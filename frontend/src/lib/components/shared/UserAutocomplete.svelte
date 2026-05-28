@@ -65,7 +65,7 @@
 
   function handleInput(e: Event) {
     const newValue = (e.target as HTMLInputElement).value;
-    // When user types, clear any previous selection — only explicit selection produces a valid id
+    // When user types, clear any previous selection - only explicit selection produces a valid id
     selectedUser = null;
     onValueChange('');
     inputText = newValue;

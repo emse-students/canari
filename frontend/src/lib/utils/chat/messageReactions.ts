@@ -17,7 +17,7 @@ export function canAddDistinctReactionEmoji(reactions: MessageReaction[], emoji:
 /**
  * Adds a user's reaction idempotently (add-only).
  * Returns null when the reaction is already present (no-op) or the emoji cap is reached.
- * Removal is handled by the `remove_reaction` system event — never by duplicate delivery.
+ * Removal is handled by the `remove_reaction` system event - never by duplicate delivery.
  */
 export function addMessageReaction(
   reactions: MessageReaction[],

@@ -21,19 +21,19 @@ export const load = async (event: LoadEvent) => {
   if (typeof window === 'undefined') return;
   if (isAuthRoute) return;
 
-  // MLS session already active — no need to re-verify the profile on every navigation.
+  // MLS session already active - no need to re-verify the profile on every navigation.
   if (globalSession.isLoggedIn) return;
 
   let userId = currentUserId();
   if (!userId) {
     // userId may be transiently null if clearUserLocally() was called (e.g. after
     // an MLS login failure) while the HTTP session (refresh cookie) is still valid.
-    // Attempt a silent refresh — _doRefresh restores userId from the JWT sub claim.
+    // Attempt a silent refresh - _doRefresh restores userId from the JWT sub claim.
     try {
       await refresh();
       userId = currentUserId();
     } catch {
-      // refresh failed — session truly expired
+      // refresh failed - session truly expired
     }
     if (!userId) {
       return goto(`/login?returnTo=${encodeURIComponent(event.url.pathname)}`, {

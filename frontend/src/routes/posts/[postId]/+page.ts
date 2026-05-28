@@ -19,7 +19,7 @@ export const load: PageLoad = async ({ params }) => {
   try {
     post = await getPost(params.postId);
   } catch {
-    // Post doesn't exist or network error — show "not found" UI instead of hard 404
+    // Post doesn't exist or network error - show "not found" UI instead of hard 404
   }
   return { post };
 };

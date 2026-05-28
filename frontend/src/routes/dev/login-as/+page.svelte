@@ -38,7 +38,7 @@
       clearMlsState(user.id);
       clearMlsState(u); // aussi nettoyer avec le nom au cas où
 
-      status = 'Connexion réussie — redirection…';
+      status = 'Connexion réussie - redirection…';
       setTimeout(() => goto('/'), 300);
     } catch (err) {
       errorMsg = err instanceof Error ? err.message : String(err);

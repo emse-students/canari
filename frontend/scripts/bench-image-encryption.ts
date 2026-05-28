@@ -117,7 +117,7 @@ async function main() {
       ? `${process.release.name} ${process.version} (${process.arch})`
       : 'unknown';
 
-  console.log('Canari — benchmark chiffrement média (AES-256-GCM, SubtleCrypto)');
+  console.log('Canari - benchmark chiffrement média (AES-256-GCM, SubtleCrypto)');
   console.log(`Runtime: ${runtime}`);
   console.log(`Itérations par taille: ${iterations} (médiane)\n`);
 
@@ -159,7 +159,7 @@ async function main() {
   console.log(
     '\nNotes: tailles = octets plaintext avant chiffrement. Ciphertext ≈ plaintext + 16 o (tag GCM).'
   );
-  console.log('La compression WebP (canvas) n’est pas mesurée ici — uniquement le crypto client.');
+  console.log('La compression WebP (canvas) n’est pas mesurée ici - uniquement le crypto client.');
 }
 
 function pad(s: string, width: number): string {

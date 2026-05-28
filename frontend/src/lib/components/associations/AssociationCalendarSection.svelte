@@ -55,8 +55,12 @@
     associationColor?: string | null;
   }
 
-  let { associationId, associationSlug, canEdit = false, associationColor = null }: Props =
-    $props();
+  let {
+    associationId,
+    associationSlug,
+    canEdit = false,
+    associationColor = null,
+  }: Props = $props();
 
   let events = $state<AssociationCalendarEvent[]>([]);
   let loading = $state(true);
@@ -208,8 +212,6 @@
     loadMonth();
   }
 
-
-
   const validatedEvents = $derived(events.filter((e) => (e.status ?? 'validated') === 'validated'));
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
   const rejectedEvents = $derived(events.filter((e) => e.status === 'rejected'));
@@ -266,7 +268,9 @@
 
   const sortedRejectedEvents = $derived(
     [...rejectedEvents].sort(
-      (a, b) => new Date(b.rejectedAt ?? b.createdAt).getTime() - new Date(a.rejectedAt ?? a.createdAt).getTime()
+      (a, b) =>
+        new Date(b.rejectedAt ?? b.createdAt).getTime() -
+        new Date(a.rejectedAt ?? a.createdAt).getTime()
     )
   );
 
@@ -403,7 +407,7 @@
       // Also refresh the list so the card shows the new image
       await loadMonth();
     } catch (err) {
-      formError = err instanceof Error ? err.message : 'Erreur lors de l\'envoi de l\'image';
+      formError = err instanceof Error ? err.message : "Erreur lors de l'envoi de l'image";
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -513,7 +517,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} — ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 </script>
 
@@ -585,7 +589,7 @@
     </div>
   {/if}
 
-  <!-- Mini month grid (orientation) + list detail below — meilleur compromis mobile -->
+  <!-- Mini month grid (orientation) + list detail below - meilleur compromis mobile -->
   <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-4 shadow-sm">
     {#if loading}
       <div class="flex justify-center py-10">
@@ -749,7 +753,11 @@
           </div>
           <div class="min-w-0 flex-1">
             {#if ev.imageUrl}
-              <img src={ev.imageUrl} alt="" class="w-full rounded-xl object-cover max-h-40 mb-2 border border-cn-border/40" />
+              <img
+                src={ev.imageUrl}
+                alt=""
+                class="w-full rounded-xl object-cover max-h-40 mb-2 border border-cn-border/40"
+              />
             {/if}
             <p class="font-bold text-text-main">{ev.title}</p>
             <p class="text-xs text-text-muted mt-0.5 flex items-center gap-1">
@@ -846,9 +854,13 @@
       </div>
       <div>
         <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</p>
-        <MarkdownComposerField bind:value={formDescription} placeholder="Décrivez l'événement…" minHeight="100px" />
+        <MarkdownComposerField
+          bind:value={formDescription}
+          placeholder="Décrivez l'événement…"
+          minHeight="100px"
+        />
       </div>
-      <!-- Poster image — only available when editing an existing event -->
+      <!-- Poster image - only available when editing an existing event -->
       {#if editingId}
         <div class="space-y-2">
           <p class="text-sm font-bold text-text-main ml-1">Affiche / image (optionnel)</p>
@@ -867,20 +879,31 @@
             </div>
           {:else}
             <label
-              class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage ? 'opacity-50 pointer-events-none' : ''}"
+              class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage
+                ? 'opacity-50 pointer-events-none'
+                : ''}"
             >
               <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
               {uploadingImage ? 'Envoi…' : 'Ajouter une affiche (JPEG / PNG / WebP)'}
-              <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" onchange={handleImageUpload} />
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                class="sr-only"
+                onchange={handleImageUpload}
+              />
             </label>
           {/if}
         </div>
       {:else}
-        <p class="text-xs text-text-muted">Vous pourrez ajouter une affiche après avoir créé l'événement.</p>
+        <p class="text-xs text-text-muted">
+          Vous pourrez ajouter une affiche après avoir créé l'événement.
+        </p>
       {/if}
       <!-- Co-owner associations picker -->
       <div class="space-y-2 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
-        <p class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1">
+        <p
+          class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
+        >
           <Users size={14} />
           Associations partenaires (optionnel)
         </p>
@@ -926,7 +949,10 @@
                 <li>
                   <button
                     type="button"
-                    onmousedown={(e) => { e.preventDefault(); addCoOwner(asso.id); }}
+                    onmousedown={(e) => {
+                      e.preventDefault();
+                      addCoOwner(asso.id);
+                    }}
                     class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-cn-yellow/10 transition-colors text-left"
                   >
                     {#if asso.color}
@@ -960,7 +986,7 @@
               bind:value={formLinkedFormId}
               class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
             >
-              <option value="">— Aucun —</option>
+              <option value="">- Aucun -</option>
               {#each linkCandidates.forms as f (f.id)}
                 <option value={f.id}>{f.title}</option>
               {/each}

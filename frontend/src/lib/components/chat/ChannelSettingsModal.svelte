@@ -487,7 +487,7 @@
                   <!-- Existing allowed users -->
                   {#if accessAllowedUserIds.length === 0}
                     <p class="text-sm text-text-muted italic">
-                      Aucun membre autorisé — le canal sera inaccessible.
+                      Aucun membre autorisé - le canal sera inaccessible.
                     </p>
                   {:else}
                     <ul class="space-y-1.5">

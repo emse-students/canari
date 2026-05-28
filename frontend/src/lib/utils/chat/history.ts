@@ -40,7 +40,7 @@ function saveLastStreamId(userId: string, groupId: string, streamId: string): vo
   try {
     localStorage.setItem(lastStreamIdKey(userId, groupId), streamId);
   } catch {
-    /* quota exceeded — graceful degradation */
+    /* quota exceeded - graceful degradation */
   }
 }
 
@@ -62,7 +62,7 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
   try {
     localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
   } catch {
-    /* quota exceeded — graceful degradation */
+    /* quota exceeded - graceful degradation */
   }
 }
 
@@ -174,14 +174,14 @@ export async function replayConversationHistory(params: {
         latestStreamId = msg.id;
       }
 
-      // Use the Redis stream ID as fingerprint — globally unique, no collision risk.
+      // Use the Redis stream ID as fingerprint - globally unique, no collision risk.
       // Fall back to timestamp+content prefix for entries without an ID.
       const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
       if (seenCipherHashes.has(cipherFingerprint)) {
         continue;
       }
 
-      // False = epoch/ratchet gap — recoverable after resync, must not be permanently skipped.
+      // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
       let skipSeenHash = false;
       try {
         const bytesStr = atob(msg.content);
@@ -211,7 +211,7 @@ export async function replayConversationHistory(params: {
           const reactions = messageReactions.get(messageId) || [];
           const emoji = parsed.reaction.emoji ?? '';
           const updated = addMessageReaction(reactions, senderNorm, emoji);
-          if (!updated) continue; // déjà présente ou cap atteint — no-op
+          if (!updated) continue; // déjà présente ou cap atteint - no-op
           messageReactions.set(messageId, updated);
           reactionUpdates.set(messageId, updated);
           mlsUpdated = true;
@@ -371,7 +371,7 @@ export async function replayConversationHistory(params: {
           errStr.includes('WrongEpoch') ||
           errStr.includes('SecretReuseError')
         ) {
-          // Non-recoverable — mark as seen to avoid infinite reprocessing.
+          // Non-recoverable - mark as seen to avoid infinite reprocessing.
           seenCipherHashes.add(cipherFingerprint);
           seenUpdated = true;
           continue;

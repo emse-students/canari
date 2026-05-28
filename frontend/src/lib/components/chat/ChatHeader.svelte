@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { ChevronLeft, LockKeyhole, Clock, Settings, Search, Users, Phone, Video } from '@lucide/svelte';
+  import {
+    ChevronLeft,
+    LockKeyhole,
+    Clock,
+    Settings,
+    Search,
+    Users,
+    Phone,
+    Video,
+  } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ChatGroupPanel from './ChatGroupPanel.svelte';
@@ -118,7 +127,7 @@
 <header
   class="bg-white/70 dark:bg-black/50 px-3 md:px-6 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 md:gap-4 relative backdrop-blur-2xl z-20"
 >
-  <!-- Bouton Retour (Mobile) — largeur fixe pour que l'avatar soit centré -->
+  <!-- Bouton Retour (Mobile) - largeur fixe pour que l'avatar soit centré -->
   <div class="w-8 flex-shrink-0 flex items-center justify-start md:hidden">
     {#if onBack}
       <button

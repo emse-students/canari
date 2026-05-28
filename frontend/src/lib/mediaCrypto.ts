@@ -1,6 +1,6 @@
 /**
  * AES-256-GCM media encryption (SubtleCrypto).
- * Shared by MediaService and benchmarks — same path as production uploads.
+ * Shared by MediaService and benchmarks - same path as production uploads.
  */
 
 export function hexEncode(buf: Uint8Array): string {

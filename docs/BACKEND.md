@@ -4,12 +4,12 @@
 
 Canari compte quatre services NestJS et une gateway Rust. Ce document couvre les services NestJS. Pour le chat-gateway Rust, voir [CHAT_GATEWAY.md](CHAT_GATEWAY.md).
 
-| Service | Port | Base de données | Rôle principal |
-|---|---|---|---|
-| core-service | 3012 | PostgreSQL | Auth OIDC, utilisateurs, paiements Stripe |
-| chat-delivery-service | 3010 | PostgreSQL + Redis | API MLS, messages offline, historique |
-| media-service | 3011 | MinIO | Upload/download de médias chiffrés |
-| social-service | 3014 | PostgreSQL + MongoDB | Posts, formulaires, channels |
+| Service               | Port | Base de données      | Rôle principal                            |
+| --------------------- | ---- | -------------------- | ----------------------------------------- |
+| core-service          | 3012 | PostgreSQL           | Auth OIDC, utilisateurs, paiements Stripe |
+| chat-delivery-service | 3010 | PostgreSQL + Redis   | API MLS, messages offline, historique     |
+| media-service         | 3011 | MinIO                | Upload/download de médias chiffrés        |
+| social-service        | 3014 | PostgreSQL + MongoDB | Posts, formulaires, channels              |
 
 ---
 
@@ -27,12 +27,12 @@ Canari compte quatre services NestJS et une gateway Rust. Ce document couvre les
 ```typescript
 @Entity('users')
 class User {
-  @PrimaryColumn() id: string;          // sub OIDC Authentik
+  @PrimaryColumn() id: string; // sub OIDC Authentik
   displayName: string | null;
   firstName: string | null;
   lastName: string | null;
-  promo: number | null;                  // Année de promotion EMSE
-  formation: string | null;             // Formation (ex. "ISMIN")
+  promo: number | null; // Année de promotion EMSE
+  formation: string | null; // Formation (ex. "ISMIN")
   bio: string | null;
   stripeCustomerId: string | null;
   admin: boolean;
@@ -45,31 +45,31 @@ class User {
 
 **Auth**
 
-| Méthode | Route | Description |
-|---|---|---|
-| `POST` | `/api/auth/oidc/callback` | Échange OIDC `code` → JWT Canari |
-| `POST` | `/api/auth/refresh` | Renouvelle access_token via cookie refresh |
-| `POST` | `/api/auth/logout` | Invalide la session, supprime cookie |
-| `GET` | `/api/auth/verify` | Endpoint interne Nginx auth_request |
-| `POST` | `/api/auth/dev-login` | Login de développement (désactivé en prod) |
+| Méthode | Route                     | Description                                |
+| ------- | ------------------------- | ------------------------------------------ |
+| `POST`  | `/api/auth/oidc/callback` | Échange OIDC `code` → JWT Canari           |
+| `POST`  | `/api/auth/refresh`       | Renouvelle access_token via cookie refresh |
+| `POST`  | `/api/auth/logout`        | Invalide la session, supprime cookie       |
+| `GET`   | `/api/auth/verify`        | Endpoint interne Nginx auth_request        |
+| `POST`  | `/api/auth/dev-login`     | Login de développement (désactivé en prod) |
 
 **Users**
 
-| Méthode | Route | Description |
-|---|---|---|
-| `GET` | `/api/users/search?q=` | Recherche préfixe (ILIKE, max 10 résultats) |
-| `GET` | `/api/users/me` | Profil courant |
-| `GET` | `/api/users/:id` | Profil d'un utilisateur |
-| `PATCH` | `/api/users/me` | Met à jour le profil |
-| `GET` | `/api/users/:id/avatar` | Proxy vers gallerie.mitv.fr |
+| Méthode | Route                   | Description                                 |
+| ------- | ----------------------- | ------------------------------------------- |
+| `GET`   | `/api/users/search?q=`  | Recherche préfixe (ILIKE, max 10 résultats) |
+| `GET`   | `/api/users/me`         | Profil courant                              |
+| `GET`   | `/api/users/:id`        | Profil d'un utilisateur                     |
+| `PATCH` | `/api/users/me`         | Met à jour le profil                        |
+| `GET`   | `/api/users/:id/avatar` | Proxy vers gallerie.mitv.fr                 |
 
 **Paiements (Stripe)**
 
-| Méthode | Route | Description |
-|---|---|---|
-| `POST` | `/api/payments/onboarding` | Crée un compte Stripe Connect |
-| `POST` | `/api/payments/create-checkout-session` | Session de paiement |
-| `POST` | `/api/payments/webhook` | Webhook Stripe (body brut) → notifie social-service |
+| Méthode | Route                                   | Description                                         |
+| ------- | --------------------------------------- | --------------------------------------------------- |
+| `POST`  | `/api/payments/onboarding`              | Crée un compte Stripe Connect                       |
+| `POST`  | `/api/payments/create-checkout-session` | Session de paiement                                 |
+| `POST`  | `/api/payments/webhook`                 | Webhook Stripe (body brut) → notifie social-service |
 
 ### Flux d'authentification OIDC
 
@@ -120,70 +120,70 @@ La majorité des routes des autres services sont protégées par le `NginxAuthGu
 
 ### Entités PostgreSQL (`auth_db`)
 
-**key_packages** — KeyPackage MLS standard par device
+**key_packages** - KeyPackage MLS standard par device
 
-| Colonne | Description |
-|---|---|
-| `userId` | Identifiant utilisateur |
-| `deviceId` | Identifiant device (UUID généré côté client) |
-| `packageBase64` | KeyPackage sérialisé (base64) |
+| Colonne         | Description                                  |
+| --------------- | -------------------------------------------- |
+| `userId`        | Identifiant utilisateur                      |
+| `deviceId`      | Identifiant device (UUID généré côté client) |
+| `packageBase64` | KeyPackage sérialisé (base64)                |
 
-Contrainte UNIQUE sur `(userId, deviceId)` — un seul KeyPackage standard par device.
+Contrainte UNIQUE sur `(userId, deviceId)` - un seul KeyPackage standard par device.
 
-**one_time_key_packages** — Pool de pré-keys (usage unique)
+**one_time_key_packages** - Pool de pré-keys (usage unique)
 
 Utilisées lors des Welcomes MLS pour éviter les collisions d'epoch quand plusieurs invitations sont générées rapidement.
 
-**queued_message** — Messages offline
+**queued_message** - Messages offline
 
-| Colonne | Description |
-|---|---|
-| `recipientId` | Destinataire |
-| `deviceId` | Device destinataire |
-| `proto` | Ciphertext MLS (base64) |
-| `isWelcome` | Boolean — c'est un Welcome MLS |
-| `isCommit` | Boolean — c'est un Commit MLS |
-| `groupId` | Identifiant du groupe |
-| `type` | Type de message |
+| Colonne       | Description                      |
+| ------------- | -------------------------------- |
+| `recipientId` | Destinataire                     |
+| `deviceId`    | Device destinataire              |
+| `proto`       | Ciphertext MLS (base64)          |
+| `isWelcome`   | Boolean - c'est un Welcome MLS   |
+| `isCommit`    | Boolean - c'est un Commit MLS    |
+| `groupId`     | Identifiant du groupe            |
+| `type`        | Type de message                  |
 | `ratchetTree` | Ratchet tree (base64, optionnel) |
 
-**dm_groups** — Groupes MLS
+**dm_groups** - Groupes MLS
 
-| Colonne | Description |
-|---|---|
-| `id` | groupId (UUID) |
-| `isGroup` | true = groupe multi-membres, false = DM |
-| `keyVersion` | Version clé courante |
-| `activeEpoch` | Epoch MLS courant |
-| `latestKeyRotationPayload` | Dernier payload de rotation |
+| Colonne                    | Description                             |
+| -------------------------- | --------------------------------------- |
+| `id`                       | groupId (UUID)                          |
+| `isGroup`                  | true = groupe multi-membres, false = DM |
+| `keyVersion`               | Version clé courante                    |
+| `activeEpoch`              | Epoch MLS courant                       |
+| `latestKeyRotationPayload` | Dernier payload de rotation             |
 
-**dm_group_members** — Appartenance aux groupes
+**dm_group_members** - Appartenance aux groupes
 
-| Colonne | Description |
-|---|---|
-| `groupId` | Référence dm_groups |
-| `userId` | Membre |
-| `role` | `admin` \| `member` |
-| `leftAt` | Timestamp départ (null si membre actif) |
+| Colonne   | Description                             |
+| --------- | --------------------------------------- |
+| `groupId` | Référence dm_groups                     |
+| `userId`  | Membre                                  |
+| `role`    | `admin` \| `member`                     |
+| `leftAt`  | Timestamp départ (null si membre actif) |
 
-**dm_device_group_memberships** — Tracking par device
+**dm_device_group_memberships** - Tracking par device
 
-| Colonne | Description |
-|---|---|
-| `groupId` | Référence dm_groups |
-| `userId` | |
-| `deviceId` | |
-| `status` | `pending` \| `welcome_sent` \| `welcome_received` \| `stale` |
-| `lastEpochSeen` | Dernier epoch traité par ce device |
+| Colonne         | Description                                                  |
+| --------------- | ------------------------------------------------------------ |
+| `groupId`       | Référence dm_groups                                          |
+| `userId`        |                                                              |
+| `deviceId`      |                                                              |
+| `status`        | `pending` \| `welcome_sent` \| `welcome_received` \| `stale` |
+| `lastEpochSeen` | Dernier epoch traité par ce device                           |
 
-**push_tokens** — Tokens FCM/APNs
+**push_tokens** - Tokens FCM/APNs
 
-| Colonne | Description |
-|---|---|
-| `userId` | |
-| `deviceId` | |
-| `token` | Token FCM ou APNs |
-| `platform` | `fcm` \| `apns` |
+| Colonne    | Description       |
+| ---------- | ----------------- |
+| `userId`   |                   |
+| `deviceId` |                   |
+| `token`    | Token FCM ou APNs |
+| `platform` | `fcm` \| `apns`   |
 
 ### Flux d'envoi d'un message
 
@@ -242,7 +242,7 @@ Voir aussi `docs/PUSH_NOTIFICATIONS.md` pour le flux réel, les limites actuelle
 
 ### Principe de sécurité
 
-Le media-service stocke uniquement des **blobs opaques chiffrés**. Il ne détient jamais les clés de déchiffrement — celles-ci voyagent dans les messages MLS chiffrés.
+Le media-service stocke uniquement des **blobs opaques chiffrés**. Il ne détient jamais les clés de déchiffrement - celles-ci voyagent dans les messages MLS chiffrés.
 
 ### Stockage
 
@@ -255,11 +255,11 @@ Validation JWT HS256 maison via `Authorization: Bearer <token>` (même `JWT_SECR
 
 ### Endpoints
 
-| Méthode | Route | Description |
-|---|---|---|
-| `POST` | `/api/media/upload` | Upload multipart → `{ mediaId }` |
-| `GET` | `/api/media/:id` | Download du blob chiffré |
-| `DELETE` | `/api/media/:id` | Suppression |
+| Méthode  | Route               | Description                      |
+| -------- | ------------------- | -------------------------------- |
+| `POST`   | `/api/media/upload` | Upload multipart → `{ mediaId }` |
+| `GET`    | `/api/media/:id`    | Download du blob chiffré         |
+| `DELETE` | `/api/media/:id`    | Suppression                      |
 
 ### Flux d'upload
 
@@ -269,7 +269,7 @@ Validation JWT HS256 maison via `Authorization: Bearer <token>` (même `JWT_SECR
 3. POST /api/media/upload { file: ciphertext, mimetype }
    ← { mediaId }
 4. Envoie un message MLS MediaMsg { media_id, key=CEK, iv=IV, ... }
-   (CEK + IV chiffrés dans le proto MLS — jamais vus par le serveur)
+   (CEK + IV chiffrés dans le proto MLS - jamais vus par le serveur)
 ```
 
 ---
@@ -291,27 +291,27 @@ Validation JWT HS256 maison via `Authorization: Bearer <token>` (même `JWT_SECR
 
 **Collections MongoDB** (`chat_db`) : `posts`, `comments`, `reactions`
 
-| Méthode | Route | Description |
-|---|---|---|
-| `POST` | `/api/posts` | Créer un post (vérification membership + Stripe si paiement) |
-| `GET` | `/api/posts` | Liste paginée |
-| `GET` | `/api/posts/:id` | Détail d'un post |
-| `PATCH` | `/api/posts/:id` | Modifier (auteur ou admin) |
-| `DELETE` | `/api/posts/:id` | Supprimer |
-| `POST` | `/api/posts/:id/reactions` | Réagir (emoji) |
-| `POST` | `/api/posts/:postId/polls/:pollId/vote` | Voter dans un sondage |
-| `POST` | `/api/posts/:id/comments` | Commenter |
+| Méthode  | Route                                   | Description                                                  |
+| -------- | --------------------------------------- | ------------------------------------------------------------ |
+| `POST`   | `/api/posts`                            | Créer un post (vérification membership + Stripe si paiement) |
+| `GET`    | `/api/posts`                            | Liste paginée                                                |
+| `GET`    | `/api/posts/:id`                        | Détail d'un post                                             |
+| `PATCH`  | `/api/posts/:id`                        | Modifier (auteur ou admin)                                   |
+| `DELETE` | `/api/posts/:id`                        | Supprimer                                                    |
+| `POST`   | `/api/posts/:id/reactions`              | Réagir (emoji)                                               |
+| `POST`   | `/api/posts/:postId/polls/:pollId/vote` | Voter dans un sondage                                        |
+| `POST`   | `/api/posts/:id/comments`               | Commenter                                                    |
 
 ### Formulaires
 
 Les formulaires permettent de collecter des réponses avec paiement optionnel via Stripe Connect :
 
-| Méthode | Route | Description |
-|---|---|---|
-| `POST` | `/api/forms` | Créer un formulaire |
-| `GET` | `/api/forms/:id` | Récupérer un formulaire |
-| `POST` | `/api/forms/:id/responses` | Soumettre une réponse |
-| `GET` | `/api/forms/:id/responses` | Toutes les réponses (admin) |
+| Méthode | Route                      | Description                 |
+| ------- | -------------------------- | --------------------------- |
+| `POST`  | `/api/forms`               | Créer un formulaire         |
+| `GET`   | `/api/forms/:id`           | Récupérer un formulaire     |
+| `POST`  | `/api/forms/:id/responses` | Soumettre une réponse       |
+| `GET`   | `/api/forms/:id/responses` | Toutes les réponses (admin) |
 
 ### Channels / Communautés
 

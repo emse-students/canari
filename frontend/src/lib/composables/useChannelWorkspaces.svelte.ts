@@ -24,7 +24,7 @@ export interface ChannelSidebarWorkspace {
   id: string;
   /** Human-readable display name. */
   name: string;
-  /** MongoDB _id from the backend — may be absent until the first API sync. */
+  /** MongoDB _id from the backend - may be absent until the first API sync. */
   workspaceDbId?: string;
   /** Seed for the avatar image fallback (usually the workspace name). */
   avatarUserId: string;
@@ -40,11 +40,11 @@ export interface ChannelWorkspaceContext {
   conversations: SvelteMap<string, Conversation>;
   /** Persists a conversation to IndexedDB. */
   saveConversation: (id: string) => Promise<void>;
-  /** Removes a conversation from IndexedDB (optional — skipped during boot). */
+  /** Removes a conversation from IndexedDB (optional - skipped during boot). */
   deleteConversation?: (id: string) => Promise<void>;
   /** Selects a conversation in the UI. */
   selectConversation: (id: string) => void;
-  /** Returns (or lazily initialises) the MLS service instance — required for key distribution. */
+  /** Returns (or lazily initialises) the MLS service instance - required for key distribution. */
   ensureMls?: () => IMlsService | Promise<IMlsService>;
   /** Opens (or creates) a direct MLS conversation with the given user. */
   startDirectConversation?: (targetUserId: string) => Promise<void>;

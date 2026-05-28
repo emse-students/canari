@@ -5,7 +5,7 @@ export function toHex(buffer: Uint8Array): string {
     .join('');
 }
 
-/** Null-safe hex conversion — returns '' for null/undefined/empty buffers. */
+/** Null-safe hex conversion - returns '' for null/undefined/empty buffers. */
 export function bytesToHex(bytes?: Uint8Array | null): string {
   return bytes && bytes.length > 0 ? toHex(bytes) : '';
 }
@@ -65,14 +65,14 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
 
 /**
  * Persist the MLS state blob for `userId` in IndexedDB.
- * Stores raw bytes — no base64 overhead.
+ * Stores raw bytes - no base64 overhead.
  */
 export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
   const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
   if (isTauri) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      // Ensure native .bin file is written — fail fast so callers can handle errors.
+      // Ensure native .bin file is written - fail fast so callers can handle errors.
       await invoke('save_mls_state', { data: Array.from(bytes) });
       return;
     } catch (e) {

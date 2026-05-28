@@ -4,7 +4,7 @@ import {
   consumeWasmDuplicateDeliveryFlag,
 } from './wasmLogShim';
 
-/** WASM init_logger forwards here — not on standard `Window`, so we narrow for tests only. */
+/** WASM init_logger forwards here - not on standard `Window`, so we narrow for tests only. */
 type WasmLogWindow = Window & {
   wasm_bindings_log?: (level: string, msg: string) => void;
 };

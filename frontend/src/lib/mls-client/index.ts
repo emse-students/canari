@@ -1,5 +1,5 @@
 /**
- * `$lib/mls-client` — MLS runtime surface (types, queue policy, WASM load).
+ * `$lib/mls-client` - MLS runtime surface (types, queue policy, WASM load).
  * Import from `$lib/mls-client`; prefer not to deep-import internal paths from app code.
  */
 export type { IMlsService, GroupMeta, UserGroupRow } from './IMlsService';

@@ -13,7 +13,7 @@ import { ModerationModule } from './moderation/moderation.module';
 import { InternalModule } from './internal/internal.module';
 import { RedisModule } from './common/redis';
 
-/** Root NestJS module — wires up TypeORM, config, Redis, and all social feature modules. */
+/** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),

@@ -42,7 +42,9 @@
     error = '';
     try {
       stats = await listDocuments(associationId);
-      console.log(`[Vault] ${stats.documents.length} documents, ${stats.usedBytes}/${stats.quotaBytes} bytes`);
+      console.log(
+        `[Vault] ${stats.documents.length} documents, ${stats.usedBytes}/${stats.quotaBytes} bytes`
+      );
     } catch (e) {
       error = e instanceof Error ? e.message : 'Erreur de chargement';
     } finally {
@@ -111,7 +113,7 @@
       console.log(`[Vault] Blob chiffré uploadé: ${mediaId}`);
 
       // Store the CEK salt in the description so we can retrieve it for decryption.
-      // Format: "[s:<salt>]" — a 36-char UUID, invisible once stripped.
+      // Format: "[s:<salt>]" - a 36-char UUID, invisible once stripped.
       const doc = await createDocument(associationId, {
         name: file.name,
         description: `[s:${cekSalt}]`,
@@ -124,9 +126,9 @@
     } catch (e: unknown) {
       console.error('[Vault] Erreur upload:', e);
       if (e && typeof e === 'object' && 'status' in e) {
-        uploadError = `Erreur ${(e as { status: number }).status} — vérifiez l'espace disponible`;
+        uploadError = `Erreur ${(e as { status: number }).status} - vérifiez l'espace disponible`;
       } else {
-        uploadError = e instanceof Error ? e.message : 'Erreur lors de l\'upload';
+        uploadError = e instanceof Error ? e.message : "Erreur lors de l'upload";
       }
     } finally {
       uploading = false;
@@ -144,7 +146,7 @@
       // Extract CEK salt from description
       const saltMatch = detail.description?.match(/^\[s:([^\]]+)\]/);
       const cekSalt = saltMatch?.[1];
-      if (!cekSalt) throw new Error('Salt de chiffrement introuvable — document corrompu');
+      if (!cekSalt) throw new Error('Salt de chiffrement introuvable - document corrompu');
 
       const vaultKeyHex = await getVaultKey(associationId);
       const cek = await deriveDocumentCek(vaultKeyHex, cekSalt);
@@ -197,7 +199,9 @@
 <div class="space-y-5">
   {#if loading}
     <div class="flex justify-center py-10">
-      <div class="h-7 w-7 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-7 w-7 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
   {:else if error}
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
@@ -267,7 +271,9 @@
                 class="inline-flex items-center justify-center rounded-xl border border-cn-border bg-[var(--cn-surface)] p-2 text-text-muted hover:text-text-main disabled:opacity-40 transition-colors"
               >
                 {#if downloadingId === doc.id}
-                  <div class="h-4 w-4 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent"></div>
+                  <div
+                    class="h-4 w-4 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent"
+                  ></div>
                 {:else}
                   <Download size={15} />
                 {/if}

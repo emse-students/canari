@@ -63,7 +63,7 @@ export class FormReminderScheduler {
     });
     for (const r of toNotifyOpen) {
       const title = '🟢 Formulaire maintenant ouvert !';
-      const body = 'Le formulaire est disponible — dépêchez-vous, les places sont limitées !';
+      const body = 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !';
       try {
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
         // Notification in-app dans la cloche
@@ -89,7 +89,7 @@ export class FormReminderScheduler {
     }
   }
 
-  /** Hourly cron — expires unvalidated cash submissions past their deadline. */
+  /** Hourly cron - expires unvalidated cash submissions past their deadline. */
   @Cron('0 * * * *')
   async expireStaleCashPayments() {
     try {

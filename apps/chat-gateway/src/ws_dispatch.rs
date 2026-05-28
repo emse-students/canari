@@ -1,4 +1,4 @@
-// WS message dispatch — one async function per message type.
+// WS message dispatch - one async function per message type.
 //
 // All send-path operations (mls, commit, welcome) now go directly from
 // the frontend to the delivery service via HTTP.  The gateway WS
@@ -6,9 +6,9 @@
 // here are control/signalling messages only.
 //
 // Remaining inbound frame types:
-//   • welcome_request   — forwarded to one online peer
-//   • reinvite_request  — forwarded to one online peer
-//   • read              — no-op
+//   • welcome_request   - forwarded to one online peer
+//   • reinvite_request  - forwarded to one online peer
+//   • read              - no-op
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -72,7 +72,7 @@ pub async fn handle_disconnect(
     use redis::AsyncCommands;
     let redis_key = format!("user:online:{}:{}", user_id, device_id);
     tracing::info!(
-        "[presence] Explicit disconnect from {}:{} — removing presence key immediately",
+        "[presence] Explicit disconnect from {}:{} - removing presence key immediately",
         user_id,
         device_id
     );

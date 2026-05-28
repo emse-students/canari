@@ -212,7 +212,7 @@ export class PaymentController {
         'verify-session: mark-paid failed',
         error?.response?.data || error?.message,
       );
-      // Non-fatal if already paid — webhook may have already handled it
+      // Non-fatal if already paid - webhook may have already handled it
     }
 
     return { ok: true, submissionId, formId };
@@ -353,7 +353,7 @@ export class PaymentController {
   /**
    * Returns the Stripe customer ID for a user, creating one if necessary.
    * Called by social-service when creating a checkout session for a paid form.
-   * Not exposed to end-users — no auth guard needed (internal traffic only).
+   * Not exposed to end-users - no auth guard needed (internal traffic only).
    */
   @Post('internal/customer-id')
   @HttpCode(200)
@@ -485,7 +485,7 @@ export class PaymentController {
           'Failed to mark submission as paid',
           error?.response?.data || error?.message,
         );
-        // Payment succeeded but marking failed — return ok, user can retry
+        // Payment succeeded but marking failed - return ok, user can retry
       }
     }
 

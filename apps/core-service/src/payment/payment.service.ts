@@ -126,7 +126,7 @@ export class PaymentService {
           await this.stripe.customers.retrieve(existingCustomerId);
         if (!customer.deleted) return existingCustomerId;
       } catch {
-        // Customer no longer exists — create a new one
+        // Customer no longer exists - create a new one
       }
     }
 

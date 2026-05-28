@@ -42,7 +42,14 @@
     label: string;
     description: string;
     href: string;
-    icon: 'users' | 'newspaper' | 'message-circle' | 'calendar-days' | 'shopping-bag' | 'file-text' | 'shield';
+    icon:
+      | 'users'
+      | 'newspaper'
+      | 'message-circle'
+      | 'calendar-days'
+      | 'shopping-bag'
+      | 'file-text'
+      | 'shield';
   }
 
   /** Items accessible depuis la nav desktop mais absents de la nav mobile. */
@@ -121,7 +128,7 @@
         sent: number;
         failed: number;
       };
-      pushTestResult = `Test envoyé — trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
+      pushTestResult = `Test envoyé - trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
     } catch (e) {
       pushTestResult = e instanceof Error ? e.message : 'Erreur';
     } finally {

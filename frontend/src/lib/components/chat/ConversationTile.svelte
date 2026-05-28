@@ -41,7 +41,7 @@
     onClick,
   }: Props = $props();
 
-  // Only direct conversations have a real peer user ID — group/channel names are
+  // Only direct conversations have a real peer user ID - group/channel names are
   // display names, not user IDs, so we must not use them for presence or avatars.
   const isDirect = $derived(conversationType === 'direct');
 
@@ -50,9 +50,7 @@
   let resolvedDisplayName = $state('');
 
   const effectiveDisplayName = $derived(
-    displayName &&
-      displayName !== contactName &&
-      !(isDirect && isCanonicalDirectKey(displayName))
+    displayName && displayName !== contactName && !(isDirect && isCanonicalDirectKey(displayName))
       ? displayName
       : resolvedDisplayName
   );
@@ -85,8 +83,7 @@
     const env = parseEnvelope(raw);
     previewText = getPreviewText(env);
 
-    const source =
-      env.kind === 'text' ? env.text : env.kind === 'media' ? (env.caption ?? '') : '';
+    const source = env.kind === 'text' ? env.text : env.kind === 'media' ? (env.caption ?? '') : '';
     const mentionIds = extractMentionUserIds(source);
     if (mentionIds.length === 0) return;
 

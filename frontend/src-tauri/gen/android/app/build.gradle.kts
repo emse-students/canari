@@ -92,7 +92,7 @@ android {
         buildConfig = true
     }
     lint {
-        // Disable release lint check — known AGP/Kotlin-FIR bug with Kotlin 2.x
+        // Disable release lint check - known AGP/Kotlin-FIR bug with Kotlin 2.x
         checkReleaseBuilds = false
         abortOnError = false
     }

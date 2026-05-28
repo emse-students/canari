@@ -72,12 +72,15 @@
     ];
   }
 
-  /** Inline CSS background for an event block — solid or split-color gradient. */
+  /** Inline CSS background for an event block - solid or split-color gradient. */
   function eventBgStyle(ev: AssociationCalendarFeedEvent): string {
     const colors = eventColors(ev);
     if (colors.length === 1) return `background:${colors[0]};`;
     const pct = 100 / colors.length;
-    const stops = colors.flatMap((c, i) => [`${c} ${(i * pct).toFixed(1)}%`, `${c} ${((i + 1) * pct).toFixed(1)}%`]);
+    const stops = colors.flatMap((c, i) => [
+      `${c} ${(i * pct).toFixed(1)}%`,
+      `${c} ${((i + 1) * pct).toFixed(1)}%`,
+    ]);
     return `background:linear-gradient(to right,${stops.join(',')});`;
   }
 
@@ -110,7 +113,9 @@
 
 {#if loading}
   <div class="flex justify-center py-16">
-    <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+    <div
+      class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+    ></div>
   </div>
 {:else}
   <!-- ── Desktop grid ───────────────────────────────────────────────────── -->
@@ -147,9 +152,13 @@
           <button
             type="button"
             role="gridcell"
-            aria-label="{cell.day}{dayEvents.length > 0 ? `, ${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}` : ''}"
+            aria-label="{cell.day}{dayEvents.length > 0
+              ? `, ${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}`
+              : ''}"
             aria-selected={selected}
-            onclick={() => { selectedDay = selectedDay === cell.day ? null : cell.day; }}
+            onclick={() => {
+              selectedDay = selectedDay === cell.day ? null : cell.day;
+            }}
             class="relative min-h-[100px] text-left transition-all border-r border-b border-cn-border/40 overflow-hidden
               {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/60'}
               {selected ? '' : 'hover:brightness-95'}"
@@ -158,8 +167,8 @@
               <!-- Empty cell: day number only -->
               <span
                 class="absolute top-1.5 left-2 text-xs font-bold leading-none
-                  {today ? 'text-cn-yellow' : 'text-text-muted/50'}"
-              >{cell.day}</span>
+                  {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+              >
             {:else}
               <!-- Events fill the entire cell, split equally -->
               <div class="absolute inset-0 flex flex-col">
@@ -175,8 +184,8 @@
                       <span
                         class="absolute top-1 left-1.5 text-[10px] font-extrabold leading-none z-10
                           {today ? 'underline decoration-2' : ''}"
-                        style="color:{fg};"
-                      >{cell.day}</span>
+                        style="color:{fg};">{cell.day}</span
+                      >
                     {/if}
                     <!-- Circular logo watermark centred in the slot -->
                     {#if ev.associationLogoUrl}
@@ -191,14 +200,15 @@
                       <span
                         class="absolute rounded-full flex items-center justify-center text-[11px] font-black opacity-15"
                         style="width:52px;height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
-                      >{getInitials(ev.associationName)}</span>
+                        >{getInitials(ev.associationName)}</span
+                      >
                     {/if}
                     <!-- Event title, centred and always on top of watermark -->
                     <span
                       class="relative z-10 text-[10px] font-bold text-center leading-tight px-3 line-clamp-2"
-                      title="{ev.title} — {ev.associationName}"
-                      style="color:{fg};"
-                    >{ev.title}</span>
+                      title="{ev.title} - {ev.associationName}"
+                      style="color:{fg};">{ev.title}</span
+                    >
                   </div>
                 {/each}
 
@@ -214,7 +224,9 @@
 
             <!-- Selected ring overlay (always on top) -->
             {#if selected}
-              <div class="absolute inset-0 ring-inset ring-2 ring-cn-yellow/70 pointer-events-none z-20"></div>
+              <div
+                class="absolute inset-0 ring-inset ring-2 ring-cn-yellow/70 pointer-events-none z-20"
+              ></div>
             {/if}
           </button>
         {/if}
@@ -225,7 +237,9 @@
   <!-- ── Mobile list ───────────────────────────────────────────────────── -->
   <div class="sm:hidden space-y-3">
     {#if daysWithEvents.length === 0}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-8 text-center text-sm text-text-muted">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-8 text-center text-sm text-text-muted"
+      >
         Aucun événement ce mois-ci.
       </div>
     {:else}
@@ -240,14 +254,15 @@
           <!-- Day header with colored left accent -->
           <button
             type="button"
-            onclick={() => { selectedDay = selected ? null : day; }}
+            onclick={() => {
+              selectedDay = selected ? null : day;
+            }}
             class="w-full flex items-center gap-3 px-4 py-3 border-b transition-colors
-                   {selected ? 'bg-cn-yellow/10 border-cn-yellow/30' : 'bg-[var(--cn-surface)]/90 border-cn-border/50 hover:bg-cn-bg/50'}"
+                   {selected
+              ? 'bg-cn-yellow/10 border-cn-yellow/30'
+              : 'bg-[var(--cn-surface)]/90 border-cn-border/50 hover:bg-cn-bg/50'}"
           >
-            <span
-              class="h-8 w-1 rounded-full shrink-0"
-              style="background:{firstBg};"
-            ></span>
+            <span class="h-8 w-1 rounded-full shrink-0" style="background:{firstBg};"></span>
             <span class="flex-1 text-sm font-bold text-text-main capitalize text-left">
               {today ? '⭐ ' : ''}{formatDayHeader(day)}
             </span>
@@ -268,17 +283,32 @@
                   style="background:{primaryColor};"
                 >
                   {#if ev.associationLogoUrl}
-                    <img src={ev.associationLogoUrl} alt="" aria-hidden="true" class="h-8 w-8 object-cover" />
+                    <img
+                      src={ev.associationLogoUrl}
+                      alt=""
+                      aria-hidden="true"
+                      class="h-8 w-8 object-cover"
+                    />
                   {:else}
-                    <span class="text-[11px] font-black" style="color:{fg};">{getInitials(ev.associationName)}</span>
+                    <span class="text-[11px] font-black" style="color:{fg};"
+                      >{getInitials(ev.associationName)}</span
+                    >
                   {/if}
                 </span>
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-bold text-text-main truncate">{ev.title}</p>
                   <p class="text-xs text-text-muted flex items-center gap-1.5 mt-0.5">
-                    <span class="font-semibold">{ev.associationName}{coOwnerNames.length > 0 ? ` & ${coOwnerNames.join(', ')}` : ''}</span>
+                    <span class="font-semibold"
+                      >{ev.associationName}{coOwnerNames.length > 0
+                        ? ` & ${coOwnerNames.join(', ')}`
+                        : ''}</span
+                    >
                     <span>·</span>
-                    <span>{formatTime(ev.startsAt)}{ev.endsAt ? ` – ${formatTime(ev.endsAt)}` : ''}</span>
+                    <span
+                      >{formatTime(ev.startsAt)}{ev.endsAt
+                        ? ` – ${formatTime(ev.endsAt)}`
+                        : ''}</span
+                    >
                   </p>
                 </div>
               </li>

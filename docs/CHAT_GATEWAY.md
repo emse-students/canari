@@ -102,11 +102,11 @@ La clé Redis `user:online:{userId}:{deviceId}` est renouvelée (`set_ex`, TTL *
 
 ### Client → Gateway
 
-| Type | Champs | Action |
-|---|---|---|
-| `welcome_request` | `groupId`, `payload`, `targetUserId`, `targetDeviceId` | Forward du Welcome vers le device cible |
-| `reinvite_request` | idem | Réinvitation (epoch stale) |
-| `read` | `messageId` | Acquittement lecture (no-op) |
+| Type               | Champs                                                 | Action                                  |
+| ------------------ | ------------------------------------------------------ | --------------------------------------- |
+| `welcome_request`  | `groupId`, `payload`, `targetUserId`, `targetDeviceId` | Forward du Welcome vers le device cible |
+| `reinvite_request` | idem                                                   | Réinvitation (epoch stale)              |
+| `read`             | `messageId`                                            | Acquittement lecture (no-op)            |
 
 **Logique de forward du Welcome** :
 
@@ -192,11 +192,11 @@ Pour chaque userId dans userIds :
 
 ## 7. Routes HTTP (non-WebSocket)
 
-| Méthode | Route | Description |
-|---|---|---|
-| `GET` | `/api/ws` | Upgrade WebSocket |
-| `GET` | `/api/presence` | Récupère l'état de présence des utilisateurs |
-| `GET` | `/api/health` | Health check du service |
+| Méthode | Route           | Description                                  |
+| ------- | --------------- | -------------------------------------------- |
+| `GET`   | `/api/ws`       | Upgrade WebSocket                            |
+| `GET`   | `/api/presence` | Récupère l'état de présence des utilisateurs |
+| `GET`   | `/api/health`   | Health check du service                      |
 
 > **Note**: Les routes `/api/groups` mentionnées dans les versions précédentes ne sont pas implémentées. La gestion des groupes se fait via le chat-delivery-service (`/api/mls/groups/*`).
 
@@ -221,12 +221,12 @@ tracing-subscriber = "0.3"
 
 ## 9. Variables d'environnement
 
-| Variable | Défaut | Description |
-|---|---|---|
-| `REDIS_URL` | `redis://localhost:6379` | URL Redis |
-| `JWT_SECRET` | — | Secret JWT HS256 (obligatoire) |
-| `PORT` | `3000` | Port d'écoute |
-| `RUST_LOG` | `info` | Niveau de log (`debug`, `info`, `warn`, `error`) |
+| Variable     | Défaut                   | Description                                      |
+| ------------ | ------------------------ | ------------------------------------------------ |
+| `REDIS_URL`  | `redis://localhost:6379` | URL Redis                                        |
+| `JWT_SECRET` | -                        | Secret JWT HS256 (obligatoire)                   |
+| `PORT`       | `3000`                   | Port d'écoute                                    |
+| `RUST_LOG`   | `info`                   | Niveau de log (`debug`, `info`, `warn`, `error`) |
 
 ---
 

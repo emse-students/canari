@@ -51,9 +51,15 @@
     onDelete?: () => void;
   }
 
-  let { post: postProp, currentUserId, authToken = '', onRefresh: _onRefresh, onDelete }: Props = $props();
+  let {
+    post: postProp,
+    currentUserId,
+    authToken = '',
+    onRefresh: _onRefresh,
+    onDelete,
+  }: Props = $props();
 
-  // Local mutable copy — updated directly after interactions to avoid a full list reload.
+  // Local mutable copy - updated directly after interactions to avoid a full list reload.
   // Re-syncs from postProp whenever the parent explicitly refreshes.
   let localPost = $derived(untrack(() => ({ ...postProp })));
 
@@ -64,9 +70,7 @@
   let selectedOptions = $state<string[]>([]);
   // Synchronise selectedOptions depuis les données serveur (postProp est réactif, localPost ne l'est pas).
   $effect(() => {
-    const serverVotes = (postProp.polls ?? []).flatMap(
-      (p) => p.votesByUser?.[currentUserId] ?? []
-    );
+    const serverVotes = (postProp.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
     if (serverVotes.length > 0) {
       selectedOptions = serverVotes;
     }
@@ -90,7 +94,9 @@
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
-  let formInfos = $state<{ id: string; title: string; submitted: boolean; opensAt?: string | null }[]>([]);
+  let formInfos = $state<
+    { id: string; title: string; submitted: boolean; opensAt?: string | null }[]
+  >([]);
 
   const expectedAttachedFormIds = $derived.by(() => {
     const ids: string[] = [];
@@ -185,7 +191,7 @@
     try {
       await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
       actionMessage = selectedOptions.length === 0 ? 'Vote retiré.' : 'Vote enregistré !';
-      // Update the poll locally — track votesByUser + per-option vote arrays
+      // Update the poll locally - track votesByUser + per-option vote arrays
       const updatedPolls = (localPost.polls ?? []).map((p) => {
         if (p.id !== pollId) return p;
         const newVotesByUser = { ...(p.votesByUser ?? {}), [currentUserId]: selectedOptions };
@@ -210,7 +216,7 @@
   async function handleReaction(reactionType: string) {
     if (!currentUserId.trim()) return;
 
-    // Optimistic update — apply immediately, roll back on error
+    // Optimistic update - apply immediately, roll back on error
     const prevReactions = { ...(localPost.reactions ?? {}) };
     const wasReacted = prevReactions[currentUserId] === reactionType;
     const newReactions = { ...prevReactions };
@@ -270,7 +276,10 @@
   }
 
   /** Posts a new comment (or reply) and appends it to the local comments array. media is an optional encrypted GIF/image ref. */
-  async function handleAddComment(parentId?: string, media?: import('$lib/posts/api').PostImageRef) {
+  async function handleAddComment(
+    parentId?: string,
+    media?: import('$lib/posts/api').PostImageRef
+  ) {
     const text = commentText.trim();
     if (!text && !media) return;
     if (!currentUserId.trim()) return;
@@ -379,145 +388,153 @@
       reportSubmitting = false;
     }
   }
-
 </script>
 
 <div class="relative mb-6">
   {#if localPost.pinned}
-    <span class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30 inline-flex items-center gap-1 pointer-events-none">
+    <span
+      class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30 inline-flex items-center gap-1 pointer-events-none"
+    >
       <Pin size={10} strokeWidth={3} /> Épinglé
     </span>
   {/if}
-<Card
-  class="group/card !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
->
-  <div class="relative">
-    <PostHeader post={localPost} />
-    <PostOverlayControls
-      pinned={localPost.pinned ?? false}
-      {isOwnPost}
-      isGlobalAdmin={isGlobalAdmin()}
-      isLoggedIn={!!currentUserId}
-      {reportOpen}
-      {reportReason}
-      {reportSubmitting}
-      reportReasons={REPORT_REASONS.map((r) => r.label)}
-      onTogglePin={togglePin}
-      onStartEdit={startEditPost}
-      onDelete={handleDeletePost}
-      onToggleReport={(open) => { reportOpen = open; if (!open) reportReason = ''; }}
-      onReportReasonChange={(r) => { reportReason = r; }}
-      onSubmitReport={submitReport}
-    />
-  </div>
-
-  {#if localPost.linkedCalendarEvent}
-    {@const ev = localPost.linkedCalendarEvent}
-    <div class="px-5 pb-3">
-      <a
-        href="/associations/{encodeURIComponent(ev.associationSlug)}?section=agenda"
-        class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
-      >
-        <CalendarCheck size={14} strokeWidth={2.5} />
-        <span>
-          Événement :
-          {ev.title}
-          ·
-          {new Date(ev.startsAt).toLocaleString('fr-FR', {
-            day: 'numeric',
-            month: 'short',
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
-        </span>
-      </a>
+  <Card
+    class="group/card !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 backdrop-blur-xl"
+  >
+    <div class="relative">
+      <PostHeader post={localPost} />
+      <PostOverlayControls
+        pinned={localPost.pinned ?? false}
+        {isOwnPost}
+        isGlobalAdmin={isGlobalAdmin()}
+        isLoggedIn={!!currentUserId}
+        {reportOpen}
+        {reportReason}
+        {reportSubmitting}
+        reportReasons={REPORT_REASONS.map((r) => r.label)}
+        onTogglePin={togglePin}
+        onStartEdit={startEditPost}
+        onDelete={handleDeletePost}
+        onToggleReport={(open) => {
+          reportOpen = open;
+          if (!open) reportReason = '';
+        }}
+        onReportReasonChange={(r) => {
+          reportReason = r;
+        }}
+        onSubmitReport={submitReport}
+      />
     </div>
-  {/if}
 
-  {#if editingPost}
-    <div class="px-5 pb-4 flex flex-col gap-2">
-      <textarea
-        bind:value={editMarkdown}
-        rows={4}
-        class="w-full max-w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2.5 text-[0.9rem] text-text-main border border-black/10 dark:border-white/10 focus:ring-2 focus:ring-amber-500/50 outline-none resize-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-      ></textarea>
-      <div class="flex gap-2 justify-end">
-        <button
-          type="button"
-          onclick={() => (editingPost = false)}
-          class="px-3 py-1.5 text-xs font-bold text-text-muted hover:text-text-main rounded-lg transition-colors"
-        >Annuler</button>
-        <button
-          type="button"
-          onclick={submitEditPost}
-          class="px-4 py-1.5 text-xs font-extrabold bg-amber-500 text-[#151B2C] rounded-lg hover:bg-amber-400 transition-colors"
-        >Enregistrer</button>
+    {#if localPost.linkedCalendarEvent}
+      {@const ev = localPost.linkedCalendarEvent}
+      <div class="px-5 pb-3">
+        <a
+          href="/associations/{encodeURIComponent(ev.associationSlug)}?section=agenda"
+          class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
+        >
+          <CalendarCheck size={14} strokeWidth={2.5} />
+          <span>
+            Événement :
+            {ev.title}
+            ·
+            {new Date(ev.startsAt).toLocaleString('fr-FR', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        </a>
       </div>
-    </div>
-  {:else}
-    <PostContent post={localPost} {authToken} />
-  {/if}
+    {/if}
 
-  <PostActions
-    {userReaction}
-    {showReactionPicker}
-    reactionList={REACTIONS}
-    commentCount={comments.length || undefined}
-    onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
-    onReactionSelect={handleReaction}
-    onCommentClick={() => (showComments = !showComments)}
-  />
+    {#if editingPost}
+      <div class="px-5 pb-4 flex flex-col gap-2">
+        <textarea
+          bind:value={editMarkdown}
+          rows={4}
+          class="w-full max-w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2.5 text-[0.9rem] text-text-main border border-black/10 dark:border-white/10 focus:ring-2 focus:ring-amber-500/50 outline-none resize-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+        ></textarea>
+        <div class="flex gap-2 justify-end">
+          <button
+            type="button"
+            onclick={() => (editingPost = false)}
+            class="px-3 py-1.5 text-xs font-bold text-text-muted hover:text-text-main rounded-lg transition-colors"
+            >Annuler</button
+          >
+          <button
+            type="button"
+            onclick={submitEditPost}
+            class="px-4 py-1.5 text-xs font-extrabold bg-amber-500 text-[#151B2C] rounded-lg hover:bg-amber-400 transition-colors"
+            >Enregistrer</button
+          >
+        </div>
+      </div>
+    {:else}
+      <PostContent post={localPost} {authToken} />
+    {/if}
 
-  <ReactionsDisplay
-    {reactionCounts}
-    reactions={localPost.reactions ?? {}}
-    {userReaction}
-    reactionList={REACTIONS}
-    onReactionClick={handleReaction}
-  />
+    <PostActions
+      {userReaction}
+      {showReactionPicker}
+      reactionList={REACTIONS}
+      commentCount={comments.length || undefined}
+      onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
+      onReactionSelect={handleReaction}
+      onCommentClick={() => (showComments = !showComments)}
+    />
 
-  <PostPolls
-    polls={localPost.polls}
-    {selectedOptions}
-    onVoteClick={handleVoteClick}
-    onSubmitVote={submitVote}
-  />
+    <ReactionsDisplay
+      {reactionCounts}
+      reactions={localPost.reactions ?? {}}
+      {userReaction}
+      reactionList={REACTIONS}
+      onReactionClick={handleReaction}
+    />
 
-  {#if pendingAttachedFormIds.length > 0}
-    <div class="px-5 py-3 space-y-3" aria-hidden="true">
-      {#each pendingAttachedFormIds as formId (formId)}
-        <div
-          class="rounded-2xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse"
-          style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
-        ></div>
-      {/each}
-    </div>
-  {/if}
+    <PostPolls
+      polls={localPost.polls}
+      {selectedOptions}
+      onVoteClick={handleVoteClick}
+      onSubmitVote={submitVote}
+    />
 
-  <PostForms {formInfos} />
+    {#if pendingAttachedFormIds.length > 0}
+      <div class="px-5 py-3 space-y-3" aria-hidden="true">
+        {#each pendingAttachedFormIds as formId (formId)}
+          <div
+            class="rounded-2xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse"
+            style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
+          ></div>
+        {/each}
+      </div>
+    {/if}
 
-  <PostComments
-    {comments}
-    {topLevelComments}
-    {showComments}
-    {commentText}
-    {submittingComment}
-    {currentUserId}
-    {authToken}
-    onToggleComments={() => (showComments = !showComments)}
-    onCommentTextChange={async (text) => {
-      commentText = text;
-    }}
-    onAddComment={handleAddComment}
-    onLikeComment={handleLikeComment}
-    onEditComment={handleEditComment}
-    onDeleteComment={handleDeleteComment}
-    onReport={handleReportComment}
-    onLoadAllComments={loadAllComments}
-    totalCommentCount={(localPost.comments ?? []).length}
-  />
+    <PostForms {formInfos} />
 
-  <!-- Notifications intégrées à la carte -->
-  <PostFeedback {errorMessage} {actionMessage} />
-</Card>
+    <PostComments
+      {comments}
+      {topLevelComments}
+      {showComments}
+      {commentText}
+      {submittingComment}
+      {currentUserId}
+      {authToken}
+      onToggleComments={() => (showComments = !showComments)}
+      onCommentTextChange={async (text) => {
+        commentText = text;
+      }}
+      onAddComment={handleAddComment}
+      onLikeComment={handleLikeComment}
+      onEditComment={handleEditComment}
+      onDeleteComment={handleDeleteComment}
+      onReport={handleReportComment}
+      onLoadAllComments={loadAllComments}
+      totalCommentCount={(localPost.comments ?? []).length}
+    />
+
+    <!-- Notifications intégrées à la carte -->
+    <PostFeedback {errorMessage} {actionMessage} />
+  </Card>
 </div>

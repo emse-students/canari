@@ -14,7 +14,7 @@ import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 
 /**
- * Internal-only user data deletion endpoint — called by core-service during account deletion.
+ * Internal-only user data deletion endpoint - called by core-service during account deletion.
  * NOT exposed through Nginx: only reachable via Docker-internal networking.
  * Auth: X-Internal-Secret header matched against INTERNAL_SECRET env var.
  */
@@ -50,7 +50,7 @@ export class InternalController {
    * Deletes or anonymises all social data for the given user.
    * Hard-deletes: posts, memberships, follows, tags, moderation records.
    * Anonymises (keeps record): channel messages, purchase records, content reports
-   * — these are preserved for conversation continuity or legal/financial obligations.
+   * - these are preserved for conversation continuity or legal/financial obligations.
    */
   @Delete('users/:userId')
   async deleteUserData(
@@ -70,7 +70,7 @@ export class InternalController {
     this.logger.log(`[INTERNAL_DELETE] starting social data for user=${userId}`);
 
     await Promise.all([
-      // Hard deletes — user's own content and memberships
+      // Hard deletes - user's own content and memberships
       this.postRepo.delete({ authorId: userId }),
       this.channelMemberRepo.delete({ userId }),
       this.assocMemberRepo.delete({ userId }),
@@ -80,7 +80,7 @@ export class InternalController {
       this.userTagRepo.delete({ userId }),
       this.moderationRepo.delete({ userId }),
 
-      // Anonymise — preserve records for legal/accounting obligations or conversation continuity
+      // Anonymise - preserve records for legal/accounting obligations or conversation continuity
       this.channelMessageRepo.update({ authorId: userId }, { authorId: '[deleted]' }),
       this.purchaseRepo.update({ userId }, { userId: '[deleted]' }),
       this.reportRepo.update({ reporterId: userId }, { reporterId: '[deleted]' }),

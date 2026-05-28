@@ -66,7 +66,7 @@
       const result = await onPayWithSaved(selectedMethodId);
       if (!result.ok) {
         if (result.requiresAction && result.clientSecret) {
-          // Handle 3DS inline — user stays in the app
+          // Handle 3DS inline - user stays in the app
           const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
           if (key) {
             const stripe = await loadStripe(key);
@@ -83,7 +83,7 @@
               }
             }
           } else {
-            // No publishable key configured — fall back to hosted checkout
+            // No publishable key configured - fall back to hosted checkout
             onPayWithNew();
           }
         } else {

@@ -85,7 +85,7 @@ services:
   # RUST SERVICES (3000-3009 range)
   # ─────────────────────────────────────────────────────
 
-  # Chat Gateway (Rust / Axum) — port 3000
+  # Chat Gateway (Rust / Axum) - port 3000
   chat-gateway:
     build:
       context: ../../
@@ -105,7 +105,7 @@ services:
       kafka:
         condition: service_healthy
 
-  # Call Service (Rust SFU) — port 3004
+  # Call Service (Rust SFU) - port 3004
   call-service:
     build:
       context: ../../
@@ -129,7 +129,7 @@ services:
   # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────
 
-  # Chat Delivery Service (NestJS) — New port 3010
+  # Chat Delivery Service (NestJS) - New port 3010
   chat-delivery-service:
     build:
       context: ../../
@@ -190,7 +190,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # Media Service (NestJS) — New port 3011
+  # Media Service (NestJS) - New port 3011
   # Stores only opaque encrypted blobs; never sees decryption keys.
   # ─────────────────────────────────────────────────────
   media-service:
@@ -218,7 +218,7 @@ services:
         condition: service_healthy
 
   # ─────────────────────────────────────────────────────
-  # Core Service (NestJS) — port 3012
+  # Core Service (NestJS) - port 3012
   # Handles Auth, Users, Payment
   # ─────────────────────────────────────────────────────
   core-service:
@@ -247,7 +247,7 @@ services:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # Social Service (NestJS) — port 3014
+  # Social Service (NestJS) - port 3014
   # Handles Channels, Posts, Forms
   # ─────────────────────────────────────────────────────
   social-service:

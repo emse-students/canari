@@ -291,7 +291,7 @@ export class MessagingService {
       where: { id: queued.id },
     });
     if (!stillQueued) {
-      // Client ACKed via WebSocket — nothing to do.
+      // Client ACKed via WebSocket - nothing to do.
       return;
     }
     this.logger.log(
@@ -478,7 +478,7 @@ export class MessagingService {
     // 1b. Append to history stream so late-joining devices can replay.
     // Only for regular application messages (proto path, not Welcome/Commit).
     // Welcome and Commit messages are MLS epoch-transition frames that cannot
-    // be replayed out of order — only app-level payloads belong in history.
+    // be replayed out of order - only app-level payloads belong in history.
     if (
       body.proto &&
       !body.isWelcome &&
@@ -602,11 +602,11 @@ export class MessagingService {
 
     // Serialize via Redis lock to prevent TOCTOU races.
     // Two devices sending commits at the same epoch would both read the same
-    // activeEpoch — the lock ensures only one gets through.
+    // activeEpoch - the lock ensures only one gets through.
     const lockKey = `mls:commitlock:${groupId}`;
     const lockAcquired = await this.redis.set(lockKey, deviceId, 'EX', 5, 'NX');
     if (lockAcquired !== 'OK') {
-      // Another commit is being validated right now — reject to retry.
+      // Another commit is being validated right now - reject to retry.
       const group = await this.groupRepo.findOne({ where: { id: groupId } });
       this.logger.warn(
         `[COMMIT][${traceId}] REJECT concurrent_commit group=${groupId} currentEpoch=${group?.activeEpoch ?? 0}`,
@@ -711,7 +711,7 @@ export class MessagingService {
       `[WELCOME][${traceId}] START group=${safeGroupId} sender=${senderUserId} target=${targetUserId ?? 'unknown'}:${targetDeviceId} payloadLen=${body.welcomePayload?.length ?? 0} ratchetTreeLen=${body.ratchetTreePayload?.length ?? 0}`,
     );
 
-    // Look up recipient device — include userId in the query when provided so the lookup
+    // Look up recipient device - include userId in the query when provided so the lookup
     // is unambiguous even if two users happen to share the same raw device ID string
     // (common in same-browser multi-tab testing).
     const query: Record<string, string> = { deviceId: targetDeviceId };
@@ -786,7 +786,7 @@ export class MessagingService {
       )
       .execute();
 
-    // Device can now decrypt — add it to the routing set.
+    // Device can now decrypt - add it to the routing set.
     await this.redis.sadd(
       `group:members:${safeGroupId}`,
       `${deviceInfo.userId}:${targetDeviceId}`,
@@ -835,7 +835,7 @@ export class MessagingService {
     // DB. Fall back to the DB and repopulate the cache so routing is restored.
     if (members.length === 0) {
       this.logger.log(
-        `[WELCOME_REQ][${traceId}] REDIS_EMPTY — falling back to DB for group=${groupId}`,
+        `[WELCOME_REQ][${traceId}] REDIS_EMPTY - falling back to DB for group=${groupId}`,
       );
       const dbMembers = await this.deviceGroupRepo.find({
         where: { groupId, status: In(['welcome_received', 'welcome_sent']) },
@@ -934,7 +934,7 @@ export class MessagingService {
       }
     }
 
-    // No peer online — persist so the request is replayed when a peer connects.
+    // No peer online - persist so the request is replayed when a peer connects.
     // Mirrors the pending_reinvite pattern in notifyReinviteRequest.
     const pendingSetKey = `pending_welcome:${groupId}`;
     const pipeline = this.redis.pipeline();
@@ -952,7 +952,7 @@ export class MessagingService {
     );
 
     this.logger.log(
-      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis, FCM sent to peers`,
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`,
     );
     return { status: 'no_peer_online' };
   }
@@ -987,7 +987,7 @@ export class MessagingService {
     );
 
     // Ensure the requester's DeviceGroupMembership is marked stale so
-    // getPendingInvitations on any online peer will return them — even if the
+    // getPendingInvitations on any online peer will return them - even if the
     // client-side updateInvitationStatus call failed due to a network error.
     try {
       const existing = await this.deviceGroupRepo.findOne({
@@ -1125,7 +1125,7 @@ export class MessagingService {
       }
     }
 
-    // No peer online — persist the reinvite request so any future online member
+    // No peer online - persist the reinvite request so any future online member
     // will drain it the next time someone in this group sends a reinvite_request.
     const pipeline = this.redis.pipeline();
     pipeline.sadd(pendingSetKey, senderKey);
@@ -1133,7 +1133,7 @@ export class MessagingService {
     await pipeline.exec();
 
     this.logger.log(
-      `[REINVITE_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} — stored in Redis for later drain`,
+      `[REINVITE_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis for later drain`,
     );
     return { status: 'no_peer_online' };
   }
@@ -1335,7 +1335,7 @@ export class MessagingService {
    * Used for side-channel social signals (reactions, mentions) where the
    * server never sees the MLS plaintext.
    *
-   * Returns { sent, failed } — failure is non-fatal for the caller.
+   * Returns { sent, failed } - failure is non-fatal for the caller.
    */
   async sendPushToUser(
     userId: string,

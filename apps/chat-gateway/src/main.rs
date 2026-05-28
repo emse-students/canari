@@ -26,7 +26,7 @@ fn base64_decode_to_string(input: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Liveness probe endpoint — returns `200 OK` with body `"OK"`.
+/// Liveness probe endpoint - returns `200 OK` with body `"OK"`.
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
@@ -244,7 +244,7 @@ async fn main() {
                                         }
                                     };
 
-                                    // Forward flat JSON to the WS client — no proto decode needed.
+                                    // Forward flat JSON to the WS client - no proto decode needed.
                                     serde_json::json!({
                                     "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
                                     "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
@@ -296,9 +296,9 @@ async fn main() {
                                             // The mpsc channel is full or the receiver was dropped
                                             // (device disconnected). The message is already in the
                                             // DB queue and will be fetched via fetchPendingMessages
-                                            // on the next reconnect — it is NOT lost.
+                                            // on the next reconnect - it is NOT lost.
                                             tracing::warn!(
-                                                "[PubSub] Real-time delivery failed for {} (queuedId={}) — message stays in DB queue, will be fetched on reconnect",
+                                                "[PubSub] Real-time delivery failed for {} (queuedId={}) - message stays in DB queue, will be fetched on reconnect",
                                                 key,
                                                 queue_id
                                             );
@@ -362,7 +362,7 @@ async fn main() {
                                     }
                                 } else if !found {
                                     tracing::info!(
-                                        "[PubSub] {} not connected to this gateway — message stays in DB queue, will be fetched on reconnect (queuedId={}).",
+                                        "[PubSub] {} not connected to this gateway - message stays in DB queue, will be fetched on reconnect (queuedId={}).",
                                         key,
                                         queue_id
                                     );
@@ -437,7 +437,7 @@ async fn main() {
                         tracing::warn!("[PubSub] Non-string payload on {}, dropping", channel_name);
                     }
                 }
-                // Stream ended (Redis disconnected) — retry with back-off.
+                // Stream ended (Redis disconnected) - retry with back-off.
                 tracing::warn!("Stream Redis pub/sub terminé, reconnexion dans 5s...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }

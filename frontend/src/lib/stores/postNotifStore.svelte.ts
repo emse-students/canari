@@ -28,7 +28,7 @@ export const postNotifStore = {
     try {
       notifications = await getPostNotifications(limit);
     } catch {
-      // silent — stale data is better than an error screen
+      // silent - stale data is better than an error screen
     } finally {
       loading = false;
     }

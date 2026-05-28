@@ -28,7 +28,7 @@ export function isUuidLike(value: string): boolean {
 const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
 
 /**
- * True when `value` looks like a raw technical ID that must never be shown in the UI —
+ * True when `value` looks like a raw technical ID that must never be shown in the UI -
  * either a UUID or an MLS group ID (64-char lowercase hex hash).
  */
 export function isRawId(value: string): boolean {
@@ -40,8 +40,23 @@ export function isCanonicalDirectKey(value: string): boolean {
   return value.includes('::');
 }
 
+/**
+ * Extracts the peer's user ID from a DM group name formatted as `"userA::userB"`.
+ * Returns `null` when the name does not match the pattern (i.e. for named group chats).
+ */
+export function parseDirectPeerFromName(rawName: string, userId: string): string | null {
+  const parts = rawName
+    .split('::')
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+  const current = userId.toLowerCase();
+  const unique = [...new Set(parts)];
+  return unique.find((p) => p !== current) ?? null;
+}
+
 /** Number of messages loaded from local DB on first display. Older messages load on scroll-up. */
-const INITIAL_MESSAGES_PAGE = 60;
+export const INITIAL_MESSAGES_PAGE = 60;
 
 // ---------- Archive persistence ----------
 
@@ -78,9 +93,9 @@ export function persistArchivedConversations(uid: string, ids: string[]) {
  * inspecting the conversation name and optional ID.
  *
  * Supported naming patterns:
- * - `"alice::bob"` — canonical direct conversation format.
- * - `"alice & bob"` — legacy two-participant format.
- * - `metaId` starts with `"dm_"` — explicit DM marker.
+ * - `"alice::bob"` - canonical direct conversation format.
+ * - `"alice & bob"` - legacy two-participant format.
+ * - `metaId` starts with `"dm_"` - explicit DM marker.
  *
  * Returns the conversation type, the contact name to display, and the peer's user ID
  * (`directPeerId`) for direct conversations.
@@ -154,7 +169,7 @@ export interface ConversationListPresentation {
 
 /**
  * Resolves sidebar / mini-panel row data from a conversation record.
- * Prefer stored `conversationType` / `directPeerId` — re-parsing `conv.name` alone
+ * Prefer stored `conversationType` / `directPeerId` - re-parsing `conv.name` alone
  * breaks after MLS reload when `name` is only the peer UUID (no `::` key).
  */
 export function resolveConversationListPresentation(
@@ -184,7 +199,7 @@ export function resolveConversationListPresentation(
         : undefined) ??
       identity.contactName;
     if (!peerRaw?.trim()) {
-      // Stale/partial row during route switch or MLS reload — avoid throwing on .toLowerCase().
+      // Stale/partial row during route switch or MLS reload - avoid throwing on .toLowerCase().
       return {
         conversationType: 'group',
         contactId: input.id,
@@ -345,7 +360,7 @@ export interface LoadConversationsContext {
   pin: string;
   storage: IStorage;
   mlsService: IMlsService;
-  /** Reactive map populated by this function — cleared and rebuilt on each call. */
+  /** Reactive map populated by this function - cleared and rebuilt on each call. */
   conversations: SvelteMap<string, Conversation>;
   /** Shared reactions map, updated while loading messages. */
   messageReactions: SvelteMap<string, any>;
@@ -392,7 +407,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     persistArchivedConversations(ctx.userId, prunedArchivedIds);
   }
 
-  // Preserve in-memory UI fields (avatars, resolved names) across reload — they are
+  // Preserve in-memory UI fields (avatars, resolved names) across reload - they are
   // not stored in ConversationMeta and would otherwise flash away on every login.
   const snapshot = new SvelteMap<
     string,
@@ -410,7 +425,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   ctx.conversations.clear();
   ctx.messageReactions.clear();
 
-  // Phase 1 — fast, immediately usable conversation stubs.
+  // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
     const identity = deriveConversationIdentity(meta.name, ctx.userId, meta.id);
     const prev = snapshot.get(meta.id);
@@ -442,7 +457,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     });
   }
 
-  // Phase 2 — decrypt stored messages + replay remote history.
+  // Phase 2 - decrypt stored messages + replay remote history.
   // Serialised (not parallel) because replayConversationHistory calls the shared
   // WASM MLS client which is not safe to invoke concurrently.
   for (const meta of mergedConvMetas) {
@@ -458,7 +473,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         !isChannelConversationId(meta.id)
       ) {
         try {
-          // First check the explicit isGroup flag from the backend — this is
+          // First check the explicit isGroup flag from the backend - this is
           // authoritative and prevents multi-user groups with only 2 members
           // from being misclassified as direct conversations.
           let isGroupFromApi: boolean | null = null;

@@ -1,6 +1,6 @@
 import { isTauri } from '@tauri-apps/api/core';
 
-/** True on Tauri Android / iOS — Stripe Checkout must return via app deep link. */
+/** True on Tauri Android / iOS - Stripe Checkout must return via app deep link. */
 export function isMobileTauri(): boolean {
   if (typeof window === 'undefined' || !isTauri()) return false;
   return /android|iphone|ipad|ipod/i.test(navigator.userAgent);

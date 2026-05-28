@@ -1,4 +1,4 @@
-# Dépendances et artefacts de build — exclus du contexte Docker
+# Dépendances et artefacts de build - exclus du contexte Docker
 **/node_modules
 **/target
 **/.git

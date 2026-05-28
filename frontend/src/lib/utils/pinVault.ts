@@ -1,5 +1,5 @@
 /**
- * PinVault — stores the user's PIN in an AES-GCM encrypted blob in
+ * PinVault - stores the user's PIN in an AES-GCM encrypted blob in
  * sessionStorage (not localStorage) so that:
  *
  * 1. The PIN is never written to disk in plaintext.
@@ -20,8 +20,8 @@
  * keystore and call PinVault.clear() after successful biometric enrolment.
  */
 
-const VAULT_KEY_KEY = 'canari_pin_vault_key'; // sessionStorage — random wrap key (b64), session-scoped so it never persists to disk
-const VAULT_BLOB_KEY = 'canari_pin_vault'; // sessionStorage — iv:ciphertext (b64)
+const VAULT_KEY_KEY = 'canari_pin_vault_key'; // sessionStorage - random wrap key (b64), session-scoped so it never persists to disk
+const VAULT_BLOB_KEY = 'canari_pin_vault'; // sessionStorage - iv:ciphertext (b64)
 
 async function getOrCreateWrapKey(): Promise<CryptoKey> {
   const stored = sessionStorage.getItem(VAULT_KEY_KEY);
@@ -79,7 +79,7 @@ export async function loadPin(): Promise<string | null> {
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
     return new TextDecoder().decode(plain);
   } catch {
-    // Decryption failure (tampered blob, key rotated, etc.) — treat as absent.
+    // Decryption failure (tampered blob, key rotated, etc.) - treat as absent.
     clearPin();
     return null;
   }

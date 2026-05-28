@@ -3,10 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { createForm, type CreateFormPayload } from '$lib/forms/api';
-  import {
-    POST_NEW_FORM_ID_KEY,
-    loadPostComposerDraft,
-  } from '$lib/posts/postComposerDraft';
+  import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import { listAssociations, type Association } from '$lib/associations/api';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -44,7 +41,7 @@
       const all = await listAssociations();
       associations = all.filter((a) => a.stripeAccountId);
     } catch {
-      // Ignore — user may not have access
+      // Ignore - user may not have access
     }
   });
 
@@ -68,7 +65,6 @@
 
   // Type picker
   let showTypePicker = $state(false);
-
 
   let titleMissing = $derived(!title.trim());
 
@@ -99,7 +95,8 @@
                   .filter((opt: any) => opt.label?.trim())
                   .map((opt: any) => ({
                     ...opt,
-                    priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
+                    priceModifier:
+                      opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
                   }))
               : [],
             rows: (item.rows ?? [])
@@ -230,7 +227,9 @@
   {/if}
 
   <!-- Section 1: General Settings -->
-  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5">
+  <section
+    class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
+  >
     <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <FileText size={20} />
@@ -248,7 +247,11 @@
 
       <div>
         <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description</p>
-        <MarkdownComposerField bind:value={description} placeholder="Décrivez l'objet de ce formulaire…" minHeight="80px" />
+        <MarkdownComposerField
+          bind:value={description}
+          placeholder="Décrivez l'objet de ce formulaire…"
+          minHeight="80px"
+        />
       </div>
 
       <Input
@@ -277,7 +280,9 @@
   </section>
 
   <!-- Section 2: Payment -->
-  <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5">
+  <section
+    class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
+  >
     <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <CreditCard size={20} />
@@ -343,16 +348,21 @@
             Les paiements seront transférés au compte Stripe de l'association sélectionnée.
           </p>
         {:else}
-          <div class="rounded-2xl border-2 border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 space-y-2">
+          <div
+            class="rounded-2xl border-2 border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 space-y-2"
+          >
             <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">
               Les formulaires payants nécessitent une association avec Stripe Connect activé.
             </p>
             <p class="text-xs text-amber-800/80 dark:text-amber-200/70">
-              Vous n'êtes administrateur d'aucune association ayant connecté un compte de paiement. Vous pouvez créer un formulaire gratuit sans association.
+              Vous n'êtes administrateur d'aucune association ayant connecté un compte de paiement.
+              Vous pouvez créer un formulaire gratuit sans association.
             </p>
             <button
               type="button"
-              onclick={() => { requiresPayment = false; }}
+              onclick={() => {
+                requiresPayment = false;
+              }}
               class="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-100 px-3 py-1.5 text-xs font-bold transition-colors"
             >
               Créer un formulaire gratuit à la place
@@ -375,7 +385,7 @@
           <div class="flex-1 min-w-0">
             <p class="text-sm font-bold text-text-main">Carte, Apple Pay, Google Pay</p>
             <p class="text-xs text-text-muted">
-              Visa, Mastercard, Amex — wallets détectés automatiquement
+              Visa, Mastercard, Amex - wallets détectés automatiquement
             </p>
           </div>
           <div
@@ -434,7 +444,7 @@
     {/if}
   </section>
 
-  <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur — à implémenter ultérieurement -->
+  <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur - à implémenter ultérieurement -->
 
   <!-- Section 3: Questions -->
   <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-3 sm:p-6">
@@ -508,7 +518,10 @@
                 onclick={() => addItem(qtype.value)}
                 class="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-cn-border hover:border-cn-yellow hover:bg-cn-yellow/5 text-center transition-all group"
               >
-                <Icon size={18} class="text-text-muted group-hover:text-cn-dark transition-colors" />
+                <Icon
+                  size={18}
+                  class="text-text-muted group-hover:text-cn-dark transition-colors"
+                />
                 <span
                   class="text-[0.65rem] font-semibold text-text-muted group-hover:text-text-main leading-tight"
                   >{qtype.label}</span
@@ -522,13 +535,18 @@
   </section>
 
   <!-- Save bar -->
-  <div class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 text-center sm:text-left">
+  <div
+    class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 text-center sm:text-left"
+  >
     <p class="text-sm text-text-muted min-h-[1.25rem]">
       {#if titleMissing}
         <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
       {:else}
         {items.length} question{items.length > 1 ? 's' : ''}{#if requiresPayment && basePrice > 0}
-          · {basePrice.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} €
+          · {basePrice.toLocaleString('fr-FR', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 2,
+          })} €
         {:else if !requiresPayment}
           · Gratuit
         {/if}

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pre-commit hook — auto-fixe et re-stage plutôt que de bloquer.
+# Pre-commit hook - auto-fixe et re-stage plutôt que de bloquer.
 
 STAGED_FILES=$(git diff --cached --name-only)
 

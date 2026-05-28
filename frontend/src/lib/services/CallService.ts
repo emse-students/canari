@@ -25,7 +25,7 @@ interface IceServerConfig {
   credential?: string;
 }
 
-/** Gecko (Firefox) — standard `RTCRtpScriptTransform`; no Chromium-only PC flags. */
+/** Gecko (Firefox) - standard `RTCRtpScriptTransform`; no Chromium-only PC flags. */
 function isGeckoBrowser(): boolean {
   return typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent);
 }
@@ -214,7 +214,7 @@ export class CallService {
         /* ignore */
       }
       appendLog(`[Call] ICE servers HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
-      throw new Error(`Failed to fetch ICE servers: ${res.status}${detail ? ` — ${detail}` : ''}`);
+      throw new Error(`Failed to fetch ICE servers: ${res.status}${detail ? ` - ${detail}` : ''}`);
     }
 
     const data = (await res.json()) as { iceServers?: IceServerConfig[] };
@@ -367,7 +367,7 @@ export class CallService {
         appendLog('[Call] connected to SFU, joining room…');
         this.sendSfuMessage({ type: 'Join', room_id: roomId });
         joinTimeout = window.setTimeout(() => {
-          fail(new Error('SFU Join ack timeout (20s) — redéployer call-service'));
+          fail(new Error('SFU Join ack timeout (20s) - redéployer call-service'));
           ws.close();
         }, 20_000);
       };
@@ -436,7 +436,7 @@ export class CallService {
     }
     if (!canUseRtpScriptTransform()) {
       appendLog(
-        '[Call] RTCRtpScriptTransform indisponible — E2E désactivé (Firefox ≥ 117 : vérifier media.peerconnection.scripttransform.enabled)'
+        '[Call] RTCRtpScriptTransform indisponible - E2E désactivé (Firefox ≥ 117 : vérifier media.peerconnection.scripttransform.enabled)'
       );
       return;
     }
@@ -542,7 +542,7 @@ export class CallService {
     window.setTimeout(() => {
       if (track.readyState === 'ended') return;
       if (!track.muted) return;
-      appendLog('[Call] remote video still muted — requesting keyframe');
+      appendLog('[Call] remote video still muted - requesting keyframe');
       void this.requestVideoKeyframes();
     }, 3_000);
   }
@@ -570,7 +570,7 @@ export class CallService {
       iceServers,
       iceTransportPolicy: 'relay',
     };
-    // Legacy Chromium flag — not used by Firefox (standard API since FF 117).
+    // Legacy Chromium flag - not used by Firefox (standard API since FF 117).
     if (!isGeckoBrowser()) {
       (
         pcConfig as RTCConfiguration & { encodedInsertableStreams?: boolean }
@@ -594,7 +594,7 @@ export class CallService {
         });
         if (relayCandidateCount === 0) {
           appendLog(
-            '[Call] Aucun candidat TURN relay — Cloudflare TURN indisponible ou mal configuré'
+            '[Call] Aucun candidat TURN relay - Cloudflare TURN indisponible ou mal configuré'
           );
         }
       }
@@ -634,7 +634,7 @@ export class CallService {
       }
       if (iceState === 'failed') {
         appendLog(
-          '[Call] ICE failed — vérifier Cloudflare TURN sur chat-delivery et call-service (mêmes secrets)'
+          '[Call] ICE failed - vérifier Cloudflare TURN sur chat-delivery et call-service (mêmes secrets)'
         );
       }
     };

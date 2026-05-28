@@ -4,13 +4,13 @@
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
-  /** Primary key — equals the MLS groupId UUID (e.g. "g-abc123", "channel_xyz", "dm_uuid"). */
+  /** Primary key - equals the MLS groupId UUID (e.g. "g-abc123", "channel_xyz", "dm_uuid"). */
   id: string;
   /** Human-readable name shown in the conversation list. */
   name: string;
   /** True once the MLS Welcome has been processed and the group is ready to send/receive. */
   isReady: boolean;
-  /** Unix milliseconds — used for ordering conversations by recency. */
+  /** Unix milliseconds - used for ordering conversations by recency. */
   updatedAt: number;
 }
 
@@ -32,7 +32,7 @@ export interface StoredMessage {
   /** Unix ms when the first read receipt for this message was received locally. */
   readAt?: number;
   /**
-   * Server queue creation time (Unix ms) — stable secondary sort key when two messages share
+   * Server queue creation time (Unix ms) - stable secondary sort key when two messages share
    * the same client `sentAt` timestamp.  Set from `queuedCreatedAt` in the delivery envelope.
    */
   serverTimestamp?: number;
@@ -44,7 +44,7 @@ export interface StoredMessage {
 
 /**
  * Raw encrypted message row as persisted on disk (IndexedDB or SQLite).
- * The content field of StoredMessage is never stored in plaintext — only this encrypted form exists on disk.
+ * The content field of StoredMessage is never stored in plaintext - only this encrypted form exists on disk.
  */
 export interface EncryptedMessageRow {
   /** Same UUID as StoredMessage.id. */

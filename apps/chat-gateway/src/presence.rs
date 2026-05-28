@@ -115,7 +115,7 @@ pub async fn get_admin_presence(
     };
 
     // Redis: scan all user:online:* keys with their TTL
-    // NOTE: KEYS blocks Redis — acceptable for a low-traffic admin endpoint.
+    // NOTE: KEYS blocks Redis - acceptable for a low-traffic admin endpoint.
     let mut redis_entries: Vec<(String, String, i64)> = Vec::new();
     if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await
         && let Ok(keys) = redis::cmd("KEYS")

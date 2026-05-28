@@ -24,7 +24,7 @@
     onMoveDown?: () => void;
     canMoveUp?: boolean;
     canMoveDown?: boolean;
-    /** All questions in the form — used for the conditional display picker. */
+    /** All questions in the form - used for the conditional display picker. */
     allItems?: any[];
     /** If provided, enables image upload for this question. */
     imageUploadFn?: (file: File) => Promise<string>;
@@ -222,7 +222,8 @@
                     item.type = qt.value;
                     showTypePicker = false;
                   }}
-                  class="flex items-center gap-2 px-3 py-2 rounded-xl transition-all {item.type === qt.value
+                  class="flex items-center gap-2 px-3 py-2 rounded-xl transition-all {item.type ===
+                  qt.value
                     ? 'bg-cn-yellow/15 text-cn-dark font-semibold'
                     : 'hover:bg-cn-yellow/5 text-text-main'}"
                 >
@@ -251,15 +252,19 @@
         />
         <button
           type="button"
-          onclick={() => { item.description = undefined; }}
+          onclick={() => {
+            item.description = undefined;
+          }}
           class="absolute top-1.5 right-1.5 p-1 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-          title="Supprimer la description"
-        ><X size={14} /></button>
+          title="Supprimer la description"><X size={14} /></button
+        >
       </div>
     {:else}
       <button
         type="button"
-        onclick={() => { item.description = ''; }}
+        onclick={() => {
+          item.description = '';
+        }}
         class="text-xs font-semibold text-text-muted hover:text-text-main transition-colors flex items-center gap-1"
       >
         <Plus size={12} />
@@ -276,21 +281,30 @@
           <img src={item.imageUrl} alt="Question" class="w-full max-h-40 object-cover" />
           <button
             type="button"
-            onclick={() => { item.imageUrl = undefined; }}
+            onclick={() => {
+              item.imageUrl = undefined;
+            }}
             class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
-            title="Supprimer l'image"
-          ><X size={14} /></button>
+            title="Supprimer l'image"><X size={14} /></button
+          >
         </div>
       {:else}
         {#if imageUploadError}
           <p class="text-xs text-red-500 mb-1.5">{imageUploadError}</p>
         {/if}
         <label
-          class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border px-3 py-2.5 text-xs font-semibold text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage ? 'opacity-50 pointer-events-none' : ''}"
+          class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border px-3 py-2.5 text-xs font-semibold text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage
+            ? 'opacity-50 pointer-events-none'
+            : ''}"
         >
           <ImagePlus size={15} class="shrink-0" />
           {uploadingImage ? 'Envoi en cours…' : 'Ajouter une image à la question'}
-          <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" onchange={handleImageUpload} />
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            class="sr-only"
+            onchange={handleImageUpload}
+          />
         </label>
       {/if}
     </div>
@@ -538,17 +552,24 @@
     <div class="mt-4 pt-4 border-t border-black/5 dark:border-white/5">
       <div class="flex items-center gap-1.5 mb-2">
         <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-        <span class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider">Afficher si…</span>
+        <span class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider"
+          >Afficher si…</span
+        >
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <select
           bind:value={item.dependsOn}
           class="flex-1 min-w-0 px-3 py-2 border-2 border-cn-border rounded-xl text-xs text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow"
-          onchange={() => { item.dependsValue = ''; }}
+          onchange={() => {
+            item.dependsValue = '';
+          }}
         >
           <option value="">Toujours afficher</option>
           {#each eligibleConditionSources as src (src.id)}
-            <option value={src.id}>{src.label || `Question ${allItems.findIndex((q: any) => q.id === src.id) + 1}`}</option>
+            <option value={src.id}
+              >{src.label ||
+                `Question ${allItems.findIndex((q: any) => q.id === src.id) + 1}`}</option
+            >
           {/each}
         </select>
         {#if item.dependsOn}

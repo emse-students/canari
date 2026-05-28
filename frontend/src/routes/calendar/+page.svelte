@@ -148,7 +148,7 @@
   function toAgendaExport(ev: AssociationCalendarFeedEvent): AgendaExportEvent {
     return {
       id: ev.id,
-      title: `${ev.title} — ${ev.associationName}`,
+      title: `${ev.title} - ${ev.associationName}`,
       description: ev.description,
       startsAt: ev.startsAt,
       endsAt: ev.endsAt,
@@ -156,14 +156,16 @@
     };
   }
 
-  /** webcal:// URL pointing to the public ICS feed — calendar apps subscribe and auto-refresh. */
+  /** webcal:// URL pointing to the public ICS feed - calendar apps subscribe and auto-refresh. */
   function calendarSubscribeUrl(): string {
     if (typeof window === 'undefined') return '';
-    const query = filterAssociationId ? `?associationId=${encodeURIComponent(filterAssociationId)}` : '';
+    const query = filterAssociationId
+      ? `?associationId=${encodeURIComponent(filterAssociationId)}`
+      : '';
     return `webcal://${window.location.host}/api/associations/calendar/feed.ics${query}`;
   }
 
-  /** Silently downloads a single-event ICS — the OS calendar app opens it automatically. */
+  /** Silently downloads a single-event ICS - the OS calendar app opens it automatically. */
   function addEventToCalendar(ev: AssociationCalendarFeedEvent) {
     downloadTextFile(
       `canari-event-${ev.id}.ics`,
@@ -183,7 +185,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} — ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   const sortedEvents = $derived(
@@ -213,8 +215,6 @@
     if (filterAssociationId) parts.push(`association=${encodeURIComponent(filterAssociationId)}`);
     return `/calendar/export?${parts.join('&')}`;
   });
-
-
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
@@ -239,7 +239,9 @@
       href="/admin/agenda"
       class="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/70 dark:bg-amber-950/30 px-4 py-3 hover:border-amber-300 transition-colors"
     >
-      <span class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+      <span
+        class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
+      >
         <ShieldAlert size={18} />
         Modérer les événements en attente
         {#if pendingCount > 0}
@@ -311,15 +313,12 @@
     </div>
   </Card>
 
-  <MonthCalendarGridRich
-    {focusDate}
-    events={sortedEvents}
-    {loading}
-    bind:selectedDay
-  />
+  <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
 
   {#if loadError}
-    <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{loadError}</div>
+    <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">
+      {loadError}
+    </div>
   {/if}
 
   {#if loading}

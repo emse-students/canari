@@ -91,7 +91,7 @@
     isLoggingIn = true;
     try {
       startOidcLogin(getSafeReturnTarget());
-      // Le navigateur navigue vers Authentik — pas besoin de réinitialiser isLoggingIn
+      // Le navigateur navigue vers Authentik - pas besoin de réinitialiser isLoggingIn
     } catch (e: unknown) {
       loginError = e instanceof Error ? e.message : String(e);
       isLoggingIn = false;

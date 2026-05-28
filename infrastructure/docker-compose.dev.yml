@@ -64,7 +64,7 @@ services:
   # RUST SERVICES (3000-3009 range)
   # ─────────────────────────────────────────────────────
 
-  # Chat Gateway (Rust / Axum) — port 3100 (DEV)
+  # Chat Gateway (Rust / Axum) - port 3100 (DEV)
   chat-gateway:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-dev}
     restart: always
@@ -109,7 +109,7 @@ services:
   # NODE.JS SERVICES (3010-3029 range)
   # ─────────────────────────────────────────────────────
 
-  # Chat Delivery Service (NestJS) — New port 3110 (DEV)
+  # Chat Delivery Service (NestJS) - New port 3110 (DEV)
   chat-delivery-service:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-dev}
     restart: always
@@ -170,7 +170,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # Media Service (NestJS) — New port 3111 (DEV)
+  # Media Service (NestJS) - New port 3111 (DEV)
   # Stores only opaque encrypted blobs; never sees decryption keys.
   # ─────────────────────────────────────────────────────
   media-service:
@@ -198,7 +198,7 @@ services:
         condition: service_healthy
 
   # ─────────────────────────────────────────────────────
-  # Core Service (NestJS) — port 3112 (DEV)
+  # Core Service (NestJS) - port 3112 (DEV)
   # Handles Auth, Users, Payment
   # ─────────────────────────────────────────────────────
   core-service:
@@ -229,7 +229,7 @@ services:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
-  # Social Service (NestJS) — port 3114 (DEV)
+  # Social Service (NestJS) - port 3114 (DEV)
   # Handles Channels, Posts, Forms
   # ─────────────────────────────────────────────────────
   social-service:

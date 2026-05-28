@@ -33,7 +33,7 @@ export class AssociationProduct {
   @Column({ default: 'eur' })
   currency: string;
 
-  /** `membership` — grants a tag; `balance_topup` — sends Cercle webhook; `other` — generic. */
+  /** `membership` - grants a tag; `balance_topup` - sends Cercle webhook; `other` - generic. */
   @Column({ length: 50 })
   type: 'membership' | 'balance_topup' | 'other';
 

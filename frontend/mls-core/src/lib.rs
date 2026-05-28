@@ -112,7 +112,7 @@ impl MlsManager {
             let loaded_identity = String::from_utf8_lossy(credential.identity()).to_string();
             if loaded_identity != expected_identity {
                 log::warn!(
-                    "load_or_create: identity mismatch — expected={} loaded={}",
+                    "load_or_create: identity mismatch - expected={} loaded={}",
                     expected_identity,
                     loaded_identity
                 );
@@ -251,12 +251,12 @@ impl MlsManager {
                         group_id_str,
                         e
                     );
-                    // Continue anyway — worst case the create below will hit GroupAlreadyExists
+                    // Continue anyway - worst case the create below will hit GroupAlreadyExists
                     // and we fall back to the legacy orphan-recovery path.
                 }
             }
             _ => {
-                // Nothing in storage — nothing to wipe.
+                // Nothing in storage - nothing to wipe.
             }
         }
 
@@ -576,20 +576,20 @@ impl MlsManager {
         if let Some(existing) = self.groups.get(&group_id) {
             let existing_epoch = existing.epoch().as_u64();
             if welcome_epoch == 0 && existing_epoch > 0 {
-                // Re-bootstrap légitime — on écrase l'ancien état.
+                // Re-bootstrap légitime - on écrase l'ancien état.
                 // Le guard min_epoch éventuel est aussi effacé : un reset à 0
                 // annule toute contrainte d'epoch issue d'une récupération antérieure.
                 log::info!(
-                    "process_welcome: re-bootstrap détecté pour {} (epoch {} → 0) — remplacement de l'état",
+                    "process_welcome: re-bootstrap détecté pour {} (epoch {} → 0) - remplacement de l'état",
                     group_id,
                     existing_epoch
                 );
                 self.forgotten_group_min_epochs.remove(&group_id);
                 // On laisse tomber vers self.groups.insert() ci-dessous.
             } else {
-                // Welcome parallèle ou dupliqué — on conserve l'état en mémoire.
+                // Welcome parallèle ou dupliqué - on conserve l'état en mémoire.
                 log::info!(
-                    "process_welcome: groupe {} déjà actif (epoch={}) — Welcome ignoré (new epoch={})",
+                    "process_welcome: groupe {} déjà actif (epoch={}) - Welcome ignoré (new epoch={})",
                     group_id,
                     existing_epoch,
                     welcome_epoch
@@ -607,14 +607,14 @@ impl MlsManager {
             if welcome_epoch == 0 {
                 // Re-bootstrap : la contrainte min_epoch est levée.
                 log::info!(
-                    "process_welcome: epoch-0 Welcome pour {} — suppression du guard min_epoch={}",
+                    "process_welcome: epoch-0 Welcome pour {} - suppression du guard min_epoch={}",
                     group_id,
                     min_ep
                 );
                 self.forgotten_group_min_epochs.remove(&group_id);
             } else if welcome_epoch < min_ep {
                 log::warn!(
-                    "process_welcome: Welcome rejeté pour {} — epoch {} < minimum attendu {}",
+                    "process_welcome: Welcome rejeté pour {} - epoch {} < minimum attendu {}",
                     group_id,
                     welcome_epoch,
                     min_ep
@@ -671,7 +671,7 @@ impl MlsManager {
             _ => return Err(MlsError::InvalidData),
         };
 
-        // Both fields are always cleartext in the MLS frame header — safe to read
+        // Both fields are always cleartext in the MLS frame header - safe to read
         // before decryption and invaluable for diagnosing epoch-mismatch errors.
         let msg_epoch = protocol_message.epoch();
         let group_epoch = group.epoch();

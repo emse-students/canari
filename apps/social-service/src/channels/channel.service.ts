@@ -1157,7 +1157,7 @@ export class ChannelService {
     }
 
     const msg = this.messageRepo.create({
-      // Never use a client-supplied ID as the DB primary key — the server
+      // Never use a client-supplied ID as the DB primary key - the server
       // always generates a fresh UUID to prevent IDOR / row-overwrite attacks.
       workspaceId: channel.workspaceId,
       channelId,
@@ -1169,7 +1169,7 @@ export class ChannelService {
 
     const savedMsg = await this.messageRepo.save(msg);
 
-    // Publish event fire-and-forget — do not block the HTTP response
+    // Publish event fire-and-forget - do not block the HTTP response
     this.getWorkspaceMemberIds(channel.workspaceId)
       .then((workspaceMemberIds) =>
         this.redis.publishChannelEvent(

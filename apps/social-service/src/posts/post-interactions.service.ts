@@ -211,7 +211,7 @@ export class PostInteractionsService {
     return { ok: true, comment };
   }
 
-  /** Toggles a like on a comment — adds the userId if not present, removes it if already liked. */
+  /** Toggles a like on a comment - adds the userId if not present, removes it if already liked. */
   async likeComment(postId: string, commentId: string, userId: string) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
@@ -294,7 +294,7 @@ export class PostInteractionsService {
   /**
    * Submits an embedded form on a post. Validates the post exists and that the
    * form is actually attached, then returns a stub success response. Full
-   * submission logic lives in FormsService — cross-module wiring requires
+   * submission logic lives in FormsService - cross-module wiring requires
    * extracting PostNotificationsService to break the circular dependency.
    */
   async submitForm(

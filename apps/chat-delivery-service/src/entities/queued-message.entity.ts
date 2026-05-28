@@ -22,7 +22,7 @@ export class QueuedMessage {
   @Column({ type: 'varchar', length: 255 })
   recipientId: string;
 
-  /** Device ID of the intended recipient — messages are device-addressed in MLS. */
+  /** Device ID of the intended recipient - messages are device-addressed in MLS. */
   @Column()
   deviceId: string;
 

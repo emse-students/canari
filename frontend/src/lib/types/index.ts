@@ -59,13 +59,13 @@ export interface ChatMessage {
 /**
  * Runtime representation of a conversation (DM, group, or channel).
  *
- * `messages` is loaded lazily — it can be empty while the conversation is still
+ * `messages` is loaded lazily - it can be empty while the conversation is still
  * visible in the sidebar. `lastMessageAt` provides a stable sort key even before
  * messages are loaded; it is initialised from `ConversationMeta.updatedAt` on
  * startup and kept up-to-date by `addMessageToChat` / `batchAddMessages`.
  */
 export interface Conversation {
-  /** Primary key — the MLS groupId UUID (same as ConversationMeta.id). */
+  /** Primary key - the MLS groupId UUID (same as ConversationMeta.id). */
   id: string;
   /** Display name shown in the UI (e.g. peer username, group name). */
   name: string;

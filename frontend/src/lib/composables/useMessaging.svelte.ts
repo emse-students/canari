@@ -456,7 +456,7 @@ export function useMessaging() {
     const isChannel = isChannelConversationId(ctx.selectedContact);
     ctx.log(`[SEND] convo: groupId="${convo.id}" isReady=${convo.isReady} isChannel=${isChannel}`);
 
-    // Channels don't use MLS — skip MLS membership verification
+    // Channels don't use MLS - skip MLS membership verification
     if (!isChannel) {
       ctx.log('[SEND] Vérification membership MLS...');
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
@@ -464,7 +464,7 @@ export function useMessaging() {
       if (!stillMember || !convo.isReady) {
         if (text && ctx.selectedContact) {
           pendingRetry = { text, convoId: ctx.selectedContact };
-          ctx.setSendError('Resynchronisation en cours — le message sera envoyé automatiquement');
+          ctx.setSendError('Resynchronisation en cours - le message sera envoyé automatiquement');
         } else {
           ctx.setSendError('Le groupe est en cours de resynchronisation. Réessaie plus tard');
         }

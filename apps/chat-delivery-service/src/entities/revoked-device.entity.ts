@@ -12,7 +12,7 @@ import {
  * Once a device is recorded here the server refuses to enqueue new messages for it,
  * preventing a stolen or lost device from receiving future group traffic. The primary
  * key is set by the caller (rather than auto-generated) so that revocation can be
- * idempotent — re-revoking the same device ID is a no-op.
+ * idempotent - re-revoking the same device ID is a no-op.
  */
 @Entity()
 @Unique(['userId', 'deviceId'])

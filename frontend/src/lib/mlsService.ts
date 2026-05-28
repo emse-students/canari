@@ -3,7 +3,7 @@ import type { IMlsService } from '$lib/mls-client';
 import { TauriMlsService } from './services/TauriMlsService';
 import { WebMlsService } from './services/WebMlsService';
 
-// Synchronous platform detection — no top-level await, no TDZ risk.
+// Synchronous platform detection - no top-level await, no TDZ risk.
 // The mlsWasmStub Vite plugin stubs out mlsWasmLoader for TAURI_TARGET builds,
 // so the WASM binary is excluded from Tauri bundles even though WebMlsService
 // is statically imported here.

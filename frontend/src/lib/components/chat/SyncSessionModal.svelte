@@ -384,7 +384,7 @@
               onclick={() => (showManualPaste = true)}
               class="text-xs font-semibold text-text-muted hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
             >
-              Je ne peux pas scanner — Coller le code texte manuellement
+              Je ne peux pas scanner - Coller le code texte manuellement
             </button>
           </div>
         {/if}

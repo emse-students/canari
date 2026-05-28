@@ -35,7 +35,7 @@ export class NginxAuthGuard implements CanActivate {
         return true;
       }
       throw new UnauthorizedException(
-        'Missing X-User-Id header — ensure the request passes through nginx auth.'
+        'Missing X-User-Id header - ensure the request passes through nginx auth.'
       );
     }
 
@@ -58,12 +58,12 @@ export class NginxAuthGuard implements CanActivate {
             return true;
           }
         } catch {
-          // Malformed token — fall through to UnauthorizedException
+          // Malformed token - fall through to UnauthorizedException
         }
       }
     }
     throw new UnauthorizedException(
-      'Missing X-User-Id header or JWT — ensure the request passes through nginx auth.'
+      'Missing X-User-Id header or JWT - ensure the request passes through nginx auth.'
     );
   }
 }

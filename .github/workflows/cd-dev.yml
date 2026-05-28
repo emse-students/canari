@@ -133,7 +133,7 @@ jobs:
                 esac
               done <<< "$CHANGED_FILES"
               if [ "$version_only" = true ]; then
-                echo "Version manifest bump — forcing core-service and frontend image rebuild."
+                echo "Version manifest bump - forcing core-service and frontend image rebuild."
                 add_service core-service
                 add_service frontend
               fi
@@ -184,7 +184,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.2.18"
+          bun-version: '1.2.18'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -453,7 +453,7 @@ jobs:
             upsert_env_var "FRONTEND_URL" "$FRONTEND_URL_SYNC"
           elif ! grep -q '^FRONTEND_URL=' infrastructure/.env; then
             upsert_env_var "FRONTEND_URL" "https://${{ env.DOMAIN }}"
-            echo "ℹ️ secrets.BASE_URL absent — FRONTEND_URL défaut https://${{ env.DOMAIN }}"
+            echo "ℹ️ secrets.BASE_URL absent - FRONTEND_URL défaut https://${{ env.DOMAIN }}"
           fi
 
           if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then

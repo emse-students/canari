@@ -73,7 +73,7 @@ export async function fetchServerAppVersionReliable(
       const info = await fetchServerAppVersion(fetchFn, controller.signal);
       if (info) return info;
     } catch {
-      /* timeout or network — retry */
+      /* timeout or network - retry */
     } finally {
       clearTimeout(timer);
     }

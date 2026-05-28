@@ -118,7 +118,7 @@ export async function sendChatMessage(
 
       try {
         await mlsService.sendMessage(conversation.id, payload, messageId);
-        deps.log(`[SEND] mlsService.sendMessage confirmé — sauvegarde état MLS...`);
+        deps.log(`[SEND] mlsService.sendMessage confirmé - sauvegarde état MLS...`);
         try {
           const stateBytes = await mlsService.saveState(pin);
           saveMlsState(userId, stateBytes);
@@ -156,13 +156,13 @@ interface MessageActionDeps {
   userId: string;
   pin: string;
   conversation: Conversation;
-  /** Display name of the current user — used as actor in reaction notifications. */
+  /** Display name of the current user - used as actor in reaction notifications. */
   currentUserDisplayName?: string;
 }
 
 /**
  * Notifies the author of a message that the current user reacted to it.
- * Fire-and-forget REST call — the server never sees MLS plaintext.
+ * Fire-and-forget REST call - the server never sees MLS plaintext.
  * Exported so it can be reused by other callers (e.g. channel reactions).
  */
 export async function notifyReaction(params: {

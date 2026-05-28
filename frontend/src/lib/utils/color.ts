@@ -23,7 +23,7 @@ export function hslToHex(hsl: string): string {
 
 /**
  * Returns '#ffffff' or '#111111' for readable text on the given background.
- * Accepts both hex (#rrggbb) and CSS HSL strings — converts HSL to hex internally.
+ * Accepts both hex (#rrggbb) and CSS HSL strings - converts HSL to hex internally.
  */
 export function contrastColor(color: string): string {
   const hex = color.startsWith('#') ? color : hslToHex(color);

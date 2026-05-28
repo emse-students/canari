@@ -9,7 +9,7 @@ import { User } from './users/entities/user.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
 
-/** Root NestJS module — wires up TypeORM, config, auth, users, payments, and version. */
+/** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),

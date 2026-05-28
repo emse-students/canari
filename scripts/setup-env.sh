@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# setup-env.sh — Initialisation des fichiers .env
+# setup-env.sh - Initialisation des fichiers .env
 #
 # Usage:
 #   ./scripts/setup-env.sh          # Développement : crée frontend/.env + infrastructure/.env

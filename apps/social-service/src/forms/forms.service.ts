@@ -192,7 +192,7 @@ export class FormsService {
     return count > 0;
   }
 
-  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and — if totalCents > 0 — returns a Stripe Checkout URL. */
+  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a Stripe Checkout URL. */
   async submit(id: string, input: SubmitFormDto) {
     const form = await this.formRepo.findOne({ where: { id } });
     if (!form) throw new NotFoundException('Form not found');
@@ -268,7 +268,7 @@ export class FormsService {
       savedSubmission = await this.submissionRepo.save(submission);
     }
 
-    // Cash payment shortcut — skip Stripe entirely
+    // Cash payment shortcut - skip Stripe entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
       const cashExpiresAt =
         form.cashPaymentExpiryDays != null
@@ -318,7 +318,7 @@ export class FormsService {
             );
             customerId = customerResp.data.customerId ?? undefined;
           } catch {
-            // Non-fatal — proceed without customer ID
+            // Non-fatal - proceed without customer ID
           }
         }
 
@@ -454,7 +454,7 @@ export class FormsService {
     if (submission.userId !== callerId) {
       await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
     }
-    // Only cancel pending submissions — never touch paid ones
+    // Only cancel pending submissions - never touch paid ones
     if (submission.paymentStatus !== 'pending') return { ok: true };
     submission.paymentStatus = 'cancelled';
     await this.submissionRepo.save(submission);
@@ -471,7 +471,7 @@ export class FormsService {
   }
 
   /**
-   * Validates a cash submission — marks as paid and grants the tag if configured.
+   * Validates a cash submission - marks as paid and grants the tag if configured.
    * Requires form manager rights (form owner or MANAGE_FORMS flag).
    */
   async validateCashPayment(formId: string, submissionId: string, validatedBy: string, isGlobalAdmin: boolean) {
@@ -534,7 +534,7 @@ export class FormsService {
     return { ok: true };
   }
 
-  /** Called by the hourly cron — expires cash submissions past their deadline. */
+  /** Called by the hourly cron - expires cash submissions past their deadline. */
   async expireStalecashPayments(): Promise<number> {
     const result = await this.submissionRepo
       .createQueryBuilder()
@@ -551,7 +551,7 @@ export class FormsService {
     return count;
   }
 
-  /** Returns false for empty arrays, empty objects, null, undefined, and empty strings — used to validate required fields. */
+  /** Returns false for empty arrays, empty objects, null, undefined, and empty strings - used to validate required fields. */
   private hasValue(val: any): boolean {
     if (Array.isArray(val)) return val.length > 0;
     if (val && typeof val === 'object') return Object.keys(val).length > 0;

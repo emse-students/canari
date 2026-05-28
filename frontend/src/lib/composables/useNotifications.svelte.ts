@@ -56,7 +56,7 @@ export function useNotifications() {
       osc.start(startAt);
       osc.stop(startAt + 0.16);
     } catch {
-      // Browser/autoplay restriction — silently ignored.
+      // Browser/autoplay restriction - silently ignored.
     }
   }
 
@@ -85,11 +85,11 @@ export function useNotifications() {
       osc.start(startAt);
       osc.stop(startAt + 0.12);
     } catch {
-      // Browser/autoplay restriction — silently ignored.
+      // Browser/autoplay restriction - silently ignored.
     }
   }
 
-  /** Alias for playNotificationTone — used when a message is received from another user. */
+  /** Alias for playNotificationTone - used when a message is received from another user. */
   function playReceiveTone() {
     playNotificationTone();
   }
@@ -119,7 +119,7 @@ export function useNotifications() {
       osc.start(startAt);
       osc.stop(startAt + 0.1);
     } catch {
-      // Browser/autoplay restriction — silently ignored.
+      // Browser/autoplay restriction - silently ignored.
     }
   }
 

@@ -109,7 +109,7 @@ export interface IMlsService {
   getEpoch(groupId: string): number;
   /**
    * Broadcast a structural commit to all group members.
-   * `excludeDeviceIds` — optional list of "userId:deviceId" pairs to skip
+   * `excludeDeviceIds` - optional list of "userId:deviceId" pairs to skip
    * (typically the inviter and the newly-welcomed invitee).
    */
   sendCommit(commitBytes: Uint8Array, groupId: string, excludeDeviceIds?: string[]): Promise<void>;

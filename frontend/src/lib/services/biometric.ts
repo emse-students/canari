@@ -19,7 +19,7 @@ export class BiometricService {
    * Enrolls biometric protection for the given secret.
    * keystoreStore() generates a hardware-backed AES-GCM key in the Android
    * Keystore (userAuthenticationRequired = true, CryptoObject every-use) and
-   * shows the OS BiometricPrompt to encrypt the secret — nothing is stored in
+   * shows the OS BiometricPrompt to encrypt the secret - nothing is stored in
    * plain text on disk.
    *
    * Note: tauri-plugin-keystore is alpha; its store() JS promise resolves
@@ -49,8 +49,8 @@ export class BiometricService {
   }
 
   /**
-   * Shows the OS BiometricPrompt backed by a CryptoObject — the Android Keystore
-   * AES key is only usable after hardware-verified biometric auth — then decrypts
+   * Shows the OS BiometricPrompt backed by a CryptoObject - the Android Keystore
+   * AES key is only usable after hardware-verified biometric auth - then decrypts
    * and returns the protected secret.
    */
   static async authenticateAndGetSecret(): Promise<string | null> {
@@ -72,7 +72,7 @@ export class BiometricService {
           return true;
         }
       } catch {
-        /* Ignore — native storage unavailable */
+        /* Ignore - native storage unavailable */
       }
     }
     return false;

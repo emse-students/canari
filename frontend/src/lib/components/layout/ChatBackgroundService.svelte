@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * ChatBackgroundService — toujours actif dans le layout.
+   * ChatBackgroundService - toujours actif dans le layout.
    *
    * Responsabilités :
    * - Initialisation de la session MLS + WebSocket (PIN, biométrie).
@@ -358,7 +358,7 @@
               globalSession.userId = savedUser2;
               showPinModal = true;
             } else {
-              // No saved user — the layout auth guard will redirect to /login.
+              // No saved user - the layout auth guard will redirect to /login.
             }
           }
           return;
@@ -371,7 +371,7 @@
           void globalSession.login({
             ...sessionCb(),
             onLoginFailed: (msg: string) => {
-              // Le PIN sauvegardé est invalide — on demande à l'utilisateur
+              // Le PIN sauvegardé est invalide - on demande à l'utilisateur
               pinError = msg;
               showPinModal = true;
             },
@@ -391,7 +391,7 @@
           }
           showPinModal = true;
         } else {
-          // No saved user — the layout auth guard will redirect to /login.
+          // No saved user - the layout auth guard will redirect to /login.
         }
       } finally {
         // Reset flag so afterNavigate can re-try if this invocation did nothing
@@ -411,7 +411,7 @@
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
         if (!globalSession.isWsConnected) {
-          appendLog('Page visible de nouveau — reconnexion...');
+          appendLog('Page visible de nouveau - reconnexion...');
           void globalSession.attemptReconnect(sessionCb());
         }
         // Injecter les messages FCM mis en cache pendant l'arrière-plan
@@ -502,7 +502,11 @@
   // `/chat`, this `afterNavigate` hook re-tries the login flow.
   afterNavigate(async ({ to }) => {
     const path = to?.url.pathname ?? window.location.pathname;
-    const isAuthRoute = path === '/login' || path.startsWith('/login') || path.startsWith('/auth/') || path.startsWith('/legal');
+    const isAuthRoute =
+      path === '/login' ||
+      path.startsWith('/login') ||
+      path.startsWith('/auth/') ||
+      path.startsWith('/legal');
     if (isAuthRoute) return;
     if (globalSession.isLoggedIn || _loginInProgress) return;
 

@@ -63,7 +63,7 @@ export function buildAggregatedCalendarIcs(
     const start = toDate(r.startsAt);
     if (Number.isNaN(start.getTime())) continue;
     const end = defaultEnd(start, r.endsAt ?? null);
-    const summary = `${r.title} — ${r.associationName}`;
+    const summary = `${r.title} - ${r.associationName}`;
     const sourceUrl = `${base}/associations/${encodeURIComponent(r.associationSlug)}`;
     lines.push('BEGIN:VEVENT');
     lines.push(`UID:${icsEscapeText(r.id)}@canari`);

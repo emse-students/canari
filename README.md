@@ -176,9 +176,9 @@ canari/
 
 Chaque push sur `main` déclenche automatiquement :
 
-1. **CI** — `cargo clippy`, `cargo test`, `eslint`, `svelte-check`
-2. **Build** — WASM + SvelteKit + 6 images Docker → `ghcr.io/emse-students/canari/*`
-3. **Déploiement** — Pull des images sur le serveur via runner self-hosted, restart Docker Compose
+1. **CI** - `cargo clippy`, `cargo test`, `eslint`, `svelte-check`
+2. **Build** - WASM + SvelteKit + 6 images Docker → `ghcr.io/emse-students/canari/*`
+3. **Déploiement** - Pull des images sur le serveur via runner self-hosted, restart Docker Compose
 
 Le seul secret à configurer dans GitHub est `JWT_SECRET` (voir [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md)).
 

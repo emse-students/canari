@@ -6,6 +6,7 @@ import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { sendHistoryBundle } from '$lib/utils/chat/history';
+import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 
 /**
  * Persists the WASM MLS blob to encrypted storage after forgetGroup / commits.
@@ -90,7 +91,7 @@ export async function purgeOrphanGroup(params: {
   await purgeLocalConversationRecord({ ...uiParams, groupId, log });
 }
 
-/** @deprecated Prefer purgeOrphanGroup — kept as alias for call sites. */
+/** @deprecated Prefer purgeOrphanGroup - kept as alias for call sites. */
 export const purgeLocalGroupConversation = purgeOrphanGroup;
 
 /** Returns whether the group is still active for this user on the server (null = unknown). */
@@ -110,27 +111,27 @@ export async function isGroupActiveOnServer(
 }
 
 /**
- * Extracts the other user's ID from a DM group name formatted as "userA::userB".
- * Returns null when the name does not match the pattern (i.e. for named group chats).
+ * Retire silencieusement le leaf stale d'un device de l'arbre MLS (best-effort).
+ * Encapsule removeMemberDevice + kickStaleDevice pour éviter la duplication.
  */
-function parseDirectPeerFromName(rawName: string, userId: string): string | null {
-  const parts = rawName
-    .split('::')
-    .map((p) => p.trim().toLowerCase())
-    .filter(Boolean);
-  if (parts.length < 2) return null;
-
-  const current = userId.toLowerCase();
-  const unique = [...new Set(parts)];
-  const peer = unique.find((p) => p !== current);
-  return peer ?? null;
+export async function kickStaleLeaf(
+  groupId: string,
+  targetUserId: string,
+  targetDeviceId: string,
+  mlsService: IMlsService,
+  log: (msg: string) => void
+): Promise<void> {
+  const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
+  await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
+  await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
+  log(`[KICK] Leaf stale ${targetUserId}:${targetDeviceId} retiré de ${groupId}`);
 }
 
 /**
  * Process pending device-group invitations.
  *
  * New paradigm: ANY online device of ANY group member can add a pending device.
- * This eliminates deadlocks — the first device to reconnect handles all pending
+ * This eliminates deadlocks - the first device to reconnect handles all pending
  * invitations for groups it belongs to.
  *
  * Flow:
@@ -140,12 +141,13 @@ function parseDirectPeerFromName(rawName: string, userId: string): string | null
  */
 export async function processPendingInvitations(params: {
   mlsService: IMlsService;
+  storage: IStorage | null;
   userId: string;
   pin: string;
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, userId, pin, conversations, log } = params;
+  const { mlsService, storage, userId, pin, conversations, log } = params;
 
   const myDeviceId = mlsService.getDeviceId();
 
@@ -203,7 +205,7 @@ export async function processPendingInvitations(params: {
         // Aucune conversation locale prête. Si le groupe est totalement absent (pas même
         // un placeholder isReady:false), envoyer un reinvite_request à tout membre online
         // pour récupérer un nouveau Welcome. Un placeholder indique que le Welcome est
-        // peut-être déjà en transit depuis la queue — on ne réenvoie pas.
+        // peut-être déjà en transit depuis la queue - on ne réenvoie pas.
         const isAbsent = !conversations.has(origGroupId) && !conversations.has(resolved);
         if (isAbsent) {
           const tsKey = `reinvite_requested:${resolved}`;
@@ -215,10 +217,10 @@ export async function processPendingInvitations(params: {
               `[PENDING] Groupe ${origGroupId} absent localement → reinvite_request envoyé pour ${resolved}`
             );
           } else {
-            log(`[PENDING] Groupe ${origGroupId}: reinvite_request déjà envoyé récemment — skip`);
+            log(`[PENDING] Groupe ${origGroupId}: reinvite_request déjà envoyé récemment - skip`);
           }
         } else {
-          log(`[PENDING] Groupe ${groupId}: conversation locale non prête — skip`);
+          log(`[PENDING] Groupe ${groupId}: conversation locale non prête - skip`);
         }
         continue;
       }
@@ -227,7 +229,7 @@ export async function processPendingInvitations(params: {
     // Acquire distributed lock to prevent concurrent Add commits
     const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
     if (!lockAcquired) {
-      log(`[PENDING] Groupe ${groupId}: verrou tenu par un autre appareil — skip`);
+      log(`[PENDING] Groupe ${groupId}: verrou tenu par un autre appareil - skip`);
       continue;
     }
 
@@ -239,20 +241,11 @@ export async function processPendingInvitations(params: {
 
       for (const inv of staleInvs) {
         try {
-          // Remove this specific device's leaf from the MLS tree by its identity
-          const deviceIdentity = `${inv.userId}:${inv.deviceId}`;
-          await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
-          log(`[PENDING] Kicked stale device ${inv.userId}:${inv.deviceId} from ${groupId}`);
-
-          // Reset only this device in this group to pending on the server
-          await mlsService.kickStaleDevice(inv.deviceId, inv.userId, groupId);
+          await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
 
           // Persist MLS state after the remove commit
           const stBytes = await mlsService.saveState(pin);
           await saveMlsState(userId, stBytes);
-
-          // Short delay for commit propagation
-          await new Promise((r) => setTimeout(r, 150));
         } catch (e) {
           log(`[PENDING] Erreur kick stale device ${inv.deviceId}: ${String(e).slice(0, 100)}`);
         }
@@ -279,22 +272,9 @@ export async function processPendingInvitations(params: {
           const devices = await mlsService.fetchUserDevices(inv.userId);
           const targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
           if (!targetDevice) {
-            const failKey = `kp_missing:${inv.deviceId}:${groupId}`;
-            const failCount = (parseInt(localStorage.getItem(failKey) ?? '0', 10) || 0) + 1;
-            log(`[PENDING] KeyPackage introuvable pour ${inv.deviceId} — tentative ${failCount}/3`);
-            if (failCount >= 3) {
-              log(`[PENDING] ${inv.deviceId} introuvable 3x — archivage comme welcome_received`);
-              localStorage.removeItem(failKey);
-              await mlsService
-                .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'welcome_received')
-                .catch(() => {});
-            } else {
-              localStorage.setItem(failKey, String(failCount));
-            }
+            log(`[PENDING] KeyPackage introuvable pour ${inv.deviceId} - skip`);
             continue;
           }
-          // Device found — reset any partial-failure counter
-          localStorage.removeItem(`kp_missing:${inv.deviceId}:${groupId}`);
 
           // Check if device is already in the MLS group (idempotency).
           // If the device is in the tree but Welcome was never received (e.g. sendWelcome
@@ -307,14 +287,11 @@ export async function processPendingInvitations(params: {
                 .catch(() => []);
               const memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
               if (memberStatus === 'welcome_received') {
-                log(`[PENDING] ${inv.deviceId} déjà membre (Welcome reçu) — skip`);
+                log(`[PENDING] ${inv.deviceId} déjà membre (Welcome reçu) - skip`);
                 continue;
               }
-              // Device is in MLS tree but Welcome was lost — kick to allow reinvite
-              log(`[PENDING] ${inv.deviceId} dans l'arbre MLS sans Welcome — kick du leaf stale`);
-              const deviceIdentity = `${inv.userId}:${inv.deviceId}`;
-              await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
-              await mlsService.kickStaleDevice(inv.deviceId, inv.userId, groupId).catch(() => {});
+              // Device is in MLS tree but Welcome was lost - kick to allow reinvite
+              await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
               continue;
             }
           } catch {
@@ -349,12 +326,13 @@ export async function processPendingInvitations(params: {
             await mlsService.sendCommit(result.commit, groupId, [`${inv.userId}:${inv.deviceId}`]);
           }
 
-          // Short delay for commit propagation
-          await new Promise((r) => setTimeout(r, 150));
+          sendHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+            log(`[HISTORY_BUNDLE] Erreur envoi historique à ${inv.userId}: ${String(e)}`)
+          );
         } catch (e) {
           const errStr = String(e);
-          if (errStr.includes('DuplicateSignatur') || errStr.includes('already')) {
-            // addMember threw DuplicateSignature — device is in MLS tree.
+          if (errStr.includes('DuplicateSignatur')) {
+            // addMember threw DuplicateSignature - device is in MLS tree.
             // If Welcome was received, nothing to do. If Welcome was lost (e.g. a
             // previous addMember succeeded but sendWelcome threw), kick the stale
             // leaf so the next round can re-add with a fresh Welcome.
@@ -363,9 +341,7 @@ export async function processPendingInvitations(params: {
               const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
               const memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
               if (memberStatus !== 'welcome_received') {
-                const deviceIdentity = `${inv.userId}:${inv.deviceId}`;
-                await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
-                await mlsService.kickStaleDevice(inv.deviceId, inv.userId, groupId).catch(() => {});
+                await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
               }
             } catch {
               await mlsService
@@ -373,13 +349,13 @@ export async function processPendingInvitations(params: {
                 .catch(() => {});
             }
           } else if (errStr.includes('WrongEpoch') || errStr.includes('epoch_mismatch')) {
-            // Someone else committed — check if this invitation was already handled
-            log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} — vérification...`);
+            // Someone else committed - check if this invitation was already handled
+            log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} - vérification...`);
             try {
               const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
               const m = memberships.find((x) => x.groupId === groupId);
               if (m && (m.status === 'welcome_sent' || m.status === 'welcome_received')) {
-                log(`[PENDING] ${inv.deviceId} déjà traité (${m.status}) — skip`);
+                log(`[PENDING] ${inv.deviceId} déjà traité (${m.status}) - skip`);
                 continue;
               }
             } catch {
@@ -417,7 +393,7 @@ export function forceSyncReset(_userId: string, log: (msg: string) => void) {
  * locaux absents du serveur (si la liste serveur a bien été récupérée).
  *
  * IMPORTANT : l'identifiant unique est le couple (userId, deviceId).
- * Un même userId peut avoir plusieurs devices — ne jamais utiliser userId
+ * Un même userId peut avoir plusieurs devices - ne jamais utiliser userId
  * seul pour identifier un participant ou un leaf node.
  */
 export async function discoverMissingGroups(params: {
@@ -446,7 +422,7 @@ export async function discoverMissingGroups(params: {
     serverGroups = await mlsService.getUserGroups(userId);
     serverFetchSucceeded = true;
   } catch {
-    // Continue to Phase 2 even if server fetch fails — there may be pending placeholders
+    // Continue to Phase 2 even if server fetch fails - there may be pending placeholders
   }
 
   // Some backends can transiently return duplicates; keep first occurrence by groupId.
@@ -454,12 +430,12 @@ export async function discoverMissingGroups(params: {
 
   // Active groups only: exclude soft-deleted (replaced by a successor).
   // Soft-deleted groups still exist on the server for recovery routing but should not
-  // be created as local placeholders — checkGroupSuccessors handles the migration.
+  // be created as local placeholders - checkGroupSuccessors handles the migration.
   const activeServerGroups = uniqueServerGroups.filter((g) => !g.deletedAt);
 
   // ── Orphan cleanup (server membership = source of truth) ─────────────────
-  // Phase 1 — MLS WASM: drop OpenMLS trees for groupIds absent from the server.
-  // Phase 2 — UI/IndexedDB: drop conversation rows (may exist without WASM state).
+  // Phase 1 - MLS WASM: drop OpenMLS trees for groupIds absent from the server.
+  // Phase 2 - UI/IndexedDB: drop conversation rows (may exist without WASM state).
   // Only when getUserGroups succeeded (never purge on transient network errors).
   if (serverFetchSucceeded) {
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
@@ -489,7 +465,7 @@ export async function discoverMissingGroups(params: {
       const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
       if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {
         log(
-          `[DISCOVERY] Groupe UI "${convo.name || convo.id}" migré vers ${serverEntry.successorId} — retrait`
+          `[DISCOVERY] Groupe UI "${convo.name || convo.id}" migré vers ${serverEntry.successorId} - retrait`
         );
         await purgeLocalConversationRecord({
           conversations,
@@ -502,7 +478,7 @@ export async function discoverMissingGroups(params: {
       }
 
       if (!serverGroupIds.has(convo.id)) {
-        log(`[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur — retrait`);
+        log(`[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur - retrait`);
         await purgeLocalConversationRecord({
           conversations,
           contactKey: key,
@@ -516,7 +492,7 @@ export async function discoverMissingGroups(params: {
 
   // Include both ready and placeholder conversations to avoid recreating
   // the same pending entry on each login.
-  // Only create placeholders for active groups — soft-deleted ones are handled by checkGroupSuccessors.
+  // Only create placeholders for active groups - soft-deleted ones are handled by checkGroupSuccessors.
   const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
   const missing = activeServerGroups.filter((g) => !localGroupIds.has(g.groupId));
 
@@ -534,7 +510,7 @@ export async function discoverMissingGroups(params: {
 
     // Dédoublon local : si une conv directe avec ce même pair existe déjà
     // sous un groupId différent (doublon côté serveur), on ne crée pas un
-    // second placeholder — on met juste à jour la clé si nécessaire.
+    // second placeholder - on met juste à jour la clé si nécessaire.
     if (directPeer) {
       const alreadyLoaded = [...conversations.values()].find(
         (c) =>
@@ -746,7 +722,7 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] Groupe ${groupId} → successeur ${meta.successorId}`);
       groupId = meta.successorId;
     } else {
-      log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} — skip`);
+      log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} - skip`);
       return;
     }
   }
@@ -754,7 +730,7 @@ export async function handleWelcomeRequest(params: {
   // Guard in-process : empêche deux traitements simultanés du même groupe
   // dans le même onglet (les retries rapides arrivent avant la fin du premier)
   if (welcomeRequestInProgress.has(groupId)) {
-    log(`[WELCOME_REQ] Déjà en cours pour ${groupId} — skip`);
+    log(`[WELCOME_REQ] Déjà en cours pour ${groupId} - skip`);
     return;
   }
   welcomeRequestInProgress.add(groupId);
@@ -763,7 +739,7 @@ export async function handleWelcomeRequest(params: {
   // processPendingInvitations sur un autre device du même groupe
   const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
   if (!lockAcquired) {
-    log(`[WELCOME_REQ] Verrou occupé pour ${groupId} — autre device en cours, skip`);
+    log(`[WELCOME_REQ] Verrou occupé pour ${groupId} - autre device en cours, skip`);
     welcomeRequestInProgress.delete(groupId);
     return;
   }
@@ -773,7 +749,7 @@ export async function handleWelcomeRequest(params: {
     const devices = await mlsService.fetchUserDevices(requesterUserId);
     const targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
-      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} — skip`);
+      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} - skip`);
       return;
     }
 
@@ -784,28 +760,21 @@ export async function handleWelcomeRequest(params: {
     // après avoir perdu son état local.
     try {
       const currentMembers = await mlsService.getGroupMembers(groupId);
-      const deviceIdentity = `${requesterUserId}:${requesterDeviceId}`;
       if (currentMembers.some((m) => m.deviceId === requesterDeviceId)) {
         log(
-          `[WELCOME_REQ] ${requesterDeviceId} déjà dans l'arbre MLS — kick du leaf stale avant ré-ajout`
+          `[WELCOME_REQ] ${requesterDeviceId} déjà dans l'arbre MLS - kick du leaf stale avant ré-ajout`
         );
-        // Retirer le leaf stale de l'arbre MLS (remove commit)
-        await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
-        // Remettre la membership serveur à "pending"
-        await mlsService.kickStaleDevice(requesterDeviceId, requesterUserId, groupId);
+        await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 
         // Sauvegarder l'état MLS après le remove commit
         const stBytes = await mlsService.saveState(pin);
         await saveMlsState(userId, stBytes);
 
-        // Court délai pour la propagation du commit de remove
-        await new Promise((r) => setTimeout(r, 150));
-
         // Re-fetch le KeyPackage (peut avoir changé après le kick)
         const freshDevices = await mlsService.fetchUserDevices(requesterUserId);
         const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
         if (!freshDevice) {
-          log(`[WELCOME_REQ] KeyPackage introuvable après kick pour ${requesterDeviceId} — skip`);
+          log(`[WELCOME_REQ] KeyPackage introuvable après kick pour ${requesterDeviceId} - skip`);
           return;
         }
         // Mettre à jour la référence pour l'ajout ci-dessous
@@ -843,14 +812,14 @@ export async function handleWelcomeRequest(params: {
     }
 
     // Envoyer l'historique chiffré au nouveau membre (best-effort, fire-and-forget).
-    // Le bundle arrive après le Welcome côté destinataire — ordre garanti par MLS.
+    // Le bundle arrive après le Welcome côté destinataire - ordre garanti par MLS.
     sendHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
       log(`[HISTORY_BUNDLE] Erreur envoi historique à ${requesterUserId}: ${String(e)}`)
     );
   } catch (e) {
     const errStr = String(e);
-    if (errStr.includes('DuplicateSignatur') || errStr.includes('already')) {
-      // Le device est déjà dans l'arbre MLS — marquer comme welcome_received
+    if (errStr.includes('DuplicateSignatur')) {
+      // Le device est déjà dans l'arbre MLS - marquer comme welcome_received
       await mlsService
         .updateInvitationStatus(requesterDeviceId, requesterUserId, groupId, 'welcome_received')
         .catch(() => {});

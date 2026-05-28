@@ -46,7 +46,7 @@ export interface CalendarExportOptions {
 /** Default values matching the original hardcoded design. */
 export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDataUrl'>> = {
   bgOpacity: 14,
-  // Original design: no extra background on the header bar — it inherits the container bg (#f0f4f8).
+  // Original design: no extra background on the header bar - it inherits the container bg (#f0f4f8).
   headerBg: '#f0f4f8',
   monthTitleColor: '#122035',
   weekdayRowBg: '#122035',
@@ -80,7 +80,7 @@ function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
   ];
 }
 
-/** CSS background value for an event slot — solid hex or inline gradient for co-owned events. */
+/** CSS background value for an event slot - solid hex or inline gradient for co-owned events. */
 function eventBgCss(ev: AssociationCalendarFeedEvent): string {
   const colors = eventHexColors(ev);
   if (colors.length === 1) return colors[0];
@@ -295,7 +295,7 @@ function buildCalendarHtml(
 
 /**
  * Builds a complete standalone HTML document for use as an `<iframe srcdoc>` live preview.
- * Uses direct logo URLs (same-origin iframe — no CORS issue) and loads Google Fonts so the
+ * Uses direct logo URLs (same-origin iframe - no CORS issue) and loads Google Fonts so the
  * preview fonts match the exported PDF.
  */
 export function buildPreviewDocument(

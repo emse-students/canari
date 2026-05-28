@@ -163,7 +163,7 @@
       (envelope.kind === 'text' || envelope.kind === 'media' ? envelope.replyTo : undefined)
   );
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
-  // Image/video with no caption and no reply quote — render naked (no bubble background)
+  // Image/video with no caption and no reply quote - render naked (no bubble background)
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
   let textSegments = $derived(splitTextWithLinks(textContent));
@@ -496,7 +496,9 @@
           }
         }}
         style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
-        class="{isMediaOnly ? 'p-0' : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly
+        class="{isMediaOnly
+          ? 'p-0'
+          : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly
           ? ''
           : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
           ? 'message-swipe-reply-active'
@@ -511,52 +513,52 @@
           : ''}
         {shouldAnimate ? 'animate-rise-in' : ''}"
       >
-      {#if effectiveReplyTo}
-        <MessageReplyQuote
-          replyId={effectiveReplyTo.id}
-          senderId={effectiveReplyTo.senderId}
-          displayName={replySenderDisplayName}
-          content={effectiveReplyTo.content}
-          {onNavigateToMessage}
-        />
-      {/if}
-
-      <MessageMediaRenderer
-        {mediaRef}
-        {blobUrl}
-        {loadError}
-        {mediaPurgedByRetention}
-        {textContent}
-        {isOwn}
-        {textSegments}
-      />
-
-      {#if !mediaRef}
-        <MessageEditForm
-          editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
-          {editText}
-          onEditChange={(text) => (editText = text)}
-          onConfirm={confirmEdit}
-          onCancel={cancelInlineEdit}
-        />
-
-        {#if !isEditingInline}
-          <MessageTextBody {textSegments} {searchTerm} {isDeleted} {firstLink} />
+        {#if effectiveReplyTo}
+          <MessageReplyQuote
+            replyId={effectiveReplyTo.id}
+            senderId={effectiveReplyTo.senderId}
+            displayName={replySenderDisplayName}
+            content={effectiveReplyTo.content}
+            {onNavigateToMessage}
+          />
         {/if}
-      {/if}
 
-      <MessageMetadata
-        {isEdited}
-        {isOwn}
-        {isLastOwn}
-        isReadReceiptAnchor={false}
-        {status}
-        {readBy}
-        {readAt}
-        {timestamp}
-        {groupPosition}
-      />
-    </div>
+        <MessageMediaRenderer
+          {mediaRef}
+          {blobUrl}
+          {loadError}
+          {mediaPurgedByRetention}
+          {textContent}
+          {isOwn}
+          {textSegments}
+        />
+
+        {#if !mediaRef}
+          <MessageEditForm
+            editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
+            {editText}
+            onEditChange={(text) => (editText = text)}
+            onConfirm={confirmEdit}
+            onCancel={cancelInlineEdit}
+          />
+
+          {#if !isEditingInline}
+            <MessageTextBody {textSegments} {searchTerm} {isDeleted} {firstLink} />
+          {/if}
+        {/if}
+
+        <MessageMetadata
+          {isEdited}
+          {isOwn}
+          {isLastOwn}
+          isReadReceiptAnchor={false}
+          {status}
+          {readBy}
+          {readAt}
+          {timestamp}
+          {groupPosition}
+        />
+      </div>
 
       <MessageBubbleToolbar
         {isOwn}
@@ -577,7 +579,6 @@
             }
           : undefined}
       />
-
     </div>
 
     <MessageReactions
@@ -607,7 +608,6 @@
     />
 
     <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
-
   </div>
 
   <Modal

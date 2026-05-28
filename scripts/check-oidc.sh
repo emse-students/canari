@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Canari — Authentik OIDC Configuration Checker
+# Canari - Authentik OIDC Configuration Checker
 # Usage:  bash scripts/check-oidc.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -36,7 +36,7 @@ if [[ -f "$CORE_ENV" ]]; then
 else
   # Also check if vars are already exported (e.g. from docker-compose or shell)
   if [[ -z "${AUTHENTIK_BASE_URL:-}" ]]; then
-    warn "No apps/core-service/.env found — checking exported env vars"
+    warn "No apps/core-service/.env found - checking exported env vars"
   fi
 fi
 
@@ -69,7 +69,7 @@ if [[ -n "${JWT_SECRET:-}" ]]; then
   if [[ "$JWT_SECRET" == "change-me-in-production" || "$JWT_SECRET" == "your-secret-jwt-key-here-change-me" ]]; then
     fail "JWT_SECRET is still set to a placeholder value"
   elif [[ ${#JWT_SECRET} -lt 32 ]]; then
-    warn "JWT_SECRET is short (${#JWT_SECRET} chars) — recommended ≥ 32"
+    warn "JWT_SECRET is short (${#JWT_SECRET} chars) - recommended ≥ 32"
   else
     pass "JWT_SECRET is set (${#JWT_SECRET} chars)"
   fi
@@ -141,7 +141,7 @@ CHECK_URL="${AURL:-${VITE_AUTHENTIK_URL:-}}"
 CHECK_URL="${CHECK_URL%/}"
 
 if [[ -z "$CHECK_URL" ]]; then
-  fail "Cannot test connectivity — no Authentik URL configured"
+  fail "Cannot test connectivity - no Authentik URL configured"
 else
   # 3a. OpenID Discovery endpoint
   DISCO_URL="$CHECK_URL/application/o/canari/.well-known/openid-configuration"
@@ -176,13 +176,13 @@ else
     fail "Cannot reach Authentik at $CHECK_URL (connection refused / timeout)"
     echo -e "     ${YELLOW}→ Is Authentik running? Check the URL and firewall.${NC}"
   elif [[ "$HTTP_CODE" == "404" ]]; then
-    warn "Discovery returned 404 — the application slug might not be 'canari'"
+    warn "Discovery returned 404 - the application slug might not be 'canari'"
     echo -e "     ${YELLOW}→ Trying generic well-known at provider level...${NC}"
     # Try the base /.well-known/openid-configuration
     GENERIC_URL="$CHECK_URL/.well-known/openid-configuration"
     GEN_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$GENERIC_URL" 2>/dev/null || echo "000")
     if [[ "$GEN_CODE" == "200" ]]; then
-      pass "Base discovery works at $GENERIC_URL — adjust the app slug in the check script if needed"
+      pass "Base discovery works at $GENERIC_URL - adjust the app slug in the check script if needed"
     else
       fail "Base discovery also failed (HTTP $GEN_CODE)"
     fi
@@ -196,7 +196,7 @@ else
   AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     --connect-timeout 5 --max-time 10 "$AUTH_TEST_URL" 2>/dev/null || echo "000")
   if [[ "$AUTH_CODE" =~ ^(200|302|303|400|401|403)$ ]]; then
-    pass "Authorize endpoint reachable (HTTP $AUTH_CODE — expected redirect or 400 without params)"
+    pass "Authorize endpoint reachable (HTTP $AUTH_CODE - expected redirect or 400 without params)"
   elif [[ "$AUTH_CODE" == "000" ]]; then
     fail "Cannot reach authorize endpoint"
   else
@@ -209,7 +209,7 @@ else
   TOK_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
     --connect-timeout 5 --max-time 10 -X POST "$TOKEN_TEST_URL" 2>/dev/null || echo "000")
   if [[ "$TOK_CODE" =~ ^(200|400|401|403|405|415)$ ]]; then
-    pass "Token endpoint reachable (HTTP $TOK_CODE — expected 400 without body)"
+    pass "Token endpoint reachable (HTTP $TOK_CODE - expected 400 without body)"
   elif [[ "$TOK_CODE" == "000" ]]; then
     fail "Cannot reach token endpoint"
   else

@@ -3,7 +3,7 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# ─── TAURI 2.11 / TAO 0.35 — CHAMPS ACCÉDÉS PAR JNI ───────────────────────────
+# ─── TAURI 2.11 / TAO 0.35 - CHAMPS ACCÉDÉS PAR JNI ───────────────────────────
 # tao accède aux champs `id` via env.get_field() / env.set_field() par nom
 # littéral. R8 renomme ces champs en release → NoSuchFieldError → JavaException
 # → SIGABRT dans Java_fr_emse_canari_Rust_onActivityCreate.
@@ -21,7 +21,7 @@
 -keep class fr.emse.canari.WryLifecycleObserver { *; }
 -keep class fr.emse.canari.TauriLifecycleObserver { *; }
 
-# ─── APP.TAURI — PLUGIN MANAGER ────────────────────────────────────────────────
+# ─── APP.TAURI - PLUGIN MANAGER ────────────────────────────────────────────────
 # PluginManager est un singleton Kotlin dans tauri-android ; ses méthodes sont
 # appelées par réflexion depuis les plugins et depuis le bridge Rust.
 -keep class app.tauri.** { *; }

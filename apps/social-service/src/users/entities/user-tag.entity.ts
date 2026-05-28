@@ -2,7 +2,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index, Unique
 
 /**
  * Cotisation/membership tag granted to a user by an association.
- * Upserted on `(userId, tagName)` — a second grant extends `expiresAt` rather than creating a duplicate.
+ * Upserted on `(userId, tagName)` - a second grant extends `expiresAt` rather than creating a duplicate.
  */
 @Entity('user_tags')
 @Unique(['userId', 'tagName'])

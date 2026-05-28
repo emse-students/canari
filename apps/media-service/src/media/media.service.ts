@@ -5,7 +5,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Readable } from 'stream';
 
-/** UUID v4 pattern — used to validate user-supplied IDs before path joins and property accesses. */
+/** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const CHUNK_DIR = path.join(process.cwd(), 'chunks_temp');
@@ -151,7 +151,7 @@ export class MediaService {
           contentType: 'image/webp',
         };
         await this.persistMetadata();
-        this.logger.warn(`media ${mediaId}: metadata missing — backfilled from storage`);
+        this.logger.warn(`media ${mediaId}: metadata missing - backfilled from storage`);
         return { status: 'ok', data, contentType: 'image/webp' };
       }
     }

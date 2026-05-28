@@ -4,7 +4,7 @@
  * Model: the server stores a per-association `documentVaultKey` (hex 32 bytes).
  * The client derives a per-document CEK (Content Encryption Key) via HKDF and
  * then encrypts/decrypts blobs with AES-256-GCM. The server only stores the
- * encrypted ciphertext and never sees plaintext — same model as channel keys.
+ * encrypted ciphertext and never sees plaintext - same model as channel keys.
  */
 
 const HKDF_INFO = new TextEncoder().encode('doc-vault');

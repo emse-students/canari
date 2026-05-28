@@ -15,7 +15,7 @@ export class PushService {
   constructor() {
     if (!this.secret) {
       this.logger.warn(
-        '[PUSH] INTERNAL_SECRET non défini — les notifications FCM de ce service sont désactivées'
+        '[PUSH] INTERNAL_SECRET non défini - les notifications FCM de ce service sont désactivées'
       );
     }
   }

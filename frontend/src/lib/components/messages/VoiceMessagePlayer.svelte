@@ -133,10 +133,13 @@
       {#if onDownload}
         <button
           type="button"
-          onclick={(e) => { e.stopPropagation(); onDownload?.(); }}
+          onclick={(e) => {
+            e.stopPropagation();
+            onDownload?.();
+          }}
           class="text-xs font-bold underline"
-          aria-label="Télécharger le message vocal"
-        >Télécharger</button>
+          aria-label="Télécharger le message vocal">Télécharger</button
+        >
       {/if}
     </div>
   {:else}
@@ -177,7 +180,7 @@
     </div>
   {/if}
 
-  <!-- Actions (Vitesse et Téléchargement) — masquées si format non supporté -->
+  <!-- Actions (Vitesse et Téléchargement) - masquées si format non supporté -->
   <div class="flex items-center gap-0.5 shrink-0" class:hidden={cannotPlay}>
     <button
       type="button"

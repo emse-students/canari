@@ -1,4 +1,4 @@
-// encryption.worker.ts — WebRTC Encoded Transform (insertable streams) for MLS-derived call keys.
+// encryption.worker.ts - WebRTC Encoded Transform (insertable streams) for MLS-derived call keys.
 
 /** Minimal typing for RTCTransformEvent (DOM lib may omit it in worker context). */
 interface TransformEventLike {

@@ -19,7 +19,18 @@
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
-  import { ArrowLeft, Save, Plus, FileText, CreditCard, ListChecks, ImagePlus, X, Users, Trash2 } from '@lucide/svelte';
+  import {
+    ArrowLeft,
+    Save,
+    Plus,
+    FileText,
+    CreditCard,
+    ListChecks,
+    ImagePlus,
+    X,
+    Users,
+    Trash2,
+  } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
 
   const formId = $derived(page.params.id as string);
@@ -64,7 +75,6 @@
   // Type picker
   let showTypePicker = $state(false);
 
-
   function pad2(n: number) {
     return n < 10 ? `0${n}` : `${n}`;
   }
@@ -100,7 +110,9 @@
       const profiles = await Promise.allSettled(coOwnerIds.map((id) => fetchUserProfile(id)));
       coOwners = coOwnerIds.map((id, i) => {
         const p = profiles[i].status === 'fulfilled' ? profiles[i].value : null;
-        const name = (p?.displayName ?? `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.trim()) || id.slice(0, 8) + '…';
+        const name =
+          (p?.displayName ?? `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.trim()) ||
+          id.slice(0, 8) + '…';
         return { id, displayName: name };
       });
       items = (f.items ?? []).map((item: any) => ({
@@ -146,7 +158,8 @@
                   .filter((opt: any) => opt.label?.trim())
                   .map((opt: any) => ({
                     ...opt,
-                    priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
+                    priceModifier:
+                      opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
                   }))
               : [],
             rows: (item.rows ?? [])
@@ -509,7 +522,7 @@
       {/if}
     </section>
 
-    <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur — à implémenter ultérieurement -->
+    <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur - à implémenter ultérieurement -->
 
     <!-- Section: Co-owners -->
     <section
@@ -626,7 +639,9 @@
           <div
             class="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-3"
           >
-            <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mb-2.5 ml-1">
+            <p
+              class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mb-2.5 ml-1"
+            >
               Type de question
             </p>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
@@ -656,7 +671,9 @@
 
   {#if form}
     <!-- Save bar -->
-    <div class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3">
+    <div
+      class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3"
+    >
       <p class="text-sm text-text-muted min-h-[1.25rem]">
         {#if titleMissing}
           <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>

@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { Image, ChartColumn, CalendarCheck, ClipboardList, Clock, X, CircleAlert, Building2, User, ChevronDown } from '@lucide/svelte';
+  import {
+    Image,
+    ChartColumn,
+    CalendarCheck,
+    ClipboardList,
+    Clock,
+    X,
+    CircleAlert,
+    Building2,
+    User,
+    ChevronDown,
+  } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onMount } from 'svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
@@ -72,9 +83,7 @@
 
   /** Associations the user may post as (admin/owner). Global admins can post as any. */
   let postAsAssociations = $derived(
-    isGlobalAdmin()
-      ? myAssociations
-      : myAssociations.filter((a) => a.isAdmin)
+    isGlobalAdmin() ? myAssociations : myAssociations.filter((a) => a.isAdmin)
   );
   /** Associations with completed Stripe onboarding (eligible for payment collection). */
   let payableAssociations = $derived(postAsAssociations.filter((a) => a.stripeOnboardingComplete));
@@ -134,7 +143,9 @@
       if (snap.markdown.trim() || snap.includePoll || snap.includeForm) {
         savePostComposerDraft(snap);
         draftSaved = true;
-        setTimeout(() => { draftSaved = false; }, 1800);
+        setTimeout(() => {
+          draftSaved = false;
+        }, 1800);
       } else {
         clearPostComposerDraft();
       }
@@ -144,7 +155,9 @@
   /** Auto-clear error banner after 5 seconds. */
   $effect(() => {
     if (errorMessage) {
-      const timer = setTimeout(() => { errorMessage = ''; }, 5000);
+      const timer = setTimeout(() => {
+        errorMessage = '';
+      }, 5000);
       return () => clearTimeout(timer);
     }
   });
@@ -172,7 +185,7 @@
     const d = new Date(ev.startsAt);
     const date = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
     const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    return `${date} ${time} — ${ev.title}`;
+    return `${date} ${time} - ${ev.title}`;
   }
 
   const mediaService = new MediaService();
@@ -185,8 +198,16 @@
       draftRestored = true;
     }
 
-    try { authToken = await getToken(); } catch { /* retried on upload */ }
-    try { availableForms = await getForms(); } catch (e) { console.error('Failed to load forms', e); }
+    try {
+      authToken = await getToken();
+    } catch {
+      /* retried on upload */
+    }
+    try {
+      availableForms = await getForms();
+    } catch (e) {
+      console.error('Failed to load forms', e);
+    }
 
     const newFormId = sessionStorage.getItem(POST_NEW_FORM_ID_KEY);
     if (newFormId) {
@@ -202,7 +223,9 @@
 
     try {
       myAssociations = isGlobalAdmin() ? await listAssociations() : await listMyAssociations();
-    } catch (e) { console.error('Failed to load associations', e); }
+    } catch (e) {
+      console.error('Failed to load associations', e);
+    }
   });
 
   /** Replace the current image selection with a new set of files. Revokes stale object URLs. */
@@ -232,8 +255,11 @@
         throw new Error('Le contenu du post ou une image est requis.');
       }
       if (selectedFiles.length > 0 && !authToken) {
-        try { authToken = await getToken(); }
-        catch { throw new Error("Impossible d'obtenir un jeton pour l'envoi d'images."); }
+        try {
+          authToken = await getToken();
+        } catch {
+          throw new Error("Impossible d'obtenir un jeton pour l'envoi d'images.");
+        }
       }
 
       // Compress then encrypt-upload each image; collect the resulting refs.
@@ -256,11 +282,17 @@
       };
 
       if (includePoll) {
-        const options = pollOptionsRaw.split('\n').map((l) => l.trim()).filter(Boolean).map((label) => ({ label }));
+        const options = pollOptionsRaw
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((label) => ({ label }));
         if (!pollQuestion.trim() || options.length < 2) {
           throw new Error('Un sondage nécessite une question et au moins deux options.');
         }
-        payload.polls = [{ question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice }];
+        payload.polls = [
+          { question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice },
+        ];
       }
 
       if (includeForm) {
@@ -281,8 +313,12 @@
       draftRestored = false;
       markdown = '';
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
-      selectedFiles = []; filePreviews = []; imageCaptions = [];
-      includePoll = false; pollQuestion = ''; pollOptionsRaw = 'Oui\nNon';
+      selectedFiles = [];
+      filePreviews = [];
+      imageCaptions = [];
+      includePoll = false;
+      pollQuestion = '';
+      pollOptionsRaw = 'Oui\nNon';
       includeForm = false;
       scheduledAt = '';
       selectedAssociationId = '';
@@ -302,14 +338,15 @@
 >
   <!-- En-tête du Formulaire -->
   <div class="border-b border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 px-5 py-4">
-    <p class="text-[0.65rem] font-extrabold uppercase tracking-widest text-amber-500 mb-0.5">Créer une publication</p>
+    <p class="text-[0.65rem] font-extrabold uppercase tracking-widest text-amber-500 mb-0.5">
+      Créer une publication
+    </p>
     <p class="text-sm font-semibold text-text-main opacity-90">
       Partagez une annonce, un événement ou un sondage avec le réseau.
     </p>
   </div>
 
   <div class="p-4 sm:p-5">
-
     <!-- Sélecteurs d'Association (Affichés uniquement si l'utilisateur gère une asso) -->
     {#if postAsAssociations.length > 0}
       <div class="mb-5 grid gap-4 sm:grid-cols-2">
@@ -322,20 +359,30 @@
             Publier en tant que
           </label>
           <div class="relative group">
-            <span class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-text-muted group-focus-within:text-amber-500 transition-colors" aria-hidden="true">
-              {#if selectedAssociationId}<Building2 size={16} strokeWidth={2.5} />{:else}<User size={16} strokeWidth={2.5} />{/if}
+            <span
+              class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-text-muted group-focus-within:text-amber-500 transition-colors"
+              aria-hidden="true"
+            >
+              {#if selectedAssociationId}<Building2 size={16} strokeWidth={2.5} />{:else}<User
+                  size={16}
+                  strokeWidth={2.5}
+                />{/if}
             </span>
             <select
               id="post-association-select"
               bind:value={selectedAssociationId}
               class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
             >
-              <option value="" class="bg-white dark:bg-zinc-900 font-medium">Profil personnel</option>
+              <option value="" class="bg-white dark:bg-zinc-900 font-medium"
+                >Profil personnel</option
+              >
               {#each postAsAssociations as a (a.id)}
                 <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option>
               {/each}
             </select>
-            <div class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors">
+            <div
+              class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors"
+            >
               <ChevronDown size={16} strokeWidth={2.5} />
             </div>
           </div>
@@ -351,7 +398,10 @@
               Encaissement (Stripe)
             </label>
             <div class="relative group">
-              <span class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-amber-500" aria-hidden="true">
+              <span
+                class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-amber-500"
+                aria-hidden="true"
+              >
                 <Building2 size={16} strokeWidth={2.5} />
               </span>
               <select
@@ -359,12 +409,18 @@
                 bind:value={selectedPaymentAssociationId}
                 class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
               >
-                <option value="" class="bg-white dark:bg-zinc-900 font-medium">Aucun compte lié</option>
+                <option value="" class="bg-white dark:bg-zinc-900 font-medium"
+                  >Aucun compte lié</option
+                >
                 {#each payableAssociations as a (a.id)}
-                  <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option>
+                  <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
+                    >{a.name}</option
+                  >
                 {/each}
               </select>
-              <div class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors">
+              <div
+                class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors"
+              >
                 <ChevronDown size={16} strokeWidth={2.5} />
               </div>
             </div>
@@ -387,7 +443,7 @@
               class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer disabled:opacity-60"
             >
               <option value="" class="bg-white dark:bg-zinc-900 font-medium">
-                {loadingLinkableEvents ? 'Chargement…' : '— Aucun événement —'}
+                {loadingLinkableEvents ? 'Chargement…' : '- Aucun événement -'}
               </option>
               {#each linkableCalendarEvents as ev (ev.id)}
                 <option value={ev.id} class="bg-white dark:bg-zinc-900 font-medium">
@@ -409,9 +465,13 @@
         class="mb-3 flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 shadow-sm"
         transition:slide={{ duration: 200 }}
       >
-        <span class="text-[0.75rem] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+        <span
+          class="text-[0.75rem] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5"
+        >
           Brouillon restauré
-          <span class="font-medium text-amber-700/70 dark:text-amber-400/70">(texte et options ; pas les photos)</span>
+          <span class="font-medium text-amber-700/70 dark:text-amber-400/70"
+            >(texte et options ; pas les photos)</span
+          >
         </span>
         <button
           type="button"
@@ -428,8 +488,9 @@
     {/if}
 
     <!-- Zone de Texte & Aperçu Médias (Inner Shadow Container) -->
-    <div class="relative rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-black/40 shadow-inner p-2 mb-2 transition-colors focus-within:bg-white/50 dark:focus-within:bg-black/60">
-
+    <div
+      class="relative rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-black/40 shadow-inner p-2 mb-2 transition-colors focus-within:bg-white/50 dark:focus-within:bg-black/60"
+    >
       <!-- Feedback de Sauvegarde auto -->
       {#if draftSaved}
         <span
@@ -456,10 +517,19 @@
           role="list"
         >
           {#each filePreviews as src, i (src)}
-            <div class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]" role="listitem">
+            <div
+              class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"
+              role="listitem"
+            >
               <!-- Miniature -->
-              <div class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group">
-                <img {src} alt="Aperçu" class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+              <div
+                class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group"
+              >
+                <img
+                  {src}
+                  alt="Aperçu"
+                  class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                />
                 <button
                   type="button"
                   onclick={() => removeFile(i)}
@@ -487,7 +557,6 @@
 
   <!-- Sections Optionnelles & Footer -->
   <div class="space-y-4 border-t border-black/5 dark:border-white/10 px-4 pb-5 pt-5 sm:px-5">
-
     <!-- Sondage -->
     {#if includePoll}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
@@ -526,28 +595,40 @@
 
     <!-- Barre d'outils (Toggles) + Bouton Publier -->
     <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
-
       <!-- Boutons d'ajouts (Toolbar) -->
-      <div class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto">
-
+      <div
+        class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto"
+      >
         <!-- Ajouter des photos -->
         <label
           for={imageInputId}
           title="Photos"
           class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
-          {selectedFiles.length > 0 ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+          {selectedFiles.length > 0
+            ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
+            : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
           <Image size={18} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
           <span class="hidden text-xs sm:inline">Photos</span>
         </label>
-        <input id={imageInputId} type="file" accept="image/*" multiple onchange={onPickFiles} class="sr-only" />
+        <input
+          id={imageInputId}
+          type="file"
+          accept="image/*"
+          multiple
+          onchange={onPickFiles}
+          class="sr-only"
+        />
 
         <!-- Ajouter un sondage -->
         <button
-          type="button" title="Sondage"
+          type="button"
+          title="Sondage"
           onclick={() => (includePoll = !includePoll)}
           class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
-          {includePoll ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+          {includePoll
+            ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
+            : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
           <ChartColumn size={18} strokeWidth={includePoll ? 2.5 : 2} />
           <span class="hidden text-xs sm:inline">Sondage</span>
@@ -555,10 +636,13 @@
 
         <!-- Ajouter un formulaire -->
         <button
-          type="button" title="Formulaire"
+          type="button"
+          title="Formulaire"
           onclick={() => (includeForm = !includeForm)}
           class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
-          {includeForm ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm' : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+          {includeForm
+            ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
+            : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
           <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
           <span class="hidden text-xs sm:inline">Formulaire</span>
@@ -568,14 +652,24 @@
         <div class="h-6 w-px bg-black/10 dark:bg-white/10 mx-0.5 shrink-0 hidden sm:block"></div>
 
         <!-- Programmation (Date Picker intégré) -->
-        <div class="relative flex items-center bg-black/5 dark:bg-white/5 rounded-xl px-2 py-1.5 focus-within:ring-2 focus-within:ring-amber-500/50 transition-all shrink-0 {scheduledAt ? 'bg-amber-500/10 border border-amber-500/20' : ''}">
-          <Clock size={16} strokeWidth={2.5} class="ml-1 text-text-muted {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}" />
+        <div
+          class="relative flex items-center bg-black/5 dark:bg-white/5 rounded-xl px-2 py-1.5 focus-within:ring-2 focus-within:ring-amber-500/50 transition-all shrink-0 {scheduledAt
+            ? 'bg-amber-500/10 border border-amber-500/20'
+            : ''}"
+        >
+          <Clock
+            size={16}
+            strokeWidth={2.5}
+            class="ml-1 text-text-muted {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}"
+          />
           <input
             type="datetime-local"
             bind:value={scheduledAt}
             min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
             title="Programmer la publication"
-            class="bg-transparent pl-2 pr-1 text-[0.7rem] font-bold text-text-main outline-none cursor-pointer {scheduledAt ? 'w-36 text-amber-700 dark:text-amber-400' : 'w-5 sm:w-28 text-transparent sm:text-text-main'} transition-all"
+            class="bg-transparent pl-2 pr-1 text-[0.7rem] font-bold text-text-main outline-none cursor-pointer {scheduledAt
+              ? 'w-36 text-amber-700 dark:text-amber-400'
+              : 'w-5 sm:w-28 text-transparent sm:text-text-main'} transition-all"
           />
           {#if scheduledAt}
             <button
@@ -609,8 +703,13 @@
 </article>
 
 <style>
-  .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-  .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
   .custom-scrollbar::-webkit-scrollbar-thumb {
     background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
     border-radius: 4px;
@@ -620,7 +719,7 @@
   }
 
   /* Pour cacher la petite icône calendrier native sur Webkit et avoir juste l'icône personnalisée Lucide */
-  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  input[type='datetime-local']::-webkit-calendar-picker-indicator {
     cursor: pointer;
     opacity: 0;
     position: absolute;

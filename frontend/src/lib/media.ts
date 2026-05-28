@@ -73,7 +73,7 @@ export interface PendingMediaFile {
   height?: number;
 }
 
-/** Presets par contexte — qualité plus haute, resize moins agressif. */
+/** Presets par contexte - qualité plus haute, resize moins agressif. */
 export const IMAGE_COMPRESS_PRESETS = {
   chat: { maxWidth: 2560, maxHeight: 2560, quality: 0.92 },
   post: { maxWidth: 2048, maxHeight: 2048, quality: 0.92 },
@@ -251,7 +251,7 @@ export function parseMediaMessage(content: string): MediaRef | null {
 
 /**
  * Client-side media operations: encrypt-then-upload and download-then-decrypt.
- * The decryption key (CEK) is never transmitted to or stored on the server — it is embedded inside
+ * The decryption key (CEK) is never transmitted to or stored on the server - it is embedded inside
  * the MLS-encrypted application message so only group members can decrypt the attachment.
  */
 export class MediaService {
@@ -433,7 +433,7 @@ export class MediaService {
   }
 
   // -------------------------------------------------------------------------
-  // Raw (unencrypted) upload / download — for group & community avatars
+  // Raw (unencrypted) upload / download - for group & community avatars
   // -------------------------------------------------------------------------
 
   /**
@@ -456,7 +456,7 @@ export class MediaService {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`Avatar upload failed: ${res.status}${text ? ` — ${text}` : ''}`);
+      throw new Error(`Avatar upload failed: ${res.status}${text ? ` - ${text}` : ''}`);
     }
 
     const data = await res.json();

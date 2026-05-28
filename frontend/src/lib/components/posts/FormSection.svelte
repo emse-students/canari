@@ -35,21 +35,25 @@
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     });
-    return ` — ${euros} €`;
+    return ` - ${euros} €`;
   }
 
   function formOptionLabel(form: Form): string {
     const base = `${form.title} (${form.items.length} questions)${formPriceLabel(form)}`;
     if (form.opensAt && formOpensAtIso(form.opensAt)) {
-      return `${base} — ouvre ${formatFormOpensAt(form.opensAt)}`;
+      return `${base} - ouvre ${formatFormOpensAt(form.opensAt)}`;
     }
     return base;
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border/60 bg-cn-surface/70 dark:bg-black/25 p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]">
+<div
+  class="rounded-2xl border border-cn-border/60 bg-cn-surface/70 dark:bg-black/25 p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
+>
   <div class="mb-4 flex items-center justify-between gap-2">
-    <p class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted">
+    <p
+      class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted"
+    >
       <ClipboardList size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
       Formulaire
     </p>
@@ -66,7 +70,7 @@
   {#if availableForms.length > 0}
     <div class="relative">
       <select bind:value={selectedFormId} class={selectPlainClass}>
-        <option value="">— Choisir un formulaire —</option>
+        <option value="">- Choisir un formulaire -</option>
         {#each availableForms as form (form.id)}
           <option value={form.id}>{formOptionLabel(form)}</option>
         {/each}

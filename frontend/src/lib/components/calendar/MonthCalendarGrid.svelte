@@ -96,7 +96,10 @@
           >
             <span class="leading-none">{cell.day}</span>
             {#if count > 0}
-              <span class="flex items-center justify-center gap-px flex-wrap max-w-[90%] px-0.5" aria-hidden="true">
+              <span
+                class="flex items-center justify-center gap-px flex-wrap max-w-[90%] px-0.5"
+                aria-hidden="true"
+              >
                 {#each { length: Math.min(count, 4) } as _, dotIdx (dotIdx)}
                   <span class="h-1 w-1 rounded-full bg-cn-yellow shrink-0"></span>
                 {/each}
@@ -111,7 +114,7 @@
     </div>
     {#if selectedDay != null}
       <p class="mt-3 text-center text-xs text-text-muted">
-        Jour {selectedDay} sélectionné —
+        Jour {selectedDay} sélectionné -
         <button
           type="button"
           class="font-semibold text-cn-dark hover:underline"

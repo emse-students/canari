@@ -30,7 +30,7 @@ import {
   startNewConversation as startConversation,
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
-import { loadExistingConversations } from '$lib/utils/chat/conversations';
+import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
@@ -40,8 +40,6 @@ import {
   isMobileOverlayLayout,
 } from '$lib/utils/historyOverlayStack';
 
-/** Messages loaded from DB on initial display or after network sync. */
-const INITIAL_MESSAGES_PAGE = 60;
 /** Messages loaded per scroll-up DB page request. */
 const OLDER_MESSAGES_PAGE = 50;
 /** Skip channel REST history refetch when the in-memory copy was loaded recently. */
@@ -145,7 +143,7 @@ export function useConversations() {
 
   /**
    * Clears selection when the map no longer has the key (reload, migration, channel kick).
-   * `$effect.root` — this composable is instantiated at module load in `globalChatSingleton`.
+   * `$effect.root` - this composable is instantiated at module load in `globalChatSingleton`.
    */
   $effect.root(() => {
     $effect(() => {
@@ -238,7 +236,7 @@ export function useConversations() {
     }
   }
 
-  /** Loads channel history from the server (source of truth) into memory only — never IndexedDB. */
+  /** Loads channel history from the server (source of truth) into memory only - never IndexedDB. */
   async function loadChannelHistory(
     channelConversationId: string,
     ctx: ConversationContext,
@@ -564,7 +562,7 @@ export function useConversations() {
             `[WARN] Appartenance serveur absente pour ${convo.id}, réparation lourde ignorée (état MLS local présent).`
           );
           console.warn(
-            `[VERIFY] Server membership missing for ${convo.id} but local MLS state present — skipping repair`
+            `[VERIFY] Server membership missing for ${convo.id} but local MLS state present - skipping repair`
           );
           return true;
         }
@@ -587,7 +585,7 @@ export function useConversations() {
       }
       const notice =
         'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
-      console.warn(`[VERIFY] User no longer member of ${convo.id} — showing removal notice`);
+      console.warn(`[VERIFY] User no longer member of ${convo.id} - showing removal notice`);
       if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
         await ctx.addMessageToChat('system', notice, contactName, { isSystem: true });
       }
@@ -670,12 +668,6 @@ export function useConversations() {
       });
       conversations.set(selectedContact, { ...convo, name });
       await saveConversation(selectedContact, ctx);
-      await ctx.addMessageToChat(
-        'system',
-        `${getUserDisplayNameSync(ctx.userId)} a renomme le groupe en "${name}"`,
-        selectedContact,
-        { isSystem: true }
-      );
       ctx.log(`Groupe renomme en "${name}"`);
     } catch (e) {
       ctx.log(`Erreur renommage: ${e instanceof Error ? e.message : String(e)}`);
@@ -700,11 +692,11 @@ export function useConversations() {
           pin: ctx.pin,
         });
       } else {
-        ctx.log(`[DELETE] Groupe ${convo.id} absent du serveur — purge MLS/UI locale`);
+        ctx.log(`[DELETE] Groupe ${convo.id} absent du serveur - purge MLS/UI locale`);
       }
     } catch (e) {
       ctx.log(
-        `[DELETE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) — purge MLS/UI locale`
+        `[DELETE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
       );
     }
 
@@ -744,11 +736,11 @@ export function useConversations() {
           pin: ctx.pin,
         });
       } else {
-        ctx.log(`[LEAVE] Groupe ${convo.id} absent du serveur — purge MLS/UI locale`);
+        ctx.log(`[LEAVE] Groupe ${convo.id} absent du serveur - purge MLS/UI locale`);
       }
     } catch (e) {
       ctx.log(
-        `[LEAVE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) — purge MLS/UI locale`
+        `[LEAVE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
       );
     }
 
@@ -785,12 +777,6 @@ export function useConversations() {
       });
       membershipCache.delete(convo.id);
       groupMembers = groupMembers.filter((m) => m !== memberId);
-      await ctx.addMessageToChat(
-        'system',
-        `${ctx.userId} a retire ${memberId} du groupe`,
-        selectedContact,
-        { isSystem: true }
-      );
       await loadGroupMembers(convo.id, ctx);
       ctx.log(`${memberId} retire du groupe.`);
     } catch (e) {

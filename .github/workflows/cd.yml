@@ -83,7 +83,7 @@ jobs:
             echo "Manual dispatch detected: building all services."
             CHANGED_SERVICES=("${ALL_SERVICES[@]}")
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "Version bump workflow completed — redeploying core-service and frontend."
+            echo "Version bump workflow completed - redeploying core-service and frontend."
             LAST_MSG="$(git log -1 --pretty=%s)"
             if echo "$LAST_MSG" | grep -qE '^chore: bump version to '; then
               add_service core-service
@@ -154,7 +154,7 @@ jobs:
                 esac
               done <<< "$CHANGED_FILES"
               if [ "$version_only" = true ]; then
-                echo "Version manifest bump — forcing core-service and frontend image rebuild."
+                echo "Version manifest bump - forcing core-service and frontend image rebuild."
                 add_service core-service
                 add_service frontend
               fi
@@ -210,7 +210,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           # Pinned: "latest" calls api.github.com/repos/oven-sh/bun/git/refs/tags and can 401 with GITHUB_TOKEN.
-          bun-version: "1.2.18"
+          bun-version: '1.2.18'
 
       - name: Cache Bun dependencies
         uses: actions/cache@v5
@@ -520,13 +520,13 @@ jobs:
           if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then
             upsert_env_var "CLOUDFLARE_CALLS_API_TOKEN" "$CLOUDFLARE_CALLS_API_TOKEN"
           else
-            echo "::warning::CLOUDFLARE_CALLS_API_TOKEN is not set — voice/video calls will fail (ice-servers returns 503)"
+            echo "::warning::CLOUDFLARE_CALLS_API_TOKEN is not set - voice/video calls will fail (ice-servers returns 503)"
           fi
 
           if [ -n "$CLOUDFLARE_TURN_KEY_ID" ]; then
             upsert_env_var "CLOUDFLARE_TURN_KEY_ID" "$CLOUDFLARE_TURN_KEY_ID"
           else
-            echo "::warning::CLOUDFLARE_TURN_KEY_ID is not set — voice/video calls will fail (ice-servers returns 503)"
+            echo "::warning::CLOUDFLARE_TURN_KEY_ID is not set - voice/video calls will fail (ice-servers returns 503)"
           fi
 
           echo "✅ Runtime secrets synced to infrastructure/.env"

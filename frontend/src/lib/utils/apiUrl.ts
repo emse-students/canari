@@ -12,7 +12,7 @@ export function coreUrl(): string {
 /**
  * Returns the base URL for the social service (posts, channels, associations).
  * Returns an empty string when VITE_SOCIAL_URL is not set so that relative
- * paths are used — Nginx routes /api/posts/* to the social service.
+ * paths are used - Nginx routes /api/posts/* to the social service.
  */
 export function socialUrl(): string {
   const url = (import.meta as any).env?.VITE_SOCIAL_URL as string | undefined;
@@ -33,7 +33,7 @@ export function gatewayUrl(): string {
 
 /**
  * Returns the base URL for the chat-delivery service (MLS HTTP API, push, history).
- * Must be an absolute URL in Tauri/mobile — see {@link gatewayUrl}.
+ * Must be an absolute URL in Tauri/mobile - see {@link gatewayUrl}.
  */
 export function deliveryUrl(): string {
   const url = (import.meta as any).env?.VITE_DELIVERY_URL as string | undefined;

@@ -31,9 +31,9 @@ export interface AssociationMember {
   role: string;
   /** True if the member has at least one permission flag set. */
   isAdmin: boolean;
-  /** Full bitmask — only present when the caller holds MANAGE_MEMBERS. */
+  /** Full bitmask - only present when the caller holds MANAGE_MEMBERS. */
   permissions?: number;
-  /** Display position — lower values appear first. */
+  /** Display position - lower values appear first. */
   sortOrder?: number;
   createdAt: string;
 }
@@ -79,9 +79,9 @@ export interface UpdateAssociationPayload {
   description?: string | null;
   bioMarkdown?: string | null;
   logoUrl?: string;
-  /** Global admin only — marks this association as the BDE. */
+  /** Global admin only - marks this association as the BDE. */
   isBDE?: boolean;
-  /** Global admin only — sets the document vault quota in bytes. */
+  /** Global admin only - sets the document vault quota in bytes. */
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
@@ -391,7 +391,7 @@ export async function listPendingCalendarEvents(): Promise<PendingCalendarEvents
   return request<PendingCalendarEventsResponse>('/api/associations/calendar/pending');
 }
 
-/** Association admins — publications et formulaires récents pour lier un événement d’agenda. */
+/** Association admins - publications et formulaires récents pour lier un événement d’agenda. */
 export async function listAssociationLinkCandidates(
   associationId: string
 ): Promise<AssociationLinkCandidates> {
@@ -400,7 +400,7 @@ export async function listAssociationLinkCandidates(
   );
 }
 
-/** Public — événement d’agenda pointant vers cette publication (fil). */
+/** Public - événement d’agenda pointant vers cette publication (fil). */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
@@ -409,7 +409,7 @@ export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   );
 }
 
-/** Public — événement d’agenda pointant vers ce formulaire. */
+/** Public - événement d’agenda pointant vers ce formulaire. */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {

@@ -4,7 +4,7 @@
  * This module is the ONLY place in the codebase that contains static-string
  * dynamic imports of the compiled WASM assets. By isolating them here, the
  * `mls-wasm-stub` Vite plugin can replace this entire module with a no-op
- * stub when TAURI_TARGET is set — so Vite never resolves or bundles the WASM
+ * stub when TAURI_TARGET is set - so Vite never resolves or bundles the WASM
  * files in Tauri (AppImage / Android) builds.
  *
  * WASM assets live under `$lib/wasm/` (built output).

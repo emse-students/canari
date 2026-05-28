@@ -125,7 +125,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val groupId       = data["groupId"] ?: ""
             val requesterUser = data["requesterUserId"] ?: ""
             val requesterDev  = data["requesterDeviceId"] ?: ""
-            Log.d(TAG, "welcome_request_pending → groupId=$groupId requester=$requesterUser:$requesterDev — traitement background complet")
+            Log.d(TAG, "welcome_request_pending → groupId=$groupId requester=$requesterUser:$requesterDev - traitement background complet")
             if (groupId.isEmpty() || requesterUser.isEmpty() || requesterDev.isEmpty()) {
                 Log.e(TAG, "welcome_request_pending: champs manquants → abandon")
                 return
@@ -141,7 +141,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // tenter un déchiffrement voué à l'échec.
         if (data["isWelcome"] == "true") {
             val groupId = data["groupId"] ?: ""
-            Log.d(TAG, "isWelcome=true → groupId=$groupId — enqueue worker, no notification")
+            Log.d(TAG, "isWelcome=true → groupId=$groupId - enqueue worker, no notification")
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .build()
@@ -187,7 +187,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Message MLS chiffré : déchiffrement dans un thread dédié (max 10s)
         val silent = data["silent"] == "true"
-        // Le thread tourne en parallèle — onMessageReceived retourne immédiatement
+        // Le thread tourne en parallèle - onMessageReceived retourne immédiatement
         // (non-bloquant pour FCM, qui peut traiter le message suivant sans attendre).
         // MLS_LOCK dans tryDecrypt garantit qu'un seul thread écrit mls.bin à la fois.
         Thread {
@@ -650,7 +650,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * le réseau est lent ou que PushSecretKeystore.retrieve() est instable.
      */
     private fun fetchAvatar(userId: String): Bitmap? {
-        // 1. Lire le cache fichier si récent (< 24h) — pas besoin du Keystore ni du réseau
+        // 1. Lire le cache fichier si récent (< 24h) - pas besoin du Keystore ni du réseau
         val cacheFile = avatarCacheFile(userId)
         val now = System.currentTimeMillis()
         if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {

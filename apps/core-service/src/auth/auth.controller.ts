@@ -333,7 +333,7 @@ export class AuthController {
     const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!refresh_token) {
       this.clearRefreshCookie(req, res);
-      throw new UnauthorizedException('No refresh token — please log in again');
+      throw new UnauthorizedException('No refresh token - please log in again');
     }
 
     let payload: { sub: string; type: string };
@@ -402,7 +402,7 @@ export class AuthController {
   private check(req: Request, res: Response) {
     const rawHeaders = req.headers['authorization'];
 
-    // Default: not authenticated — headers are always set so downstream services
+    // Default: not authenticated - headers are always set so downstream services
     // receive a consistent shape regardless of whether a token was provided.
     res.set('X-User-Id', '');
     res.set('X-Logged-In', 'false');
@@ -429,7 +429,7 @@ export class AuthController {
       res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
       return res.status(200).send();
     } catch {
-      // Invalid/expired token — pass through as anonymous; the service decides
+      // Invalid/expired token - pass through as anonymous; the service decides
       // whether to reject the request.
       return res.status(200).send();
     }

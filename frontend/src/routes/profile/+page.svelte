@@ -108,7 +108,7 @@
     try {
       paymentMethods = await listPaymentMethods();
     } catch {
-      // Ignore — Stripe may not be configured
+      // Ignore - Stripe may not be configured
     } finally {
       paymentLoading = false;
     }
@@ -496,7 +496,11 @@
           </p>
           {#if !deletionDialogOpen}
             <button
-              onclick={() => { deletionDialogOpen = true; deletionConfirmText = ''; deletionError = ''; }}
+              onclick={() => {
+                deletionDialogOpen = true;
+                deletionConfirmText = '';
+                deletionError = '';
+              }}
               class="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-500/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             >
               <Trash2 size={16} strokeWidth={2.5} />
@@ -505,7 +509,9 @@
           {:else}
             <div transition:slide={{ duration: 200 }} class="space-y-4">
               <p class="text-sm font-semibold text-red-400">
-                Tapez <code class="font-mono bg-red-500/10 px-1.5 py-0.5 rounded-md">{DELETION_CONFIRM_WORD}</code> pour confirmer :
+                Tapez <code class="font-mono bg-red-500/10 px-1.5 py-0.5 rounded-md"
+                  >{DELETION_CONFIRM_WORD}</code
+                > pour confirmer :
               </p>
               <input
                 type="text"
@@ -515,13 +521,20 @@
                 class="w-full max-w-xs rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-2.5 text-sm font-mono font-bold text-red-400 placeholder-red-500/30 outline-none focus:border-red-500/60 focus:ring-2 focus:ring-red-500/20 disabled:opacity-50 transition-all"
               />
               {#if deletionError}
-                <p transition:slide={{ duration: 150 }} class="text-sm font-semibold text-red-500 flex items-center gap-2">
-                  <AlertCircle size={16} /> {deletionError}
+                <p
+                  transition:slide={{ duration: 150 }}
+                  class="text-sm font-semibold text-red-500 flex items-center gap-2"
+                >
+                  <AlertCircle size={16} />
+                  {deletionError}
                 </p>
               {/if}
               <div class="flex gap-3">
                 <button
-                  onclick={() => { deletionDialogOpen = false; deletionConfirmText = ''; }}
+                  onclick={() => {
+                    deletionDialogOpen = false;
+                    deletionConfirmText = '';
+                  }}
                   disabled={deleting}
                   class="rounded-xl px-4 py-2.5 text-sm font-bold text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                 >
@@ -544,6 +557,5 @@
         </div>
       </div>
     </div>
-
   {/if}
 </div>

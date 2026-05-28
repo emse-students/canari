@@ -14,7 +14,7 @@ import { PushService } from '../push/push.service';
 export class PostsService {
   private static readonly LIST_CACHE_TTL = 30; // seconds
 
-  /** PostgreSQL BIGINT fields break JSON.stringify — convert to Number. */
+  /** PostgreSQL BIGINT fields break JSON.stringify - convert to Number. */
   private stripBigIntForJson<T>(value: T): T {
     return JSON.parse(
       JSON.stringify(value, (_key, v) => (typeof v === 'bigint' ? Number(v) : v))
@@ -292,7 +292,7 @@ export class PostsService {
       ]);
       if (cached) return JSON.parse(cached as string);
     } catch {
-      // Redis miss or error — fall through to DB
+      // Redis miss or error - fall through to DB
     }
 
     // Promo-based date gate: non-admin viewers cannot see posts published before
@@ -543,7 +543,7 @@ export class PostsService {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
     const shaped = await this.toPublicPostFromEntity(post);
-    // Attach author name fields (same source as listPosts — local users table).
+    // Attach author name fields (same source as listPosts - local users table).
     if (!shaped.associationId && shaped.authorId) {
       const rows: {
         displayName: string | null;

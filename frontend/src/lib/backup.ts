@@ -141,7 +141,7 @@ export async function exportBackup(
  *                         the exporter's MLS state) or a second-device transfer
  *                         (MLS state must NOT be applied; conversations imported
  *                         as pending until Device A sends Welcomes).
- * @returns `{ data, isSameDevice }` — `isSameDevice` is true when the backup
+ * @returns `{ data, isSameDevice }` - `isSameDevice` is true when the backup
  *          was created on this same device (wipe + restore scenario).
  * @throws  If the magic header is wrong, the PIN is incorrect, or the backup
  *          format is unsupported.

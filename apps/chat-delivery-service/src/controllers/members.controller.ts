@@ -135,7 +135,7 @@ export class MembersController {
       }
     });
 
-    // NB: NOT added to group:members Redis here — devices only enter the routing
+    // NB: NOT added to group:members Redis here - devices only enter the routing
     // set once welcome_sent so pre-welcome devices never receive group messages.
     this.logger.log(
       `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length}`,

@@ -62,7 +62,7 @@ export async function renameGroupAndBroadcast(params: {
   const { mlsService, groupId, newName, userId, pin } = params;
   await mlsService.renameGroup(groupId, newName);
 
-  // Broadcast the rename notification — best-effort: the local rename is
+  // Broadcast the rename notification - best-effort: the local rename is
   // already committed to the server; if the MLS message fails, peers will
   // still see the new name when they next fetch group metadata.
   try {
@@ -85,7 +85,7 @@ export async function removeMemberAndBroadcast(params: {
 }) {
   const { mlsService, groupId, memberId, userId, pin } = params;
 
-  // 1. MLS remove commit — removes all devices of the target user from the group
+  // 1. MLS remove commit - removes all devices of the target user from the group
   //    and broadcasts the commit to remaining members so they advance their epoch.
   await mlsService.removeMember(groupId, [memberId]);
 
@@ -126,22 +126,14 @@ export async function leaveGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, pin } = params;
 
-  // 1. Notifier les autres membres (best-effort)
-  try {
-    const controlMsg = encodeAppMessage(mkSystem('memberLeft', JSON.stringify({ userId })));
-    await mlsService.sendMessage(groupId, controlMsg);
-  } catch {
-    // Non-blocking
-  }
-
-  // 2. Se retirer du registre serveur
+  // Se retirer du registre serveur
   try {
     await mlsService.removeMemberFromServer(groupId, userId);
   } catch {
     // Non-blocking
   }
 
-  // 3. Sauvegarder l'état MLS puis oublier le groupe
+  // Sauvegarder l'état MLS
   try {
     const stBytes = await mlsService.saveState(pin);
     saveMlsState(userId, stBytes);

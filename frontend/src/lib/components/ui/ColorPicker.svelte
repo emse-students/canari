@@ -45,7 +45,7 @@
   let h = $state(ih);
   let s = $state(is);
   let v = $state(iv);
-  let lastEmitted = value; // plain variable — intentionally not reactive
+  let lastEmitted = value; // plain variable - intentionally not reactive
 
   $effect(() => {
     // Only re-parse when an external update changes value
@@ -135,19 +135,51 @@
 
   // Preset swatches for quick picks
   const PRESETS = [
-    '#122035', '#1e3a5f', '#0f4c81', '#1565c0', '#0d47a1',
-    '#1a237e', '#4527a0', '#6a1b9a', '#880e4f', '#b71c1c',
-    '#bf360c', '#e65100', '#f57f17', '#f9a825', '#f5c518',
-    '#33691e', '#1b5e20', '#004d40', '#006064', '#01579b',
-    '#37474f', '#546e7a', '#607d8b', '#9e9e9e', '#ffffff',
+    '#122035',
+    '#1e3a5f',
+    '#0f4c81',
+    '#1565c0',
+    '#0d47a1',
+    '#1a237e',
+    '#4527a0',
+    '#6a1b9a',
+    '#880e4f',
+    '#b71c1c',
+    '#bf360c',
+    '#e65100',
+    '#f57f17',
+    '#f9a825',
+    '#f5c518',
+    '#33691e',
+    '#1b5e20',
+    '#004d40',
+    '#006064',
+    '#01579b',
+    '#37474f',
+    '#546e7a',
+    '#607d8b',
+    '#9e9e9e',
+    '#ffffff',
   ];
 </script>
 
 <svelte:window
   onmousemove={onWindowMouseMove}
   onmouseup={onWindowMouseUp}
-  ontouchmove={(e) => { if (draggingSv) { e.preventDefault(); pickSv(e); } if (draggingHue) { e.preventDefault(); pickHue(e); } }}
-  ontouchend={() => { draggingSv = false; draggingHue = false; }}
+  ontouchmove={(e) => {
+    if (draggingSv) {
+      e.preventDefault();
+      pickSv(e);
+    }
+    if (draggingHue) {
+      e.preventDefault();
+      pickHue(e);
+    }
+  }}
+  ontouchend={() => {
+    draggingSv = false;
+    draggingHue = false;
+  }}
 />
 
 <div class="relative inline-block {className}" use:clickOutside={() => (open = false)}>
@@ -172,12 +204,16 @@
         class="relative w-full rounded-xl overflow-hidden select-none"
         style="height:120px; background: linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, hsl({h}deg 100% 50%)); cursor:crosshair;"
         onmousedown={startSvDrag}
-        ontouchstart={(e) => { e.preventDefault(); startSvDrag(e); }}
+        ontouchstart={(e) => {
+          e.preventDefault();
+          startSvDrag(e);
+        }}
       >
         <!-- Cursor ring -->
         <div
           class="absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow pointer-events-none"
-          style="left:{s * 100}%; top:{(1 - v) * 100}%; transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.4);"
+          style="left:{s * 100}%; top:{(1 - v) *
+            100}%; transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.4);"
         ></div>
       </div>
 
@@ -188,12 +224,16 @@
         class="relative w-full rounded-full select-none"
         style="height:14px; background:linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00); cursor:pointer;"
         onmousedown={startHueDrag}
-        ontouchstart={(e) => { e.preventDefault(); startHueDrag(e); }}
+        ontouchstart={(e) => {
+          e.preventDefault();
+          startHueDrag(e);
+        }}
       >
         <!-- Hue thumb -->
         <div
           class="absolute top-1/2 w-4 h-4 rounded-full border-2 border-white pointer-events-none"
-          style="left:{(h / 360) * 100}%; transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);"
+          style="left:{(h / 360) *
+            100}%; transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);"
         ></div>
       </div>
 
@@ -208,7 +248,9 @@
           type="text"
           value={hexInput.replace(/^#/, '')}
           oninput={(e) => {
-            const raw = (e.target as HTMLInputElement).value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
+            const raw = (e.target as HTMLInputElement).value
+              .replace(/[^0-9a-fA-F]/g, '')
+              .slice(0, 6);
             (e.target as HTMLInputElement).value = raw;
             onHexInput({ target: { value: '#' + raw } } as unknown as Event);
           }}
@@ -228,11 +270,15 @@
               value = preset;
               lastEmitted = preset;
               const [nh, ns, nv] = hexToHsv(preset);
-              h = nh; s = ns; v = nv;
+              h = nh;
+              s = ns;
+              v = nv;
               hexInput = preset;
             }}
             class="w-full aspect-square rounded-lg border-2 transition-transform hover:scale-110 active:scale-95"
-            style="background:{preset}; border-color:{value === preset ? 'var(--cn-dark)' : 'transparent'};"
+            style="background:{preset}; border-color:{value === preset
+              ? 'var(--cn-dark)'
+              : 'transparent'};"
             title={preset}
             aria-label={preset}
           ></button>

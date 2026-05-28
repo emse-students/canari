@@ -247,7 +247,7 @@ class TauriManagerApp:
             self.log("Système", f"Exception lors de l'exécution: {str(e)}")
 
     def execute_command_list(self, cmd: list[str], source_name: str, success_msg: Optional[str] = None) -> None:
-        """Exécute une commande via une liste d'args (shell=False) — évite les problèmes de quoting Windows."""
+        """Exécute une commande via une liste d'args (shell=False) - évite les problèmes de quoting Windows."""
         self.log("Système", f"Exécution : {' '.join(cmd)}")
         try:
             process = subprocess.Popen(
@@ -301,7 +301,7 @@ class TauriManagerApp:
         def task() -> None:
             # Désinstallation préalable : évite les bases SQLite / clés Keystore
             # corrompues laissées par une ancienne version. adb uninstall retourne
-            # un code non-nul si le package n'est pas installé — on l'ignore.
+            # un code non-nul si le package n'est pas installé - on l'ignore.
             self.log("Système", f"Désinstallation de {PACKAGE_NAME}...")
             result = subprocess.run(
                 ['adb', '-s', device_id, 'uninstall', PACKAGE_NAME],

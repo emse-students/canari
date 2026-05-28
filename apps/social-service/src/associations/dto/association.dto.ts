@@ -18,7 +18,7 @@ import {
 } from 'class-validator';
 
 export class ReorderMembersDto {
-  /** Ordered list of member user IDs — position in the array becomes the new sortOrder. */
+  /** Ordered list of member user IDs - position in the array becomes the new sortOrder. */
   @IsArray()
   @IsString({ each: true })
   userIds: string[];

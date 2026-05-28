@@ -90,7 +90,7 @@
     };
   }
 
-  /** Merge IndexedDB baseline with live globalConvs — avoids a flash when login reloads conversations. */
+  /** Merge IndexedDB baseline with live globalConvs - avoids a flash when login reloads conversations. */
   const displayItems = $derived.by(() => {
     const uid = globalSession.userId ?? getSavedUserId() ?? '';
     if (!uid) return [];

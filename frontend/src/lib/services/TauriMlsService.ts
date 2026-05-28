@@ -29,9 +29,9 @@ interface QueuedMessage {
   isWelcome: boolean;
   isCommit: boolean;
   ratchetTreeBytes?: Uint8Array;
-  /** ID from the delivery service queue — used for at-least-once ACK */
+  /** ID from the delivery service queue - used for at-least-once ACK */
   queuedMessageId?: string;
-  /** Server queue enqueue time (ms) — timestamp fallback when `sentAt` is absent. */
+  /** Server queue enqueue time (ms) - timestamp fallback when `sentAt` is absent. */
   queuedCreatedAt?: number;
   /**
    * Type discriminant for control messages persisted by the server.
@@ -85,7 +85,7 @@ export class TauriMlsService implements IMlsService {
   private _epochByGroupId: Map<string, number> = new Map();
   /** Resolved when init() completes; shared across concurrent callers to avoid double native init. */
   private initPromise: Promise<void> | null = null;
-  /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
+  /** True when initialized without existing state - triggers OTKP purge before new ones are published. */
   private freshStart = false;
   private appVersionCache: string | null | undefined = undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -116,7 +116,7 @@ export class TauriMlsService implements IMlsService {
   private _pin = '';
 
   constructor() {
-    // Device ID is initialized per-user in init() — see WebMlsService for rationale.
+    // Device ID is initialized per-user in init() - see WebMlsService for rationale.
     this.deviceId = 'pending';
 
     const urls = resolveMlsPublicUrls();
@@ -141,7 +141,7 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  /** Tauri-native `invoke` wrapper — opens a NativeWebSocket to the chat gateway, passing the Bearer token in the URL query string for mobile compatibility. */
+  /** Tauri-native `invoke` wrapper - opens a NativeWebSocket to the chat gateway, passing the Bearer token in the URL query string for mobile compatibility. */
   async connect(token?: string): Promise<void> {
     // Unlisten before disconnecting so the Close event doesn't trigger disconnectCallback.
     if (this.ws) {
@@ -195,7 +195,7 @@ export class TauriMlsService implements IMlsService {
 
     // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
     this.ws = await NativeWebSocket.connect(wsUrl);
-    console.log(`[WS] Connecté au Chat Gateway — device=${this.deviceId}`);
+    console.log(`[WS] Connecté au Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
       if (msg.type === 'Close') {
@@ -218,7 +218,7 @@ export class TauriMlsService implements IMlsService {
                   : code === 1011
                     ? 'erreur serveur interne'
                     : `code=${code}`;
-        console.warn(`[WS] Déconnecté — ${codeDesc}, reason="${closeData?.reason ?? ''}"`);
+        console.warn(`[WS] Déconnecté - ${codeDesc}, reason="${closeData?.reason ?? ''}"`);
         this.disconnectCallback?.();
         return;
       }
@@ -409,7 +409,7 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  // simulateMessageReceive removed — pending messages now go through enqueueMessage
+  // simulateMessageReceive removed - pending messages now go through enqueueMessage
   // so they are serialized with live WebSocket messages via processQueue.
 
   onMessage(
@@ -440,7 +440,7 @@ export class TauriMlsService implements IMlsService {
   private enqueueMessage(msg: QueuedMessage) {
     const groupId = msg.groupId;
 
-    // Niveau 0 — signal de contrôle persisté (type: 'group_reset')
+    // Niveau 0 - signal de contrôle persisté (type: 'group_reset')
     // Ces messages ne passent pas par messageCallback.
     if (msg.type === 'group_reset') {
       console.log(`[QUEUE] Control: group_reset pour groupe ${groupId ?? 'inconnu'}`);
@@ -449,7 +449,7 @@ export class TauriMlsService implements IMlsService {
       return;
     }
 
-    // Niveau 1 — Welcome MLS
+    // Niveau 1 - Welcome MLS
     if (msg.isWelcome) {
       if (groupId) this.pendingWelcomeGroups.set(groupId, []);
       this.welcomeQueue.push(msg);
@@ -457,7 +457,7 @@ export class TauriMlsService implements IMlsService {
       return;
     }
 
-    // Niveau 2 — Message applicatif ou commit
+    // Niveau 2 - Message applicatif ou commit
     // Bufférisation si un Welcome est en attente pour ce groupe.
     if (groupId && this.pendingWelcomeGroups.has(groupId)) {
       console.log(`[QUEUE] Buffering message pour groupe ${groupId} (Welcome en attente)`);
@@ -487,7 +487,7 @@ export class TauriMlsService implements IMlsService {
     this.isProcessingQueue = true;
     const total = this.controlQueue.length + this.welcomeQueue.length + this.messageQueue.length;
     console.log(
-      `[QUEUE] Démarrage — control=${this.controlQueue.length} welcome=${this.welcomeQueue.length} msg=${this.messageQueue.length}`
+      `[QUEUE] Démarrage - control=${this.controlQueue.length} welcome=${this.welcomeQueue.length} msg=${this.messageQueue.length}`
     );
 
     const useBulkCatchup = total >= BULK_CATCHUP_THRESHOLD;
@@ -580,7 +580,7 @@ export class TauriMlsService implements IMlsService {
           if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
             const buffered = this.pendingWelcomeGroups.get(groupId)!;
             console.log(
-              `[QUEUE] Welcome terminé — réinjection de ${buffered.length} message(s) bufférisé(s) pour ${groupId}`
+              `[QUEUE] Welcome terminé - réinjection de ${buffered.length} message(s) bufférisé(s) pour ${groupId}`
             );
             this.pendingWelcomeGroups.delete(groupId);
             for (let i = buffered.length - 1; i >= 0; i--) {
@@ -618,9 +618,9 @@ export class TauriMlsService implements IMlsService {
             });
             // Le Welcome a été rejeté avec une erreur inattendue (re-thrown depuis connection.ts).
             // Ne PAS ACK : le message reste en file serveur et sera retenté à la prochaine connexion.
-            // C'est intentionnel — le device a besoin de ce Welcome pour rejoindre le groupe.
+            // C'est intentionnel - le device a besoin de ce Welcome pour rejoindre le groupe.
             console.error(
-              `[QUEUE] Welcome échoué pour groupe=${groupId} — NE PAS ACK, retry sur reconnexion`
+              `[QUEUE] Welcome échoué pour groupe=${groupId} - NE PAS ACK, retry sur reconnexion`
             );
             if (groupId) this.pendingWelcomeGroups.delete(groupId);
           } else {
@@ -688,7 +688,7 @@ export class TauriMlsService implements IMlsService {
     this.disconnectCallback = callback;
   }
 
-  /** Tauri-native `invoke` wrapper — broadcasts a reinvite_request signal to online group members via the delivery service. */
+  /** Tauri-native `invoke` wrapper - broadcasts a reinvite_request signal to online group members via the delivery service. */
   async sendReinviteRequest(groupId: string): Promise<void> {
     await this.delivery.deliveryPost('reinvite-request', {
       groupId,
@@ -701,7 +701,7 @@ export class TauriMlsService implements IMlsService {
     this.reinviteRequestCallback = callback;
   }
 
-  /** Tauri-native `invoke` wrapper — signals the delivery service that this device needs a Welcome for the given group. */
+  /** Tauri-native `invoke` wrapper - signals the delivery service that this device needs a Welcome for the given group. */
   async sendWelcomeRequest(groupId: string): Promise<void> {
     await this.delivery.deliveryPost('welcome-request', {
       groupId,
@@ -736,7 +736,7 @@ export class TauriMlsService implements IMlsService {
   sendDisconnect(): void {
     if (this.ws) {
       this.ws.send(JSON.stringify({ type: 'disconnect' })).catch(() => {
-        // Best-effort — ignore if the socket is already closing
+        // Best-effort - ignore if the socket is already closing
       });
     }
   }
@@ -746,7 +746,7 @@ export class TauriMlsService implements IMlsService {
     return this.deviceId;
   }
 
-  /** Tauri-native `invoke` wrapper — fetches all registered devices for a user from the delivery service, decoding base64 key packages. */
+  /** Tauri-native `invoke` wrapper - fetches all registered devices for a user from the delivery service, decoding base64 key packages. */
   async fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -759,7 +759,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.fetchUserDevices(userId);
   }
 
-  /** Tauri-native wrapper — fetches one device's KeyPackage (invite / welcome flows). */
+  /** Tauri-native wrapper - fetches one device's KeyPackage (invite / welcome flows). */
   async fetchDeviceKeyPackage(userId: string, deviceId: string) {
     return this.delivery.fetchDeviceKeyPackage(userId, deviceId);
   }
@@ -769,7 +769,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.registerMember(groupId, userId);
   }
 
-  /** Tauri-native `invoke` wrapper — publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
+  /** Tauri-native `invoke` wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
     const base64 = btoa(Array.from(keyPackageBytes, (b) => String.fromCharCode(b)).join(''));
     const storedName =
@@ -783,12 +783,12 @@ export class TauriMlsService implements IMlsService {
     });
   }
 
-  /** Tauri-native `invoke` wrapper — bulk-uploads one-time prekey packages to replenish the server pool. */
+  /** Tauri-native `invoke` wrapper - bulk-uploads one-time prekey packages to replenish the server pool. */
   async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
     return this.delivery.publishKeyPackages(packages);
   }
 
-  /** Tauri-native `invoke` wrapper — PATCHes device label and/or OS metadata on the delivery service. */
+  /** Tauri-native `invoke` wrapper - PATCHes device label and/or OS metadata on the delivery service. */
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
@@ -816,7 +816,7 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  /** Tauri-native `invoke` wrapper — delivers an MLS Welcome message to a specific or first-available device of the target user. */
+  /** Tauri-native `invoke` wrapper - delivers an MLS Welcome message to a specific or first-available device of the target user. */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -834,7 +834,7 @@ export class TauriMlsService implements IMlsService {
     );
   }
 
-  /** Tauri-native `invoke` wrapper — initializes the Rust MLS state via `initialiser_mls`, deduplicating concurrent calls via a shared promise. */
+  /** Tauri-native `invoke` wrapper - initializes the Rust MLS state via `initialiser_mls`, deduplicating concurrent calls via a shared promise. */
   async init(userId: string, pin: string, state?: Uint8Array) {
     if (this.initPromise) return this.initPromise;
     this.initPromise = this._initImpl(userId, pin, state);
@@ -856,7 +856,7 @@ export class TauriMlsService implements IMlsService {
     } else {
       // localStorage may have been cleared (Android WebView eviction / re-install).
       // Try to restore the original device ID from the native push_context.json
-      // before falling back to generating a new random one — avoids credential mismatch.
+      // before falling back to generating a new random one - avoids credential mismatch.
       let restoredId: string | null = null;
       try {
         const ctx = await invoke<{ deviceId?: string; userId?: string } | null>(
@@ -889,7 +889,7 @@ export class TauriMlsService implements IMlsService {
       // Discard the stale state and start fresh so the user is not permanently blocked.
       if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
         const oldDeviceId = this.deviceId; // capture before overwriting
-        console.warn('[MLS] Credential mismatch — discarding stale state, starting fresh');
+        console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
         this.deviceId =
           'tauri-' +
           userId +
@@ -945,26 +945,26 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  /** Tauri-native `invoke` wrapper — calls `creer_groupe` in Rust and updates the local known-groups cache. */
+  /** Tauri-native `invoke` wrapper - calls `creer_groupe` in Rust and updates the local known-groups cache. */
   async createGroup(groupId: string) {
     await invoke('creer_groupe', { groupId });
     this._knownGroups.add(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — calls `creer_groupe` ignoring GroupAlreadyExists, letting Rust handle orphan state cleanup. */
+  /** Tauri-native `invoke` wrapper - calls `creer_groupe` ignoring GroupAlreadyExists, letting Rust handle orphan state cleanup. */
   async forceCreateGroup(groupId: string) {
-    // Tauri: use the same creer_groupe — orphan recovery in Rust handles the wipe.
+    // Tauri: use the same creer_groupe - orphan recovery in Rust handles the wipe.
     // A dedicated force_creer_groupe IPC command could be added later if needed.
     await invoke('creer_groupe', { groupId }).catch(() => {});
     this._knownGroups.add(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — creates a group record on the delivery service and returns the server-assigned groupId. */
+  /** Tauri-native `invoke` wrapper - creates a group record on the delivery service and returns the server-assigned groupId. */
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
 
-  /** Tauri-native `invoke` wrapper — validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
+  /** Tauri-native `invoke` wrapper - validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
   async sendCommit(
     commitBytes: Uint8Array,
     groupId: string,
@@ -982,17 +982,17 @@ export class TauriMlsService implements IMlsService {
     await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
   }
 
-  /** Tauri-native `invoke` wrapper — requests the Redis add-lock from the delivery service; fails open (returns true) on network error to avoid deadlock. */
+  /** Tauri-native `invoke` wrapper - requests the Redis add-lock from the delivery service; fails open (returns true) on network error to avoid deadlock. */
   async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
     return this.delivery.acquireAddLock(groupId, ttlMs);
   }
 
-  /** Tauri-native `invoke` wrapper — releases the Redis add-lock for the given group; errors are silently ignored. */
+  /** Tauri-native `invoke` wrapper - releases the Redis add-lock for the given group; errors are silently ignored. */
   async releaseAddLock(groupId: string): Promise<void> {
     return this.delivery.releaseAddLock(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — calls `sauvegarder_mls` to encrypt and persist the MLS state to the native mls.bin file. */
+  /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls` to encrypt and persist the MLS state to the native mls.bin file. */
   async saveState(pin: string) {
     // Native command handles save_encrypted + mls.bin write in one invoke to
     // avoid JS Array.from(...) conversion on large state blobs (notably Android).
@@ -1001,7 +1001,7 @@ export class TauriMlsService implements IMlsService {
     return bytes;
   }
 
-  /** Tauri-native `invoke` wrapper — calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
+  /** Tauri-native `invoke` wrapper - calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
   async generateKeyPackage(pin: string) {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
@@ -1040,7 +1040,7 @@ export class TauriMlsService implements IMlsService {
     return fallback;
   }
 
-  /** Tauri-native `invoke` wrapper — calls `ajouter_membre` and returns the commit, optional Welcome, and optional ratchet tree as Uint8Arrays. */
+  /** Tauri-native `invoke` wrapper - calls `ajouter_membre` and returns the commit, optional Welcome, and optional ratchet tree as Uint8Arrays. */
   async addMember(groupId: string, keyPackageBytes: Uint8Array) {
     // Returns tuple (commit, welcome?)
     const result = await invoke<[number[], number[] | null, number[] | null]>('ajouter_membre', {
@@ -1054,7 +1054,7 @@ export class TauriMlsService implements IMlsService {
     };
   }
 
-  /** Tauri-native `invoke` wrapper — calls `ajouter_membres_bulk` to add multiple devices in a single OpenMLS commit, producing one shared Welcome. */
+  /** Tauri-native `invoke` wrapper - calls `ajouter_membres_bulk` to add multiple devices in a single OpenMLS commit, producing one shared Welcome. */
   async addMembersBulk(
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
@@ -1078,7 +1078,7 @@ export class TauriMlsService implements IMlsService {
     };
   }
 
-  /** Tauri-native `invoke` wrapper — calls `trailer_welcome`, updates the known-groups cache, refreshes the epoch, and returns the derived groupId. */
+  /** Tauri-native `invoke` wrapper - calls `trailer_welcome`, updates the known-groups cache, refreshes the epoch, and returns the derived groupId. */
   async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array) {
     const groupId = await invoke<string>('trailer_welcome', {
       welcomeBytes: Array.from(welcomeBytes),
@@ -1089,7 +1089,7 @@ export class TauriMlsService implements IMlsService {
     return groupId;
   }
 
-  /** Tauri-native `invoke` wrapper — encrypts plaintext via `envoyer_message_bytes`, then POSTs the ciphertext to the delivery service. */
+  /** Tauri-native `invoke` wrapper - encrypts plaintext via `envoyer_message_bytes`, then POSTs the ciphertext to the delivery service. */
   async sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
@@ -1106,7 +1106,7 @@ export class TauriMlsService implements IMlsService {
     return encryptedBytes;
   }
 
-  /** Tauri-native `invoke` wrapper — decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */
+  /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */
   async processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array
@@ -1118,7 +1118,7 @@ export class TauriMlsService implements IMlsService {
     return res ? Uint8Array.from(res) : null;
   }
 
-  /** Tauri-native `invoke` wrapper — calls `exporter_secret` in Rust to derive a keying-material export for channel encryption. */
+  /** Tauri-native `invoke` wrapper - calls `exporter_secret` in Rust to derive a keying-material export for channel encryption. */
   async exportSecret(
     groupId: string,
     label: string,
@@ -1134,7 +1134,7 @@ export class TauriMlsService implements IMlsService {
     return new Uint8Array(res);
   }
 
-  /** Tauri-native `invoke` wrapper — fetches Redis Stream history from the delivery service, optionally starting after a given stream ID. */
+  /** Tauri-native `invoke` wrapper - fetches Redis Stream history from the delivery service, optionally starting after a given stream ID. */
   async fetchHistory(
     groupId: string,
     afterStreamId?: string
@@ -1152,7 +1152,7 @@ export class TauriMlsService implements IMlsService {
     return this._epochByGroupId.get(groupId) ?? 0;
   }
 
-  /** Tauri-native `invoke` wrapper — calls `oublier_groupe` in Rust to drop local MLS state and removes the group from the epoch cache. */
+  /** Tauri-native `invoke` wrapper - calls `oublier_groupe` in Rust to drop local MLS state and removes the group from the epoch cache. */
   forgetGroup(groupId: string, minEpoch = 0): void {
     this._epochByGroupId.delete(groupId);
     invoke('oublier_groupe', { groupId, minEpoch }).catch((e) =>
@@ -1160,7 +1160,7 @@ export class TauriMlsService implements IMlsService {
     );
   }
 
-  /** Poison Pill — purge définitive via Tauri `supprimer_groupe` : mémoire Rust, stockage et verrou d'epoch à MAX. */
+  /** Poison Pill - purge définitive via Tauri `supprimer_groupe` : mémoire Rust, stockage et verrou d'epoch à MAX. */
   dropGroup(groupId: string): void {
     this._epochByGroupId.delete(groupId);
     invoke('supprimer_groupe', { groupId }).catch((e) => console.warn('[MLS] dropGroup error:', e));
@@ -1177,22 +1177,22 @@ export class TauriMlsService implements IMlsService {
     }
   }
 
-  /** Tauri-native `invoke` wrapper — PATCHes the group name on the delivery service. */
+  /** Tauri-native `invoke` wrapper - PATCHes the group name on the delivery service. */
   async renameGroup(groupId: string, name: string): Promise<void> {
     return this.delivery.renameGroup(groupId, name);
   }
 
-  /** Tauri-native `invoke` wrapper — DELETEs the group record from the delivery service. */
+  /** Tauri-native `invoke` wrapper - DELETEs the group record from the delivery service. */
   async deleteGroupOnServer(groupId: string): Promise<boolean> {
     return this.delivery.deleteGroupOnServer(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — removes a user's server-side membership from the group on the delivery service. */
+  /** Tauri-native `invoke` wrapper - removes a user's server-side membership from the group on the delivery service. */
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
     return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
-  /** Tauri-native `invoke` wrapper — calls `retirer_membres` to generate a remove commit for all devices of the given users, then broadcasts it. */
+  /** Tauri-native `invoke` wrapper - calls `retirer_membres` to generate a remove commit for all devices of the given users, then broadcasts it. */
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
     const commitBytes = await invoke<number[]>('retirer_membres', {
       groupId,
@@ -1201,7 +1201,7 @@ export class TauriMlsService implements IMlsService {
     await this.sendCommit(new Uint8Array(commitBytes), groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — calls `retirer_membres_par_appareil` to remove specific devices by identity string and broadcasts the resulting commit. */
+  /** Tauri-native `invoke` wrapper - calls `retirer_membres_par_appareil` to remove specific devices by identity string and broadcasts the resulting commit. */
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
     const commitBytes = await invoke<number[]>('retirer_membres_par_appareil', {
       groupId,
@@ -1210,22 +1210,22 @@ export class TauriMlsService implements IMlsService {
     await this.sendCommit(new Uint8Array(commitBytes), groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — fetches the server-side member list for a group from the delivery service. */
+  /** Tauri-native `invoke` wrapper - fetches the server-side member list for a group from the delivery service. */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     return this.delivery.getGroupMembers(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — fetches all groups the given user belongs to from the delivery service. */
+  /** Tauri-native `invoke` wrapper - fetches all groups the given user belongs to from the delivery service. */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     return this.delivery.getUserGroups(userId);
   }
 
-  /** Tauri-native wrapper — fetches server-side group metadata (successor routing). */
+  /** Tauri-native wrapper - fetches server-side group metadata (successor routing). */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     return this.delivery.getGroupMeta(groupId);
   }
 
-  /** Tauri-native wrapper — CAS claim for dead-group successor. */
+  /** Tauri-native wrapper - CAS claim for dead-group successor. */
   async claimGroupSuccessor(
     deadGroupId: string,
     successorId: string
@@ -1233,7 +1233,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.claimGroupSuccessor(deadGroupId, successorId);
   }
 
-  /** Tauri-native `invoke` wrapper — retrieves pending device-group invitations for this device from the delivery service. */
+  /** Tauri-native `invoke` wrapper - retrieves pending device-group invitations for this device from the delivery service. */
   async getPendingInvitations(
     userId: string,
     deviceId: string
@@ -1243,7 +1243,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.getPendingInvitations(userId, deviceId);
   }
 
-  /** Tauri-native `invoke` wrapper — retrieves all device-group membership records for this device from the delivery service. */
+  /** Tauri-native `invoke` wrapper - retrieves all device-group membership records for this device from the delivery service. */
   async getDeviceMemberships(
     userId: string,
     deviceId: string
@@ -1260,7 +1260,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.getDeviceMemberships(userId, deviceId);
   }
 
-  /** Tauri-native `invoke` wrapper — POSTs an invitation status update (e.g. welcome_received) to the delivery service. */
+  /** Tauri-native `invoke` wrapper - POSTs an invitation status update (e.g. welcome_received) to the delivery service. */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -1271,12 +1271,12 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status, lastEpochSeen);
   }
 
-  /** Tauri-native `invoke` wrapper — resets a device-group membership to pending after an MLS remove commit targeting that device. */
+  /** Tauri-native `invoke` wrapper - resets a device-group membership to pending after an MLS remove commit targeting that device. */
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
     return this.delivery.kickStaleDevice(deviceId, userId, groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — DELETEs a single device-group membership record from the delivery service. */
+  /** Tauri-native `invoke` wrapper - DELETEs a single device-group membership record from the delivery service. */
   async deleteDeviceMembership(
     userId: string,
     deviceId: string,
@@ -1285,7 +1285,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.deleteDeviceMembership(userId, deviceId, groupId);
   }
 
-  /** Tauri-native `invoke` wrapper — DELETEs all device-group membership records for a device from the delivery service. */
+  /** Tauri-native `invoke` wrapper - DELETEs all device-group membership records for a device from the delivery service. */
   async deleteAllDeviceMemberships(
     userId: string,
     deviceId: string
@@ -1293,7 +1293,7 @@ export class TauriMlsService implements IMlsService {
     return this.delivery.deleteAllDeviceMemberships(userId, deviceId);
   }
 
-  /** Tauri-native `invoke` wrapper — fully removes a device from the delivery service, cleaning up groups, KeyPackages, and push token. */
+  /** Tauri-native `invoke` wrapper - fully removes a device from the delivery service, cleaning up groups, KeyPackages, and push token. */
   async deleteDevice(
     userId: string,
     deviceId: string

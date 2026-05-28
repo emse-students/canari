@@ -10,7 +10,7 @@ export interface InboundMsgPayload {
 }
 
 /**
- * Build a Redis routing envelope as flat JSON — no protobuf encoding.
+ * Build a Redis routing envelope as flat JSON - no protobuf encoding.
  * Shape: { recipientId, deviceId, senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
  *
  * The gateway Redis subscriber expects this exact shape and forwards it

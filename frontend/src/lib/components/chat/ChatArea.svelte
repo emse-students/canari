@@ -139,7 +139,7 @@
 
   const INITIAL_RENDER_GROUPS = 180;
   const RENDER_GROUPS_STEP = 140;
-  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // 460 — cap on DOM nodes
+  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // 460 - cap on DOM nodes
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
@@ -215,7 +215,7 @@
 
   /**
    * Single snapshot for the open chat UI. The template must only read `chatView`, never
-   * `conversation` directly — avoids `activeConversationView.contactName` races when
+   * `conversation` directly - avoids `activeConversationView.contactName` races when
    * `conversation` becomes null during route switches (chat ↔ communities).
    */
   const chatView = $derived.by(() => {
@@ -261,7 +261,7 @@
         const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
         if (!hasMore) hasMoreInDb = false;
-        // New messages were prepended — restore scroll position so the
+        // New messages were prepended - restore scroll position so the
         // viewport doesn't jump back to the top.
         await tick();
         if (chatContainer) {
@@ -520,43 +520,43 @@
         onscroll={handleScroll}
         class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
       >
-      {#if isLoadingHistory}
-        <!-- Loading skeleton — hides per-message pop-in while history replays -->
-        <div class="flex flex-col gap-3 px-1 py-4 animate-pulse" aria-hidden="true">
-          {#each [0.55, 0.8, 0.4, 0.7, 0.5, 0.65, 0.45] as w, i (i)}
-            <div class="flex {i % 2 === 0 ? 'justify-end' : 'justify-start'} gap-2">
-              {#if i % 2 !== 0}
+        {#if isLoadingHistory}
+          <!-- Loading skeleton - hides per-message pop-in while history replays -->
+          <div class="flex flex-col gap-3 px-1 py-4 animate-pulse" aria-hidden="true">
+            {#each [0.55, 0.8, 0.4, 0.7, 0.5, 0.65, 0.45] as w, i (i)}
+              <div class="flex {i % 2 === 0 ? 'justify-end' : 'justify-start'} gap-2">
+                {#if i % 2 !== 0}
+                  <div
+                    class="w-7 h-7 rounded-full bg-black/10 dark:bg-white/10 shrink-0 self-end"
+                  ></div>
+                {/if}
                 <div
-                  class="w-7 h-7 rounded-full bg-black/10 dark:bg-white/10 shrink-0 self-end"
+                  class="h-9 rounded-2xl bg-black/8 dark:bg-white/8"
+                  style="width: {Math.round(w * 100)}%; max-width: 22rem;"
                 ></div>
-              {/if}
-              <div
-                class="h-9 rounded-2xl bg-black/8 dark:bg-white/8"
-                style="width: {Math.round(w * 100)}%; max-width: 22rem;"
-              ></div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <ChatMessageGroups
-          {visibleMessageGroups}
-          {hiddenGroupCount}
-          {loadOlderGroups}
-          hasMoreInDb={hasMoreInDb && !!onLoadOlderMessages}
-          {messageReactions}
-          {currentUserId}
-          searchQuery={searchQuery.trim()}
-          {onReply}
-          onNavigateToMessage={navigateToMessage}
-          {onReact}
-          {onDelete}
-          {onEdit}
-          {switchTime}
-          {authToken}
-          isDirect={chatView.isDirect}
-          isMobile={_isMobile}
-        />
-      {/if}
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <ChatMessageGroups
+            {visibleMessageGroups}
+            {hiddenGroupCount}
+            {loadOlderGroups}
+            hasMoreInDb={hasMoreInDb && !!onLoadOlderMessages}
+            {messageReactions}
+            {currentUserId}
+            searchQuery={searchQuery.trim()}
+            {onReply}
+            onNavigateToMessage={navigateToMessage}
+            {onReact}
+            {onDelete}
+            {onEdit}
+            {switchTime}
+            {authToken}
+            isDirect={chatView.isDirect}
+            isMobile={_isMobile}
+          />
+        {/if}
       </div>
 
       {#if isCatchingUpMessages}
@@ -571,7 +571,9 @@
             class="flex flex-col items-center gap-3 rounded-2xl border border-black/8 dark:border-white/10 bg-[var(--color-surface)] px-6 py-5 shadow-lg"
           >
             <Loader2 size={28} class="animate-spin text-amber-500" strokeWidth={2.25} />
-            <p class="text-sm font-medium text-[var(--color-text)]">Synchronisation des messages…</p>
+            <p class="text-sm font-medium text-[var(--color-text)]">
+              Synchronisation des messages…
+            </p>
             <p class="text-xs text-[var(--color-text-muted)]">Récupération après reconnexion</p>
           </div>
         </div>
@@ -629,7 +631,9 @@
     {#if onBack}
       <!-- Safety net: when a conversation ID is selected but its object is null (e.g. load race),
            the back button must still be reachable on mobile or the user is completely stuck. -->
-      <header class="md:hidden bg-white/70 dark:bg-black/50 px-3 py-3 border-b border-black/5 dark:border-white/10 flex items-center backdrop-blur-2xl z-20">
+      <header
+        class="md:hidden bg-white/70 dark:bg-black/50 px-3 py-3 border-b border-black/5 dark:border-white/10 flex items-center backdrop-blur-2xl z-20"
+      >
         <button
           onclick={onBack}
           aria-label="Retour au menu"

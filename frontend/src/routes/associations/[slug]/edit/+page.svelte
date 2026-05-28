@@ -60,10 +60,7 @@
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
-  import {
-    hasPermissionFlag,
-    AssociationPermissionFlag,
-  } from '$lib/associations/api';
+  import { hasPermissionFlag, AssociationPermissionFlag } from '$lib/associations/api';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -91,9 +88,18 @@
 
   /** Material You–inspired tonal palette (tone ~60, moderate saturation). */
   const PRESET_COLORS = [
-    '#6B92D1', '#5BA8A0', '#5EA86C', '#8BAC5A',
-    '#ACA05A', '#AC7A5A', '#AC5E5E', '#AC5E8C',
-    '#8C5EAC', '#6E7EAC', '#5EA8A8', '#7CAC7C',
+    '#6B92D1',
+    '#5BA8A0',
+    '#5EA86C',
+    '#8BAC5A',
+    '#ACA05A',
+    '#AC7A5A',
+    '#AC5E5E',
+    '#AC5E8C',
+    '#8C5EAC',
+    '#6E7EAC',
+    '#5EA8A8',
+    '#7CAC7C',
   ] as const;
   let saving = $state(false);
   let saveSuccess = $state(false);
@@ -111,13 +117,23 @@
   let showCropper = $state(false);
 
   let editSection = $state<
-    'profile' | 'members' | 'documents' | 'cotisants' | 'boutique' | 'payments' | 'formulaires' | 'danger'
+    | 'profile'
+    | 'members'
+    | 'documents'
+    | 'cotisants'
+    | 'boutique'
+    | 'payments'
+    | 'formulaires'
+    | 'danger'
   >('profile');
 
   let canManageDocuments = $derived(
     isGlobalAdminUser ||
       (!!myMembership &&
-        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_DOCUMENTS))
+        hasPermissionFlag(
+          myMembership.permissions ?? 0,
+          AssociationPermissionFlag.MANAGE_DOCUMENTS
+        ))
   );
 
   let canManageMembers = $derived(
@@ -138,7 +154,7 @@
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_FORMS))
   );
 
-  /** Stripe onboarding — backend checks POST_AS_ASSO via manage-permission endpoint. */
+  /** Stripe onboarding - backend checks POST_AS_ASSO via manage-permission endpoint. */
   let canManagePayments = $derived(
     isGlobalAdminUser ||
       (!!myMembership &&
@@ -195,11 +211,10 @@
       const names: Record<string, string> = {};
       for (const m of members) {
         // Prefer the module cache (warm on SPA navigation), then displayName from API
-        names[m.userId] =
-          getUserDisplayNameSync(m.userId) || m.displayName?.trim() || m.userId;
+        names[m.userId] = getUserDisplayNameSync(m.userId) || m.displayName?.trim() || m.userId;
       }
       resolvedMemberNames = names;
-      // Always resolve asynchronously — API displayName may be stale or be the bare userId
+      // Always resolve asynchronously - API displayName may be stale or be the bare userId
       for (const m of members) {
         resolveUserDisplayName(m.userId).then((resolved) => {
           if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
@@ -676,7 +691,10 @@
         {#if canManageMembers}
           <button
             type="button"
-            onclick={() => { editSection = 'cotisants'; void loadTags(); }}
+            onclick={() => {
+              editSection = 'cotisants';
+              void loadTags();
+            }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'cotisants'
               ? 'bg-cn-yellow text-cn-dark shadow-sm'
@@ -689,7 +707,10 @@
         {#if canManageProducts}
           <button
             type="button"
-            onclick={() => { editSection = 'boutique'; void loadProducts(); }}
+            onclick={() => {
+              editSection = 'boutique';
+              void loadProducts();
+            }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'boutique'
               ? 'bg-cn-yellow text-cn-dark shadow-sm'
@@ -702,7 +723,10 @@
         {#if canManageForms}
           <button
             type="button"
-            onclick={() => { editSection = 'formulaires'; void loadForms(); }}
+            onclick={() => {
+              editSection = 'formulaires';
+              void loadForms();
+            }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'formulaires'
               ? 'bg-cn-yellow text-cn-dark shadow-sm'
@@ -768,7 +792,9 @@
 
         <Input label="Nom" bind:value={editName} />
         <div class="space-y-2">
-          <span class="block text-sm font-bold text-text-main ml-1">Description (sous le titre)</span>
+          <span class="block text-sm font-bold text-text-main ml-1"
+            >Description (sous le titre)</span
+          >
           <MarkdownComposerField
             bind:value={editDescription}
             maxlength={2000}
@@ -798,21 +824,22 @@
                 onclick={() => (editColor = c)}
                 title={c}
                 class="h-7 w-7 rounded-full border-2 transition-all hover:scale-110 focus:outline-none shrink-0
-                       {editColor === c ? 'border-cn-dark ring-2 ring-offset-1 ring-cn-yellow/70 scale-110' : 'border-transparent hover:border-white/60'}"
+                       {editColor === c
+                  ? 'border-cn-dark ring-2 ring-offset-1 ring-cn-yellow/70 scale-110'
+                  : 'border-transparent hover:border-white/60'}"
                 style="background:{c};"
               ></button>
             {/each}
           </div>
           <div class="flex items-center gap-2 ml-0.5">
             <span class="text-xs text-text-muted">Personnalisée</span>
-            <ColorPicker
-              bind:value={editColor}
-              label="Couleur personnalisée"
-            />
+            <ColorPicker bind:value={editColor} label="Couleur personnalisée" />
           </div>
         </div>
 
-        <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3">
+        <div
+          class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3"
+        >
           <p class="font-semibold text-text-main">Aperçu</p>
           {#if editDescription.trim()}
             <div>
@@ -850,7 +877,9 @@
             {/if}
           </div>
         {:else}
-          <p class="text-sm text-text-muted">Vous n'avez pas le droit de modifier le profil (flag MANAGE_MEMBERS requis).</p>
+          <p class="text-sm text-text-muted">
+            Vous n'avez pas le droit de modifier le profil (flag MANAGE_MEMBERS requis).
+          </p>
         {/if}
       </div>
     {/if}
@@ -894,7 +923,8 @@
           <div>
             <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
             <p class="text-sm text-text-muted mt-1">
-              Rôles affichés sur la page publique. Les admins peuvent gérer l’agenda et les paiements.
+              Rôles affichés sur la page publique. Les admins peuvent gérer l’agenda et les
+              paiements.
             </p>
           </div>
           <button
@@ -916,7 +946,9 @@
               ondragover={(e) => onDragOver(e, idx)}
               ondrop={() => onDrop(idx)}
               ondragend={onDragEnd}
-              class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx ? 'opacity-40' : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-2 ring-cn-yellow/60' : ''}"
+              class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx
+                ? 'opacity-40'
+                : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-2 ring-cn-yellow/60' : ''}"
             >
               <button
                 type="button"
@@ -1008,21 +1040,27 @@
     {/if}
 
     {#if editSection === 'cotisants' && canManageMembers && asso}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
+      >
         <div>
           <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
             <Tags size={20} />
             Cotisants
           </h2>
           <p class="text-sm text-text-muted mt-1">
-            Tags de cotisation actifs émis par cette association. Attribuez ou révoquez des tags manuellement.
+            Tags de cotisation actifs émis par cette association. Attribuez ou révoquez des tags
+            manuellement.
           </p>
         </div>
 
         <!-- Grant form -->
         <form
           class="flex flex-col sm:flex-row gap-3"
-          onsubmit={(e) => { e.preventDefault(); void handleGrantTag(); }}
+          onsubmit={(e) => {
+            e.preventDefault();
+            void handleGrantTag();
+          }}
         >
           <input
             type="text"
@@ -1052,19 +1090,25 @@
         </form>
 
         {#if tagsError}
-          <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{tagsError}</div>
+          <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+            {tagsError}
+          </div>
         {/if}
 
         {#if tagsLoading}
           <div class="flex justify-center py-6">
-            <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+            <div
+              class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+            ></div>
           </div>
         {:else if tags.length === 0}
           <p class="text-sm text-text-muted text-center py-6">Aucun tag actif.</p>
         {:else}
           <ul class="space-y-2">
             {#each tags as tag (tag.id)}
-              <li class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3">
+              <li
+                class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3"
+              >
                 <div class="min-w-0 flex-1">
                   <p class="font-semibold text-sm text-text-main truncate">{tag.tagName}</p>
                   <p class="text-xs text-text-muted">
@@ -1090,7 +1134,9 @@
     {/if}
 
     {#if editSection === 'boutique' && canManageProducts && asso}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm"
+      >
         <div class="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
@@ -1118,13 +1164,18 @@
         {/if}
 
         {#if !asso.stripeOnboardingComplete}
-          <div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
-            Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion de l'onboarding.
+          <div
+            class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm"
+          >
+            Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion
+            de l'onboarding.
             <button
               type="button"
-              onclick={() => { editSection = 'payments'; }}
-              class="ml-2 font-semibold underline hover:no-underline"
-            >Configurer</button>
+              onclick={() => {
+                editSection = 'payments';
+              }}
+              class="ml-2 font-semibold underline hover:no-underline">Configurer</button
+            >
           </div>
         {/if}
 
@@ -1132,13 +1183,18 @@
         {#if showProductForm}
           <form
             class="rounded-xl border border-cn-border bg-cn-bg/40 p-5 space-y-4"
-            onsubmit={(e) => { e.preventDefault(); void handleCreateProduct(); }}
+            onsubmit={(e) => {
+              e.preventDefault();
+              void handleCreateProduct();
+            }}
           >
             <h3 class="font-bold text-sm text-text-main">Nouveau produit</h3>
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div class="space-y-1">
-                <label for="new-product-name" class="text-xs font-semibold text-text-muted">Nom *</label>
+                <label for="new-product-name" class="text-xs font-semibold text-text-muted"
+                  >Nom *</label
+                >
                 <input
                   id="new-product-name"
                   type="text"
@@ -1149,7 +1205,9 @@
                 />
               </div>
               <div class="space-y-1">
-                <label for="new-product-type" class="text-xs font-semibold text-text-muted">Type *</label>
+                <label for="new-product-type" class="text-xs font-semibold text-text-muted"
+                  >Type *</label
+                >
                 <select
                   id="new-product-type"
                   bind:value={newProductType}
@@ -1174,7 +1232,9 @@
 
             <div class="grid gap-4 sm:grid-cols-2">
               <div class="space-y-1">
-                <label for="new-product-amount" class="text-xs font-semibold text-text-muted">Prix fixe (€) — vide = libre uniquement</label>
+                <label for="new-product-amount" class="text-xs font-semibold text-text-muted"
+                  >Prix fixe (€) - vide = libre uniquement</label
+                >
                 <input
                   id="new-product-amount"
                   type="number"
@@ -1196,7 +1256,9 @@
             {#if newProductAllowCustom}
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label for="new-product-min" class="text-xs font-semibold text-text-muted">Min (€)</label>
+                  <label for="new-product-min" class="text-xs font-semibold text-text-muted"
+                    >Min (€)</label
+                  >
                   <input
                     id="new-product-min"
                     type="number"
@@ -1208,7 +1270,9 @@
                   />
                 </div>
                 <div class="space-y-1">
-                  <label for="new-product-max" class="text-xs font-semibold text-text-muted">Max (€)</label>
+                  <label for="new-product-max" class="text-xs font-semibold text-text-muted"
+                    >Max (€)</label
+                  >
                   <input
                     id="new-product-max"
                     type="number"
@@ -1225,7 +1289,9 @@
             {#if newProductType === 'membership'}
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label for="new-product-tag" class="text-xs font-semibold text-text-muted">Tag accordé à l'achat</label>
+                  <label for="new-product-tag" class="text-xs font-semibold text-text-muted"
+                    >Tag accordé à l'achat</label
+                  >
                   <input
                     id="new-product-tag"
                     type="text"
@@ -1235,7 +1301,9 @@
                   />
                 </div>
                 <div class="space-y-1">
-                  <label for="new-product-tag-expires" class="text-xs font-semibold text-text-muted">Expiration du tag</label>
+                  <label for="new-product-tag-expires" class="text-xs font-semibold text-text-muted"
+                    >Expiration du tag</label
+                  >
                   <input
                     id="new-product-tag-expires"
                     type="date"
@@ -1249,7 +1317,9 @@
             {#if newProductType === 'balance_topup'}
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label for="new-product-webhook-url" class="text-xs font-semibold text-text-muted">URL webhook Cercle</label>
+                  <label for="new-product-webhook-url" class="text-xs font-semibold text-text-muted"
+                    >URL webhook Cercle</label
+                  >
                   <input
                     id="new-product-webhook-url"
                     type="url"
@@ -1259,7 +1329,10 @@
                   />
                 </div>
                 <div class="space-y-1">
-                  <label for="new-product-webhook-secret" class="text-xs font-semibold text-text-muted">Secret HMAC</label>
+                  <label
+                    for="new-product-webhook-secret"
+                    class="text-xs font-semibold text-text-muted">Secret HMAC</label
+                  >
                   <input
                     id="new-product-webhook-secret"
                     type="password"
@@ -1282,8 +1355,8 @@
               <button
                 type="button"
                 onclick={resetProductForm}
-                class="text-sm text-text-muted hover:text-text-main"
-              >Annuler</button>
+                class="text-sm text-text-muted hover:text-text-main">Annuler</button
+              >
             </div>
           </form>
         {/if}
@@ -1291,18 +1364,26 @@
         <!-- Product list -->
         {#if productsLoading}
           <div class="flex justify-center py-6">
-            <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+            <div
+              class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+            ></div>
           </div>
         {:else if products.length === 0}
           <p class="text-sm text-text-muted text-center py-6">Aucun produit pour le moment.</p>
         {:else}
           <ul class="space-y-3">
             {#each products as product (product.id)}
-              <li class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3">
+              <li
+                class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3"
+              >
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2 flex-wrap">
                     <p class="font-semibold text-sm text-text-main">{product.name}</p>
-                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-cn-surface-alt text-text-muted'}">
+                    <span
+                      class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-cn-surface-alt text-text-muted'}"
+                    >
                       {product.isActive ? 'Actif' : 'Inactif'}
                     </span>
                     <span class="text-xs text-text-muted">{product.type}</span>
@@ -1345,16 +1426,21 @@
             </h3>
             <ul class="space-y-2">
               {#each webhookFailures as delivery (delivery.id)}
-                <li class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+                <li
+                  class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3"
+                >
                   <div class="min-w-0 flex-1">
                     <p class="text-xs font-semibold text-text-main">
-                      {(delivery.amountCents / 100).toFixed(2)} € — {delivery.paymentIntentId.slice(0, 20)}…
+                      {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(
+                        0,
+                        20
+                      )}…
                     </p>
                     <p class="text-xs text-text-muted">
                       Tentatives: {delivery.attemptCount} ·
                       {delivery.lastAttemptAt
                         ? new Date(delivery.lastAttemptAt).toLocaleString('fr-FR')
-                        : '—'}
+                        : '-'}
                     </p>
                     {#if delivery.lastError}
                       <p class="text-xs text-red-600 truncate">{delivery.lastError}</p>
@@ -1366,7 +1452,10 @@
                     onclick={() => handleRetryDelivery(delivery)}
                     class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
                   >
-                    <RefreshCw size={13} class={retryingDelivery === delivery.id ? 'animate-spin' : ''} />
+                    <RefreshCw
+                      size={13}
+                      class={retryingDelivery === delivery.id ? 'animate-spin' : ''}
+                    />
                     Réessayer
                   </button>
                 </li>
@@ -1378,7 +1467,9 @@
     {/if}
 
     {#if editSection === 'formulaires' && canManageForms && asso}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
+      >
         <div>
           <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
             <ClipboardList size={20} />
@@ -1390,15 +1481,21 @@
         </div>
 
         {#if formsError}
-          <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{formsError}</div>
+          <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+            {formsError}
+          </div>
         {/if}
 
         {#if formsLoading}
           <div class="flex justify-center py-8">
-            <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+            <div
+              class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+            ></div>
           </div>
         {:else if forms.length === 0}
-          <p class="text-sm text-text-muted text-center py-8">Aucun formulaire lié à cette association.</p>
+          <p class="text-sm text-text-muted text-center py-8">
+            Aucun formulaire lié à cette association.
+          </p>
         {:else}
           <ul class="space-y-4">
             {#each forms as form (form.id)}
@@ -1418,22 +1515,32 @@
                     href="/forms/{form.id}"
                     class="text-xs font-semibold text-cn-yellow hover:underline shrink-0"
                     target="_blank"
-                    rel="noopener noreferrer"
-                  >Voir le formulaire ↗</a>
+                    rel="noopener noreferrer">Voir le formulaire ↗</a
+                  >
                 </div>
 
                 {#if pendingCash[form.id]?.length}
                   <div class="border-t border-cn-border/50 pt-3 space-y-2">
                     <p class="text-xs font-bold text-amber-700 flex items-center gap-1.5">
                       <AlertTriangle size={13} />
-                      {pendingCash[form.id].length} paiement{pendingCash[form.id].length > 1 ? 's' : ''} en attente de validation
+                      {pendingCash[form.id].length} paiement{pendingCash[form.id].length > 1
+                        ? 's'
+                        : ''} en attente de validation
                     </p>
                     <ul class="space-y-2">
                       {#each pendingCash[form.id] as sub (sub.id)}
-                        <li class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+                        <li
+                          class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2"
+                        >
                           <div class="min-w-0 flex-1">
-                            <p class="text-xs font-semibold text-text-main truncate">{sub.userId}</p>
-                            <p class="text-xs text-text-muted">{(sub.totalPaid / 100).toFixed(2)} € · {new Date(sub.createdAt).toLocaleDateString('fr-FR')}</p>
+                            <p class="text-xs font-semibold text-text-main truncate">
+                              {sub.userId}
+                            </p>
+                            <p class="text-xs text-text-muted">
+                              {(sub.totalPaid / 100).toFixed(2)} € · {new Date(
+                                sub.createdAt
+                              ).toLocaleDateString('fr-FR')}
+                            </p>
                           </div>
                           <div class="flex items-center gap-2 shrink-0">
                             <button
@@ -1441,33 +1548,43 @@
                               onclick={async () => {
                                 try {
                                   await validateCashSubmission(form.id, sub.id);
-                                  pendingCash = { ...pendingCash, [form.id]: pendingCash[form.id].filter((s) => s.id !== sub.id) };
+                                  pendingCash = {
+                                    ...pendingCash,
+                                    [form.id]: pendingCash[form.id].filter((s) => s.id !== sub.id),
+                                  };
                                 } catch (e) {
                                   formsError = e instanceof Error ? e.message : 'Erreur';
                                 }
                               }}
                               class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
-                            >Valider</button>
+                              >Valider</button
+                            >
                             <button
                               type="button"
                               onclick={async () => {
                                 if (!confirm('Annuler ce paiement ?')) return;
                                 try {
                                   await cancelCashSubmission(form.id, sub.id);
-                                  pendingCash = { ...pendingCash, [form.id]: pendingCash[form.id].filter((s) => s.id !== sub.id) };
+                                  pendingCash = {
+                                    ...pendingCash,
+                                    [form.id]: pendingCash[form.id].filter((s) => s.id !== sub.id),
+                                  };
                                 } catch (e) {
                                   formsError = e instanceof Error ? e.message : 'Erreur';
                                 }
                               }}
                               class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors"
-                            >Annuler</button>
+                              >Annuler</button
+                            >
                           </div>
                         </li>
                       {/each}
                     </ul>
                   </div>
                 {:else if form.allowCashPayment}
-                  <p class="text-xs text-text-muted border-t border-cn-border/50 pt-3">Aucun paiement en espèces en attente.</p>
+                  <p class="text-xs text-text-muted border-t border-cn-border/50 pt-3">
+                    Aucun paiement en espèces en attente.
+                  </p>
                 {/if}
               </li>
             {/each}

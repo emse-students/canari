@@ -45,9 +45,7 @@
 
       // Fetch profiles for any new userIds
       const known = profiles;
-      const newIds = [...new Set(data.devices.map((d) => d.userId))].filter(
-        (id) => !known.has(id)
-      );
+      const newIds = [...new Set(data.devices.map((d) => d.userId))].filter((id) => !known.has(id));
       for (const id of newIds) {
         fetchUserProfile(id)
           .then((p) => {
@@ -99,7 +97,7 @@
 </script>
 
 <svelte:head>
-  <title>Admin — Statut des connexions</title>
+  <title>Admin - Statut des connexions</title>
 </svelte:head>
 
 {#snippet deviceTable(rows: DeviceEntry[])}
@@ -109,7 +107,9 @@
     <div class="overflow-x-auto rounded-xl border border-cn-border">
       <table class="w-full text-sm">
         <thead>
-          <tr class="border-b border-cn-border bg-[var(--surface-elevated)] text-xs font-semibold uppercase tracking-wide text-text-muted">
+          <tr
+            class="border-b border-cn-border bg-[var(--surface-elevated)] text-xs font-semibold uppercase tracking-wide text-text-muted"
+          >
             <th class="px-4 py-2.5 text-left">Utilisateur</th>
             <th class="px-4 py-2.5 text-left">Device ID</th>
             <th class="px-4 py-2.5 text-center">WS</th>
@@ -175,8 +175,7 @@
     <div>
       <h1 class="text-2xl font-bold text-text-main">Connexions en direct</h1>
       <p class="mt-0.5 text-text-muted">
-        {total} appareil{total !== 1 ? 's' : ''} — rafraîchissement toutes les {REFRESH_MS /
-          1000}s
+        {total} appareil{total !== 1 ? 's' : ''} - rafraîchissement toutes les {REFRESH_MS / 1000}s
       </p>
     </div>
     <div class="flex items-center gap-2">
@@ -210,10 +209,11 @@
             <Wifi size={13} class="mr-1 inline text-green-ok" />WS (WebSocket)
           </p>
           <p class="text-text-muted">
-            Connexion WebSocket active en mémoire du gateway. Chaque onglet ouvert dans l'app
-            compte comme un onglet (colonne "Onglets"). Après un <strong class="text-text-main"
+            Connexion WebSocket active en mémoire du gateway. Chaque onglet ouvert dans l'app compte
+            comme un onglet (colonne "Onglets"). Après un <strong class="text-text-main"
               >arrêt forcé</strong
-            > de l'app, le serveur envoie un Ping toutes les 30s : s'il ne reçoit pas de Pong, il
+            >
+            de l'app, le serveur envoie un Ping toutes les 30s : s'il ne reçoit pas de Pong, il
             ferme la connexion. L'utilisateur reste marqué "WS connecté" pendant
             <strong class="text-text-main">jusqu'à ~30s</strong> après la déconnexion.
           </p>
@@ -224,8 +224,8 @@
             Clé <code class="rounded bg-[var(--surface-elevated)] px-1 font-mono text-xs"
               >user:online:&#123;userId&#125;:&#123;deviceId&#125;</code
             >
-            dans Redis. Créée à la connexion WS, rafraîchie à chaque Pong. Supprimée automatiquement
-            quand la connexion se ferme proprement.
+            dans Redis. Créée à la connexion WS, rafraîchie à chaque Pong. Supprimée automatiquement quand
+            la connexion se ferme proprement.
           </p>
         </div>
         <div>
@@ -234,8 +234,7 @@
             Durée de vie restante de la clé Redis. La clé expire après 90s sans refresh.
             <span class="text-green-ok font-medium">Vert</span> = sain,
             <span class="text-cn-yellow font-medium">jaune</span> = bientôt expiré,
-            <span class="text-red-err font-medium">rouge</span> = &lt;20s (connexion probablement
-            morte).
+            <span class="text-red-err font-medium">rouge</span> = &lt;20s (connexion probablement morte).
           </p>
         </div>
         <div>
@@ -243,8 +242,8 @@
             <TriangleAlert size={13} class="mr-1 inline text-cn-yellow" />Anomalies (fond jaune)
           </p>
           <p class="text-text-muted">
-            <strong class="text-text-main">Redis ✓ mais WS –</strong> : connexion fermée (ex. arrêt forcé
-            de l'app) mais la clé Redis n'a pas encore expiré. Disparaîtra en ≤30s.<br />
+            <strong class="text-text-main">Redis ✓ mais WS –</strong> : connexion fermée (ex. arrêt
+            forcé de l'app) mais la clé Redis n'a pas encore expiré. Disparaîtra en ≤30s.<br />
             <strong class="text-text-main">WS ✓ mais Redis –</strong> : connexion active mais présence
             jamais écrite (bug gateway) ou TTL expiré sans refresh.
           </p>
@@ -269,7 +268,7 @@
       <section class="mb-8">
         <h2 class="mb-1 flex items-center gap-2 font-semibold text-text-main">
           <TriangleAlert size={16} class="text-cn-yellow" />
-          {anomalies.length} anomalie{anomalies.length > 1 ? 's' : ''} — WS et Redis désynchronisés
+          {anomalies.length} anomalie{anomalies.length > 1 ? 's' : ''} - WS et Redis désynchronisés
         </h2>
         <p class="mb-3 text-sm text-text-muted">
           Fond jaune = WS et Redis ne sont pas d'accord sur le statut de l'appareil.
@@ -277,9 +276,11 @@
         {@render deviceTable(anomalies)}
       </section>
     {:else}
-      <div class="mb-6 flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-3 text-sm text-green-ok">
+      <div
+        class="mb-6 flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-3 text-sm text-green-ok"
+      >
         <Wifi size={14} />
-        Aucune anomalie — WS et Redis sont synchronisés sur tous les appareils
+        Aucune anomalie - WS et Redis sont synchronisés sur tous les appareils
       </div>
     {/if}
 

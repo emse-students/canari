@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
-        warn!("JWT_SECRET not set — WebSocket auth will reject all connections");
+        warn!("JWT_SECRET not set - WebSocket auth will reject all connections");
         String::new()
     });
 
@@ -476,7 +476,7 @@ fn ice_url_blocked_for_sfu(url: &str) -> bool {
     if url.contains("transport=tcp") {
         return true;
     }
-    // Port 53 (DNS) — blocked in browsers; webrtc-rs TURN client fails allocation.
+    // Port 53 (DNS) - blocked in browsers; webrtc-rs TURN client fails allocation.
     if url.contains(":53?") || url.ends_with(":53") {
         return true;
     }
@@ -670,7 +670,7 @@ fn ice_servers_from_env() -> Vec<RTCIceServer> {
         }
     }
 
-    warn!("SFU has no Cloudflare/TURN config — STUN only; relay-only clients may not connect");
+    warn!("SFU has no Cloudflare/TURN config - STUN only; relay-only clients may not connect");
     vec![RTCIceServer {
         urls: vec!["stun:stun.l.google.com:19302".to_owned()],
         ..Default::default()

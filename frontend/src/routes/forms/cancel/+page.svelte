@@ -18,7 +18,7 @@
       const data = await res.json();
       if (data.ok) formId = data.formId ?? null;
     } catch {
-      // Non-fatal — submission will remain pending and can be reused on next attempt
+      // Non-fatal - submission will remain pending and can be reused on next attempt
     }
   });
 </script>

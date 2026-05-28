@@ -14,11 +14,11 @@ export function handleError({ error }: { error: unknown }): void {
   console.error('[App] Client error:', error);
 }
 
-/** Optional init hook — called once before the app starts. No setup needed here. */
+/** Optional init hook - called once before the app starts. No setup needed here. */
 export function init(): void {}
 
 // ════════════════════════════════════════════════════════════════════════════
-// EXTERNAL LINKS — Open in system browser / default app (not in WebView)
+// EXTERNAL LINKS - Open in system browser / default app (not in WebView)
 // ════════════════════════════════════════════════════════════════════════════
 
 if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
@@ -26,7 +26,7 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DEEP LINK HANDLER — OIDC on Mobile Tauri
+// DEEP LINK HANDLER - OIDC on Mobile Tauri
 // ════════════════════════════════════════════════════════════════════════════
 //
 // Flow on Android Tauri:
@@ -187,7 +187,7 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       // Handles deep links when the app is already running
       onOpenUrl(processUrls);
 
-      // URL traitée lors du dernier appel getCurrent() — évite de rejouer la même URL
+      // URL traitée lors du dernier appel getCurrent() - évite de rejouer la même URL
       // au retour au premier plan si Android n'a pas mis à jour l'intent courant.
       let lastGetCurrentUrl: string | null = null;
 
@@ -213,13 +213,13 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
     })
     .catch((err) => {
       // Plugin might not be available (desktop, or in dev without Tauri).
-      // This is not an error — just log it.
+      // This is not an error - just log it.
       console.log('[hooks] Deep-link plugin not available:', err.message);
     });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// HTTP PLUGIN WRAPPER — Use Tauri native HTTP for external API calls
+// HTTP PLUGIN WRAPPER - Use Tauri native HTTP for external API calls
 // ════════════════════════════════════════════════════════════════════════════
 
 if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
@@ -247,7 +247,7 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
 
         // Cookie-bearing requests (credentials: 'include') MUST use the
         // browser's native fetch. The Tauri HTTP plugin runs in a separate
-        // Rust thread whose cookie jar is isolated from the WebView's — it
+        // Rust thread whose cookie jar is isolated from the WebView's - it
         // can't write Set-Cookie responses back to the WebView, which breaks
         // HttpOnly session cookies (refresh token). Using native fetch here
         // also prevents a deadlock where the plugin stalls waiting for a

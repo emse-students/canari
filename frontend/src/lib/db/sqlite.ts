@@ -115,7 +115,7 @@ export class SqliteStorage implements IStorage {
 
     if (currentVersion < 3) {
       // Encryption format changed from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM.
-      // Old rows cannot be decrypted — drop them. Messages re-fetch from server.
+      // Old rows cannot be decrypted - drop them. Messages re-fetch from server.
       await this.db.execute('DELETE FROM messages');
       await this.db.execute('PRAGMA user_version = 3');
     }

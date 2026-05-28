@@ -10,7 +10,7 @@ export class AssociationCalendarEventCoOwner {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** FK to `association_calendar_events.id` — cascade-deleted when the event is removed. */
+  /** FK to `association_calendar_events.id` - cascade-deleted when the event is removed. */
   @Column({ type: 'uuid', name: 'event_id' })
   @Index()
   eventId: string;

@@ -35,7 +35,7 @@ endif
 
 	@echo "${BLUE}📥 Pulling Docker images from GHCR...${RESET}"
 	@docker compose -f infrastructure/docker-compose.prod.yml pull || \
-		echo "${YELLOW}⚠️  Pull partiel/échoué — tentative de démarrage avec images locales disponibles${RESET}"
+		echo "${YELLOW}⚠️  Pull partiel/échoué - tentative de démarrage avec images locales disponibles${RESET}"
 	@echo "${BLUE}🛑 Stopping existing containers...${RESET}"
 	@docker compose -f infrastructure/docker-compose.prod.yml down --remove-orphans
 	@echo "${BLUE}🚀 Starting production services...${RESET}"
@@ -60,7 +60,7 @@ production-check:
 
 ifeq ($(OS),Windows_NT)
 	@if not exist infrastructure\.env ( \
-		echo "${YELLOW}⚠️  infrastructure/.env manquant — création depuis le template${RESET}" & \
+		echo "${YELLOW}⚠️  infrastructure/.env manquant - création depuis le template${RESET}" & \
 		powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-env.ps1 -Prod & \
 		echo "${YELLOW}⚠️  Éditez infrastructure/.env (POSTGRES_PASSWORD, DOMAIN...) puis relancez.${RESET}" & \
 		exit /b 1 \
@@ -71,7 +71,7 @@ ifeq ($(OS),Windows_NT)
 	@echo "${GREEN}✅ Configuration validée${RESET}"
 else
 	@if [ ! -f infrastructure/.env ]; then \
-		echo "${YELLOW}⚠️  infrastructure/.env manquant — création depuis le template${RESET}"; \
+		echo "${YELLOW}⚠️  infrastructure/.env manquant - création depuis le template${RESET}"; \
 		chmod +x scripts/setup-env.sh; \
 		./scripts/setup-env.sh --prod; \
 		echo ""; \
@@ -283,7 +283,7 @@ test: test-libs test-gateway test-history test-frontend
 	@echo "---------------------------------------------------"
 	@echo ""
 
-# Tests frontend (Vitest — logique de création de conversations)
+# Tests frontend (Vitest - logique de création de conversations)
 test-frontend:
 	@echo "${BLUE}🧪 Testing Frontend conversation logic...${RESET}"
 	@cd frontend && npm test
@@ -337,7 +337,7 @@ reset-services-prod: production-check
 	@echo "${BLUE}🔄 Resetting services (stop + remove volumes)...${RESET}"
 	@docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env down -v --remove-orphans && \
 		( docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env pull || \
-		  echo "${YELLOW}⚠️  Pull partiel/échoué — tentative de démarrage avec images locales disponibles${RESET}" ) && \
+		  echo "${YELLOW}⚠️  Pull partiel/échoué - tentative de démarrage avec images locales disponibles${RESET}" ) && \
 		docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env up -d --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
 
@@ -352,7 +352,7 @@ update-services-prod: production-check
 # Usage: make run-ci
 run-ci: lint-frontend test
 	@echo ""
-	@echo "${BOLD}${GREEN}✅ CI COMPLETE — tous les checks ont passé${RESET}"
+	@echo "${BOLD}${GREEN}✅ CI COMPLETE - tous les checks ont passé${RESET}"
 	@echo ""
 
 lint-frontend:

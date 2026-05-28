@@ -23,9 +23,9 @@ interface QueuedMessage {
   isWelcome: boolean;
   isCommit: boolean;
   ratchetTreeBytes?: Uint8Array;
-  /** ID from the delivery service queue — used for at-least-once ACK */
+  /** ID from the delivery service queue - used for at-least-once ACK */
   queuedMessageId?: string;
-  /** Server queue enqueue time (ms) — used as timestamp fallback when `sentAt` is absent. */
+  /** Server queue enqueue time (ms) - used as timestamp fallback when `sentAt` is absent. */
   queuedCreatedAt?: number;
 }
 
@@ -73,7 +73,7 @@ export class WebMlsService implements IMlsService {
   private readonly delivery: MlsDeliveryApi;
   /** Resolved when init() completes; shared across concurrent callers to avoid double WASM init. */
   private initPromise: Promise<void> | null = null;
-  /** True when initialized without existing state — triggers OTKP purge before new ones are published. */
+  /** True when initialized without existing state - triggers OTKP purge before new ones are published. */
   private freshStart = false;
   private _visibilityHandler: (() => void) | null = null;
   private _onlineHandler: (() => void) | null = null;
@@ -214,7 +214,7 @@ export class WebMlsService implements IMlsService {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /** WASM client wrapper — opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
+  /** WASM client wrapper - opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
   async connect(): Promise<void> {
     this.clearHeartbeat();
     // Close existing socket before creating a new one
@@ -230,7 +230,7 @@ export class WebMlsService implements IMlsService {
       this.ws = null;
     }
 
-    // Register visibility/online listeners once — trigger reconnect when the
+    // Register visibility/online listeners once - trigger reconnect when the
     // tab becomes visible or the network comes back after a gap.
     if (!this._visibilityHandler && typeof document !== 'undefined') {
       this._visibilityHandler = () => {
@@ -454,12 +454,12 @@ export class WebMlsService implements IMlsService {
    */
   private async processQueue() {
     if (this.isProcessingQueue) {
-      console.log('[QUEUE] Déjà en cours de traitement — déclenchement ignoré');
+      console.log('[QUEUE] Déjà en cours de traitement - déclenchement ignoré');
       return;
     }
     if (!this.messageCallback) {
       console.warn(
-        '[QUEUE] messageCallback non défini — messages en attente ne seront pas traités'
+        '[QUEUE] messageCallback non défini - messages en attente ne seront pas traités'
       );
       return;
     }
@@ -617,7 +617,7 @@ export class WebMlsService implements IMlsService {
     this.disconnectCallback = callback;
   }
 
-  /** WASM client wrapper — broadcasts a reinvite_request signal to online group members via the delivery service. */
+  /** WASM client wrapper - broadcasts a reinvite_request signal to online group members via the delivery service. */
   async sendReinviteRequest(groupId: string): Promise<void> {
     await this.delivery.deliveryPost('reinvite-request', {
       groupId,
@@ -630,7 +630,7 @@ export class WebMlsService implements IMlsService {
     this.reinviteRequestCallback = callback;
   }
 
-  /** WASM client wrapper — signals the delivery service that this device needs a Welcome for the given group. */
+  /** WASM client wrapper - signals the delivery service that this device needs a Welcome for the given group. */
   async sendWelcomeRequest(groupId: string): Promise<void> {
     await this.delivery.deliveryPost('welcome-request', {
       groupId,
@@ -680,15 +680,15 @@ export class WebMlsService implements IMlsService {
       try {
         this.ws.send(JSON.stringify({ type: 'disconnect' }));
       } catch {
-        // Best-effort — ignore if the socket is already closing
+        // Best-effort - ignore if the socket is already closing
       }
     }
   }
 
-  // simulateMessageReceive removed — pending messages now go through enqueueMessage
+  // simulateMessageReceive removed - pending messages now go through enqueueMessage
   // so they are serialized with live WebSocket messages via processQueue.
 
-  /** WASM client wrapper — fetches offline-queued messages from the delivery service and routes each one through the message queue. */
+  /** WASM client wrapper - fetches offline-queued messages from the delivery service and routes each one through the message queue. */
   async fetchPendingMessages() {
     if (this.userId === 'unknown') return;
 
@@ -770,7 +770,7 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  /** WASM client wrapper — fetches all registered devices for a user from the delivery service, decoding base64 key packages. */
+  /** WASM client wrapper - fetches all registered devices for a user from the delivery service, decoding base64 key packages. */
   async fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -783,17 +783,17 @@ export class WebMlsService implements IMlsService {
     return this.delivery.fetchUserDevices(userId);
   }
 
-  /** WASM client wrapper — fetches one device's KeyPackage (invite / welcome flows). */
+  /** WASM client wrapper - fetches one device's KeyPackage (invite / welcome flows). */
   async fetchDeviceKeyPackage(userId: string, deviceId: string) {
     return this.delivery.fetchDeviceKeyPackage(userId, deviceId);
   }
 
-  /** WASM client wrapper — registers a user as a server-side member of the given MLS group on the delivery service. */
+  /** WASM client wrapper - registers a user as a server-side member of the given MLS group on the delivery service. */
   async registerMember(groupId: string, userId: string): Promise<void> {
     return this.delivery.registerMember(groupId, userId);
   }
 
-  /** WASM client wrapper — publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
+  /** WASM client wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
     const base64 = btoa(Array.from(keyPackageBytes, (b) => String.fromCharCode(b)).join(''));
     const storedName =
@@ -805,12 +805,12 @@ export class WebMlsService implements IMlsService {
     });
   }
 
-  /** WASM client wrapper — bulk-uploads one-time prekey packages to replenish the server pool. */
+  /** WASM client wrapper - bulk-uploads one-time prekey packages to replenish the server pool. */
   async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
     return this.delivery.publishKeyPackages(packages);
   }
 
-  /** WASM client wrapper — PATCHes device label and/or OS metadata on the delivery service. */
+  /** WASM client wrapper - PATCHes device label and/or OS metadata on the delivery service. */
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
@@ -824,7 +824,7 @@ export class WebMlsService implements IMlsService {
     return this.delivery.updateDeviceMetadata(userId, deviceId, metadata);
   }
 
-  /** WASM client wrapper — delivers an MLS Welcome message to all devices (or a specific device) of the target user in parallel. */
+  /** WASM client wrapper - delivers an MLS Welcome message to all devices (or a specific device) of the target user in parallel. */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -841,7 +841,7 @@ export class WebMlsService implements IMlsService {
     );
   }
 
-  /** WASM client wrapper — validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
+  /** WASM client wrapper - validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
   async sendCommit(
     commitBytes: Uint8Array,
     groupId: string,
@@ -850,17 +850,17 @@ export class WebMlsService implements IMlsService {
     return this.delivery.sendCommitBytes(commitBytes, groupId, excludeDeviceIds);
   }
 
-  /** WASM client wrapper — requests the Redis add-lock from the delivery service; fails open (returns true) on network error to avoid deadlock. */
+  /** WASM client wrapper - requests the Redis add-lock from the delivery service; fails open (returns true) on network error to avoid deadlock. */
   async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
     return this.delivery.acquireAddLock(groupId, ttlMs);
   }
 
-  /** WASM client wrapper — releases the Redis add-lock for the given group; errors are silently ignored. */
+  /** WASM client wrapper - releases the Redis add-lock for the given group; errors are silently ignored. */
   async releaseAddLock(groupId: string): Promise<void> {
     return this.delivery.releaseAddLock(groupId);
   }
 
-  /** WASM client wrapper — loads and initializes the WASM module via `loadAndInitWasm`, deduplicating concurrent calls via a shared promise. */
+  /** WASM client wrapper - loads and initializes the WASM module via `loadAndInitWasm`, deduplicating concurrent calls via a shared promise. */
   async init(userId: string, pin: string, state?: Uint8Array) {
     // If already initialized or initialization is in flight, reuse the same promise.
     if (this.client) return;
@@ -880,7 +880,7 @@ export class WebMlsService implements IMlsService {
     this.freshStart = !state;
     this.lastKnownState = state ? state.slice() : undefined;
 
-    // Per-user device ID — prevents two users in the same browser from sharing a
+    // Per-user device ID - prevents two users in the same browser from sharing a
     // device ID, which would cause the delivery service to route the welcome message
     // to the wrong user.
     const deviceKey = `mls_device_id_${userId}`;
@@ -908,7 +908,7 @@ export class WebMlsService implements IMlsService {
       // another device). Discard the stale state and start fresh.
       if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
         const oldDeviceId = this.deviceId;
-        console.warn('[MLS] Credential mismatch — discarding stale state, starting fresh');
+        console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
         this.deviceId =
           'web-' +
           userId +
@@ -929,23 +929,23 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  /** WASM client wrapper — calls `this.client.create_group` to create a new local MLS group. */
+  /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */
   async createGroup(groupId: string) {
     this.client.create_group(groupId);
   }
 
-  /** WASM client wrapper — calls `this.client.force_create_group`, wiping any orphan state before creating the group. */
+  /** WASM client wrapper - calls `this.client.force_create_group`, wiping any orphan state before creating the group. */
   async forceCreateGroup(groupId: string) {
     this.client.force_create_group(groupId);
   }
 
-  /** WASM client wrapper — creates a group record on the delivery service and returns the server-assigned groupId. */
+  /** WASM client wrapper - creates a group record on the delivery service and returns the server-assigned groupId. */
   async createRemoteGroup(name: string, isGroup: boolean = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
 
   // Updated to accept PIN
-  /** WASM client wrapper — calls `this.client.save_state(pin)` to encrypt and return the current MLS state as bytes. */
+  /** WASM client wrapper - calls `this.client.save_state(pin)` to encrypt and return the current MLS state as bytes. */
   async saveState(pin: string) {
     // Pass PIN to save encrypted
     // Wasm binding updated to accept optional PIN
@@ -954,7 +954,7 @@ export class WebMlsService implements IMlsService {
     return stateBytes;
   }
 
-  /** WASM client wrapper — calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
+  /** WASM client wrapper - calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
   async generateKeyPackage(pin: string) {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
@@ -1031,7 +1031,7 @@ export class WebMlsService implements IMlsService {
     return fallback;
   }
 
-  /** WASM client wrapper — calls `this.client.add_member` and returns the commit, optional Welcome, and optional ratchet tree. */
+  /** WASM client wrapper - calls `this.client.add_member` and returns the commit, optional Welcome, and optional ratchet tree. */
   async addMember(groupId: string, keyPackageBytes: Uint8Array) {
     const res = this.client.add_member(groupId, keyPackageBytes);
     return {
@@ -1041,7 +1041,7 @@ export class WebMlsService implements IMlsService {
     };
   }
 
-  /** WASM client wrapper — calls `this.client.add_members_bulk` to add multiple devices in a single OpenMLS commit, producing one shared Welcome. */
+  /** WASM client wrapper - calls `this.client.add_members_bulk` to add multiple devices in a single OpenMLS commit, producing one shared Welcome. */
   async addMembersBulk(
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
@@ -1063,12 +1063,12 @@ export class WebMlsService implements IMlsService {
     };
   }
 
-  /** WASM client wrapper — calls `this.client.process_welcome` and returns the derived groupId. */
+  /** WASM client wrapper - calls `this.client.process_welcome` and returns the derived groupId. */
   async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array) {
     return this.client.process_welcome(welcomeBytes, ratchetTreeBytes);
   }
 
-  /** WASM client wrapper — encrypts plaintext via `this.client.send_message_bytes`, then POSTs the ciphertext to the delivery service. */
+  /** WASM client wrapper - encrypts plaintext via `this.client.send_message_bytes`, then POSTs the ciphertext to the delivery service. */
   async sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
@@ -1081,7 +1081,7 @@ export class WebMlsService implements IMlsService {
     return encryptedBytes;
   }
 
-  /** WASM client wrapper — decrypts a raw MLS ciphertext via `this.client.process_incoming_message_bytes`; returns null for commit or proposal frames. */
+  /** WASM client wrapper - decrypts a raw MLS ciphertext via `this.client.process_incoming_message_bytes`; returns null for commit or proposal frames. */
   async processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array
@@ -1090,7 +1090,7 @@ export class WebMlsService implements IMlsService {
     return result ?? null;
   }
 
-  /** WASM client wrapper — calls `this.client.export_secret` to derive keying material for channel encryption. */
+  /** WASM client wrapper - calls `this.client.export_secret` to derive keying material for channel encryption. */
   async exportSecret(
     groupId: string,
     label: string,
@@ -1101,7 +1101,7 @@ export class WebMlsService implements IMlsService {
     return this.client.export_secret(groupId, label, context, keyLen);
   }
 
-  /** WASM client wrapper — fetches Redis Stream history from the delivery service, optionally starting after a given stream ID. */
+  /** WASM client wrapper - fetches Redis Stream history from the delivery service, optionally starting after a given stream ID. */
   async fetchHistory(
     groupId: string,
     afterStreamId?: string
@@ -1114,13 +1114,13 @@ export class WebMlsService implements IMlsService {
     return this.deviceId;
   }
 
-  /** WASM client wrapper — returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
+  /** WASM client wrapper - returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
   getLocalGroups(): string[] {
     if (!this.client) return [];
     return Array.from(this.client.get_groups() as Iterable<string>);
   }
 
-  /** WASM client wrapper — returns the current MLS epoch for a group via `this.client.get_epoch`, or 0 if unavailable. */
+  /** WASM client wrapper - returns the current MLS epoch for a group via `this.client.get_epoch`, or 0 if unavailable. */
   getEpoch(groupId: string): number {
     if (!this.client) return 0;
     try {
@@ -1130,7 +1130,7 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  /** WASM client wrapper — calls `this.client.forget_group` to drop local MLS state for the given group. */
+  /** WASM client wrapper - calls `this.client.forget_group` to drop local MLS state for the given group. */
   forgetGroup(groupId: string, minEpoch = 0): void {
     if (!this.client) return;
     try {
@@ -1140,7 +1140,7 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  /** Poison Pill — purge définitive : mémoire WASM, stockage OpenMLS et verrou d'epoch à MAX. */
+  /** Poison Pill - purge définitive : mémoire WASM, stockage OpenMLS et verrou d'epoch à MAX. */
   dropGroup(groupId: string): void {
     if (!this.client) return;
     try {
@@ -1161,22 +1161,22 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  /** WASM client wrapper — PATCHes the group name on the delivery service. */
+  /** WASM client wrapper - PATCHes the group name on the delivery service. */
   async renameGroup(groupId: string, name: string): Promise<void> {
     return this.delivery.renameGroup(groupId, name);
   }
 
-  /** WASM client wrapper — DELETEs the group record from the delivery service. */
+  /** WASM client wrapper - DELETEs the group record from the delivery service. */
   async deleteGroupOnServer(groupId: string): Promise<boolean> {
     return this.delivery.deleteGroupOnServer(groupId);
   }
 
-  /** WASM client wrapper — removes a user's server-side membership from the group on the delivery service. */
+  /** WASM client wrapper - removes a user's server-side membership from the group on the delivery service. */
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
     return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
-  /** WASM client wrapper — calls `this.client.remove_members` to generate a remove commit for all devices of the given users, then broadcasts it. */
+  /** WASM client wrapper - calls `this.client.remove_members` to generate a remove commit for all devices of the given users, then broadcasts it. */
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
     // Build a JS Array for the WASM call
     const jsArray = userIds.reduce((arr, id) => {
@@ -1187,7 +1187,7 @@ export class WebMlsService implements IMlsService {
     await this.sendCommit(commitBytes, groupId);
   }
 
-  /** WASM client wrapper — calls `this.client.remove_members_by_device` to remove specific devices by identity string and broadcasts the resulting commit. */
+  /** WASM client wrapper - calls `this.client.remove_members_by_device` to remove specific devices by identity string and broadcasts the resulting commit. */
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
     const jsArray = deviceIdentities.reduce((arr, id) => {
       arr.push(id);
@@ -1197,22 +1197,22 @@ export class WebMlsService implements IMlsService {
     await this.sendCommit(commitBytes, groupId);
   }
 
-  /** WASM client wrapper — fetches the server-side member list for a group from the delivery service. */
+  /** WASM client wrapper - fetches the server-side member list for a group from the delivery service. */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     return this.delivery.getGroupMembers(groupId);
   }
 
-  /** WASM client wrapper — fetches all groups the given user belongs to from the delivery service. */
+  /** WASM client wrapper - fetches all groups the given user belongs to from the delivery service. */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     return this.delivery.getUserGroups(userId);
   }
 
-  /** WASM client wrapper — fetches server-side group metadata (successor routing). */
+  /** WASM client wrapper - fetches server-side group metadata (successor routing). */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     return this.delivery.getGroupMeta(groupId);
   }
 
-  /** WASM client wrapper — CAS claim for dead-group successor. */
+  /** WASM client wrapper - CAS claim for dead-group successor. */
   async claimGroupSuccessor(
     deadGroupId: string,
     successorId: string
@@ -1220,7 +1220,7 @@ export class WebMlsService implements IMlsService {
     return this.delivery.claimGroupSuccessor(deadGroupId, successorId);
   }
 
-  /** WASM client wrapper — retrieves pending device-group invitations for this device from the delivery service. */
+  /** WASM client wrapper - retrieves pending device-group invitations for this device from the delivery service. */
   async getPendingInvitations(
     userId: string,
     deviceId: string
@@ -1230,7 +1230,7 @@ export class WebMlsService implements IMlsService {
     return this.delivery.getPendingInvitations(userId, deviceId);
   }
 
-  /** WASM client wrapper — retrieves all device-group membership records for this device from the delivery service. */
+  /** WASM client wrapper - retrieves all device-group membership records for this device from the delivery service. */
   async getDeviceMemberships(
     userId: string,
     deviceId: string
@@ -1247,7 +1247,7 @@ export class WebMlsService implements IMlsService {
     return this.delivery.getDeviceMemberships(userId, deviceId);
   }
 
-  /** WASM client wrapper — POSTs an invitation status update (e.g. welcome_received) to the delivery service. */
+  /** WASM client wrapper - POSTs an invitation status update (e.g. welcome_received) to the delivery service. */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -1258,12 +1258,12 @@ export class WebMlsService implements IMlsService {
     return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status, lastEpochSeen);
   }
 
-  /** WASM client wrapper — resets a device-group membership to pending after an MLS remove commit targeting that device. */
+  /** WASM client wrapper - resets a device-group membership to pending after an MLS remove commit targeting that device. */
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
     return this.delivery.kickStaleDevice(deviceId, userId, groupId);
   }
 
-  /** WASM client wrapper — DELETEs a single device-group membership record from the delivery service. */
+  /** WASM client wrapper - DELETEs a single device-group membership record from the delivery service. */
   async deleteDeviceMembership(
     userId: string,
     deviceId: string,
@@ -1272,7 +1272,7 @@ export class WebMlsService implements IMlsService {
     return this.delivery.deleteDeviceMembership(userId, deviceId, groupId);
   }
 
-  /** WASM client wrapper — DELETEs all device-group membership records for a device from the delivery service. */
+  /** WASM client wrapper - DELETEs all device-group membership records for a device from the delivery service. */
   async deleteAllDeviceMemberships(
     userId: string,
     deviceId: string
@@ -1280,7 +1280,7 @@ export class WebMlsService implements IMlsService {
     return this.delivery.deleteAllDeviceMemberships(userId, deviceId);
   }
 
-  /** WASM client wrapper — fully removes a device from the delivery service, cleaning up groups, KeyPackages, and push token. */
+  /** WASM client wrapper - fully removes a device from the delivery service, cleaning up groups, KeyPackages, and push token. */
   async deleteDevice(
     userId: string,
     deviceId: string

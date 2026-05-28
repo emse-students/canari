@@ -208,7 +208,7 @@
       return;
     }
 
-    // Validation — only validate visible (non-conditional-hidden) questions
+    // Validation - only validate visible (non-conditional-hidden) questions
     for (const item of visibleItems) {
       const val = selections[item.id];
       if (item.required) {
@@ -248,7 +248,7 @@
       // Only submit answers for visible questions
       const visibleIds = new Set(visibleItems.map((i) => i.id));
       const visibleAnswers = Object.fromEntries(
-        Object.entries(selections).filter(([id]) => visibleIds.has(id)),
+        Object.entries(selections).filter(([id]) => visibleIds.has(id))
       );
       const res = await submitFormService(form.id, {
         email: '',
@@ -257,7 +257,7 @@
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
       if (res.checkoutUrl) {
-        // Payment required — check if user has saved payment methods
+        // Payment required - check if user has saved payment methods
         if (paymentMethods.length > 0 && res.submissionId) {
           pendingCheckoutUrl = res.checkoutUrl;
           pendingSubmissionId = res.submissionId;
@@ -312,7 +312,9 @@
         if (!val || typeof val !== 'object') return false;
         return (item.rows ?? []).every((row) => {
           const rv = (val as Record<string, any>)[row];
-          return rv !== '' && rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0);
+          return (
+            rv !== '' && rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0)
+          );
         });
       }
       return val !== '' && val !== undefined && val !== null;
@@ -362,26 +364,37 @@
 
   {#if loading}
     <div class="flex justify-center py-24">
-      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
   {:else if error && !form}
-    <div class="rounded-3xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center space-y-3">
+    <div
+      class="rounded-3xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center space-y-3"
+    >
       <p class="text-red-600 font-semibold">{error}</p>
-      <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}>Retour</button>
+      <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}
+        >Retour</button
+      >
     </div>
   {:else if form}
-
     <!-- ── Header ── -->
-    <div class="rounded-3xl overflow-hidden border border-cn-border bg-[var(--cn-surface)] shadow-sm mb-5">
+    <div
+      class="rounded-3xl overflow-hidden border border-cn-border bg-[var(--cn-surface)] shadow-sm mb-5"
+    >
       {#if form.imageUrl}
         <div class="relative">
           <img src={form.imageUrl} alt="" class="w-full max-h-72 object-cover" />
-          <div class="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/60 to-transparent"></div>
+          <div
+            class="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/60 to-transparent"
+          ></div>
           <div class="absolute bottom-0 inset-x-0 p-5 flex items-end gap-3">
             <div class="flex-1 min-w-0">
               <h1 class="text-2xl font-extrabold text-white leading-tight">{form.title}</h1>
               {#if form.basePrice > 0}
-                <span class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full">
+                <span
+                  class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full"
+                >
                   À partir de {formatCurrency(form.basePrice, form.currency)}
                 </span>
               {/if}
@@ -394,14 +407,18 @@
           </div>
         </div>
       {:else}
-        <div class="bg-gradient-to-br from-cn-yellow/10 via-transparent to-transparent px-6 pt-6 pb-4 flex items-start gap-4">
+        <div
+          class="bg-gradient-to-br from-cn-yellow/10 via-transparent to-transparent px-6 pt-6 pb-4 flex items-start gap-4"
+        >
           <div class="p-3 rounded-2xl bg-cn-yellow/20 text-cn-dark shrink-0">
             <ClipboardList size={26} />
           </div>
           <div class="flex-1 min-w-0">
             <h1 class="text-2xl font-extrabold text-text-main leading-tight">{form.title}</h1>
             {#if form.basePrice > 0}
-              <span class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full">
+              <span
+                class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full"
+              >
                 À partir de {formatCurrency(form.basePrice, form.currency)}
               </span>
             {/if}
@@ -456,7 +473,9 @@
 
     <!-- ── Not open yet ── -->
     {#if isNotOpenYet && form.opensAt}
-      <div class="rounded-2xl border border-amber-300/60 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-4 mb-4 flex items-center justify-between gap-4">
+      <div
+        class="rounded-2xl border border-amber-300/60 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-4 mb-4 flex items-center justify-between gap-4"
+      >
         <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
           Ouverture le {formatFormOpensAt(form.opensAt)}
         </p>
@@ -481,13 +500,17 @@
 
     <!-- ── Success ── -->
     {#if successMessage}
-      <div class="rounded-2xl border border-green-200 bg-green-50 dark:bg-green-950/20 px-5 py-4 mb-4 flex items-center gap-3">
+      <div
+        class="rounded-2xl border border-green-200 bg-green-50 dark:bg-green-950/20 px-5 py-4 mb-4 flex items-center gap-3"
+      >
         <div class="p-2 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-600 shrink-0">
           <Check size={20} />
         </div>
         <div>
           <p class="font-bold text-green-700 dark:text-green-300">{successMessage}</p>
-          <p class="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">Redirection en cours…</p>
+          <p class="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">
+            Redirection en cours…
+          </p>
         </div>
       </div>
     {/if}
@@ -498,7 +521,9 @@
         <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 shadow-sm">
           <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="flex items-start gap-2 mb-1.5">
-            <span class="text-[10px] font-bold text-text-muted bg-cn-border/50 rounded-md px-1.5 py-0.5 mt-0.5 shrink-0 tabular-nums">
+            <span
+              class="text-[10px] font-bold text-text-muted bg-cn-border/50 rounded-md px-1.5 py-0.5 mt-0.5 shrink-0 tabular-nums"
+            >
               {qi + 1}
             </span>
             <span class="text-sm font-bold text-text-main leading-snug">
@@ -542,7 +567,11 @@
               <option value="" disabled>Choisir une option…</option>
               {#each item.options ?? [] as opt (opt.id)}
                 <option value={opt.id}>
-                  {opt.label}{opt.priceModifier > 0 ? ` (+${formatCurrency(opt.priceModifier, form.currency)})` : opt.priceModifier < 0 ? ` (${formatCurrency(opt.priceModifier, form.currency)})` : ''}
+                  {opt.label}{opt.priceModifier > 0
+                    ? ` (+${formatCurrency(opt.priceModifier, form.currency)})`
+                    : opt.priceModifier < 0
+                      ? ` (${formatCurrency(opt.priceModifier, form.currency)})`
+                      : ''}
                 </option>
               {/each}
             </select>
@@ -551,7 +580,9 @@
               {#each item.options ?? [] as opt (opt.id)}
                 <label
                   class="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all
-                  {selections[item.id] === opt.id ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
+                  {selections[item.id] === opt.id
+                    ? 'border-cn-yellow bg-cn-yellow/8'
+                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
                   {submitted || isNotOpenYet ? 'opacity-60 cursor-not-allowed' : ''}"
                 >
                   <input
@@ -564,8 +595,13 @@
                   />
                   <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
                   {#if opt.priceModifier !== 0}
-                    <span class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0">
-                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(opt.priceModifier, form.currency)}
+                    <span
+                      class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0"
+                    >
+                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
+                        opt.priceModifier,
+                        form.currency
+                      )}
                     </span>
                   {/if}
                 </label>
@@ -576,7 +612,9 @@
               {#each item.options ?? [] as opt (opt.id)}
                 <label
                   class="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all
-                  {(selections[item.id] ?? []).includes(opt.id) ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
+                  {(selections[item.id] ?? []).includes(opt.id)
+                    ? 'border-cn-yellow bg-cn-yellow/8'
+                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
                   {submitted || isNotOpenYet ? 'opacity-60 cursor-not-allowed' : ''}"
                 >
                   <input
@@ -588,8 +626,13 @@
                   />
                   <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
                   {#if opt.priceModifier !== 0}
-                    <span class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0">
-                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(opt.priceModifier, form.currency)}
+                    <span
+                      class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0"
+                    >
+                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
+                        opt.priceModifier,
+                        form.currency
+                      )}
                     </span>
                   {/if}
                 </label>
@@ -601,7 +644,9 @@
                 <span>{item.scale?.minLabel || item.scale?.min}</span>
                 <span>{item.scale?.maxLabel || item.scale?.max}</span>
               </div>
-              <div class="flex items-stretch gap-1 rounded-2xl border-2 border-cn-border overflow-hidden bg-cn-bg">
+              <div
+                class="flex items-stretch gap-1 rounded-2xl border-2 border-cn-border overflow-hidden bg-cn-bg"
+              >
                 {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
                   <label
                     class="flex-1 flex flex-col items-center justify-center gap-1.5 py-3 cursor-pointer transition-all select-none
@@ -626,22 +671,42 @@
               <table class="w-full text-sm border-separate border-spacing-0">
                 <thead>
                   <tr class="bg-cn-border/20">
-                    <th class="w-1/3 min-w-[120px] sticky left-0 bg-[var(--cn-surface)] z-10 p-3"></th>
+                    <th class="w-1/3 min-w-[120px] sticky left-0 bg-[var(--cn-surface)] z-10 p-3"
+                    ></th>
                     {#each item.options ?? [] as col (col.id)}
-                      <th class="px-3 py-3 text-center font-bold text-xs text-text-muted uppercase tracking-wide min-w-[80px]">{col.label}</th>
+                      <th
+                        class="px-3 py-3 text-center font-bold text-xs text-text-muted uppercase tracking-wide min-w-[80px]"
+                        >{col.label}</th
+                      >
                     {/each}
                   </tr>
                 </thead>
                 <tbody>
                   {#each item.rows ?? [] as row (row)}
                     <tr class="hover:bg-cn-border/10 transition-colors">
-                      <td class="py-3 px-3 font-medium text-sm text-text-main sticky left-0 bg-[var(--cn-surface)] z-10 border-t border-cn-border">{row}</td>
+                      <td
+                        class="py-3 px-3 font-medium text-sm text-text-main sticky left-0 bg-[var(--cn-surface)] z-10 border-t border-cn-border"
+                        >{row}</td
+                      >
                       {#each item.options ?? [] as col (col.id)}
                         <td class="text-center py-3 border-t border-cn-border">
                           {#if item.type === 'matrix_single'}
-                            <input type="radio" name={`matrix-${form.id}-${item.id}-${row}`} value={col.id} bind:group={selections[item.id][row]} class="h-4 w-4 accent-cn-yellow" disabled={submitted || isNotOpenYet} />
+                            <input
+                              type="radio"
+                              name={`matrix-${form.id}-${item.id}-${row}`}
+                              value={col.id}
+                              bind:group={selections[item.id][row]}
+                              class="h-4 w-4 accent-cn-yellow"
+                              disabled={submitted || isNotOpenYet}
+                            />
                           {:else}
-                            <input type="checkbox" value={col.id} bind:group={selections[item.id][row]} class="h-4 w-4 accent-cn-yellow" disabled={submitted || isNotOpenYet} />
+                            <input
+                              type="checkbox"
+                              value={col.id}
+                              bind:group={selections[item.id][row]}
+                              class="h-4 w-4 accent-cn-yellow"
+                              disabled={submitted || isNotOpenYet}
+                            />
                           {/if}
                         </td>
                       {/each}
@@ -662,17 +727,39 @@
     <!-- ── Payment method (cash vs Stripe) ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <div class="mt-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5">
-        <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-3">Mode de paiement</p>
+        <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-3">
+          Mode de paiement
+        </p>
         <div class="grid grid-cols-2 gap-2">
-          <label class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice === 'stripe' ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/50'}">
-            <input type="radio" bind:group={paymentMethodChoice} value="stripe" class="accent-cn-yellow" />
+          <label
+            class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice ===
+            'stripe'
+              ? 'border-cn-yellow bg-cn-yellow/8'
+              : 'border-cn-border hover:border-cn-yellow/50'}"
+          >
+            <input
+              type="radio"
+              bind:group={paymentMethodChoice}
+              value="stripe"
+              class="accent-cn-yellow"
+            />
             <div>
               <p class="text-sm font-semibold text-text-main">En ligne</p>
               <p class="text-xs text-text-muted">Carte / wallet</p>
             </div>
           </label>
-          <label class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice === 'cash' ? 'border-cn-yellow bg-cn-yellow/8' : 'border-cn-border hover:border-cn-yellow/50'}">
-            <input type="radio" bind:group={paymentMethodChoice} value="cash" class="accent-cn-yellow" />
+          <label
+            class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice ===
+            'cash'
+              ? 'border-cn-yellow bg-cn-yellow/8'
+              : 'border-cn-border hover:border-cn-yellow/50'}"
+          >
+            <input
+              type="radio"
+              bind:group={paymentMethodChoice}
+              value="cash"
+              class="accent-cn-yellow"
+            />
             <div>
               <p class="text-sm font-semibold text-text-main">En espèces</p>
               <p class="text-xs text-text-muted">Validé par un admin</p>
@@ -684,26 +771,35 @@
 
     <!-- ── Error ── -->
     {#if error}
-      <div class="mt-4 rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300">
+      <div
+        class="mt-4 rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300"
+      >
         {error}
       </div>
     {/if}
-
   {/if}
 </div>
 
 <!-- ── Sticky bottom bar ── -->
 {#if form && !loading}
-  <div class="keyboard-aware-bottom fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5">
+  <div
+    class="keyboard-aware-bottom fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
+  >
     <div class="max-w-2xl mx-auto px-4">
-      <div class="pointer-events-auto rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/90 backdrop-blur-xl shadow-lg px-4 py-3 flex items-center gap-3">
+      <div
+        class="pointer-events-auto rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/90 backdrop-blur-xl shadow-lg px-4 py-3 flex items-center gap-3"
+      >
         <div class="flex-1 min-w-0">
           {#if submitted}
-            <span class="text-sm font-bold text-green-600 flex items-center gap-1.5"><Check size={16} /> Réponse envoyée</span>
+            <span class="text-sm font-bold text-green-600 flex items-center gap-1.5"
+              ><Check size={16} /> Réponse envoyée</span
+            >
           {:else if calculateTotal() > 0}
             <div>
               <p class="text-xs text-text-muted font-medium">Total à payer</p>
-              <p class="text-lg font-extrabold text-cn-dark">{formatCurrency(calculateTotal(), form.currency)}</p>
+              <p class="text-lg font-extrabold text-cn-dark">
+                {formatCurrency(calculateTotal(), form.currency)}
+              </p>
             </div>
           {:else}
             <span class="text-sm text-text-muted">{form.submitLabel || 'Envoyer'}</span>
@@ -718,7 +814,10 @@
           {#if submitted}
             <Check size={16} class="mr-1.5" />Envoyé
           {:else if calculateTotal() > 0}
-            <CreditCard size={16} class="mr-1.5" />Payer {formatCurrency(calculateTotal(), form.currency)}
+            <CreditCard size={16} class="mr-1.5" />Payer {formatCurrency(
+              calculateTotal(),
+              form.currency
+            )}
           {:else}
             <Check size={16} class="mr-1.5" />{form.submitLabel || 'Envoyer'}
           {/if}

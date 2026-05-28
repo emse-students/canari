@@ -10,7 +10,10 @@
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
   import LogsPanel from '$lib/components/dev/LogsPanel.svelte';
   import { page } from '$app/state';
-  import { initHistoryOverlayStack, drainHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
+  import {
+    initHistoryOverlayStack,
+    drainHistoryOverlayStack,
+  } from '$lib/utils/historyOverlayStack';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
   import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -30,17 +33,25 @@
   // NOUVEAUX IMPORTS POUR LE PUSH :
   import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
+  import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
 
   let { children } = $props();
 
   const pathname = $derived(page.url.pathname);
   const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
 
+  const pageTitle = $derived(
+    (() => {
+      const activePlaceId = resolveActivePlaceId(pathname);
+      const place = APP_PLACES.find((p) => p.id === activePlaceId);
+      return place ? `${place.label} - Canari` : 'Canari';
+    })()
+  );
+
   // Hide BottomNav and remove its padding from the composer when a conversation
   // is open on mobile (only relevant on the chat / communities routes).
   const isMobileConvoOpen = $derived(
-    (pathname === '/chat' || pathname === '/communities') &&
-      globalConvs.mobileView === 'chat'
+    (pathname === '/chat' || pathname === '/communities') && globalConvs.mobileView === 'chat'
   );
 
   $effect(() => {
@@ -48,7 +59,7 @@
     return () => document.documentElement.classList.remove('mobile-convo-open');
   });
 
-  // ── Logs panel (global — fonctionne sur toutes les routes) ──────────────────
+  // ── Logs panel (global - fonctionne sur toutes les routes) ──────────────────
   let showLogs = $state(false);
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
@@ -58,8 +69,7 @@
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';
-    const leavingMessaging =
-      fromPath === '/chat' || fromPath === '/communities';
+    const leavingMessaging = fromPath === '/chat' || fromPath === '/communities';
     const enteringMessaging = toPath === '/chat' || toPath === '/communities';
     if (leavingMessaging && enteringMessaging && fromPath !== toPath) {
       globalConvs.selectedContact = null;
@@ -113,16 +123,15 @@
       // avant de faire popper la demande d'autorisation native.
       const timer = setTimeout(() => {
         startPushService(
-          globalSession.historyBaseUrl || "https://canari-emse.fr",
+          globalSession.historyBaseUrl || 'https://canari-emse.fr',
           globalSession.authToken,
           globalSession.myDeviceId
-        ).catch(err => console.error("[Push] Erreur d'initialisation:", err));
+        ).catch((err) => console.error("[Push] Erreur d'initialisation:", err));
       }, 500);
 
       return () => clearTimeout(timer);
     }
   });
-
 
   // ── Swipe navigation (mobile uniquement) ───────────────────────────────────
   let pageScrollWrap = $state<HTMLDivElement | null>(null);
@@ -163,11 +172,7 @@
     if (!swipeGesture || swipeGesture.phase === 'ignored' || !pageScrollWrap) return;
     if (!isSwipeNavActive(swipeNavContext())) return;
 
-    const updated = updateSwipeNavGesture(
-      swipeGesture,
-      e.touches[0].clientX,
-      e.touches[0].clientY
-    );
+    const updated = updateSwipeNavGesture(swipeGesture, e.touches[0].clientX, e.touches[0].clientY);
     swipeGesture = updated;
 
     if (updated.phase !== 'horizontal') return;
@@ -261,6 +266,10 @@
   }
 </script>
 
+<svelte:head>
+  <title>{pageTitle}</title>
+</svelte:head>
+
 <a href="#main-content" class="skip-link">Aller au contenu principal</a>
 
 <AppUpdateModal />
@@ -276,12 +285,11 @@
   <ChatBackgroundService />
 
   <!-- Sidebar (navigation principale) -->
-   {#if !isLoginPage}
+  {#if !isLoginPage}
     <AppSidebar />
   {/if}
 
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
-
     {#if !isLoginPage && !isKeyboardOpen}
       <Navbar />
     {/if}

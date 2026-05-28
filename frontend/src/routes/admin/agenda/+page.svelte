@@ -16,7 +16,7 @@
   let error = $state('');
   let actingId = $state<string | null>(null);
 
-  /** Event currently being rejected — drives the reject modal. */
+  /** Event currently being rejected - drives the reject modal. */
   let rejectTarget = $state<AssociationCalendarFeedEvent | null>(null);
   let rejectReason = $state('');
   let rejecting = $state(false);
@@ -49,7 +49,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} — ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   async function validate(ev: AssociationCalendarFeedEvent) {
@@ -73,7 +73,11 @@
     if (!rejectTarget) return;
     rejecting = true;
     try {
-      await rejectAssociationCalendarEvent(rejectTarget.associationId, rejectTarget.id, rejectReason);
+      await rejectAssociationCalendarEvent(
+        rejectTarget.associationId,
+        rejectTarget.id,
+        rejectReason
+      );
       rejectTarget = null;
       await load();
     } catch (e) {
@@ -208,7 +212,9 @@
         le motif dans sa page.
       </p>
       <div class="space-y-1.5">
-        <span class="text-xs font-semibold text-text-muted uppercase tracking-wide">Motif (optionnel)</span>
+        <span class="text-xs font-semibold text-text-muted uppercase tracking-wide"
+          >Motif (optionnel)</span
+        >
         <Textarea
           bind:value={rejectReason}
           rows={3}
@@ -219,7 +225,9 @@
       <div class="flex gap-2 justify-end">
         <button
           type="button"
-          onclick={() => { rejectTarget = null; }}
+          onclick={() => {
+            rejectTarget = null;
+          }}
           class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
         >
           Annuler

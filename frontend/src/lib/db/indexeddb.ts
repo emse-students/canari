@@ -55,7 +55,7 @@ export class IndexedDbStorage implements IStorage {
 
         if (oldVersion < 4) {
           // Encryption format changed from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM
-          // (SubtleCrypto). Old ciphertext is unreadable — drop all message rows.
+          // (SubtleCrypto). Old ciphertext is unreadable - drop all message rows.
           // Conversations are kept; messages will be re-fetched from the server.
           if (db.objectStoreNames.contains('messages')) {
             db.deleteObjectStore('messages');
@@ -85,7 +85,7 @@ export class IndexedDbStorage implements IStorage {
                 convStore.add({ ...rest, id: newId });
                 cursor.delete();
               } else {
-                // Same key — just strip groupId field if present
+                // Same key - just strip groupId field if present
                 if ('groupId' in old) {
                   const { groupId: _drop, ...rest } = old as any;
                   cursor.update(rest);
@@ -134,7 +134,7 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  /** Return all stored conversation metadata rows (unordered — callers should sort). */
+  /** Return all stored conversation metadata rows (unordered - callers should sort). */
   async getConversations(): Promise<ConversationMeta[]> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {

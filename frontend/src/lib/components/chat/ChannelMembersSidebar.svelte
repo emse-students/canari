@@ -96,7 +96,7 @@
           class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2"
         >
           <ShieldAlert size={14} class="text-amber-500" strokeWidth={2.5} />
-          Administrateurs — {admins.length}
+          Administrateurs - {admins.length}
         </h3>
         <div class="space-y-1.5">
           {#each admins as member (member.id)}
@@ -131,7 +131,7 @@
           class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2"
         >
           <User size={14} class="text-text-muted/70" strokeWidth={2.5} />
-          Membres — {regulars.length}
+          Membres - {regulars.length}
         </h3>
         <div class="space-y-1.5">
           {#each regulars as member (member.id)}

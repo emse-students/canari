@@ -37,7 +37,7 @@ function mlsWasmStub() {
     load(id) {
       if (id === VIRTUAL_ID) {
         return `export async function loadAndInitWasm() {
-  throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds — TauriMlsService should be used instead.');
+  throw new Error('[mls-wasm-stub] WASM is not available in Tauri builds - TauriMlsService should be used instead.');
 }`;
       }
     },
@@ -68,7 +68,7 @@ export default defineConfig(async () => ({
   plugins: [mlsWasmStub(), tailwindcss(), sveltekit(), protobufPatch()],
 
   // Pre-bundle Tauri/heavy deps at startup so Vite never re-optimizes them
-  // mid-session — which triggers an HMR full-reload that Android WebView
+  // mid-session - which triggers an HMR full-reload that Android WebView
   // cannot handle (Failed to fetch dynamically imported module).
   optimizeDeps: {
     include: [
@@ -151,7 +151,7 @@ export default defineConfig(async () => ({
       '/api/forms': { target: 'http://localhost:3014', changeOrigin: true },
       '/api/associations': { target: 'http://localhost:3014', changeOrigin: true },
 
-      // WebSocket proxy — /api/ws must be listed before the /ws fallback
+      // WebSocket proxy - /api/ws must be listed before the /ws fallback
       '/api/ws': {
         target: 'ws://localhost:3000',
         ws: true,

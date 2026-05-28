@@ -2,7 +2,7 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index, Unique
 
 /**
  * Discord-style permission flags for association members.
- * Each flag is an independent capability — combine with bitwise OR.
+ * Each flag is an independent capability - combine with bitwise OR.
  */
 export enum AssociationPermissionFlag {
   /** Post content on behalf of the association (not as an individual). */

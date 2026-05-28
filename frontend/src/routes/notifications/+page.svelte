@@ -13,13 +13,14 @@
   });
 
   function openNotification(notif: PostNotification) {
-    const url = notif.type === 'form_reminder' ? `/forms/${notif.postId}` : `/posts/${notif.postId}`;
+    const url =
+      notif.type === 'form_reminder' ? `/forms/${notif.postId}` : `/posts/${notif.postId}`;
     void goto(url);
   }
 </script>
 
 <svelte:head>
-  <title>Notifications — Canari</title>
+  <title>Notifications - Canari</title>
 </svelte:head>
 
 <main class="max-w-xl mx-auto px-4 py-6 pb-24 md:pb-8">
@@ -55,7 +56,9 @@
             <span
               class="shrink-0 mt-0.5 flex items-center justify-center w-10 h-10 rounded-full
                 {notif.type === 'reaction' ? 'bg-pink-500/10 text-pink-500' : ''}
-                {notif.type === 'mention' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : ''}
+                {notif.type === 'mention'
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                : ''}
                 {notif.type === 'reply' ? 'bg-blue-500/10 text-blue-500' : ''}
                 {notif.type === 'comment' ? 'bg-green-500/10 text-green-600' : ''}
                 {notif.type === 'form_reminder' ? 'bg-purple-500/10 text-purple-500' : ''}"
@@ -86,7 +89,9 @@
                 {:else if notif.type === 'form_reminder'}
                   <span class="text-text-muted"> {notif.text}</span>
                 {:else}
-                  <span class="text-text-muted"> a commenté : <span class="italic">{notif.text}</span></span>
+                  <span class="text-text-muted">
+                    a commenté : <span class="italic">{notif.text}</span></span
+                  >
                 {/if}
               </p>
               <p class="text-xs text-text-muted mt-1">{formatRelative(notif.createdAt)}</p>

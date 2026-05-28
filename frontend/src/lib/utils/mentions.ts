@@ -1,10 +1,10 @@
 /**
- * User id inside `@[…]` — 64 lowercase hex chars (OIDC sub, no dashes).
+ * User id inside `@[…]` - 64 lowercase hex chars (OIDC sub, no dashes).
  * @see {@link EXAMPLE_MENTION_USER_ID}
  */
 export const MENTION_USER_ID_PATTERN = '[0-9a-f]{64}';
 
-/** Example OIDC sub (64 hex, no dashes) — use in tests and docs. */
+/** Example OIDC sub (64 hex, no dashes) - use in tests and docs. */
 export const EXAMPLE_MENTION_USER_ID =
   'd82cd2268993451edb547bdd7ff278447f6619f67d0d73a520897e54f0714df2';
 

@@ -211,7 +211,7 @@
                       {percentage}%
                     </span>
                   {/if}
-                  <!-- Vote count badge — hover/tap to see voter names -->
+                  <!-- Vote count badge - hover/tap to see voter names -->
                   <div
                     role="button"
                     tabindex="0"
@@ -262,7 +262,7 @@
   </div>
 {/if}
 
-<!-- Fixed-position tooltip portal — renders above overflow-hidden containers -->
+<!-- Fixed-position tooltip portal - renders above overflow-hidden containers -->
 {#if tooltipOptionId && tooltipPos}
   {@const names = voterNames[tooltipOptionId]}
   <div

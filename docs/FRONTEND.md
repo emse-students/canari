@@ -86,16 +86,16 @@ Gère la session utilisateur et les tokens :
 
 ```typescript
 // État
-export const currentUser: Writable<User | null>
-export const accessToken: Writable<string | null>
+export const currentUser: Writable<User | null>;
+export const accessToken: Writable<string | null>;
 
 // Actions
-export function setWsSessionCookie(token: string): void
+export function setWsSessionCookie(token: string): void;
 // → document.cookie = 'canari_ws_token=...; SameSite=Lax; path=/'
-export function clearWsSessionCookie(): void
+export function clearWsSessionCookie(): void;
 
-export async function refreshAccessToken(): Promise<string | null>
-export async function logout(): Promise<void>
+export async function refreshAccessToken(): Promise<string | null>;
+export async function logout(): Promise<void>;
 ```
 
 Le token JWT est stocké **en mémoire** uniquement (pas localStorage). Le cookie `canari_ws_token` est synchronisé à chaque set/refresh du token pour permettre l'authentification WebSocket.
@@ -105,13 +105,13 @@ Le token JWT est stocké **en mémoire** uniquement (pas localStorage). Le cooki
 L'état des conversations n'est plus un store Svelte 4. Il vit dans une `SvelteMap<string, Conversation>` locale aux composables, instanciée par `MainChatPage.svelte` et `ChatBackgroundService.svelte`.
 
 ```typescript
-// types/index.ts — types centraux
+// types/index.ts - types centraux
 interface Conversation {
-  id: string;           // groupId MLS
-  name: string;         // nom affiché
-  contactName: string;  // identifiant de contact (ex : email normalisé)
+  id: string; // groupId MLS
+  name: string; // nom affiché
+  contactName: string; // identifiant de contact (ex : email normalisé)
   messages: ChatMessage[];
-  isReady: boolean;     // groupe MLS prêt (Welcome reçu)
+  isReady: boolean; // groupe MLS prêt (Welcome reçu)
   mlsStateHex: string | null;
   unreadCount?: number;
   conversationType?: 'direct' | 'group' | 'channel';
@@ -122,7 +122,7 @@ interface Conversation {
 interface ChatMessage {
   id: string;
   senderId: string;
-  content: string;        // JSON sérialisé d'un MessageEnvelope
+  content: string; // JSON sérialisé d'un MessageEnvelope
   timestamp: Date;
   editedAt?: Date;
   isOwn: boolean;
@@ -137,9 +137,10 @@ interface ChatMessage {
 ```
 
 Les trois composables s'utilisent ensemble :
-- `useConversations` — CRUD conversations, sélection active, scroll, pagination
-- `useMessaging` — envoi/réception de messages, réactions, édition, suppression, médias
-- `useChatSession` — orchestration globale (login, reconnect, WebSocket, sync multi-device)
+
+- `useConversations` - CRUD conversations, sélection active, scroll, pagination
+- `useMessaging` - envoi/réception de messages, réactions, édition, suppression, médias
+- `useChatSession` - orchestration globale (login, reconnect, WebSocket, sync multi-device)
 
 ---
 
@@ -148,6 +149,7 @@ Les trois composables s'utilisent ensemble :
 ### /login
 
 Page de connexion. Deux modes :
+
 - **OIDC** : bouton "Se connecter avec Authentik" → `startOidcLogin()`
 - **Dev** : formulaire email/password (si `ENABLE_DEV_ROUTES=true` côté serveur)
 
@@ -158,12 +160,14 @@ Reçoit le `code` OIDC, vérifie le `state`, appelle `POST /api/auth/oidc/callba
 ### /chat
 
 Interface de messagerie MLS. Composants principaux :
-- `ChatArea.svelte` — zone principale (header + messages + composer)
-- `ChatComposer.svelte` — zone de saisie avec gestion du clavier mobile
-- `ChatMessageGroups.svelte` — rendu des messages groupés par date
-- `MessageBubble.svelte` — bulle de message avec read receipts, search highlight, reply
+
+- `ChatArea.svelte` - zone principale (header + messages + composer)
+- `ChatComposer.svelte` - zone de saisie avec gestion du clavier mobile
+- `ChatMessageGroups.svelte` - rendu des messages groupés par date
+- `MessageBubble.svelte` - bulle de message avec read receipts, search highlight, reply
 
 Fonctionnalités UI :
+
 - **Focus writing mode** : le header se masque quand le compositeur est actif sur mobile
 - **Indicateur de date sticky** : la date courante reste visible lors du scroll
 - **Recherche in-chat** : barre de recherche avec navigation prev/next et surlignage
@@ -189,9 +193,9 @@ Le layout racine (`+layout.svelte`) détecte l'ouverture du clavier virtuel via 
 // Seuil adaptatif selon la plateforme
 function keyboardOpenThresholdPx(): number {
   const ua = navigator.userAgent;
-  if (/iPhone|iPad|iPod/.test(ua)) return 100;   // iOS
-  if (/Android/.test(ua)) return 140;             // Android
-  return 120;                                      // Fallback
+  if (/iPhone|iPad|iPod/.test(ua)) return 100; // iOS
+  if (/Android/.test(ua)) return 140; // Android
+  return 120; // Fallback
 }
 
 // Détection
@@ -202,6 +206,7 @@ visualViewport?.addEventListener('resize', () => {
 ```
 
 Quand `isKeyboardOpen = true` :
+
 - `pb-14` (padding pour la bottom nav) est retiré
 - La bottom nav est masquée
 - La variable CSS `--keyboard-height` est mise à jour
@@ -238,6 +243,7 @@ class WebMlsService implements IMlsService {
 `frontend/src-tauri/` contient la configuration Tauri 2.
 
 Différences avec la version web :
+
 - `TauriMlsService` utilise `invoke()` au lieu de WASM (exécution native Rust)
 - L'état MLS est stocké sur le filesystem (pas localStorage)
 - Les requêtes HTTP utilisent `@tauri-apps/plugin-http` pour bypasser les restrictions CORS
@@ -245,9 +251,10 @@ Différences avec la version web :
 - La build génère des installateurs (`.exe`/`.dmg`/`.AppImage`)
 
 Commandes Tauri disponibles (définies dans `src-tauri/src/`) :
-- `mls_init` — initialise le client MLS
-- `mls_send_message` — chiffre et retourne un ciphertext
-- `mls_process_message` — déchiffre un message entrant
+
+- `mls_init` - initialise le client MLS
+- `mls_send_message` - chiffre et retourne un ciphertext
+- `mls_process_message` - déchiffre un message entrant
 - `mls_create_group` / `mls_add_members_bulk` / `mls_process_welcome`
 - `mls_generate_key_package`
 
@@ -257,19 +264,19 @@ Commandes Tauri disponibles (définies dans `src-tauri/src/`) :
 
 Injectées via `VITE_*` au moment du build (GitHub Actions ou `frontend/.env` local) :
 
-| Variable | Description |
-|---|---|
-| `VITE_GATEWAY_URL` | URL du chat-gateway (WebSocket) |
-| `VITE_DELIVERY_URL` | URL du chat-delivery-service |
-| `VITE_MEDIA_URL` | URL du media-service |
-| `VITE_CORE_URL` | URL du core-service |
-| `VITE_SOCIAL_URL` | URL du social-service |
-| `VITE_OIDC_AUTHORITY` | URL Authentik |
-| `VITE_OIDC_CLIENT_ID` | Client ID OIDC |
-| `VITE_OIDC_REDIRECT_URI` | URI de callback OIDC |
-| `PUBLIC_JWT_SECRET` | Secret JWT (injecté via Vite, utilisé côté client pour la vérification) |
+| Variable                 | Description                                                             |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `VITE_GATEWAY_URL`       | URL du chat-gateway (WebSocket)                                         |
+| `VITE_DELIVERY_URL`      | URL du chat-delivery-service                                            |
+| `VITE_MEDIA_URL`         | URL du media-service                                                    |
+| `VITE_CORE_URL`          | URL du core-service                                                     |
+| `VITE_SOCIAL_URL`        | URL du social-service                                                   |
+| `VITE_OIDC_AUTHORITY`    | URL Authentik                                                           |
+| `VITE_OIDC_CLIENT_ID`    | Client ID OIDC                                                          |
+| `VITE_OIDC_REDIRECT_URI` | URI de callback OIDC                                                    |
+| `PUBLIC_JWT_SECRET`      | Secret JWT (injecté via Vite, utilisé côté client pour la vérification) |
 
-> **Attention** : `PUBLIC_JWT_SECRET` est embarqué dans le bundle JS. Il ne s'agit pas d'un secret strictement confidentiel côté client — la sécurité repose sur la validation serveur.
+> **Attention** : `PUBLIC_JWT_SECRET` est embarqué dans le bundle JS. Il ne s'agit pas d'un secret strictement confidentiel côté client - la sécurité repose sur la validation serveur.
 
 ---
 
@@ -294,5 +301,5 @@ bun run check       # svelte-check (TypeScript + Svelte)
 
 - Extension `.svelte` pour les composants, `.svelte.ts` pour les composables avec state Svelte 5
 - Props via destructuring `$props()` avec types TypeScript explicites
-- Événements via callbacks dans les props (`onReply`, `onEdit`, etc.) — pas de `dispatch`
+- Événements via callbacks dans les props (`onReply`, `onEdit`, etc.) - pas de `dispatch`
 - Classes CSS : Tailwind utilities en priorité, classes nommées dans `app.css` pour les patterns répétés

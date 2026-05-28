@@ -188,7 +188,7 @@
       if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
       postsOverride = [...currentPosts, ...more];
     } catch {
-      // silent — user can scroll back up and retry
+      // silent - user can scroll back up and retry
     } finally {
       loadingMore = false;
     }

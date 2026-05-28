@@ -20,7 +20,7 @@ export interface RecoveryDeps {
   setSelectedContact: (id: string | null) => void;
   /** Persist a conversation to the local DB. */
   saveConversation: (key: string) => Promise<void>;
-  /** Delete a conversation from the local DB (optional — skipped if not provided). */
+  /** Delete a conversation from the local DB (optional - skipped if not provided). */
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }
@@ -29,7 +29,7 @@ export interface RecoveryDeps {
  * Orchestrates the full recovery flow for a dead MLS group.
  *
  * Algorithm:
- * 1. Check server state — if a successor is already set, skip creation and go straight to migration.
+ * 1. Check server state - if a successor is already set, skip creation and go straight to migration.
  * 2. Create a candidate successor group on the server and locally.
  * 3. Atomically claim the successor (CAS: first writer wins).
  *    - If we won: invite all old group members to the new group.
@@ -40,7 +40,7 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
   const { mlsService, userId, pin, conversations, log } = deps;
   log(`[RECOVER] Lancement récupération groupe ${deadGroupId}`);
 
-  // Step 1 — Check if another device already claimed a successor
+  // Step 1 - Check if another device already claimed a successor
   const meta = await mlsService.getGroupMeta(deadGroupId);
   let successorId: string | null = meta?.successorId ?? null;
 
@@ -49,7 +49,7 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
     const groupName = deadConvo?.name ?? meta?.name ?? '';
     const isGroup = meta?.isGroup ?? true;
 
-    // Step 2 — Create a candidate successor on the server
+    // Step 2 - Create a candidate successor on the server
     let ourCandidateId: string | null = null;
     try {
       ourCandidateId = await mlsService.createRemoteGroup(groupName, isGroup);
@@ -69,32 +69,32 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
       throw e;
     }
 
-    // Step 3 — Atomic CAS: first writer wins
+    // Step 3 - Atomic CAS: first writer wins
     const claim = await mlsService.claimGroupSuccessor(deadGroupId, ourCandidateId);
 
     let weWon = false;
     if (!claim.claimed) {
-      // Another device won — delete our orphan and use the real successor
+      // Another device won - delete our orphan and use the real successor
       log(
-        `[RECOVER] Course perdue — suppression orphelin ${ourCandidateId}, migration vers ${claim.successorId}`
+        `[RECOVER] Course perdue - suppression orphelin ${ourCandidateId}, migration vers ${claim.successorId}`
       );
       await mlsService.deleteGroupOnServer(ourCandidateId).catch(() => {});
       mlsService.forgetGroup(ourCandidateId, 0);
       successorId = claim.successorId;
     } else {
-      // We won — invite all members of the dead group to the successor
+      // We won - invite all members of the dead group to the successor
       weWon = true;
       successorId = ourCandidateId;
-      log(`[RECOVER] Course gagnée — invitation membres dans ${successorId}`);
+      log(`[RECOVER] Course gagnée - invitation membres dans ${successorId}`);
       await inviteOldMembers(deadGroupId, successorId, deps).catch((e) =>
         log(`[RECOVER] Erreur invitation membres : ${String(e)}`)
       );
     }
 
-    // Step 4 — Migrate local conversation to successor
+    // Step 4 - Migrate local conversation to successor
     if (successorId) {
       await migrateConversation(deadGroupId, successorId, deps);
-      // The winner already has local MLS state (createGroup ran above) — mark ready immediately.
+      // The winner already has local MLS state (createGroup ran above) - mark ready immediately.
       if (weWon) {
         const newConvo = deps.conversations.get(successorId);
         if (newConvo) {
@@ -105,7 +105,7 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
       }
     }
   } else {
-    // Step 4 — successorId was already set server-side: just migrate locally
+    // Step 4 - successorId was already set server-side: just migrate locally
     await migrateConversation(deadGroupId, successorId, deps);
   }
 }
@@ -145,7 +145,7 @@ async function inviteOldMembers(
 
   if (allDevices.length === 0) {
     log(
-      '[RECOVER] Aucun appareil disponible pour les membres — ils recevront une invitation plus tard.'
+      '[RECOVER] Aucun appareil disponible pour les membres - ils recevront une invitation plus tard.'
     );
     return;
   }
@@ -153,7 +153,7 @@ async function inviteOldMembers(
   const lockAcquired = await mlsService.acquireAddLock(successorId).catch(() => false);
   if (!lockAcquired) {
     log(
-      "[RECOVER] Impossible d'acquérir le verrou add-lock — abandon invitation (un autre appareil s'en charge)"
+      "[RECOVER] Impossible d'acquérir le verrou add-lock - abandon invitation (un autre appareil s'en charge)"
     );
     return;
   }
@@ -214,17 +214,17 @@ export async function migrateConversation(
 
   const oldConvo = conversations.get(fromGroupId);
   if (!oldConvo) {
-    log(`[MIGRATE] Conversation source ${fromGroupId} introuvable — skip`);
+    log(`[MIGRATE] Conversation source ${fromGroupId} introuvable - skip`);
     return;
   }
 
   // Court-circuit : si le groupe source a été purgé via drop_group (Poison Pill),
   // getEpoch lève une exception car le groupe n'est plus dans l'état WASM.
-  // Dans ce cas la migration n'a plus de sens — on abandonne sans erreur.
+  // Dans ce cas la migration n'a plus de sens - on abandonne sans erreur.
   try {
     mlsService.getEpoch(fromGroupId);
   } catch {
-    log(`[MIGRATE] Court-circuit : état MLS ${fromGroupId} purgé (drop_group) — migration annulée`);
+    log(`[MIGRATE] Court-circuit : état MLS ${fromGroupId} purgé (drop_group) - migration annulée`);
     return;
   }
 
@@ -238,7 +238,7 @@ export async function migrateConversation(
   const targetAlreadyReady = existingToConvo?.isReady === true || localGroups.includes(toGroupId);
 
   if (targetAlreadyReady) {
-    log(`[MIGRATE] Cible ${toGroupId} déjà prête en local — isReady préservé`);
+    log(`[MIGRATE] Cible ${toGroupId} déjà prête en local - isReady préservé`);
   }
 
   if (storage) {
@@ -265,7 +265,7 @@ export async function migrateConversation(
       .catch((e) => log(`[MIGRATE] Erreur sauvegarde conversation : ${String(e)}`));
   }
 
-  // Update reactive map — merge with existing target state when it was already ready,
+  // Update reactive map - merge with existing target state when it was already ready,
   // otherwise mark as not-ready until a Welcome arrives.
   const mergedConvo: Conversation = existingToConvo
     ? { ...existingToConvo, name: oldConvo.name, isReady: targetAlreadyReady }
@@ -291,7 +291,7 @@ export async function migrateConversation(
   }
 
   await saveConversation(toGroupId);
-  log(`[MIGRATE] Terminé — "${oldConvo.name}" vit maintenant dans ${toGroupId}`);
+  log(`[MIGRATE] Terminé - "${oldConvo.name}" vit maintenant dans ${toGroupId}`);
 }
 
 /**
@@ -316,7 +316,7 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
   try {
     serverGroups = await mlsService.getUserGroups(userId);
   } catch {
-    return; // server unreachable — skip silently
+    return; // server unreachable - skip silently
   }
 
   for (const g of serverGroups) {
@@ -326,13 +326,13 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
     // ── Migration ────────────────────────────────────────────────────────────
     if (conversations.has(g.groupId) && !conversations.has(successorId)) {
       // Not yet migrated on this device
-      log(`[HEALTH] Successeur détecté ${g.groupId} → ${successorId} — migration`);
+      log(`[HEALTH] Successeur détecté ${g.groupId} → ${successorId} - migration`);
       await migrateConversation(g.groupId, successorId, deps).catch((e) =>
         log(`[HEALTH] Erreur migration : ${String(e)}`)
       );
     } else if (conversations.has(g.groupId)) {
-      // Already migrated — remove the stale old entry
-      log(`[HEALTH] ${g.groupId} déjà migré vers ${successorId} — nettoyage`);
+      // Already migrated - remove the stale old entry
+      log(`[HEALTH] ${g.groupId} déjà migré vers ${successorId} - nettoyage`);
       conversations.delete(g.groupId);
       if (deps.deleteConversation) await deps.deleteConversation(g.groupId).catch(() => {});
     }
@@ -344,7 +344,7 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
     const localGroups = mlsService.getLocalGroups();
     if (localGroups.includes(successorId) && mlsService.getEpoch(successorId) === 0) {
       log(
-        `[HEALTH] Successeur ${successorId} epoch=0 — ré-invitation post-crash depuis ${g.groupId}`
+        `[HEALTH] Successeur ${successorId} epoch=0 - ré-invitation post-crash depuis ${g.groupId}`
       );
       await inviteOldMembers(g.groupId, successorId, deps).catch((e) =>
         log(`[HEALTH] Erreur ré-invitation : ${String(e)}`)

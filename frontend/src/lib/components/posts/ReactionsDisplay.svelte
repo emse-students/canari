@@ -35,7 +35,10 @@
   }
 
   function onBadgeEnter(reactionType: string, anchor: HTMLElement) {
-    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
     const rect = anchor.getBoundingClientRect();
     popupPos = { top: rect.bottom + 6, left: rect.left };
     popupReactionType = reactionType;
@@ -50,7 +53,10 @@
   }
 
   function cancelHide() {
-    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
   }
 </script>
 
@@ -63,7 +69,8 @@
         onclick={() => onReactionClick(reactionType)}
         onmouseenter={(e) => onBadgeEnter(reactionType, e.currentTarget as HTMLElement)}
         onmouseleave={scheduleHide}
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all {userReaction === reactionType
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all {userReaction ===
+        reactionType
           ? 'bg-cn-yellow/20 ring-1 ring-cn-yellow'
           : 'bg-[var(--cn-surface)] hover:bg-cn-yellow/10'}"
         title={reaction?.type}
@@ -75,7 +82,7 @@
   </div>
 {/if}
 
-<!-- Tooltip "Qui a réagi" — hover uniquement -->
+<!-- Tooltip "Qui a réagi" - hover uniquement -->
 {#if popupReactionType && popupPos}
   <div
     use:portal
@@ -86,7 +93,8 @@
     onmouseleave={scheduleHide}
   >
     <p class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1.5">
-      {reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊'} {popupReactionType}
+      {reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊'}
+      {popupReactionType}
     </p>
     {#if popupReactionType && resolvedNames[popupReactionType]}
       <ul class="space-y-0.5">

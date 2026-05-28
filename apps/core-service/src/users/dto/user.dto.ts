@@ -9,7 +9,7 @@ import {
 
 /** Payload for provisioning a new user record after OIDC sign-in. */
 export class CreateUserDto {
-  /** OIDC subject — used as the primary key. */
+  /** OIDC subject - used as the primary key. */
   @IsString()
   @IsNotEmpty()
   id!: string;
@@ -60,7 +60,7 @@ export class UpdateUserDto {
   stripeCustomerId?: string;
 }
 
-/** Public-facing projection of a user — omits sensitive or internal fields. */
+/** Public-facing projection of a user - omits sensitive or internal fields. */
 export class PublicUserDto {
   /** OIDC subject / primary key. */
   id?: string;

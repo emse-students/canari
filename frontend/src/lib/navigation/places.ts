@@ -85,10 +85,10 @@ export const APP_PLACES: AppPlace[] = [
   },
 ];
 
-export function resolveActivePlaceId(pathname: string): string {
+/** Returns the active place ID for the given pathname, or null if no place matches. */
+export function resolveActivePlaceId(pathname: string): string | null {
   const exact = APP_PLACES.find(
     (place) => pathname === place.href || pathname.startsWith(`${place.href}/`)
   );
-  if (exact) return exact.id;
-  return 'chat';
+  return exact?.id ?? null;
 }

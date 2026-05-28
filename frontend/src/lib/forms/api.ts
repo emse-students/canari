@@ -35,7 +35,7 @@ export interface CreateFormPayload {
   submitLabel: string;
   items: FormItem[];
   maxSubmissions?: number;
-  /** ISO 8601 — submissions blocked until this instant. */
+  /** ISO 8601 - submissions blocked until this instant. */
   opensAt?: string;
   requiresPayment?: boolean;
   associationId?: string;
@@ -46,7 +46,7 @@ export interface CreateFormPayload {
   cashPaymentExpiryDays?: number;
   /** Tag name automatically granted upon successful payment (e.g. "cotisant:bde-2026"). */
   grantedTagName?: string;
-  /** ISO 8601 — when the granted tag expires (omit for permanent). */
+  /** ISO 8601 - when the granted tag expires (omit for permanent). */
   tagExpiresAt?: string;
 }
 

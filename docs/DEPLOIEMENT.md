@@ -16,7 +16,7 @@ Internet (HTTPS)
                     └── /*              → build SvelteKit statique
 ```
 
-Tous les services backend (`chat-gateway`, `chat-delivery-service`, `media-service`, `core-service`, `social-service`) sont exposés uniquement via `expose:` dans le docker-compose de prod — ils ne sont **pas** accessibles directement depuis l'hôte, uniquement depuis le réseau Docker interne.
+Tous les services backend (`chat-gateway`, `chat-delivery-service`, `media-service`, `core-service`, `social-service`) sont exposés uniquement via `expose:` dans le docker-compose de prod - ils ne sont **pas** accessibles directement depuis l'hôte, uniquement depuis le réseau Docker interne.
 
 ---
 
@@ -24,11 +24,11 @@ Tous les services backend (`chat-gateway`, `chat-delivery-service`, `media-servi
 
 ### Fichiers
 
-| Fichier | Usage |
-|---|---|
-| `infrastructure/local/docker-compose.yml` | Développement local |
-| `infrastructure/docker-compose.dev.yml` | Dev avec services distants |
-| `infrastructure/docker-compose.prod.yml` | Production |
+| Fichier                                   | Usage                      |
+| ----------------------------------------- | -------------------------- |
+| `infrastructure/local/docker-compose.yml` | Développement local        |
+| `infrastructure/docker-compose.dev.yml`   | Dev avec services distants |
+| `infrastructure/docker-compose.prod.yml`  | Production                 |
 
 ### Services en production
 
@@ -36,35 +36,35 @@ Tous les services backend (`chat-gateway`, `chat-delivery-service`, `media-servi
 services:
   frontend:
     image: ghcr.io/emse-students/canari/frontend:latest
-    ports: ["8080:80"]    # Seul port exposé vers l'hôte
+    ports: ['8080:80'] # Seul port exposé vers l'hôte
 
   chat-gateway:
     image: ghcr.io/emse-students/canari/chat-gateway:latest
-    expose: ["3000"]       # Interne uniquement
+    expose: ['3000'] # Interne uniquement
 
   chat-delivery-service:
     image: ghcr.io/emse-students/canari/chat-delivery-service:latest
-    expose: ["3010"]
+    expose: ['3010']
 
   media-service:
     image: ghcr.io/emse-students/canari/media-service:latest
-    expose: ["3011"]
+    expose: ['3011']
 
   core-service:
     image: ghcr.io/emse-students/canari/core-service:latest
-    expose: ["3012"]
+    expose: ['3012']
 
   social-service:
     image: ghcr.io/emse-students/canari/social-service:latest
-    expose: ["3014"]
+    expose: ['3014']
 
   redis:
     image: redis:7-alpine
-    expose: ["6379"]
+    expose: ['6379']
 
   postgres:
     image: postgres:15
-    expose: ["5432"]
+    expose: ['5432']
     environment:
       POSTGRES_DB: auth_db
       POSTGRES_USER: canari
@@ -72,17 +72,17 @@ services:
 
   mongo:
     image: mongo:7
-    expose: ["27017"]
+    expose: ['27017']
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    expose: ["29092"]
+    expose: ['29092']
 
   minio:
     image: minio/minio
     ports:
-      - "${MINIO_API_HOST_PORT:-19000}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-19001}:9001"
+      - '${MINIO_API_HOST_PORT:-19000}:9000'
+      - '${MINIO_CONSOLE_HOST_PORT:-19001}:9001'
 ```
 
 ---
@@ -93,32 +93,32 @@ Toutes les variables sont dans `infrastructure/.env` (jamais committé).
 
 ### Variables obligatoires
 
-| Variable | Description | Exemple |
-|---|---|---|
-| `JWT_SECRET` | Secret JWT HS256 (64 chars hex) | `openssl rand -hex 32` |
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL | |
-| `DOMAIN` | Domaine principal | `canari-emse.fr` |
-| `ALLOW_ORIGIN` | CORS origin | `https://canari-emse.fr` |
+| Variable            | Description                     | Exemple                  |
+| ------------------- | ------------------------------- | ------------------------ |
+| `JWT_SECRET`        | Secret JWT HS256 (64 chars hex) | `openssl rand -hex 32`   |
+| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL         |                          |
+| `DOMAIN`            | Domaine principal               | `canari-emse.fr`         |
+| `ALLOW_ORIGIN`      | CORS origin                     | `https://canari-emse.fr` |
 
 ### Variables optionnelles
 
-| Variable | Défaut | Description |
-|---|---|---|
-| `FRONTEND_HOST_PORT` | `80` | Port host pour Nginx frontend |
-| `MINIO_API_HOST_PORT` | `19000` | Port host API MinIO |
-| `MINIO_CONSOLE_HOST_PORT` | `19001` | Port host console MinIO |
-| `MINIO_ROOT_USER` | `minioadmin` | Accès MinIO |
-| `MINIO_ROOT_PASSWORD` | — | Accès MinIO |
-| `AUTHENTIK_URL` | — | URL Authentik OIDC |
-| `AUTHENTIK_CLIENT_ID` | — | Client ID OIDC |
-| `AUTHENTIK_CLIENT_SECRET` | — | Secret OIDC (côté serveur uniquement) |
-| `STRIPE_SECRET_KEY` | — | Clé secrète Stripe |
-| `STRIPE_WEBHOOK_SECRET` | — | Secret webhook Stripe |
-| `FCM_PROJECT_ID` | — | Firebase (push notifs Android) |
-| `FCM_PRIVATE_KEY` | — | Firebase credentials |
-| `APNS_KEY_ID` | — | APNs (push notifs iOS) |
-| `ENABLE_DEV_ROUTES` | `false` | Active /api/auth/dev-login |
-| `MEDIA_MAX_SIZE_MB` | `100` | Taille max upload médias |
+| Variable                  | Défaut       | Description                           |
+| ------------------------- | ------------ | ------------------------------------- |
+| `FRONTEND_HOST_PORT`      | `80`         | Port host pour Nginx frontend         |
+| `MINIO_API_HOST_PORT`     | `19000`      | Port host API MinIO                   |
+| `MINIO_CONSOLE_HOST_PORT` | `19001`      | Port host console MinIO               |
+| `MINIO_ROOT_USER`         | `minioadmin` | Accès MinIO                           |
+| `MINIO_ROOT_PASSWORD`     | -            | Accès MinIO                           |
+| `AUTHENTIK_URL`           | -            | URL Authentik OIDC                    |
+| `AUTHENTIK_CLIENT_ID`     | -            | Client ID OIDC                        |
+| `AUTHENTIK_CLIENT_SECRET` | -            | Secret OIDC (côté serveur uniquement) |
+| `STRIPE_SECRET_KEY`       | -            | Clé secrète Stripe                    |
+| `STRIPE_WEBHOOK_SECRET`   | -            | Secret webhook Stripe                 |
+| `FCM_PROJECT_ID`          | -            | Firebase (push notifs Android)        |
+| `FCM_PRIVATE_KEY`         | -            | Firebase credentials                  |
+| `APNS_KEY_ID`             | -            | APNs (push notifs iOS)                |
+| `ENABLE_DEV_ROUTES`       | `false`      | Active /api/auth/dev-login            |
+| `MEDIA_MAX_SIZE_MB`       | `100`        | Taille max upload médias              |
 
 ---
 
@@ -134,12 +134,14 @@ Toutes les variables sont dans `infrastructure/.env` (jamais committé).
 ### Étapes
 
 **1. Cloner le dépôt**
+
 ```bash
 git clone https://github.com/emse-students/canari.git ~/canari
 cd ~/canari
 ```
 
 **2. Générer les secrets**
+
 ```bash
 ./scripts/setup-env.sh --prod
 # Crée infrastructure/.env avec JWT_SECRET aléatoire
@@ -150,6 +152,7 @@ nano infrastructure/.env
 **3. Configurer le secret GitHub**
 
 GitHub → Settings → Secrets and variables → Actions → New repository secret :
+
 ```
 JWT_SECRET = <même valeur que dans infrastructure/.env>
 ```
@@ -159,6 +162,7 @@ Ce secret est injecté dans le bundle JS à chaque build CI (variable `PUBLIC_JW
 **4. Configurer Cloudflare Tunnel**
 
 Dans le dashboard Cloudflare :
+
 - Créer un tunnel pointant vers `http://localhost:8080`
 - Assigner le domaine `canari-emse.fr` au tunnel
 - Installer cloudflared sur le serveur :
@@ -167,6 +171,7 @@ Dans le dashboard Cloudflare :
   ```
 
 **5. Premier démarrage**
+
 ```bash
 make production
 # Pull les images depuis ghcr.io/emse-students/canari/*
@@ -174,6 +179,7 @@ make production
 ```
 
 **6. Initialiser MinIO**
+
 ```bash
 # Créer le bucket canari-media
 docker exec -it $(docker ps -q -f name=minio) sh
@@ -188,10 +194,10 @@ mc policy set private local/canari-media
 
 ### Workflows
 
-| Fichier | Déclencheur | Actions |
-|---|---|---|
-| `.github/workflows/ci.yml` | Push, PR sur main | Lint + tests |
-| `.github/workflows/cd.yml` | Push sur main | Build + déploiement |
+| Fichier                               | Déclencheur           | Actions                      |
+| ------------------------------------- | --------------------- | ---------------------------- |
+| `.github/workflows/ci.yml`            | Push, PR sur main     | Lint + tests                 |
+| `.github/workflows/cd.yml`            | Push sur main         | Build + déploiement          |
 | `.github/workflows/code-analysis.yml` | Push + cron quotidien | Sécurité + audit dépendances |
 
 ### Pipeline CD détaillé
@@ -223,7 +229,7 @@ jobs:
 
   deploy:
     needs: build-docker
-    runs-on: self-hosted   # Runner sur le serveur de prod
+    runs-on: self-hosted # Runner sur le serveur de prod
     steps:
       - name: Pull and restart
         run: |
@@ -256,6 +262,7 @@ make run-services
 ```
 
 Le frontend tourne séparément (Vite HMR) :
+
 ```bash
 cd frontend && bun run dev
 # → http://localhost:1420
@@ -292,6 +299,7 @@ git push origin main
 ```
 
 Pour un déploiement manuel d'urgence :
+
 ```bash
 # Sur le serveur
 cd ~/canari

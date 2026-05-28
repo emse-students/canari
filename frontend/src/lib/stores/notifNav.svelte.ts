@@ -1,5 +1,5 @@
 /**
- * notifNav — pending notification navigation state.
+ * notifNav - pending notification navigation state.
  *
  * When a system notification is clicked, the click handler stores the target
  * conversation ID here and calls goto('/chat'). MainChatPage watches this via

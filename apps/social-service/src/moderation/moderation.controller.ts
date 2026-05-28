@@ -26,7 +26,7 @@ export class ModerationController {
     private readonly assocService: AssociationsService
   ) {}
 
-  /** Guard helper — throws 403 unless caller is a global admin or holds the MODERATE flag in a BDE. */
+  /** Guard helper - throws 403 unless caller is a global admin or holds the MODERATE flag in a BDE. */
   private async assertModerator(userId: string, isGlobalAdmin: boolean): Promise<void> {
     if (isGlobalAdmin) return;
     const canModerate = await this.assocService.callerHasAnyBdeFlag(

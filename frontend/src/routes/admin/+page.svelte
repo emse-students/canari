@@ -53,7 +53,7 @@
         sent: number;
         failed: number;
       };
-      pushTestResult = `Test envoyé — trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
+      pushTestResult = `Test envoyé - trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
     } catch (e) {
       pushTestResult = e instanceof Error ? e.message : 'Erreur';
     } finally {

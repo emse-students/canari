@@ -11,10 +11,10 @@ import {
 /**
  * Lifecycle state of a single device's membership in an MLS group.
  *
- * - `pending`          — The group admin knows about this device but has not yet sent a Welcome.
- * - `welcome_sent`     — An MLS Welcome message has been enqueued for the device.
- * - `welcome_received` — The device has acknowledged the Welcome and joined the MLS epoch.
- * - `stale`            — The device was removed from the group or its key package expired.
+ * - `pending`          - The group admin knows about this device but has not yet sent a Welcome.
+ * - `welcome_sent`     - An MLS Welcome message has been enqueued for the device.
+ * - `welcome_received` - The device has acknowledged the Welcome and joined the MLS epoch.
+ * - `stale`            - The device was removed from the group or its key package expired.
  */
 export type DeviceGroupStatus =
   | 'pending'
@@ -36,7 +36,7 @@ export class DeviceGroupMembership {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** Owner of the device — used for bulk queries across all devices of one user. */
+  /** Owner of the device - used for bulk queries across all devices of one user. */
   @Column({ type: 'varchar', length: 255 })
   userId: string;
 

@@ -268,7 +268,7 @@ export class DevicesController {
   @Get('mls/devices/:userId/:deviceId/key-package')
   /**
    * Returns one consumable KeyPackage for a specific device (invite / welcome flows).
-   * Unlike the user device list, there is no 30-day cutoff — only revoked / missing devices 404.
+   * Unlike the user device list, there is no 30-day cutoff - only revoked / missing devices 404.
    */
   async getDeviceKeyPackage(
     @Param('userId') userId: string,

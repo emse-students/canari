@@ -14,7 +14,7 @@ export function messageTime(msg: ChatMessage): number {
 export function compareMessageOrder(a: ChatMessage, b: ChatMessage): number {
   const t = messageTime(a) - messageTime(b);
   if (t !== 0) return t;
-  // Secondary: server queue time — persisted, survives reload.
+  // Secondary: server queue time - persisted, survives reload.
   const stA = a.serverTimestamp;
   const stB = b.serverTimestamp;
   if (stA !== undefined && stB !== undefined && stA !== stB) {

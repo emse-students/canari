@@ -1,8 +1,8 @@
 /** Metadata for an MLS payload delivered via the offline queue (not live WebSocket). */
 export type IncomingDeliveryMeta = {
-  /** Server `queued_message.createdAt` in ms — when the message was enqueued for this device. */
+  /** Server `queued_message.createdAt` in ms - when the message was enqueued for this device. */
   queuedCreatedAt?: number;
-  /** Server queue row id — stable dedup key when the MLS payload has no `messageId`. */
+  /** Server queue row id - stable dedup key when the MLS payload has no `messageId`. */
   queuedMessageId?: string;
 };
 

@@ -7,7 +7,7 @@ import {
   Index,
 } from 'typeorm';
 
-/** Platform that issued the push token — determines which push gateway is used for delivery. */
+/** Platform that issued the push token - determines which push gateway is used for delivery. */
 export type PushPlatform = 'android' | 'ios';
 
 /**

@@ -1,6 +1,6 @@
 /**
  * Yields so the browser can paint and handle input between heavy MLS catch-up steps.
- * Does not move work off-thread — WASM / Tauri crypto still runs on the main path,
+ * Does not move work off-thread - WASM / Tauri crypto still runs on the main path,
  * but the event loop gets a chance to run between queue items.
  */
 export function yieldToMainThread(): Promise<void> {

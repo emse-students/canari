@@ -730,7 +730,7 @@ export class AssociationsController {
 
   /**
    * Called by core-service Stripe webhook when a product purchase completes.
-   * No auth guard — only reachable from the internal Docker network.
+   * No auth guard - only reachable from the internal Docker network.
    */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(

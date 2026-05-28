@@ -1,5 +1,5 @@
 /**
- * envelope.ts — Unified message envelope for all chat message types.
+ * envelope.ts - Unified message envelope for all chat message types.
  *
  * Every message stored in ChatMessage.content is a serialized MessageEnvelope.
  * The `kind` discriminant lets renderers decide how to display a message without
@@ -160,7 +160,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
       result = { kind: 'text', text: content };
     }
   } else {
-    // Legacy plain-text or unknown — treat as text
+    // Legacy plain-text or unknown - treat as text
     result = { kind: 'text', text: content };
   }
 

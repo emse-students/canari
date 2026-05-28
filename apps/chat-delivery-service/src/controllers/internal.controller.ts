@@ -25,7 +25,7 @@ import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 
 /**
- * Internal-only endpoints — called by other services via Docker-internal networking.
+ * Internal-only endpoints - called by other services via Docker-internal networking.
  * NOT exposed through Nginx.
  * Auth: X-Internal-Secret header matched against INTERNAL_SECRET env var.
  */
@@ -80,7 +80,7 @@ export class InternalController {
     }
 
     if (admin.apps.length === 0) {
-      this.logger.warn('[INTERNAL_PUSH] Firebase not initialized — skipping');
+      this.logger.warn('[INTERNAL_PUSH] Firebase not initialized - skipping');
       return { sent: 0, failed: 0 };
     }
 
@@ -135,7 +135,7 @@ export class InternalController {
    * - Redis group:members sets are cleaned for both cases.
    * - History streams (history:{groupId}) are deleted only for DMs.
    *
-   * Called by core-service during account deletion — not exposed through Nginx.
+   * Called by core-service during account deletion - not exposed through Nginx.
    */
   @Delete('users/:userId')
   async deleteUserData(

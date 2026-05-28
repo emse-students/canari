@@ -8,7 +8,7 @@
    * Rendered inside CreatePostForm when the user clicks the "Sondage" toolbar button.
    */
   interface Props {
-    /** Poll question text. Bindable — parent owns the state. */
+    /** Poll question text. Bindable - parent owns the state. */
     question: string;
     /** Newline-separated list of answer options. Bindable. */
     optionsRaw: string;

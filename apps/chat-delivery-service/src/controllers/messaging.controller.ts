@@ -127,10 +127,10 @@ export class MessagingController {
 
   /**
    * Notify the author of a message that someone reacted to it.
-   * Fire-and-forget from the client — the server never sees MLS plaintext;
+   * Fire-and-forget from the client - the server never sees MLS plaintext;
    * the client provides all required metadata.
    * Guard: no notification if the reactor is the same user as the message author
-   * (cross-device own-action — the user already knows what they did).
+   * (cross-device own-action - the user already knows what they did).
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/notify-reaction')

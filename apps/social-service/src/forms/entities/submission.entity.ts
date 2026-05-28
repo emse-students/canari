@@ -33,17 +33,17 @@ export class Submission {
 
   /**
    * Lifecycle status of the payment.
-   * - `free` — no payment required
-   * - `pending` — Stripe checkout pending
-   * - `pending_cash` — awaiting physical cash validation by an admin
-   * - `paid` — paid (Stripe or cash validated)
-   * - `cancelled` — cancelled / abandoned
-   * - `expired` — cash payment window elapsed without validation
+   * - `free` - no payment required
+   * - `pending` - Stripe checkout pending
+   * - `pending_cash` - awaiting physical cash validation by an admin
+   * - `paid` - paid (Stripe or cash validated)
+   * - `cancelled` - cancelled / abandoned
+   * - `expired` - cash payment window elapsed without validation
    */
   @Column({ default: 'free' })
   paymentStatus: string;
 
-  /** `stripe` or `cash` — set when the user chooses a payment method at submission time. */
+  /** `stripe` or `cash` - set when the user chooses a payment method at submission time. */
   @Column({ nullable: true })
   paymentMethod: string | null;
 

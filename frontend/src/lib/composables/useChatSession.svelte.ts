@@ -88,7 +88,7 @@ export interface ChatSessionCallbacks {
    * sans attendre la fin complète du login (conversations, WebSocket, etc.). */
   onMlsReady?: () => void;
   /** Appelé quand le login échoue (PIN incorrect, serveur inaccessible, etc.).
-   * Si fourni, la redirection vers /login n'a PAS lieu — le caller gère l'erreur.
+   * Si fourni, la redirection vers /login n'a PAS lieu - le caller gère l'erreur.
    * Si absent, on redirige vers /login comme avant. */
   onLoginFailed?: (error: string) => void;
   log: (msg: string) => void;
@@ -135,7 +135,7 @@ export function useChatSession() {
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
   let isImporting = $state(false);
-  let isLoginInProgress = false; // plain boolean — guards against concurrent login() calls
+  let isLoginInProgress = false; // plain boolean - guards against concurrent login() calls
 
   // ── Dev tools ─────────────────────────────────────────────────────────────
   let lastKeyPackage = $state('');
@@ -160,7 +160,7 @@ export function useChatSession() {
     return mls;
   }
 
-  /** Wipes all local MLS state, device ID, and stored DB for the given user — called when the server signals that this device has been revoked. */
+  /** Wipes all local MLS state, device ID, and stored DB for the given user - called when the server signals that this device has been revoked. */
   async function resetDeviceAsFresh(userIdToReset: string, cb: ChatSessionCallbacks) {
     // Purge all local state tied to this logical device so next init creates
     // a brand new MLS device identity.
@@ -226,7 +226,7 @@ export function useChatSession() {
       const mlsService = ensureMls();
       cb.log('Verification du PIN...');
 
-      // Start MLS state load immediately — pure I/O, doesn't need the token.
+      // Start MLS state load immediately - pure I/O, doesn't need the token.
       const { loadMlsState } = await import('$lib/utils/hex');
       const _isTauri = !!(window as any).__TAURI_INTERNALS__;
       const mlsStatePromise = (async (): Promise<
@@ -277,7 +277,7 @@ export function useChatSession() {
 
       cb.log('Initialisation MLS...');
       // Run pin-check, MLS init, and DB open concurrently.
-      // mlsService.init() validates the PIN independently via Argon2 decryption —
+      // mlsService.init() validates the PIN independently via Argon2 decryption -
       // the pin-check network call adds cross-device mismatch signaling and revocation.
       // Both run in parallel to hide the network RTT inside the Argon2/deserialization time.
       const pinCheckFetch = async () => {
@@ -329,7 +329,7 @@ export function useChatSession() {
       isLoggedIn = true;
       saveUserLocally({ id: userId, admin: isGlobalAdmin() });
       cb.onMlsReady?.();
-      // On Tauri (mobile): rely exclusively on the hardware-backed keystore —
+      // On Tauri (mobile): rely exclusively on the hardware-backed keystore -
       // never cache the PIN in any browser storage. The biometric enrolment
       // prompt that follows will call BiometricService.enableBiometric(pin).
       // On web/desktop: store an AES-GCM encrypted blob in sessionStorage so
@@ -359,7 +359,7 @@ export function useChatSession() {
         const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
         const missingKeys: string[] = [];
         for (const [key, c] of cb.conversations.entries()) {
-          // Channels use AES-GCM, not MLS — never mark them as not-ready
+          // Channels use AES-GCM, not MLS - never mark them as not-ready
           if (isChannelConversationId(c.id)) continue;
           if (c.isReady && !localMlsGroups.has(c.id)) {
             cb.conversations.set(key, { ...c, isReady: false });
@@ -368,10 +368,10 @@ export function useChatSession() {
         }
         if (missingKeys.length > 0) {
           cb.log(
-            `[WARN] Groupes sans etat MLS local detectes — ${missingKeys.length} conversation(s) marquees non-pretes, reinvite declenchee au prochain connect.`
+            `[WARN] Groupes sans etat MLS local detectes - ${missingKeys.length} conversation(s) marquees non-pretes, reinvite declenchee au prochain connect.`
           );
           console.warn(
-            `[INIT] ${missingKeys.length} conversation(s) missing local MLS state — marked not-ready`
+            `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
           );
           await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
         }
@@ -429,7 +429,7 @@ export function useChatSession() {
             `[ALERTE] Conversation ${label} corrompue et irrécupérable. Demandez à un autre membre de vous réinviter.`
           );
           appendLog(
-            `⚠️ Conversation ${label} corrompue — demandez à un autre membre de vous réinviter.`
+            `⚠️ Conversation ${label} corrompue - demandez à un autre membre de vous réinviter.`
           );
         },
         log: cb.log,
@@ -641,7 +641,7 @@ export function useChatSession() {
       const { invoke } = await import('@tauri-apps/api/core');
       const ctx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
       if (!ctx?.pin || !ctx.userId || ctx.userId !== userId) return false;
-      appendLog('[PIN] PIN restauré depuis stockage natif — login auto...');
+      appendLog('[PIN] PIN restauré depuis stockage natif - login auto...');
       pin = ctx.pin;
       await login(cb);
       return isLoggedIn;
@@ -658,17 +658,17 @@ export function useChatSession() {
       const savedUser = currentUserId();
       if (!savedUser) {
         loginError = 'Aucun utilisateur enregistre pour la biometrie.';
-        cb.log('[BIOMETRIE] Echec — aucun utilisateur local');
+        cb.log('[BIOMETRIE] Echec - aucun utilisateur local');
         return;
       }
       cb.log(`[BIOMETRIE] Authentification pour userId=${savedUser.slice(0, 8)}...`);
       const retrieved = await BiometricService.authenticateAndGetSecret();
       if (!retrieved) {
         loginError = "L'authentification biometrique a echoue. Entrez votre PIN manuellement.";
-        cb.log('[BIOMETRIE] Echec — secret non récupéré, PIN manuel requis');
+        cb.log('[BIOMETRIE] Echec - secret non récupéré, PIN manuel requis');
         return;
       }
-      cb.log('[BIOMETRIE] PIN récupéré via biométrie — appel login()');
+      cb.log('[BIOMETRIE] PIN récupéré via biométrie - appel login()');
       userId = savedUser;
       pin = retrieved;
       await login(cb);
@@ -705,12 +705,12 @@ export function useChatSession() {
     appendLog('[BIOMETRIE] Inscription biométrique en cours...');
     try {
       await BiometricService.enableBiometric(pin);
-      // PIN is now protected by the hardware keystore — wipe the session cache
+      // PIN is now protected by the hardware keystore - wipe the session cache
       // so the app cannot reopen without biometric authentication.
       clearPinAndKey();
       showBiometricEnrollPrompt = false;
       localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
-      appendLog('[BIOMETRIE] Inscription OK — PIN effacé de la session (keystore matériel)');
+      appendLog('[BIOMETRIE] Inscription OK - PIN effacé de la session (keystore matériel)');
     } catch (e) {
       appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
       console.error('Biometric enrollment failed:', e);
@@ -748,7 +748,7 @@ export function useChatSession() {
     clearUserLocally();
     clearPinAndKey();
     clearAuth();
-    cb.log('[LOGOUT] État local effacé — redirection vers /login');
+    cb.log('[LOGOUT] État local effacé - redirection vers /login');
     void goto('/login', { replaceState: true });
   }
 
@@ -787,7 +787,7 @@ export function useChatSession() {
     stopConnectionWatchdog();
     mls?.sendDisconnect();
     isWsConnected = false;
-    appendLog('[LIFECYCLE] App en arrière-plan — connexion pausée.');
+    appendLog('[LIFECYCLE] App en arrière-plan - connexion pausée.');
   }
 
   /** Schedules an exponential-backoff WebSocket reconnect attempt (delays: 1s, 2s, 4s … 30s max). No-op when already logged out or a timer is already pending. */
@@ -808,7 +808,7 @@ export function useChatSession() {
     reconnectTimer = null;
     if (!isLoggedIn || isReconnecting) return;
     if (!getIsTabLeader()) {
-      cb.log('[TAB] Onglet follower — reconnexion ignorée.');
+      cb.log('[TAB] Onglet follower - reconnexion ignorée.');
       return;
     }
     isReconnecting = true;
@@ -863,6 +863,7 @@ export function useChatSession() {
     try {
       await processPendingInvitations({
         mlsService: ensureMls(),
+        storage,
         userId,
         pin,
         conversations: cb.conversations,

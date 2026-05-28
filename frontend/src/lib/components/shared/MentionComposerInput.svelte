@@ -59,7 +59,7 @@
   let pendingInternalSync = 0;
   /**
    * Tracks whether the editor contains text, updated directly from the DOM in input handlers.
-   * Used for placeholder visibility — more reliable than reactive `value` on some environments.
+   * Used for placeholder visibility - more reliable than reactive `value` on some environments.
    */
   let editorHasContent = $state(false);
 
@@ -118,8 +118,7 @@
 
     const needsMentions = needsMentionChipRender(editorEl, text);
     const needsDom =
-      needsMentions ||
-      shouldRerenderComposerDom(text, lastRenderedValue, renderOptions);
+      needsMentions || shouldRerenderComposerDom(text, lastRenderedValue, renderOptions);
 
     if (needsDom) {
       applyDomFromPlainText(text, start);
@@ -183,13 +182,7 @@
       emitEditorChange();
       return;
     }
-    if (
-      e.key === 'Enter' &&
-      !singleLine &&
-      markdownPreview &&
-      editorEl &&
-      !e.isComposing
-    ) {
+    if (e.key === 'Enter' && !singleLine && markdownPreview && editorEl && !e.isComposing) {
       e.preventDefault();
       const { text, cursor } = insertPlainTextNewline(editorEl);
       syncFromPlainText(text, cursor);
@@ -221,7 +214,7 @@
   }
 
   /**
-   * @public — Flushes any active IME composition into the value before sending.
+   * @public - Flushes any active IME composition into the value before sending.
    * Must be called right before onSend() to prevent the last uncomposed word from being lost.
    */
   export function commitComposition() {
@@ -237,7 +230,7 @@
     }
   }
 
-  /** @public — Force-clears the editor immediately without waiting for reactive prop propagation. */
+  /** @public - Force-clears the editor immediately without waiting for reactive prop propagation. */
   export function clearEditor() {
     if (!editorEl) return;
     pendingInternalSync = 0;
@@ -313,7 +306,22 @@
     overflow-y: auto;
   }
 
-  :global(.mention-composer-editor :is(.md-composer-muted, .md-composer-italic, .md-composer-underline, .md-composer-bold, .md-composer-bold-italic, .md-composer-strike, .md-composer-code, .md-composer-h1, .md-composer-h2, .md-composer-h3, .mention-editor-chip)) {
+  :global(
+    .mention-composer-editor
+      :is(
+        .md-composer-muted,
+        .md-composer-italic,
+        .md-composer-underline,
+        .md-composer-bold,
+        .md-composer-bold-italic,
+        .md-composer-strike,
+        .md-composer-code,
+        .md-composer-h1,
+        .md-composer-h2,
+        .md-composer-h3,
+        .mention-editor-chip
+      )
+  ) {
     overflow-wrap: anywhere;
     word-break: break-word;
   }

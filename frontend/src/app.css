@@ -51,7 +51,7 @@
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 92%, #ffffff 8%);
 }
 
-/* Theme transitions — scoped to elements that actually change theme colors.
+/* Theme transitions - scoped to elements that actually change theme colors.
    Avoid `*` selector: it forces WebKitGTK to track animation state for every
    DOM node, causing compositor memory pressure during route transitions. */
 :root,
@@ -280,7 +280,7 @@ h6,
   transition: bottom 180ms ease;
 }
 
-/* On mobile the BottomNav (h-16 = 4rem) sits above the composer — push it up */
+/* On mobile the BottomNav (h-16 = 4rem) sits above the composer - push it up */
 @media (max-width: 767px) {
   .chat-composer-footer {
     padding-bottom: calc(4rem + max(0.75rem, env(safe-area-inset-bottom)));
@@ -304,7 +304,7 @@ h6,
   );
 }
 
-/* When a conversation is open on mobile the BottomNav is unmounted — drop its
+/* When a conversation is open on mobile the BottomNav is unmounted - drop its
    reserved height so the composer sits flush with the safe area. */
 .mobile-convo-open .chat-composer-footer {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
@@ -314,7 +314,7 @@ h6,
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
 }
 
-/* Chat layout fills the full viewport — no page scroll behind the chat shell. */
+/* Chat layout fills the full viewport - no page scroll behind the chat shell. */
 .page-scroll-wrap:has(.app-layout) {
   padding-bottom: 0;
   overflow: hidden;
@@ -358,7 +358,7 @@ html.keyboard-open .page-scroll-wrap {
   max-height: min(92dvh, var(--app-viewport-height, 100dvh)) !important;
 }
 
-/* Message action wheel (long-press menu) — above composer / bottom nav */
+/* Message action wheel (long-press menu) - above composer / bottom nav */
 [data-keyboard-aware-actions] {
   bottom: calc(
     max(4.5rem, env(safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-layout-inset-bottom, 0px)

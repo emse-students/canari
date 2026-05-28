@@ -121,7 +121,7 @@ export class UsersService implements OnModuleInit {
     await this.userRepository.save(user);
   }
 
-  /** Returns all users (id, displayName, admin) — admin-only listing. */
+  /** Returns all users (id, displayName, admin) - admin-only listing. */
   async listAll(): Promise<Pick<User, 'id' | 'displayName' | 'admin'>[]> {
     return this.userRepository
       .createQueryBuilder('user')
@@ -131,7 +131,7 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Search users by displayName — case-insensitive, accent-insensitive, and
+   * Search users by displayName - case-insensitive, accent-insensitive, and
    * word-order-insensitive. All whitespace-delimited terms must match.
    * Returns up to 10 results, excluding the current user if specified.
    */
@@ -166,7 +166,7 @@ export class UsersService implements OnModuleInit {
   /**
    * Permanently deletes a user account and all associated data across services.
    * Order: Stripe customer → chat-delivery data → social data → user row.
-   * Downstream failures are logged but do not abort the deletion — the user row
+   * Downstream failures are logged but do not abort the deletion - the user row
    * is always removed so the account is inaccessible even if a service is down.
    */
   async deleteUser(userId: string): Promise<void> {
@@ -174,7 +174,7 @@ export class UsersService implements OnModuleInit {
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    // Best-effort Stripe customer deletion — skip if not configured or no customer
+    // Best-effort Stripe customer deletion - skip if not configured or no customer
     if (user?.stripeCustomerId) {
       try {
         const { default: Stripe } = await import('stripe');

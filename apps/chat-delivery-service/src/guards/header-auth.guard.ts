@@ -12,7 +12,7 @@ import {
  * against the core-service auth endpoint (`/internal/auth/verify`). If the header
  * is `"true"` the request is allowed through; otherwise a 401 is thrown.
  *
- * This guard must never be used on routes that are intentionally public — those
+ * This guard must never be used on routes that are intentionally public - those
  * should be excluded from Nginx's `auth_request` directive instead.
  */
 @Injectable()

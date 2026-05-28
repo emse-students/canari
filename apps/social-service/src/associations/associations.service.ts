@@ -237,7 +237,7 @@ export class AssociationsService {
         })
       );
     } catch {
-      /* non-fatal — object may already be gone */
+      /* non-fatal - object may already be gone */
     }
   }
 

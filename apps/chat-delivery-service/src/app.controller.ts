@@ -73,12 +73,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         }
       } else {
         this.logger.warn(
-          '[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set — push disabled',
+          '[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set - push disabled',
         );
       }
     }
 
-    // Both crons run hourly — there's no point detecting staleness more
+    // Both crons run hourly - there's no point detecting staleness more
     // frequently than the message cleanup that defines it.
     const ONE_HOUR = 60 * 60 * 1000;
 
@@ -165,7 +165,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   /**
    * Detect devices whose membership hasn't been touched within the message
    * retention window.  Once their queued messages have been garbage-collected,
-   * they can no longer catch up by processing missed commits — the only
+   * they can no longer catch up by processing missed commits - the only
    * recovery path is a full re-invite (reset to "pending").
    *
    * Only devices in "welcome_received" state are candidates: they were once

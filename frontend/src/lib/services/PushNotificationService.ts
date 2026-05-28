@@ -106,7 +106,7 @@ export async function startPushService(
   }
 
   if (pushAttempted) {
-    console.info('[Push] startPushService already attempted — skipping to avoid spam');
+    console.info('[Push] startPushService already attempted - skipping to avoid spam');
     return;
   }
   pushAttempted = true;

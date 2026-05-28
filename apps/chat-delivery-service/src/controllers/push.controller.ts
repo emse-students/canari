@@ -91,7 +91,7 @@ export class PushController {
 
   /**
    * Register or refresh a push token for a device.
-   * Upserts on (userId, deviceId) — one token per device per user.
+   * Upserts on (userId, deviceId) - one token per device per user.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
@@ -114,7 +114,7 @@ export class PushController {
     // Android Keystore et l'utilise pour GET /mls/push/fetch-proto.
     const pushSecret = crypto.randomUUID().replace(/-/g, '');
 
-    // Atomic upsert — avoids a race condition where two concurrent requests
+    // Atomic upsert - avoids a race condition where two concurrent requests
     // (e.g. app restart) both find no row then both try to INSERT, with the
     // second hitting the unique(userId, deviceId) constraint.
     await this.pushTokenRepo.upsert(
@@ -124,13 +124,13 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
     );
-    // pushSecret retourné UNE SEULE FOIS — le client doit le persister.
+    // pushSecret retourné UNE SEULE FOIS - le client doit le persister.
     return { status: 'registered', pushSecret };
   }
 
   /**
    * Endpoint pour le service FCM Android en arrière-plan (app tuée).
-   * Auth : Authorization: PushSecret {secret} — pas de JWT (token expiré).
+   * Auth : Authorization: PushSecret {secret} - pas de JWT (token expiré).
    * Retourne le proto MLS chiffré quand il était trop volumineux pour être
    * inclu inline dans le payload FCM (> 3.5 KB).
    */
@@ -153,7 +153,7 @@ export class PushController {
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
     const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
 
-    // Lookup en temps constant — on ne révèle pas si l'entrée existe.
+    // Lookup en temps constant - on ne révèle pas si l'entrée existe.
     const pt = await this.pushTokenRepo.findOne({
       where: { userId, deviceId },
     });
@@ -173,7 +173,7 @@ export class PushController {
       where: { id: messageId, recipientId: userId, deviceId },
     });
     if (!queued) {
-      // Message déjà ACKé ou inexistant — retourner vide (pas d'erreur pour éviter retry loops)
+      // Message déjà ACKé ou inexistant - retourner vide (pas d'erreur pour éviter retry loops)
       return { proto: '' };
     }
     return { proto: queued.proto ?? queued.content ?? '' };
@@ -264,7 +264,7 @@ export class PushController {
    * Acquires the distributed add-lock for a group.
    * Called by the Android background service before creating a Welcome package
    * to prevent concurrent epoch forks when multiple devices race to add the same requester.
-   * Auth: PushSecret (no JWT — app may be killed).
+   * Auth: PushSecret (no JWT - app may be killed).
    */
   @Post('mls/push/acquire-add-lock')
   async acquireAddLockPush(

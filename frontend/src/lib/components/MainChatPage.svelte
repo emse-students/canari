@@ -31,7 +31,7 @@
   /**
    * Component-level derived so the template subscribes directly to the SvelteMap.
    * A module-level $derived (convs.currentConvo) is not guaranteed to be tracked by
-   * component templates in Svelte 5 — placing the .get() call here ensures the
+   * component templates in Svelte 5 - placing the .get() call here ensures the
    * reactive dependency is registered in this component's effect scope.
    */
   const currentConvo = $derived(
@@ -63,10 +63,10 @@
         return;
       }
     }
-    // Conversations not yet loaded — effect re-runs when map changes
+    // Conversations not yet loaded - effect re-runs when map changes
   });
 
-  // ─── Sync session (local — scoped to /chat, not the global background service) ──
+  // ─── Sync session (local - scoped to /chat, not the global background service) ──
   const sync = useSyncSession();
 
   let messageText = $state('');
@@ -143,10 +143,14 @@
       userId: session.userId,
       pin: session.pin,
       authToken: session.authToken,
-      setAuthToken: (v: string) => { session.authToken = v; },
+      setAuthToken: (v: string) => {
+        session.authToken = v;
+      },
       selectedContact: convs.selectedContact,
       getSendError: () => convs.sendError,
-      setSendError: (v: string) => { convs.sendError = v; },
+      setSendError: (v: string) => {
+        convs.sendError = v;
+      },
       getChatContainer: () => convs.chatContainer,
       storage: session.storage,
       log,
@@ -172,17 +176,27 @@
         messaging.beginBulkMessageIngest(bulk, overlay),
       endBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
         messaging.endBulkMessageIngest(msgCtx(), bulk, overlay),
-      batchAddMessages: (msgs: Parameters<typeof messaging.batchAddMessages>[0], contactName: string) =>
-        messaging.batchAddMessages(msgs, contactName, msgCtx()),
+      batchAddMessages: (
+        msgs: Parameters<typeof messaging.batchAddMessages>[0],
+        contactName: string
+      ) => messaging.batchAddMessages(msgs, contactName, msgCtx()),
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
       selectConversation: convs.selectConversation,
-      onSendError: (msg: string) => { convs.sendError = msg; },
-      onShowSyncGuidePrompt: () => { convs.showSyncGuidePrompt = true; },
-      onReadReceiptReceived: () => { notifs.playReadTone(); },
+      onSendError: (msg: string) => {
+        convs.sendError = msg;
+      },
+      onShowSyncGuidePrompt: () => {
+        convs.showSyncGuidePrompt = true;
+      },
+      onReadReceiptReceived: () => {
+        notifs.playReadTone();
+      },
       log,
       messageReactions: messaging.messageReactions,
       getSelectedContact: () => convs.selectedContact,
-      setSelectedContact: (v: string | null) => { convs.selectedContact = v; },
+      setSelectedContact: (v: string | null) => {
+        convs.selectedContact = v;
+      },
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         convs.loadHistoryForConversation(contactName, groupId, convCtx()),
     };
@@ -203,16 +217,28 @@
       channelWorkspaces: channels.channelWorkspaces,
       selectedChannelId: channels.selectedChannelConversationId,
       currentUserId: session.userId,
-      onContactInputChange: (v: string) => { convs.newContactInput = v; },
-      onGroupInputChange: (v: string) => { convs.newGroupInput = v; },
-      onChannelInputChange: (v: string) => { convs.newChannelInput = v; },
+      onContactInputChange: (v: string) => {
+        convs.newContactInput = v;
+      },
+      onGroupInputChange: (v: string) => {
+        convs.newGroupInput = v;
+      },
+      onChannelInputChange: (v: string) => {
+        convs.newChannelInput = v;
+      },
       onAddContact: (value?: string) => {
         const c = (value ?? convs.newContactInput).trim();
-        if (c) { void convs.startNewConversation(c, convCtx()); convs.newContactInput = ''; }
+        if (c) {
+          void convs.startNewConversation(c, convCtx());
+          convs.newContactInput = '';
+        }
       },
       onCreateGroup: (value?: string) => {
         const g = (value ?? convs.newGroupInput).trim();
-        if (g) { void convs.createNewGroup(g, convCtx()); convs.newGroupInput = ''; }
+        if (g) {
+          void convs.createNewGroup(g, convCtx());
+          convs.newGroupInput = '';
+        }
       },
       onCreateChannel: (workspaceId: string, value?: string) => {
         const ch = (value ?? convs.newChannelInput).trim();
@@ -225,17 +251,24 @@
         const wn = (value ?? '').trim();
         if (wn) channels.createNewCommunity(wn, channelsCtx());
       },
-      onInviteChannelMember: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') =>
-        channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx()),
-      onUpdateChannelMemberRole: (channelId: string, memberId: string, roleName: 'member' | 'moderator' | 'admin') =>
-        channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx()),
+      onInviteChannelMember: (
+        channelId: string,
+        memberId: string,
+        roleName: 'member' | 'moderator' | 'admin'
+      ) => channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx()),
+      onUpdateChannelMemberRole: (
+        channelId: string,
+        memberId: string,
+        roleName: 'member' | 'moderator' | 'admin'
+      ) => channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx()),
       onUpdateWorkspaceImage: (workspaceDbId: string, mediaId: string) =>
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onLeaveWorkspace: (workspaceDbId: string) => {
         void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
         if (isSelectedChannel) {
           const ws = channels.channelWorkspaces.find((w) => w.workspaceDbId === workspaceDbId);
-          if (ws?.channels.some((c) => c.id === convs.selectedContact)) convs.selectedContact = null;
+          if (ws?.channels.some((c) => c.id === convs.selectedContact))
+            convs.selectedContact = null;
         }
       },
       onSelectConversation: convs.selectConversation,
@@ -319,7 +352,7 @@
 
     // Only cancel the timer when the user navigates to a different conversation.
     // Same-conversation re-runs (e.g. from the optimistic readBy update below) must
-    // not cancel the pending timer — that was the root cause of receipts never firing.
+    // not cancel the pending timer - that was the root cause of receipts never firing.
     return () => {
       if (convs.selectedContact !== currentContact) {
         if (readReceiptTimer) {
@@ -336,9 +369,15 @@
     isWindowFocused = document.hasFocus();
     isTabVisible = document.visibilityState === 'visible';
 
-    const handleVisibilityChange = () => { isTabVisible = document.visibilityState === 'visible'; };
-    const handleWindowFocus = () => { isWindowFocused = true; };
-    const handleWindowBlur = () => { isWindowFocused = false; };
+    const handleVisibilityChange = () => {
+      isTabVisible = document.visibilityState === 'visible';
+    };
+    const handleWindowFocus = () => {
+      isWindowFocused = true;
+    };
+    const handleWindowBlur = () => {
+      isWindowFocused = false;
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl+Shift+S: force sync reset (clears device cache and reloads)
       if (e.ctrlKey && e.shiftKey && e.key === 'S') {
@@ -370,7 +409,9 @@
       const pending = sessionStorage.getItem('canari_pending_contact');
       if (pending) {
         sessionStorage.removeItem('canari_pending_contact');
-        setTimeout(() => { convs.selectConversation(pending); }, 600);
+        setTimeout(() => {
+          convs.selectConversation(pending);
+        }, 600);
       }
     });
   });
@@ -442,67 +483,64 @@
   <div class="app-layout" in:fade>
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
-      <Sidebar
-        {...makeSidebarCommonProps()}
-        isHidden={convs.mobileView === 'chat'}
-      />
+      <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
 
       {#key `${routeMode}-${convs.selectedContact ?? ''}`}
-      <ChatArea
-        currentUserId={session.userId}
-        conversation={currentConvo}
-        {messageText}
-        isChannel={isSelectedChannel ?? false}
-        imageMediaId={currentConvo?.imageMediaId ?? null}
-        onMessageChange={(value) => (messageText = value)}
-        onSend={handleSendChat}
-        onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
-        onBack={convs.goBackToMenu}
-        onOpenConversations={convs.openConversationDrawer}
-        onOpenSettings={isSelectedChannel
-          ? () => (convs.isChannelSettingsModalOpen = true)
-          : undefined}
-        isHidden={convs.mobileView === 'list'}
-        isLoadingHistory={convs.isLoadingHistory}
-        isCatchingUpMessages={messaging.isMessageCatchupActive}
-        groupMembers={convs.groupMembers}
-        sendError={convs.sendError}
-        onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
-        onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
-        onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
-        onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
-        messageReactions={messaging.messageReactions}
-        replyingTo={messaging.replyingTo}
-        onReply={messaging.handleReply}
-        onReact={isSelectedChannel
-          ? undefined
-          : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
-        onDelete={isSelectedChannel
-          ? undefined
-          : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
-        onEdit={isSelectedChannel
-          ? undefined
-          : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
-        onCancelReply={messaging.cancelReply}
-        authToken={session.authToken}
-        onFilesSelected={handleFilesSelected}
-        pendingFiles={messaging.pendingMediaFiles}
-        onRemovePendingFile={messaging.removePendingMediaFile}
-        isUploading={messaging.isUploadingMedia}
-        onStartAudioCall={() => {
-          void startCallForCurrentConversation(false);
-        }}
-        onStartVideoCall={() => {
-          void startCallForCurrentConversation(true);
-        }}
-        onOpenMembers={routeMode === 'communities' && isSelectedChannel
-          ? convs.openChannelMembersDrawer
-          : undefined}
-        onLoadOlderMessages={() => convs.loadOlderMessages(convs.selectedContact!, convCtx())}
-        onMessagesScrollEl={(el) => {
-          convs.chatContainer = el ?? undefined;
-        }}
-      />
+        <ChatArea
+          currentUserId={session.userId}
+          conversation={currentConvo}
+          {messageText}
+          isChannel={isSelectedChannel ?? false}
+          imageMediaId={currentConvo?.imageMediaId ?? null}
+          onMessageChange={(value) => (messageText = value)}
+          onSend={handleSendChat}
+          onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
+          onBack={convs.goBackToMenu}
+          onOpenConversations={convs.openConversationDrawer}
+          onOpenSettings={isSelectedChannel
+            ? () => (convs.isChannelSettingsModalOpen = true)
+            : undefined}
+          isHidden={convs.mobileView === 'list'}
+          isLoadingHistory={convs.isLoadingHistory}
+          isCatchingUpMessages={messaging.isMessageCatchupActive}
+          groupMembers={convs.groupMembers}
+          sendError={convs.sendError}
+          onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
+          onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
+          onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
+          onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
+          messageReactions={messaging.messageReactions}
+          replyingTo={messaging.replyingTo}
+          onReply={messaging.handleReply}
+          onReact={isSelectedChannel
+            ? undefined
+            : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
+          onDelete={isSelectedChannel
+            ? undefined
+            : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
+          onEdit={isSelectedChannel
+            ? undefined
+            : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
+          onCancelReply={messaging.cancelReply}
+          authToken={session.authToken}
+          onFilesSelected={handleFilesSelected}
+          pendingFiles={messaging.pendingMediaFiles}
+          onRemovePendingFile={messaging.removePendingMediaFile}
+          isUploading={messaging.isUploadingMedia}
+          onStartAudioCall={() => {
+            void startCallForCurrentConversation(false);
+          }}
+          onStartVideoCall={() => {
+            void startCallForCurrentConversation(true);
+          }}
+          onOpenMembers={routeMode === 'communities' && isSelectedChannel
+            ? convs.openChannelMembersDrawer
+            : undefined}
+          onLoadOlderMessages={() => convs.loadOlderMessages(convs.selectedContact!, convCtx())}
+          onMessagesScrollEl={(el) => {
+            convs.chatContainer = el ?? undefined;
+          }}
+        />
       {/key}
 
       {#if routeMode === 'communities'}

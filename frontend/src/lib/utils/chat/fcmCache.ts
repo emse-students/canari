@@ -1,5 +1,5 @@
 /**
- * FCM Message Cache — pré-injection des messages dans le stockage local.
+ * FCM Message Cache - pré-injection des messages dans le stockage local.
  *
  * Quand l'app est fermée et qu'une notification FCM arrive, CanariFirebaseMessagingService
  * déchiffre le message MLS (pour afficher le texte dans la notification) et écrit une entrée
@@ -7,7 +7,7 @@
  * les messages dans le stockage local AVANT la sync MLS complète (~10s) → affichage immédiat.
  *
  * Les messages complets provenant du pipeline MLS normal écraseront ensuite les entrées de
- * cache via .put() — garantissant des données complètes (replyTo, media key, etc.) à terme.
+ * cache via .put() - garantissant des données complètes (replyTo, media key, etc.) à terme.
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -36,7 +36,7 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
   if (!(window as any).__TAURI_INTERNALS__) return [];
 
   // Declared without initializer: catch always returns, so entries is definitely
-  // assigned before use — TypeScript flow analysis confirms this.
+  // assigned before use - TypeScript flow analysis confirms this.
   let entries: FcmCacheEntry[];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -66,7 +66,7 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
       timestamp: entry.timestamp,
     };
     try {
-      // .saveMessage() utilise .put() — le pipeline MLS peut écraser avec les données complètes
+      // .saveMessage() utilise .put() - le pipeline MLS peut écraser avec les données complètes
       await storage.saveMessage(msg, pin);
       injected.push(msg);
       appendLog(

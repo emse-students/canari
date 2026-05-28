@@ -5,7 +5,7 @@
  * Calls `fn` once immediately if the page is currently visible, then every `ms`
  * milliseconds. Safe to call during SSR (no-op if `document` is unavailable).
  *
- * @returns Cleanup function — call on component unmount or to stop the interval permanently.
+ * @returns Cleanup function - call on component unmount or to stop the interval permanently.
  */
 export function createPausableInterval(fn: () => void, ms: number): () => void {
   if (typeof document === 'undefined') return () => {};

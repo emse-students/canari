@@ -85,9 +85,7 @@
     error = '';
     try {
       hiddenPosts = await listHiddenPosts();
-      const ids = hiddenPosts
-        .map((p) => p.authorId)
-        .filter((id): id is string => Boolean(id));
+      const ids = hiddenPosts.map((p) => p.authorId).filter((id): id is string => Boolean(id));
       await resolveNames(ids);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Impossible de charger les posts masqués.';
@@ -228,7 +226,9 @@
       <ShieldAlert size={28} class="text-red-500" />
       <div>
         <h1 class="text-2xl font-bold text-text-main">Modération</h1>
-        <p class="text-sm text-text-muted">Signalements, posts masqués et utilisateurs restreints</p>
+        <p class="text-sm text-text-muted">
+          Signalements, posts masqués et utilisateurs restreints
+        </p>
       </div>
     </div>
     <button
@@ -292,9 +292,7 @@
       <UserX size={16} />
       Utilisateurs mutés
       {#if mutedUsers.length > 0}
-        <span
-          class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-gray-500 text-white"
-        >
+        <span class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-gray-500 text-white">
           {mutedUsers.length}
         </span>
       {/if}
@@ -327,7 +325,7 @@
       <!-- Pending reports -->
       {#if pendingReports.length > 0}
         <h2 class="text-sm font-bold text-text-muted uppercase tracking-wider mb-3">
-          En attente — {pendingReports.length}
+          En attente - {pendingReports.length}
         </h2>
         <div class="space-y-3 mb-8">
           {#each pendingReports as report (report.id)}
@@ -341,10 +339,14 @@
                 >
                   {contentTypeLabel[report.contentType]}
                 </span>
-                <span class="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                <span
+                  class="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full"
+                >
                   {reasonLabel[report.reason] ?? report.reason}
                 </span>
-                <span class="ml-auto text-[11px] text-text-muted/60">{formatDate(report.createdAt)}</span>
+                <span class="ml-auto text-[11px] text-text-muted/60"
+                  >{formatDate(report.createdAt)}</span
+                >
               </div>
 
               <!-- People row -->
@@ -442,7 +444,7 @@
       <!-- Resolved reports -->
       {#if resolvedReports.length > 0}
         <h2 class="text-sm font-bold text-text-muted uppercase tracking-wider mb-3">
-          Traités / Ignorés — {resolvedReports.length}
+          Traités / Ignorés - {resolvedReports.length}
         </h2>
         <div class="space-y-2">
           {#each resolvedReports as report (report.id)}
@@ -460,7 +462,7 @@
               </span>
               {#if report.reportedUserId}
                 <span class="text-xs text-text-muted hidden sm:inline">
-                  — {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
+                  - {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
                 </span>
               {/if}
               <span class="ml-auto text-[11px] text-text-muted/60 shrink-0"
@@ -516,7 +518,9 @@
               {:else}
                 <span class="text-xs text-text-muted italic">Publication d'association</span>
               {/if}
-              <span class="ml-auto text-[11px] text-text-muted/60">{formatDate(post.createdAt)}</span>
+              <span class="ml-auto text-[11px] text-text-muted/60"
+                >{formatDate(post.createdAt)}</span
+              >
             </div>
 
             <!-- Excerpt -->
@@ -526,9 +530,7 @@
 
             <!-- Report count + ID -->
             <div class="flex items-center gap-2 mb-3">
-              <span
-                class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600"
-              >
+              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
                 {post.pendingReportCount} signalement{post.pendingReportCount > 1 ? 's' : ''} en attente
               </span>
               <button
@@ -542,7 +544,9 @@
             </div>
 
             <!-- Actions -->
-            <div class="flex items-center gap-2 pt-2 border-t border-orange-200/60 dark:border-orange-900/30">
+            <div
+              class="flex items-center gap-2 pt-2 border-t border-orange-200/60 dark:border-orange-900/30"
+            >
               <button
                 onclick={() => handleRestore(post.id)}
                 disabled={processingId === post.id}

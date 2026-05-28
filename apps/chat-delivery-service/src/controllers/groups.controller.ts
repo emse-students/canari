@@ -130,7 +130,7 @@ export class GroupsController {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     // Soft-delete: keep the row as a tombstone for recovery routing
     await this.groupRepo.update({ id: safeGroupId }, { deletedAt: new Date() });
-    // Hard-delete operational data — no longer needed once the group is gone
+    // Hard-delete operational data - no longer needed once the group is gone
     await this.groupMemberRepo.delete({ groupId: safeGroupId });
     await this.deviceGroupRepo.delete({ groupId: safeGroupId });
     await this.queuedMessageRepo.delete({ groupId: safeGroupId });
@@ -161,12 +161,12 @@ export class GroupsController {
       .execute();
 
     if (result.affected === 0) {
-      // Another device won — return the real winner's successorId
+      // Another device won - return the real winner's successorId
       const existing = await this.groupRepo.findOne({
         where: { id: safeGroupId },
       });
       this.logger.log(
-        `[CLAIM_SUCCESSOR] group=${safeGroupId} LOST — real successor=${existing?.successorId}`,
+        `[CLAIM_SUCCESSOR] group=${safeGroupId} LOST - real successor=${existing?.successorId}`,
       );
       throw new ConflictException({
         claimed: false,
@@ -175,7 +175,7 @@ export class GroupsController {
     }
 
     this.logger.log(
-      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON — successor=${body.successorId}`,
+      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${body.successorId}`,
     );
     return { claimed: true, successorId: body.successorId };
   }

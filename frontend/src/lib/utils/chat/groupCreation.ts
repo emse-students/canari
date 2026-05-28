@@ -107,7 +107,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     await mlsService.createGroup(groupId);
     await mlsService.registerMember(groupId, userId);
 
-    // Add own other devices to the group — use a single bulk commit to avoid
+    // Add own other devices to the group - use a single bulk commit to avoid
     // epoch fragmentation (sequential addMember would create one commit per device,
     // causing WrongEpoch errors on already-joined devices).
     const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
@@ -244,7 +244,7 @@ async function processBulkAddition(
 
     if (allDevices.length === 0) {
       log('[ERREUR] Aucun appareil trouve pour les utilisateurs demandes.');
-      console.error('[SYNC] No devices found for any requested user — aborting bulk add');
+      console.error('[SYNC] No devices found for any requested user - aborting bulk add');
       return;
     }
 
@@ -340,7 +340,7 @@ async function processBulkAddition(
       log(
         '[WARN] Aucun Welcome livré: aucun membre ajouté ne sera annoncé tant que la livraison échoue.'
       );
-      console.warn('[SYNC] No Welcome delivered — member addition notification skipped');
+      console.warn('[SYNC] No Welcome delivered - member addition notification skipped');
     }
   } catch (e: any) {
     log(`Erreur invitation groupée: ${toUiDiscussionError(e)}`);
@@ -377,7 +377,7 @@ export async function inviteMemberToGroup(
  *
  * Before creating anything the function checks whether a conversation already
  * exists locally or on the server (handles the case where another device already
- * created it). The contact's devices are also fetched upfront — if none are found
+ * created it). The contact's devices are also fetched upfront - if none are found
  * the function aborts without creating an orphaned group.
  *
  * All of the contact's devices plus the current user's other devices are added
@@ -406,7 +406,7 @@ export async function startNewConversation(
 
   // Check server-side: a direct group might exist but not be loaded locally yet
   // (e.g. after state clear, backup import, or another device created it first).
-  // Names can be "alice::bob" or "bob::alice" — check both orderings.
+  // Names can be "alice::bob" or "bob::alice" - check both orderings.
   try {
     const serverGroups = await mlsService.getUserGroups(userId);
     const expectedNames = [
@@ -418,7 +418,7 @@ export async function startNewConversation(
     );
     if (existing) {
       log(
-        `[1v1] Groupe serveur existant trouvé (${existing.groupId}) — chargement sans recréation.`
+        `[1v1] Groupe serveur existant trouvé (${existing.groupId}) - chargement sans recréation.`
       );
       const key = existing.groupId;
       if (!conversations.has(key)) {
@@ -522,7 +522,7 @@ export async function startNewConversation(
         }
       } else {
         log('[DM] AVERTISSEMENT: addMembersBulk a retourné welcome=null');
-        console.warn('[DM] addMembersBulk returned no welcome — contact may have no KeyPackage');
+        console.warn('[DM] addMembersBulk returned no welcome - contact may have no KeyPackage');
       }
 
       // Sauvegarder AVANT sendCommit (crash-safety)
@@ -587,7 +587,7 @@ export async function repairDirectConversation(
   const devices = await fetchDevicesWithRetry(mlsService, contact, log, 3, 1000);
   if (devices.length === 0) {
     log(`Échec de la réparation : aucun appareil pour ${contact}`);
-    console.error(`[REPAIR] No devices found for ${contact} — cannot repair`);
+    console.error(`[REPAIR] No devices found for ${contact} - cannot repair`);
     return false;
   }
 

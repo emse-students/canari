@@ -18,7 +18,7 @@ export type QueueMsgFlags = {
   hasQueuedId: boolean;
 };
 
-/** After a successful `messageCallback` — ack only if callback did not request retry. */
+/** After a successful `messageCallback` - ack only if callback did not request retry. */
 export function shouldAckAfterSuccess(
   cbResult: boolean | undefined,
   flags: QueueMsgFlags
@@ -26,20 +26,20 @@ export function shouldAckAfterSuccess(
   return flags.hasQueuedId && cbResult !== false;
 }
 
-/** After successful processing of a persisted `group_reset` control row — always ack if we have an id. */
+/** After successful processing of a persisted `group_reset` control row - always ack if we have an id. */
 export function shouldAckGroupResetControl(flags: Pick<QueueMsgFlags, 'hasQueuedId'>): boolean {
   return flags.hasQueuedId;
 }
 
 /**
- * Web: exception in processQueue — ack commits only (idempotent); Welcome retries; app stays queued.
+ * Web: exception in processQueue - ack commits only (idempotent); Welcome retries; app stays queued.
  */
 export function shouldAckAfterWebException(flags: QueueMsgFlags): boolean {
   return flags.hasQueuedId && flags.isCommit;
 }
 
 /**
- * Tauri: exception in processQueue — Welcome errors handled first by caller.
+ * Tauri: exception in processQueue - Welcome errors handled first by caller.
  * Remaining errors ack if queued id exists.
  */
 export function shouldAckAfterTauriGenericException(flags: QueueMsgFlags): boolean {

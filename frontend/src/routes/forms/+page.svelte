@@ -1,7 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { exportSubmissions, getForms, getSubmissions, deleteForm, type Form, type Submission } from '$lib/forms/api';
-  import { Plus, Download, FileText, Pencil, Link, Check, Trash2, ChevronDown, ChevronUp, Users } from '@lucide/svelte';
+  import {
+    exportSubmissions,
+    getForms,
+    getSubmissions,
+    deleteForm,
+    type Form,
+    type Submission,
+  } from '$lib/forms/api';
+  import {
+    Plus,
+    Download,
+    FileText,
+    Pencil,
+    Link,
+    Check,
+    Trash2,
+    ChevronDown,
+    ChevronUp,
+    Users,
+  } from '@lucide/svelte';
 
   let copiedId = $state<string | null>(null);
 
@@ -9,7 +27,9 @@
     if (typeof window === 'undefined') return;
     void navigator.clipboard.writeText(`${window.location.origin}/forms/${id}`);
     copiedId = id;
-    setTimeout(() => { copiedId = null; }, 2000);
+    setTimeout(() => {
+      copiedId = null;
+    }, 2000);
   }
 
   let forms = $state<Form[]>([]);
@@ -25,7 +45,7 @@
     try {
       forms = await getForms();
     } catch {
-      // unauthenticated or API unavailable — leave empty
+      // unauthenticated or API unavailable - leave empty
     } finally {
       loading = false;
     }
@@ -82,7 +102,18 @@
 
   /** Returns a human-readable label for a payment status. */
   function statusLabel(s: string): string {
-    return ({ free: 'Gratuit', pending: 'En attente', pending_cash: 'Espèces en attente', paid: 'Payé', cancelled: 'Annulé', expired: 'Expiré' } as Record<string, string>)[s] ?? s;
+    return (
+      (
+        {
+          free: 'Gratuit',
+          pending: 'En attente',
+          pending_cash: 'Espèces en attente',
+          paid: 'Payé',
+          cancelled: 'Annulé',
+          expired: 'Expiré',
+        } as Record<string, string>
+      )[s] ?? s
+    );
   }
 
   /** Formats cents as a currency string, or "–" for zero. */
@@ -139,7 +170,13 @@
   {:else}
     <div class="space-y-3">
       {#each forms as form (form.id)}
-        <div class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] transition-colors {expandedForms[form.id] ? 'border-cn-yellow/40' : 'hover:border-cn-yellow/40'}">
+        <div
+          class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] transition-colors {expandedForms[
+            form.id
+          ]
+            ? 'border-cn-yellow/40'
+            : 'hover:border-cn-yellow/40'}"
+        >
           <!-- Card header -->
           <div class="p-5 flex flex-col sm:flex-row sm:items-center gap-3">
             <div class="flex-1 min-w-0">
@@ -204,18 +241,26 @@
             <div class="border-t-2 border-cn-border px-5 py-4">
               {#if submissionsData[form.id] === 'loading'}
                 <div class="flex justify-center py-4">
-                  <div class="w-6 h-6 border-2 border-cn-yellow border-t-transparent rounded-full animate-spin"></div>
+                  <div
+                    class="w-6 h-6 border-2 border-cn-yellow border-t-transparent rounded-full animate-spin"
+                  ></div>
                 </div>
               {:else if submissionsData[form.id] === 'error'}
-                <p class="text-sm text-red-600 text-center py-2">Impossible de charger les réponses.</p>
+                <p class="text-sm text-red-600 text-center py-2">
+                  Impossible de charger les réponses.
+                </p>
               {:else if Array.isArray(submissionsData[form.id]) && (submissionsData[form.id] as Submission[]).length === 0}
-                <p class="text-sm text-text-muted text-center py-2">Aucune réponse pour l'instant.</p>
+                <p class="text-sm text-text-muted text-center py-2">
+                  Aucune réponse pour l'instant.
+                </p>
               {:else if Array.isArray(submissionsData[form.id])}
                 {@const subs = submissionsData[form.id] as Submission[]}
                 <div class="overflow-x-auto">
                   <table class="w-full text-sm">
                     <thead>
-                      <tr class="text-left text-xs font-bold text-text-muted uppercase tracking-wide border-b border-cn-border">
+                      <tr
+                        class="text-left text-xs font-bold text-text-muted uppercase tracking-wide border-b border-cn-border"
+                      >
                         <th class="pb-2 pr-4 whitespace-nowrap">Date & heure</th>
                         <th class="pb-2 pr-4 whitespace-nowrap">Nom</th>
                         <th class="pb-2 pr-4 whitespace-nowrap">Statut</th>
@@ -225,20 +270,30 @@
                     <tbody class="divide-y divide-cn-border/50">
                       {#each subs as sub (sub.id)}
                         <tr class="text-text-main">
-                          <td class="py-2 pr-4 text-xs font-mono text-text-muted whitespace-nowrap">{formatDate(sub.createdAt)}</td>
+                          <td class="py-2 pr-4 text-xs font-mono text-text-muted whitespace-nowrap"
+                            >{formatDate(sub.createdAt)}</td
+                          >
                           <td class="py-2 pr-4 whitespace-nowrap">
                             {#if sub.firstName || sub.lastName}
                               {[sub.firstName, sub.lastName].filter(Boolean).join(' ')}
                             {:else}
-                              <span class="text-text-muted/60 text-xs font-mono">{sub.userId.slice(0, 8)}…</span>
+                              <span class="text-text-muted/60 text-xs font-mono"
+                                >{sub.userId.slice(0, 8)}…</span
+                              >
                             {/if}
                           </td>
                           <td class="py-2 pr-4">
-                            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
-                              {sub.paymentStatus === 'paid' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' :
-                               sub.paymentStatus === 'free' ? 'bg-cn-border/40 text-text-muted' :
-                               sub.paymentStatus === 'pending' || sub.paymentStatus === 'pending_cash' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300' :
-                               'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}">
+                            <span
+                              class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
+                              {sub.paymentStatus === 'paid'
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                                : sub.paymentStatus === 'free'
+                                  ? 'bg-cn-border/40 text-text-muted'
+                                  : sub.paymentStatus === 'pending' ||
+                                      sub.paymentStatus === 'pending_cash'
+                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}"
+                            >
                               {statusLabel(sub.paymentStatus)}
                             </span>
                           </td>

@@ -1,7 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
 /**
- * Mute state for a user — stored in social-service to avoid cross-service HTTP calls.
+ * Mute state for a user - stored in social-service to avoid cross-service HTTP calls.
  * A muted user can still read but cannot post, react, or comment.
  */
 @Entity('user_moderation')

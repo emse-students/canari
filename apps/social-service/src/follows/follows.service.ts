@@ -77,7 +77,7 @@ export class FollowsService {
 
   // ── User follows ──────────────────────────────────────────────────────────
 
-  /** Follows a user. Idempotent — silently ignores duplicate follows. */
+  /** Follows a user. Idempotent - silently ignores duplicate follows. */
   async followUser(followerUserId: string, followedUserId: string): Promise<{ ok: boolean }> {
     const already = await this.userFollowRepo.findOne({
       where: { followerUserId, followedUserId },

@@ -432,7 +432,7 @@ async fn recevoir_message_bytes(
             }
             None => None,
         }
-        // lock est libéré ici — aucun await n'a encore eu lieu
+        // lock est libéré ici - aucun await n'a encore eu lieu
     };
     if let Some((msg_ep, group_ep)) = epoch_gap {
         log::warn!(
@@ -501,7 +501,7 @@ async fn recevoir_message_bytes(
             // probable gap du Sender Ratchet (génération future reçue).
             if err_str.contains("Process error:") {
                 log::warn!(
-                    "[GAP] Sender Ratchet gap pour group={} — message mis en file SQLite",
+                    "[GAP] Sender Ratchet gap pour group={} - message mis en file SQLite",
                     group_id
                 );
                 let ts = std::time::SystemTime::now()
@@ -615,7 +615,7 @@ async fn bootstrap_dead_conversation(
 
     if claim_resp.status() == 409 {
         log::warn!(
-            "[BOOTSTRAP] Race condition détectée pour group={} — un autre device a déjà bootstrappé.",
+            "[BOOTSTRAP] Race condition détectée pour group={} - un autre device a déjà bootstrappé.",
             conversation_id
         );
         return Ok(BootstrapOutcome::Conflict);
@@ -646,7 +646,7 @@ async fn bootstrap_dead_conversation(
         .map_err(|e| format!("reset-epoch HTTP error: {}", e))?;
     if !reset_resp.status().is_success() {
         log::warn!(
-            "[BOOTSTRAP] reset-epoch failed ({}) — on continue quand même.",
+            "[BOOTSTRAP] reset-epoch failed ({}) - on continue quand même.",
             reset_resp.status()
         );
     }
@@ -719,7 +719,7 @@ async fn bootstrap_dead_conversation(
 
     if all_key_packages.is_empty() {
         log::warn!(
-            "[BOOTSTRAP] Aucun KeyPackage valide pour group={} — bootstrap annulé.",
+            "[BOOTSTRAP] Aucun KeyPackage valide pour group={} - bootstrap annulé.",
             conversation_id
         );
         return Ok(BootstrapOutcome::NoMembers);
@@ -1058,11 +1058,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         let plaintext = match manager.process_incoming_message(&group_id_str, &cipher_vec) {
             Ok(Some(p)) => p,
             Ok(None) => {
-                log::warn!("[FCM] process_incoming_message: Ok(None) — message de contrôle MLS");
+                log::warn!("[FCM] process_incoming_message: Ok(None) - message de contrôle MLS");
                 return None;
             }
             Err(e) => {
-                log::error!("[FCM] process_incoming_message: Err({e}) — group={group_id_str}");
+                log::error!("[FCM] process_incoming_message: Err({e}) - group={group_id_str}");
                 return None;
             }
         };
@@ -1081,7 +1081,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 
 /// Lit {app_data_dir}/fcm_message_cache.ndjson, efface le fichier et retourne les entrées.
 /// Appelé au boot juste après login pour pré-injecter les messages déjà déchiffrés
-/// lors de la réception FCM — évite d'attendre la sync MLS complète (~10s).
+/// lors de la réception FCM - évite d'attendre la sync MLS complète (~10s).
 #[tauri::command]
 fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     let data_dir = match app.path().app_data_dir() {
@@ -1649,7 +1649,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                             .execute(&mut *tx)
                             .await
                             .map_err(|e| e.to_string())?;
-                        
+
                         let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
                         sqlx::query("INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)")
                             .bind(enc.as_slice())
@@ -1657,7 +1657,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                             .execute(&mut *tx)
                             .await
                             .map_err(|e| e.to_string())?;
-                        
+
                         if tx.commit().await.is_ok() {
                             let _ = std::fs::write(std::path::Path::new(&files_dir_str).join("mls.bin"), &enc);
                         }
@@ -1666,7 +1666,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                     break;
                 }
             }
-            
+
             let _ = sqlx::query("DELETE FROM pending_mls_messages WHERE group_id = ? AND is_ready = 1")
                 .bind(&group_id)
                 .execute(&pool)

@@ -83,7 +83,7 @@ export interface HighlightedCode {
  * Highlight a fenced code block; falls back to auto-detect, then plaintext.
  *
  * Security: output is passed to Svelte `{@html}`. highlight.js escapes `<>&"'`
- * in user source and only injects `<span class="hljs-…">` wrappers — see tests.
+ * in user source and only injects `<span class="hljs-…">` wrappers - see tests.
  */
 export function highlightCode(text: string, lang: string): HighlightedCode {
   registerLanguages();

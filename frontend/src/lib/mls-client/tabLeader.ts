@@ -39,7 +39,7 @@ function startHeartbeat(): void {
  * Stale leader (>5s without heartbeat) is automatically replaced.
  */
 export async function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
-  // BroadcastChannel not available (e.g. Tauri desktop) — always leader.
+  // BroadcastChannel not available (e.g. Tauri desktop) - always leader.
   if (typeof BroadcastChannel === 'undefined') {
     isTabLeader = true;
     return true;
@@ -66,7 +66,7 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
           }
           isTabLeader = true;
           startHeartbeat();
-          log('[TAB] Ancien leader fermé — promotion en leader.');
+          log('[TAB] Ancien leader fermé - promotion en leader.');
         }, delay);
       }
     });
@@ -94,14 +94,14 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
       log('[TAB] Leadership acquise.');
     } else {
       isTabLeader = false;
-      log('[TAB] Race election — autre onglet leader.');
+      log('[TAB] Race election - autre onglet leader.');
     }
   } else if (currentLeader === TAB_ID) {
     isTabLeader = true;
     startHeartbeat();
   } else {
     isTabLeader = false;
-    log('[TAB] Autre onglet actif — mode lecture seule (pas de WebSocket).');
+    log('[TAB] Autre onglet actif - mode lecture seule (pas de WebSocket).');
   }
 
   if (typeof window !== 'undefined') {

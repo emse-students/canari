@@ -216,7 +216,7 @@ export class ProductsService {
     // Idempotency guard
     const existing = await this.purchaseRecordService.findByPaymentIntent(paymentIntentId);
     if (existing) {
-      this.logger.log(`[SHOP] purchase ${paymentIntentId} already processed — skipping`);
+      this.logger.log(`[SHOP] purchase ${paymentIntentId} already processed - skipping`);
       return;
     }
 

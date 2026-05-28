@@ -5,7 +5,7 @@
 //   salt (16 bytes) || iv (12 bytes) || ciphertext (variable)
 //
 // Note: switching from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM breaks
-// backward compatibility — db.ts bumps its schema version and drops all
+// backward compatibility - db.ts bumps its schema version and drops all
 // rows encrypted with the old format.
 
 const PBKDF2_ITERATIONS = 100_000;

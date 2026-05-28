@@ -15,14 +15,14 @@ export function getOrCreateEncryptionSalt(storageId: string): Uint8Array {
     try {
       return Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
     } catch {
-      // corrupted entry — fall through to regenerate
+      // corrupted entry - fall through to regenerate
     }
   }
   const salt = crypto.getRandomValues(new Uint8Array(16));
   try {
     localStorage.setItem(lsKey, btoa(Array.from(salt, (b) => String.fromCharCode(b)).join('')));
   } catch {
-    // localStorage quota exceeded — graceful degradation: per-message random salt (no cache)
+    // localStorage quota exceeded - graceful degradation: per-message random salt (no cache)
   }
   return salt;
 }

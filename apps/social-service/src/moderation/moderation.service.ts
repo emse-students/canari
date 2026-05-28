@@ -90,7 +90,7 @@ export class ModerationService {
 
   /**
    * Marks a report as reviewed or dismissed.
-   * @param action 'reviewed' — report actioned; 'dismissed' — no action taken.
+   * @param action 'reviewed' - report actioned; 'dismissed' - no action taken.
    */
   async reviewReport(
     reportId: string,

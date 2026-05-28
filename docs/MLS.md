@@ -1,4 +1,4 @@
-# Canari — MLS Architecture & Implementation Reference
+# Canari - MLS Architecture & Implementation Reference
 
 > **Source of truth for the MLS layer.** The API endpoint table supersedes any prior version of this document; cross-check with `apps/chat-delivery-service/src/app.controller.ts` for the full list.
 
@@ -6,17 +6,17 @@
 
 ## 1. Overview
 
-Canari implements end-to-end encryption using **MLS (Messaging Layer Security, RFC 9420)**. All encryption and decryption happens inside a **Rust/OpenMLS** WASM module (browser) or a Tauri native binary (desktop/mobile). The server stores and routes only ciphertext — it never sees plaintext.
+Canari implements end-to-end encryption using **MLS (Messaging Layer Security, RFC 9420)**. All encryption and decryption happens inside a **Rust/OpenMLS** WASM module (browser) or a Tauri native binary (desktop/mobile). The server stores and routes only ciphertext - it never sees plaintext.
 
 ### Key properties
 
-| Property | Value |
-|---|---|
-| Protocol | MLS RFC 9420 |
-| Cipher suite | MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 |
-| Forward secrecy | Per epoch (key ratchet on every commit) |
-| Post-compromise security | Devices can be removed and re-added |
-| Server role | Routing + persistence of encrypted blobs only |
+| Property                 | Value                                         |
+| ------------------------ | --------------------------------------------- |
+| Protocol                 | MLS RFC 9420                                  |
+| Cipher suite             | MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519  |
+| Forward secrecy          | Per epoch (key ratchet on every commit)       |
+| Post-compromise security | Devices can be removed and re-added           |
+| Server role              | Routing + persistence of encrypted blobs only |
 
 ---
 
@@ -24,36 +24,36 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 
 ### Frontend (SvelteKit)
 
-| File | Role |
-|---|---|
-| `frontend/src/lib/services/WebMlsService.ts` | WASM MLS client (browser) |
-| `frontend/src/lib/services/TauriMlsService.ts` | Tauri native MLS client (desktop/mobile) |
-| `frontend/src/lib/services/IMlsService.ts` | Interface shared by both |
-| `frontend/src/lib/mlsService.ts` | Factory: picks Web or Tauri at runtime |
-| `frontend/src/lib/composables/useChatSession.svelte.ts` | Login, reconnect, device sync orchestration |
-| `frontend/src/lib/utils/chat/connection.ts` | WS message handler, epoch recovery, Welcome processing |
-| `frontend/src/lib/utils/chat/actions.ts` | `processPendingInvitations`, `discoverMissingGroups`, `handleWelcomeRequest` |
-| `frontend/src/lib/utils/chat/history.ts` | History replay (Redis Stream fetch + MLS decrypt) |
-| `frontend/src/lib/utils/chat/conversations.ts` | Conversation loading, de-duplication, type detection |
-| `frontend/src/lib/utils/chat/messaging.ts` | `sendChatMessage`, reactions, edits, deletes |
-| `frontend/src/lib/utils/chat/messageUtils.ts` | `appMsgToEnvelope()` — unified AppMessage → MessageEnvelope decoder |
-| `frontend/src/lib/envelope.ts` | `MessageEnvelope` union type (text/media/system) + serialization |
-| `frontend/src/lib/proto/codec.ts` | Protobuf encode/decode + `mediaKindToType` |
-| `frontend/src/lib/types/index.ts` | Central type dictionary: `Conversation`, `ChatMessage`, `MessageReference`, `AddMessageToChatOptions` |
-| `frontend/mls-wasm/` | Rust WASM bindings (OpenMLS) |
-| `frontend/mls-core/` | Shared Rust MLS logic |
+| File                                                    | Role                                                                                                  |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `frontend/src/lib/services/WebMlsService.ts`            | WASM MLS client (browser)                                                                             |
+| `frontend/src/lib/services/TauriMlsService.ts`          | Tauri native MLS client (desktop/mobile)                                                              |
+| `frontend/src/lib/services/IMlsService.ts`              | Interface shared by both                                                                              |
+| `frontend/src/lib/mlsService.ts`                        | Factory: picks Web or Tauri at runtime                                                                |
+| `frontend/src/lib/composables/useChatSession.svelte.ts` | Login, reconnect, device sync orchestration                                                           |
+| `frontend/src/lib/utils/chat/connection.ts`             | WS message handler, epoch recovery, Welcome processing                                                |
+| `frontend/src/lib/utils/chat/actions.ts`                | `processPendingInvitations`, `discoverMissingGroups`, `handleWelcomeRequest`                          |
+| `frontend/src/lib/utils/chat/history.ts`                | History replay (Redis Stream fetch + MLS decrypt)                                                     |
+| `frontend/src/lib/utils/chat/conversations.ts`          | Conversation loading, de-duplication, type detection                                                  |
+| `frontend/src/lib/utils/chat/messaging.ts`              | `sendChatMessage`, reactions, edits, deletes                                                          |
+| `frontend/src/lib/utils/chat/messageUtils.ts`           | `appMsgToEnvelope()` - unified AppMessage → MessageEnvelope decoder                                   |
+| `frontend/src/lib/envelope.ts`                          | `MessageEnvelope` union type (text/media/system) + serialization                                      |
+| `frontend/src/lib/proto/codec.ts`                       | Protobuf encode/decode + `mediaKindToType`                                                            |
+| `frontend/src/lib/types/index.ts`                       | Central type dictionary: `Conversation`, `ChatMessage`, `MessageReference`, `AddMessageToChatOptions` |
+| `frontend/mls-wasm/`                                    | Rust WASM bindings (OpenMLS)                                                                          |
+| `frontend/mls-core/`                                    | Shared Rust MLS logic                                                                                 |
 
-### Backend (NestJS — chat-delivery-service, port 3010)
+### Backend (NestJS - chat-delivery-service, port 3010)
 
-| File | Role |
-|---|---|
+| File                                               | Role                                |
+| -------------------------------------------------- | ----------------------------------- |
 | `apps/chat-delivery-service/src/app.controller.ts` | All MLS HTTP endpoints (~40 routes) |
-| `apps/chat-delivery-service/src/entities/` | TypeORM entities (see §3) |
+| `apps/chat-delivery-service/src/entities/`         | TypeORM entities (see §3)           |
 
-### Gateway (Rust/Axum — chat-gateway, port 3000)
+### Gateway (Rust/Axum - chat-gateway, port 3000)
 
-| File | Role |
-|---|---|
+| File                            | Role                                 |
+| ------------------------------- | ------------------------------------ |
 | `apps/chat-gateway/src/main.rs` | WebSocket routing, presence, pub/sub |
 
 ---
@@ -62,17 +62,17 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 
 ### Entities (chat-delivery-service)
 
-| Entity | Purpose |
-|---|---|
-| `KeyPackage` | Static fallback key package per device (1 per device) |
-| `OneTimeKeyPackage` | One-time prekeys (OTKP), consumed on invite |
-| `Group` | Group metadata (name, isGroup, epoch) |
-| `GroupMember` | User ↔ group membership |
+| Entity                  | Purpose                                                                |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `KeyPackage`            | Static fallback key package per device (1 per device)                  |
+| `OneTimeKeyPackage`     | One-time prekeys (OTKP), consumed on invite                            |
+| `Group`                 | Group metadata (name, isGroup, epoch)                                  |
+| `GroupMember`           | User ↔ group membership                                                |
 | `DeviceGroupMembership` | Per-device state machine (pending→welcome_sent→welcome_received→stale) |
-| `QueuedMessage` | Pending messages for offline devices |
-| `PinVerifier` | PBKDF2 verifier to detect PIN mismatch across devices |
-| `PushToken` | FCM push token per device |
-| `RevokedDevice` | Revoked device IDs (triggers resetRequired on next login) |
+| `QueuedMessage`         | Pending messages for offline devices                                   |
+| `PinVerifier`           | PBKDF2 verifier to detect PIN mismatch across devices                  |
+| `PushToken`             | FCM push token per device                                              |
+| `RevokedDevice`         | Revoked device IDs (triggers resetRequired on next login)              |
 
 ### DeviceGroupMembership state machine
 
@@ -90,60 +90,65 @@ stale ──(kick + re-add)──► welcome_sent
 All routes require `X-User-Id` header (injected by Nginx auth_request) unless noted.
 
 ### Device management
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/mls/register-device` | Register static key package |
-| POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
-| GET | `/api/mls/devices/:userId` | Fetch all devices for a user |
-| DELETE | `/api/mls/devices/:userId/:deviceId` | Delete a device (all memberships + KPs) |
-| PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
-| GET | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
-| DELETE | `/api/mls/devices/:userId/:deviceId/prekeys` | Purge all OTKPs for device |
+
+| Method | Path                                               | Description                             |
+| ------ | -------------------------------------------------- | --------------------------------------- |
+| POST   | `/api/mls/register-device`                         | Register static key package             |
+| POST   | `/api/mls/register-device/prekeys`                 | Bulk-upload one-time prekeys            |
+| GET    | `/api/mls/devices/:userId`                         | Fetch all devices for a user            |
+| DELETE | `/api/mls/devices/:userId/:deviceId`               | Delete a device (all memberships + KPs) |
+| PATCH  | `/api/mls/devices/:userId/:deviceId/metadata`      | Update device name/OS/version           |
+| GET    | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs                   |
+| DELETE | `/api/mls/devices/:userId/:deviceId/prekeys`       | Purge all OTKPs for device              |
 
 ### Group management
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/mls/groups` | Create group |
-| GET | `/api/mls/groups/:groupId` | Get group metadata |
-| PATCH | `/api/mls/groups/:groupId` | Rename group |
-| DELETE | `/api/mls/groups/:groupId` | Delete group |
-| POST | `/api/mls/groups/:groupId/members` | Register user as member |
-| GET | `/api/mls/groups/:groupId/members` | List group members |
-| DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove member |
-| POST | `/api/mls/groups/:groupId/reset` | Trigger group_reset broadcast |
-| POST | `/api/mls/groups/:groupId/reset-epoch` | Reset epoch counter |
-| GET | `/api/mls/users/:userId/groups` | List all groups for a user |
+
+| Method | Path                                       | Description                   |
+| ------ | ------------------------------------------ | ----------------------------- |
+| POST   | `/api/mls/groups`                          | Create group                  |
+| GET    | `/api/mls/groups/:groupId`                 | Get group metadata            |
+| PATCH  | `/api/mls/groups/:groupId`                 | Rename group                  |
+| DELETE | `/api/mls/groups/:groupId`                 | Delete group                  |
+| POST   | `/api/mls/groups/:groupId/members`         | Register user as member       |
+| GET    | `/api/mls/groups/:groupId/members`         | List group members            |
+| DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove member                 |
+| POST   | `/api/mls/groups/:groupId/reset`           | Trigger group_reset broadcast |
+| POST   | `/api/mls/groups/:groupId/reset-epoch`     | Reset epoch counter           |
+| GET    | `/api/mls/users/:userId/groups`            | List all groups for a user    |
 
 ### Messaging
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/mls/send` | Send encrypted message/commit |
-| POST | `/api/mls/welcome` | Deliver Welcome to device |
-| GET | `/api/mls/messages/:userId/:deviceId` | Fetch pending messages |
-| POST | `/api/mls/messages/ack` | Acknowledge messages |
-| POST | `/api/mls/commit` | Validate commit epoch |
+
+| Method | Path                                  | Description                   |
+| ------ | ------------------------------------- | ----------------------------- |
+| POST   | `/api/mls/send`                       | Send encrypted message/commit |
+| POST   | `/api/mls/welcome`                    | Deliver Welcome to device     |
+| GET    | `/api/mls/messages/:userId/:deviceId` | Fetch pending messages        |
+| POST   | `/api/mls/messages/ack`               | Acknowledge messages          |
+| POST   | `/api/mls/commit`                     | Validate commit epoch         |
 
 ### Device sync / invitation
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/mls/invitations/status` | Upsert DeviceGroupMembership |
-| GET | `/api/mls/invitations/pending/:userId/:deviceId` | Invitations to process |
-| GET | `/api/mls/device-memberships/:userId/:deviceId` | All memberships for device |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
-| DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
-| POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
-| POST | `/api/mls/reinvite-request` | Broadcast reinvite_request signal |
-| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
-| POST | `/api/mls/add-lock` | Acquire distributed add-lock |
-| DELETE | `/api/mls/add-lock` | Release add-lock |
+
+| Method | Path                                                     | Description                       |
+| ------ | -------------------------------------------------------- | --------------------------------- |
+| POST   | `/api/mls/invitations/status`                            | Upsert DeviceGroupMembership      |
+| GET    | `/api/mls/invitations/pending/:userId/:deviceId`         | Invitations to process            |
+| GET    | `/api/mls/device-memberships/:userId/:deviceId`          | All memberships for device        |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership             |
+| DELETE | `/api/mls/device-memberships/:userId/:deviceId`          | Delete all memberships            |
+| POST   | `/api/mls/kick-stale-device`                             | Kick stale leaf from group        |
+| POST   | `/api/mls/reinvite-request`                              | Broadcast reinvite_request signal |
+| POST   | `/api/mls/welcome-request`                               | Broadcast welcome_request signal  |
+| POST   | `/api/mls/add-lock`                                      | Acquire distributed add-lock      |
+| DELETE | `/api/mls/add-lock`                                      | Release add-lock                  |
 
 ### Auth / misc
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/mls/security/pin-check` | Validate/register PIN verifier |
-| POST | `/api/mls/push/register` | Register FCM push token |
-| DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token |
-| GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
+
+| Method | Path                                 | Description                        |
+| ------ | ------------------------------------ | ---------------------------------- |
+| POST   | `/api/mls/security/pin-check`        | Validate/register PIN verifier     |
+| POST   | `/api/mls/push/register`             | Register FCM push token            |
+| DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token              |
+| GET    | `/api/mls/history/:groupId`          | Redis Stream history (incremental) |
 
 ---
 
@@ -213,14 +218,14 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
 
 Triggered when `processIncomingMessage` fails with epoch-related errors:
 
-| Error | Condition | Recovery |
-|---|---|---|
-| `TooDistantInThePast` / `CiphertextGenerationOutOfBounds` | Ratchet key consumed | ACK silently (irrecoverable) |
-| `msg_epoch < group_epoch` | Stale message (already processed) | ACK silently |
-| `msg_epoch > group_epoch` | Local state is behind | `forgetGroup()` + `sendReinviteRequest()` |
-| `SenderDataDecryption` | Sender secrets diverged | `forgetGroup()` + `sendReinviteRequest()` |
-| Repeated null decryption (≥3) | Persistent local divergence | `forgetGroup()` + `sendReinviteRequest()` |
-| `WrongEpoch` (no epoch numbers) | ACK silently | — |
+| Error                                                     | Condition                         | Recovery                                  |
+| --------------------------------------------------------- | --------------------------------- | ----------------------------------------- |
+| `TooDistantInThePast` / `CiphertextGenerationOutOfBounds` | Ratchet key consumed              | ACK silently (irrecoverable)              |
+| `msg_epoch < group_epoch`                                 | Stale message (already processed) | ACK silently                              |
+| `msg_epoch > group_epoch`                                 | Local state is behind             | `forgetGroup()` + `sendReinviteRequest()` |
+| `SenderDataDecryption`                                    | Sender secrets diverged           | `forgetGroup()` + `sendReinviteRequest()` |
+| Repeated null decryption (≥3)                             | Persistent local divergence       | `forgetGroup()` + `sendReinviteRequest()` |
+| `WrongEpoch` (no epoch numbers)                           | ACK silently                      | -                                         |
 
 After `sendReinviteRequest()`: an online peer receives `reinvite_request` → kicks stale device → re-adds → sends new Welcome.
 
@@ -246,6 +251,7 @@ When no automatic recovery is possible (e.g. all devices diverged):
 ### 5.9 Orphan Cleanup (reconnect / login)
 
 `discoverMissingGroups()` cross-checks local conversations against the server's group list. When server fetch succeeds:
+
 - Groups present on server but missing locally → create stub + send `welcome_request`
 - Groups present locally but absent from server → `forgetGroup()` + delete from DB
 - Channel conversations (`channel_*`) are never deleted (they use a different encryption scheme)
@@ -284,11 +290,13 @@ enqueueMessage()              enqueueMessage()
 ## 7. Key Packages & OTKP
 
 ### Static fallback key package
+
 - Generated on every `generateKeyPackage()` call
 - Stored server-side as the device's main KP
 - Used when all OTKPs are exhausted
 
 ### One-time key packages (OTKP / prekeys)
+
 - Pool of 50 (web) / 200 (Tauri) replenished on connect
 - Atomically consumed by inviting devices
 - **On fresh start** (no saved MLS state): old OTKPs have no matching private keys → purged via `DELETE /api/mls/devices/:userId/:deviceId/prekeys` before new ones are published
@@ -310,7 +318,7 @@ If the saved WASM/Rust state embeds a different device ID than what's in localSt
 
 `replayConversationHistory()` in `history.ts`:
 
-1. Load `lastStreamId` from localStorage (incremental — avoids re-processing consumed ratchet keys)
+1. Load `lastStreamId` from localStorage (incremental - avoids re-processing consumed ratchet keys)
 2. Fetch Redis Stream from `/api/mls/history/:groupId?after=<streamId>`
 3. For each message: use Redis Stream ID as deduplication fingerprint (falls back to `timestamp:content_prefix` for entries without ID)
 4. `processIncomingMessage()` → decrypt → `appMsgToEnvelope()` → dispatch (text, reply, media, reaction, system events)
@@ -327,18 +335,18 @@ If the saved WASM/Rust state embeds a different device ID than what's in localSt
 
 ## 11. Bug Fixes Applied
 
-| Commit | Fix |
-|---|---|
-| `8cd8d94` | Orphan group cleanup: `discoverMissingGroups` deletes local groups absent from server |
-| `8cd8d94` | `+page.ts` deferred posts load for skeleton UI |
-| `851f37a` | Welcome callback overwrite: removed duplicate `onWelcomeRequest` from `connection.ts` |
-| `851f37a` | Welcome buffer recovery: re-queue buffered messages when Welcome throws |
-| `851f37a` | `WebMlsService` credential mismatch recovery (mirror of TauriMlsService) |
-| `851f37a` | `WebMlsService` OTKP purge on fresh start + `DELETE /prekeys` backend endpoint |
-| `851f37a` | TypeScript `let`-closure narrowing: `const stN = storage` snapshots |
-| `bccd872` | Remote reactions not rendering; delete/edit reactivity (Svelte 5 `conversations.set()`) |
-| `bccd872` | System messages showing raw user IDs — resolved with `getUserDisplayNameSync` |
-| `7abba95` | `addMessageToChat` positional API → options object (`messageId`, `replyTo` were silently discarded) |
-| `df0606a` | Contract tests for `addMessageToChat` options-based API |
+| Commit    | Fix                                                                                                               |
+| --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `8cd8d94` | Orphan group cleanup: `discoverMissingGroups` deletes local groups absent from server                             |
+| `8cd8d94` | `+page.ts` deferred posts load for skeleton UI                                                                    |
+| `851f37a` | Welcome callback overwrite: removed duplicate `onWelcomeRequest` from `connection.ts`                             |
+| `851f37a` | Welcome buffer recovery: re-queue buffered messages when Welcome throws                                           |
+| `851f37a` | `WebMlsService` credential mismatch recovery (mirror of TauriMlsService)                                          |
+| `851f37a` | `WebMlsService` OTKP purge on fresh start + `DELETE /prekeys` backend endpoint                                    |
+| `851f37a` | TypeScript `let`-closure narrowing: `const stN = storage` snapshots                                               |
+| `bccd872` | Remote reactions not rendering; delete/edit reactivity (Svelte 5 `conversations.set()`)                           |
+| `bccd872` | System messages showing raw user IDs - resolved with `getUserDisplayNameSync`                                     |
+| `7abba95` | `addMessageToChat` positional API → options object (`messageId`, `replyTo` were silently discarded)               |
+| `df0606a` | Contract tests for `addMessageToChat` options-based API                                                           |
 | `2009dd4` | Spring cleaning: centralised `MessageReference` / `AddMessageToChatOptions`, unified `appMsgToEnvelope()` decoder |
-| `2654acb` | Remove legacy fallbacks (base64 proto, old JSON format, plain-text); inline `addSystemMessage` |
+| `2654acb` | Remove legacy fallbacks (base64 proto, old JSON format, plain-text); inline `addSystemMessage`                    |

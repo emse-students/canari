@@ -38,7 +38,7 @@ fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
     None
 }
 
-// ── ConnectionGuard — cleanup on drop ────────────────────────────────────
+// ── ConnectionGuard - cleanup on drop ────────────────────────────────────
 
 /// RAII guard that cleans up a WebSocket connection's in-memory entry and
 /// Redis presence key when the connection task exits (for any reason).
@@ -72,7 +72,7 @@ impl Drop for ConnectionGuard {
                     map.remove(&self.conn_key);
                     false
                 } else {
-                    true // another session is alive — keep the presence key
+                    true // another session is alive - keep the presence key
                 }
             } else {
                 false
@@ -81,7 +81,7 @@ impl Drop for ConnectionGuard {
 
         if still_connected {
             tracing::info!(
-                "[presence] Skipping DEL for {} — another session is still active",
+                "[presence] Skipping DEL for {} - another session is still active",
                 self.conn_key
             );
             return;
@@ -230,7 +230,7 @@ async fn handle_socket(
     let awaiting_pong = Arc::new(AtomicBool::new(false));
 
     // Establish ONE shared Redis connection for this socket's lifetime.
-    // MultiplexedConnection is Clone — all clones share the same underlying
+    // MultiplexedConnection is Clone - all clones share the same underlying
     // TCP connection, so we avoid opening a new connection for every frame.
     // If Redis is unavailable at connect time, we proceed in degraded mode
     // (no presence) and attempt to reconnect on the first Pong / frame.
@@ -314,7 +314,7 @@ async fn handle_socket(
         }
         Err(e) => {
             tracing::warn!(
-                "[presence] Redis unavailable at connect for {} — proceeding in degraded mode: {}",
+                "[presence] Redis unavailable at connect for {} - proceeding in degraded mode: {}",
                 conn_key,
                 e
             );
@@ -348,7 +348,7 @@ async fn handle_socket(
                     // If it was already true the previous ping went unanswered.
                     if pong_flag_send.swap(true, Ordering::Relaxed) {
                         tracing::warn!(
-                            "[heartbeat] No pong from {} — closing dead connection",
+                            "[heartbeat] No pong from {} - closing dead connection",
                             conn_key_ping
                         );
                         break;
@@ -412,7 +412,7 @@ async fn handle_socket(
                             }
                         };
 
-                        // Client heartbeat — liveness already registered above.
+                        // Client heartbeat - liveness already registered above.
                         if json.get("type").and_then(|v| v.as_str()) == Some("ping") {
                             continue;
                         }
@@ -447,7 +447,7 @@ async fn handle_socket(
 
                         match frame.msg_type.as_str() {
                             "disconnect" => {
-                                // Client is going offline intentionally — DEL presence
+                                // Client is going offline intentionally - DEL presence
                                 // immediately so peers see them offline right away,
                                 // then close the connection cleanly.
                                 handle_disconnect(&state, &user_id, &device_id).await;
@@ -529,7 +529,7 @@ async fn refresh_presence(
         }
     }
 
-    // Connection is dead or was never established — attempt a single reconnect.
+    // Connection is dead or was never established - attempt a single reconnect.
     match state.redis_client.get_multiplexed_async_connection().await {
         Ok(mut new_con) => {
             if let Err(e) = new_con.set_ex::<_, _, ()>(&redis_key, "true", 20).await {

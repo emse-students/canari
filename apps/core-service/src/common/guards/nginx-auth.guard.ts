@@ -17,7 +17,7 @@ export class NginxAuthGuard implements CanActivate {
       .toLowerCase();
     if (!userId) {
       throw new UnauthorizedException(
-        'Missing X-User-Id header — ensure the request passes through nginx auth.',
+        'Missing X-User-Id header - ensure the request passes through nginx auth.',
       );
     }
     return true;

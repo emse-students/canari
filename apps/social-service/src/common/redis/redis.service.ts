@@ -60,7 +60,7 @@ export class RedisService implements OnModuleDestroy {
     if (keys.length) await this.client.del(...keys);
   }
 
-  /** SCAN + DEL — use sparingly (e.g. cache bust after association branding changes). */
+  /** SCAN + DEL - use sparingly (e.g. cache bust after association branding changes). */
   async deleteByPattern(match: string): Promise<number> {
     let deleted = 0;
     let cursor = '0';

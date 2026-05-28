@@ -26,7 +26,7 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
   const { mlsService, scheduleReconnect, setIsWsConnected, setReconnectAttempts, log } = deps;
 
   if (!getIsTabLeader()) {
-    log('[TAB] Onglet follower — skip openGatewayConnection.');
+    log('[TAB] Onglet follower - skip openGatewayConnection.');
     return false;
   }
 
@@ -107,7 +107,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   }
 
   // Bloc 2 : groupes présents côté serveur mais absents du WASM local.
-  // Tourne indépendamment du bloc 1 — une erreur sur getDeviceMemberships ne doit pas
+  // Tourne indépendamment du bloc 1 - une erreur sur getDeviceMemberships ne doit pas
   // empêcher d'envoyer les welcome_request pour les groupes sans entrée de membership.
   try {
     const localGroups = new Set(mlsService.getLocalGroups());
@@ -146,7 +146,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
  */
 export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
   if (!getIsTabLeader()) {
-    deps.log('[TAB] Onglet follower — skip initializeConnection.');
+    deps.log('[TAB] Onglet follower - skip initializeConnection.');
     return;
   }
 

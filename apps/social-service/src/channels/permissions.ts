@@ -31,7 +31,7 @@ export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.ROLE_MANAGE,
 ];
 
-/** Permission set granted to moderators — excludes role management. */
+/** Permission set granted to moderators - excludes role management. */
 export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.CHANNEL_READ,
   CHANNEL_PERMISSIONS.CHANNEL_WRITE,

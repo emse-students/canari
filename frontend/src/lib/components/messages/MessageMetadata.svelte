@@ -16,7 +16,7 @@
     status?: 'sending' | 'sent' | 'error';
     /** List of user IDs who have read the message. */
     readBy: string[];
-    /** Timestamp of first read receipt — kept for API compat, detail shown in tooltip. */
+    /** Timestamp of first read receipt - kept for API compat, detail shown in tooltip. */
     readAt?: number;
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
@@ -44,10 +44,7 @@
 
   // Show timestamp on the last message of a group only (end/single), never mid-run.
   const showTimestamp = $derived(
-    !outsideBubble &&
-      !!timestamp &&
-      groupPosition !== 'start' &&
-      groupPosition !== 'middle'
+    !outsideBubble && !!timestamp && groupPosition !== 'start' && groupPosition !== 'middle'
   );
   const showEdited = $derived(isEdited && !outsideBubble);
   const showSendStatus = $derived(
@@ -92,7 +89,7 @@
         </span>
       {/if}
     {:else if showSent}
-      <!-- Single check icon only — no text -->
+      <!-- Single check icon only - no text -->
       <span class="inline-flex items-center opacity-50">
         <Check size={12} strokeWidth={2.5} />
       </span>

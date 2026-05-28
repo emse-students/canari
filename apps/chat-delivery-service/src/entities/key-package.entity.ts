@@ -11,7 +11,7 @@ import {
  * Stores the long-lived (static) MLS KeyPackage for each registered device.
  * A KeyPackage is an MLS credential bundle (public key + ciphersuite + extensions)
  * that other clients consume when adding this device to a group. There is at most
- * one active entry per (userId, deviceId) pair — uploading a new package replaces
+ * one active entry per (userId, deviceId) pair - uploading a new package replaces
  * the previous one. When the one-time key pool (OneTimeKeyPackage) is exhausted,
  * this fallback entry is used instead.
  */

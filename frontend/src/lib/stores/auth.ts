@@ -1,5 +1,5 @@
 /**
- * Client-side auth store — Authentik OIDC flow.
+ * Client-side auth store - Authentik OIDC flow.
  *
  * 1. `startOidcLogin()` redirects the user to Authentik's authorize endpoint.
  * 2. Authentik redirects back to `/auth/callback?code=…&state=…`.
@@ -19,7 +19,7 @@ const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
 
 let _accessToken: string | null = null;
-// Shared in-flight refresh promise — prevents concurrent getToken() callers from
+// Shared in-flight refresh promise - prevents concurrent getToken() callers from
 // each firing a separate /api/auth/refresh request.
 let _pendingRefresh: Promise<string> | null = null;
 
@@ -146,11 +146,11 @@ export async function handleOidcCallback(
   console.debug('[auth] savedState present:', !!savedState, 'matches:', savedState === state);
   if (!isDesktop) {
     if (!savedState || savedState !== state) {
-      throw new Error('Invalid OIDC state — possible CSRF attack');
+      throw new Error('Invalid OIDC state - possible CSRF attack');
     }
   } else if (savedState && savedState !== state) {
-    // State was preserved but doesn't match — still reject.
-    throw new Error('Invalid OIDC state — possible CSRF attack');
+    // State was preserved but doesn't match - still reject.
+    throw new Error('Invalid OIDC state - possible CSRF attack');
   }
   localStorage.removeItem(OIDC_STATE_KEY);
 
@@ -267,13 +267,13 @@ async function _doRefresh(): Promise<string> {
   });
 
   if (!res.ok) {
-    // Don't call clearAuth() — that would wipe userId from localStorage and revoke
+    // Don't call clearAuth() - that would wipe userId from localStorage and revoke
     // the refresh cookie server-side, forcing a full OIDC re-auth even when the
     // failure was transient. Just drop the in-memory token.
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗${res.status} ${Date.now() - t0}ms`);
-    throw new Error('Session expired — please log in again');
+    throw new Error('Session expired - please log in again');
   }
 
   const data = (await res.json()) as { access_token: string };
@@ -371,7 +371,7 @@ export async function hasStoredSession(): Promise<boolean> {
   if (!uid) {
     // On Tauri mobile, localStorage may be wiped after an OS process kill while
     // the HttpOnly refresh cookie survives in the WebView cookie store. Attempt a
-    // silent refresh — _doRefresh will restore userId from the JWT sub claim.
+    // silent refresh - _doRefresh will restore userId from the JWT sub claim.
     if (isTauri()) {
       try {
         await refresh();

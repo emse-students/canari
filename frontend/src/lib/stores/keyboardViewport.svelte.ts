@@ -76,7 +76,7 @@ export function getKeyboardViewport(): KeyboardViewportSnapshot {
 
 /**
  * Padding for portaled overlays aligned to the visual viewport (see Modal overlay styles).
- * Does not add `--keyboard-inset-bottom` — the overlay box already matches `--app-viewport-height`.
+ * Does not add `--keyboard-inset-bottom` - the overlay box already matches `--app-viewport-height`.
  */
 export const keyboardAwareOverlayPadding =
   'max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)';

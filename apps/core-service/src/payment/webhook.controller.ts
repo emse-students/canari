@@ -47,7 +47,7 @@ export class PaymentWebhookController {
         event = this.stripe.webhooks.constructEvent(raw, sig, webhookSecret);
       } else if (process.env.NODE_ENV === 'production') {
         this.logger.error(
-          'STRIPE_WEBHOOK_SECRET is required in production — refusing unsigned webhook',
+          'STRIPE_WEBHOOK_SECRET is required in production - refusing unsigned webhook',
         );
         return res
           .status(503)
@@ -100,7 +100,7 @@ export class PaymentWebhookController {
 
       if (submissionId) {
         // Prevent SSRF: submissionId originates from Stripe session metadata which was
-        // set by the client at checkout creation time — validate before embedding in URL.
+        // set by the client at checkout creation time - validate before embedding in URL.
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
           this.logger.error(
             `Invalid submissionId in webhook metadata: ${submissionId}`,
@@ -140,7 +140,7 @@ export class PaymentWebhookController {
           return res.status(500).send('Failed to notify form-service');
         }
       } else if (productId && userId) {
-        // Boutique product purchase — notify social-service
+        // Boutique product purchase - notify social-service
         if (
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
             productId,
@@ -202,7 +202,7 @@ export class PaymentWebhookController {
       const associationId = account.metadata?.associationId;
       if (associationId && account.charges_enabled) {
         // Prevent SSRF: associationId originates from Stripe account metadata which was
-        // set by the client at onboarding time — validate before embedding in URL.
+        // set by the client at onboarding time - validate before embedding in URL.
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(associationId)) {
           this.logger.error(
             `Invalid associationId in webhook metadata: ${associationId}`,

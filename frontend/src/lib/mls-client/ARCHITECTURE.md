@@ -7,7 +7,7 @@ Measures that avoid entering bad MLS states when the network and processes behav
 - Single MLS tab leader + `BroadcastChannel` coordination (see `tabLeader.ts`).
 - Distributed add lock (`acquireAddLock` / `releaseAddLock` on `IMlsService`).
 - Server-side commit epoch validation (client uses `commitBaseEpochForValidation`).
-- Shared delivery HTTP helpers (`mlsDeliveryHttp.ts`): gateway/delivery base URLs, keepalive POST, response assert — used by Web and Tauri MLS services.
+- Shared delivery HTTP helpers (`mlsDeliveryHttp.ts`): gateway/delivery base URLs, keepalive POST, response assert - used by Web and Tauri MLS services.
 - Ordering assumptions for Welcome vs commits (handled in the message pipeline).
 
 Relax only when duplicates are provably benign and local MLS state cannot diverge.

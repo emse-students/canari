@@ -1,4 +1,4 @@
-/// Tests d'intégration MLS — Simulation multi-appareils / multi-utilisateurs
+/// Tests d'intégration MLS - Simulation multi-appareils / multi-utilisateurs
 ///
 /// Objectif : reproduire le bug `TooDistantInThePast` / `AeadError` qui survient
 /// lorsque deux appareils tentent simultanément d'ajouter le même device tiers.
@@ -41,7 +41,7 @@ fn ok_or(result: &Result<Option<Vec<u8>>, mls_core::MlsError>, label: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// SCÉNARIO 1 — Chemin heureux (baseline sans race)
+// SCÉNARIO 1 - Chemin heureux (baseline sans race)
 // ---------------------------------------------------------------------------
 ///
 /// Actions attendues :
@@ -61,7 +61,7 @@ fn ok_or(result: &Result<Option<Vec<u8>>, mls_core::MlsError>, label: &str) {
 #[test]
 fn test_scenario1_happy_path() {
     print_scenario(
-        "SCÉNARIO 1 — Chemin heureux (un seul adder)",
+        "SCÉNARIO 1 - Chemin heureux (un seul adder)",
         &[
             "jolan-dev1 crée le groupe g-dm",
             "test-dev1 génère son KeyPackage",
@@ -152,11 +152,11 @@ fn test_scenario1_happy_path() {
         "test-dev1 devrait décrypter: {:?}",
         r_test1
     );
-    println!("  ✓ PASS — chemin heureux validé");
+    println!("  ✓ PASS - chemin heureux validé");
 }
 
 // ---------------------------------------------------------------------------
-// SCÉNARIO 2 — Race condition : REPRODUIT LE BUG
+// SCÉNARIO 2 - Race condition : REPRODUIT LE BUG
 // ---------------------------------------------------------------------------
 ///
 /// Actions attendues (selon le code actuel) :
@@ -181,7 +181,7 @@ fn test_scenario1_happy_path() {
 #[test]
 fn test_scenario2_race_condition() {
     print_scenario(
-        "SCÉNARIO 2 — Race condition (BUG ACTUEL)",
+        "SCÉNARIO 2 - Race condition (BUG ACTUEL)",
         &[
             "jolan-dev1 crée le groupe g-dm-race",
             "test-dev1 génère son KeyPackage",
@@ -234,7 +234,7 @@ fn test_scenario2_race_condition() {
     let result_test1_add = test1.add_members_bulk(gid, &[&kp_jolan3]);
     match &result_test1_add {
         Ok((c, _, _, _)) => println!(
-            "  ⚠ [7] test-dev1 commit-B créé (epoch 1→2 DIVERGÉ), {} bytes — RACE ACTIVE",
+            "  ⚠ [7] test-dev1 commit-B créé (epoch 1→2 DIVERGÉ), {} bytes - RACE ACTIVE",
             c.len()
         ),
         Err(e) => println!(
@@ -258,7 +258,7 @@ fn test_scenario2_race_condition() {
         println!(
             "  [9] test-dev1 traite commit-A (déjà à epoch 2 depuis commit-B): {}",
             match &r_test1_commit_a {
-                Ok(_) => "OK (inattendu — epoch reset ?)".to_string(),
+                Ok(_) => "OK (inattendu - epoch reset ?)".to_string(),
                 Err(e) => format!("ERREUR (attendue) → {e}"),
             }
         );
@@ -302,7 +302,7 @@ fn test_scenario2_race_condition() {
 }
 
 // ---------------------------------------------------------------------------
-// SCÉNARIO 3 — Fix appliqué : seul jolan-dev1 ajoute jolan-dev3
+// SCÉNARIO 3 - Fix appliqué : seul jolan-dev1 ajoute jolan-dev3
 // ---------------------------------------------------------------------------
 ///
 /// Simule le comportement APRÈS correction de `syncPeerDevicesToGroups` :
@@ -321,7 +321,7 @@ fn test_scenario2_race_condition() {
 #[test]
 fn test_scenario3_fix_single_adder_guard() {
     print_scenario(
-        "SCÉNARIO 3 — Fix appliqué (guard syncPeerDevicesToGroups)",
+        "SCÉNARIO 3 - Fix appliqué (guard syncPeerDevicesToGroups)",
         &[
             "jolan-dev1 crée le groupe g-dm-fix",
             "test-dev1 génère son KeyPackage",
@@ -369,9 +369,9 @@ fn test_scenario3_fix_single_adder_guard() {
         commit_a.len()
     );
 
-    // test-dev1 SKIP — simule le guard TypeScript corrigé
+    // test-dev1 SKIP - simule le guard TypeScript corrigé
     // (Dans le vrai code : registeredUserIds.has('jolan') → continue)
-    println!("  ✓ [7a] test-dev1 SKIP — 'jolan' est déjà membre enregistré dans getGroupMembers()");
+    println!("  ✓ [7a] test-dev1 SKIP - 'jolan' est déjà membre enregistré dans getGroupMembers()");
 
     // test-dev1 traite commit-A du canal (comportement normal de réception)
     let r_test1_commit = test1.process_incoming_message(gid, &commit_a);
@@ -411,11 +411,11 @@ fn test_scenario3_fix_single_adder_guard() {
         "test-dev1 devrait décrypter: {:?}",
         r_test1
     );
-    println!("  ✓ PASS — fix validé, aucune divergence d'epoch");
+    println!("  ✓ PASS - fix validé, aucune divergence d'epoch");
 }
 
 // ---------------------------------------------------------------------------
-// SCÉNARIO 4 — Envoi croisé multi-appareils après fix
+// SCÉNARIO 4 - Envoi croisé multi-appareils après fix
 // ---------------------------------------------------------------------------
 /// Après le fix, tous les participants s'envoient des messages dans les deux sens.
 #[test]
@@ -451,7 +451,7 @@ fn test_scenario4_bidirectional_messaging() {
     // jolan1 et jolan3 sont tous deux à epoch 2 après le join.
     // test1 est à epoch 2 après avoir traité commit2.
 
-    println!("\n═══ SCÉNARIO 4 — Messages bidirectionnels ═══");
+    println!("\n═══ SCÉNARIO 4 - Messages bidirectionnels ═══");
 
     // jolan1 → tous
     let msg1 = jolan1
@@ -492,5 +492,5 @@ fn test_scenario4_bidirectional_messaging() {
         "test-dev1  reçoit message de jolan-dev3",
     );
 
-    println!("  ✓ PASS — messages bidirectionnels 3 appareils / 2 utilisateurs");
+    println!("  ✓ PASS - messages bidirectionnels 3 appareils / 2 utilisateurs");
 }

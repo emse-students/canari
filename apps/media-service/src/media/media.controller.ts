@@ -130,7 +130,7 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // POST /media/upload/public — small public image (not ciphertext)
+  // POST /media/upload/public - small public image (not ciphertext)
   // ---------------------------------------------------------------------------
   @Post('upload/public')
   @UseInterceptors(
@@ -158,7 +158,7 @@ export class MediaController {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
-    // Resize to max 512×512, convert to WebP 90% — logos are always public/unencrypted.
+    // Resize to max 512×512, convert to WebP 90% - logos are always public/unencrypted.
     const compressed = await sharp(upload.buffer)
       .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 90 })
@@ -217,7 +217,7 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // GET /media/public/:id — no JWT (nginx should expose only this prefix publicly)
+  // GET /media/public/:id - no JWT (nginx should expose only this prefix publicly)
   // ---------------------------------------------------------------------------
   @Get('public/:id')
   async downloadPublic(@Param('id') id: string, @Res() res: Response): Promise<void> {

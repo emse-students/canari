@@ -101,7 +101,7 @@
 </script>
 
 {#if galleryMode}
-  <!-- Used inside parent gallery lightbox — just render the image -->
+  <!-- Used inside parent gallery lightbox - just render the image -->
   {#if loading}
     <div class="flex items-center justify-center w-full min-h-[12rem]">
       <ImageIcon size={32} class="opacity-20 text-white animate-pulse" strokeWidth={1.5} />
