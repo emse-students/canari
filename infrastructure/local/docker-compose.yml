@@ -145,11 +145,13 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BROKERS: kafka:29092
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
     depends_on:
       redis:
         condition: service_healthy
@@ -273,6 +275,8 @@ services:
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
     depends_on:
       postgres:
         condition: service_started

@@ -444,6 +444,7 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          INTERNAL_SECRET: ${{ secrets.INTERNAL_SECRET }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -495,6 +496,13 @@ jobs:
           }
 
           upsert_env_var "JWT_SECRET" "$JWT_SECRET"
+
+          if [ -n "$INTERNAL_SECRET" ]; then
+            upsert_env_var "INTERNAL_SECRET" "$INTERNAL_SECRET"
+          else
+            echo "::warning::INTERNAL_SECRET is not set - social/form push notifications will be disabled"
+          fi
+
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"

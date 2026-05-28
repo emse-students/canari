@@ -42,6 +42,20 @@ fi
 
 JWT_SECRET=$(grep -E '^JWT_SECRET=' "$INFRA_ENV" | cut -d= -f2)
 
+# Générer INTERNAL_SECRET si manquant ou valeur par défaut
+CURRENT_INTERNAL=$(grep -E '^INTERNAL_SECRET=' "$INFRA_ENV" | cut -d= -f2 || true)
+if [[ -z "$CURRENT_INTERNAL" || "$CURRENT_INTERNAL" == "your-internal-secret-here-change-me" ]]; then
+    INTERNAL_SECRET_GEN=$(openssl rand -hex 32)
+    if grep -q '^INTERNAL_SECRET=' "$INFRA_ENV"; then
+        sed -i.bak "s|^INTERNAL_SECRET=.*|INTERNAL_SECRET=${INTERNAL_SECRET_GEN}|" "$INFRA_ENV" && rm -f "${INFRA_ENV}.bak"
+    else
+        echo "INTERNAL_SECRET=${INTERNAL_SECRET_GEN}" >> "$INFRA_ENV"
+    fi
+    ok "INTERNAL_SECRET généré dans infrastructure/.env"
+else
+    ok "INTERNAL_SECRET déjà configuré dans infrastructure/.env"
+fi
+
 # ── frontend/.env (dev uniquement) ────────────────────────────────────────────
 if [[ "$PROD" == "false" ]]; then
     if [[ ! -f "$FRONTEND_ENV" ]]; then

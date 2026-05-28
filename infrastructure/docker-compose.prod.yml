@@ -143,6 +143,7 @@ services:
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -276,6 +277,8 @@ services:
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
     depends_on:
       postgres:
         condition: service_started
