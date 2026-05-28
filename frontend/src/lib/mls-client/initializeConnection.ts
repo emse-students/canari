@@ -1,5 +1,10 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
+import {
+  buildUserGroupSyncIndex,
+  isGroupEligibleForMlsRecovery,
+  resolveActiveGroupTarget,
+} from '$lib/utils/chat/groupSyncEligibility';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 export interface ConnectionDeps {
@@ -39,13 +44,13 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     setReconnectAttempts(0);
     log('Connecté au réseau !');
     console.log('[WS] Connected to Chat Gateway');
-    mlsService
-      .fetchPendingMessages()
-      .catch((e) =>
-        log(
-          `[WARN] Echec récupération messages initiaux: ${e instanceof Error ? e.message : String(e)}`
-        )
+    try {
+      await mlsService.fetchPendingMessages();
+    } catch (e) {
+      log(
+        `[WARN] Echec récupération messages initiaux: ${e instanceof Error ? e.message : String(e)}`
       );
+    }
     mlsService.onDisconnect(scheduleReconnect);
 
     if (typeof window !== 'undefined') {
@@ -78,6 +83,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     /* silent */
   }
 
+  let userGroups: UserGroupRow[] = [];
+  try {
+    userGroups = await mlsService.getUserGroups(userId);
+  } catch (e) {
+    log(`[SYNC] Échec récupération user groups: ${e}`);
+    console.error('[SYNC] Failed to fetch user groups:', e);
+  }
+  const syncIndex = userGroups.length > 0 ? buildUserGroupSyncIndex(userGroups) : null;
+
   // Bloc 1 : réconciliation des memberships connus (pending/stale/welcome_received).
   // Si getDeviceMemberships échoue, membershipGroupIds reste vide et le bloc 2 prend le relais.
   let membershipGroupIds = new Set<string>();
@@ -86,19 +100,36 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     const localGroups = new Set(mlsService.getLocalGroups());
     membershipGroupIds = new Set(memberships.map((m) => m.groupId));
     for (const m of memberships) {
+      if (!isGroupEligibleForMlsRecovery(m.groupId, syncIndex, log)) {
+        mlsService.forgetGroup(m.groupId);
+        continue;
+      }
+
+      const targetGroupId =
+        syncIndex && m.groupId
+          ? (resolveActiveGroupTarget(m.groupId, syncIndex) ?? m.groupId)
+          : m.groupId;
+
+      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex, log)) {
+        mlsService.forgetGroup(m.groupId);
+        continue;
+      }
+
       if (m.status === 'pending') {
-        mlsService.sendWelcomeRequest(m.groupId);
-        log(`[SYNC] welcome_request envoyé pour groupe ${m.groupId}`);
+        mlsService.sendWelcomeRequest(targetGroupId);
+        log(`[SYNC] welcome_request envoyé pour groupe ${targetGroupId}`);
       } else if (m.status === 'stale') {
         mlsService.forgetGroup(m.groupId);
-        await mlsService.sendReinviteRequest(m.groupId);
-        log(`[SYNC] reinvite_request envoyé (stale sur groupe ${m.groupId}, état local effacé)`);
-      } else if (m.status === 'welcome_received' && !localGroups.has(m.groupId)) {
+        await mlsService.sendReinviteRequest(targetGroupId);
+        log(
+          `[SYNC] reinvite_request envoyé (stale sur groupe ${targetGroupId}, état local effacé)`
+        );
+      } else if (m.status === 'welcome_received' && !localGroups.has(targetGroupId)) {
         await mlsService
-          .updateInvitationStatus(mlsService.getDeviceId(), userId, m.groupId, 'stale')
+          .updateInvitationStatus(mlsService.getDeviceId(), userId, targetGroupId, 'stale')
           .catch(() => {});
-        await mlsService.sendReinviteRequest(m.groupId);
-        log(`[SYNC] welcome_request envoyé (état local manquant pour ${m.groupId})`);
+        await mlsService.sendReinviteRequest(targetGroupId);
+        log(`[SYNC] reinvite_request envoyé (état local manquant pour ${targetGroupId})`);
       }
     }
   } catch (e) {
@@ -106,14 +137,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     console.error('[SYNC] Failed to fetch device memberships:', e);
   }
 
-  // Bloc 2 : groupes présents côté serveur mais absents du WASM local.
-  // Tourne indépendamment du bloc 1 - une erreur sur getDeviceMemberships ne doit pas
-  // empêcher d'envoyer les welcome_request pour les groupes sans entrée de membership.
+  // Bloc 2 : groupes actifs côté serveur mais absents du WASM local.
   try {
     const localGroups = new Set(mlsService.getLocalGroups());
-    const userGroups = await mlsService.getUserGroups(userId).catch(() => [] as UserGroupRow[]);
     for (const group of userGroups) {
+      if (group.deletedAt) continue;
+
       const targetGroupId = group.successorId ?? group.groupId;
+      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex, log)) continue;
+
       if (!membershipGroupIds.has(targetGroupId) && !localGroups.has(targetGroupId)) {
         mlsService.sendWelcomeRequest(targetGroupId).catch(() => {});
         log(
@@ -124,8 +156,8 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       }
     }
   } catch (e) {
-    log(`[SYNC] Échec récupération user groups: ${e}`);
-    console.error('[SYNC] Failed to fetch user groups:', e);
+    log(`[SYNC] Échec réconciliation groupes actifs: ${e}`);
+    console.error('[SYNC] Failed active group reconciliation:', e);
   }
 
   await new Promise((r) => setTimeout(r, 500));

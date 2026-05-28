@@ -3,6 +3,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 
 /** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
@@ -235,9 +236,7 @@ export async function isGroupActiveOnServer(
 ): Promise<boolean | null> {
   try {
     const groups = await mlsService.getUserGroups(userId);
-    const row = groups.find((g) => g.groupId === groupId);
-    if (!row) return false;
-    return !row.deletedAt;
+    return isGroupEligibleForMlsRecovery(groupId, buildUserGroupSyncIndex(groups));
   } catch {
     return null;
   }

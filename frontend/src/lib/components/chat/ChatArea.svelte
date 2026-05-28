@@ -563,25 +563,6 @@
         {/if}
       </div>
 
-      {#if isCatchingUpMessages}
-        <div
-          class="absolute inset-0 z-30 flex items-center justify-center bg-[var(--color-bg)]/65 backdrop-blur-sm pointer-events-auto"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-          aria-label="Synchronisation des messages en cours"
-        >
-          <div
-            class="flex flex-col items-center gap-3 rounded-2xl border border-black/8 dark:border-white/10 bg-[var(--color-surface)] px-6 py-5 shadow-lg"
-          >
-            <Loader2 size={28} class="animate-spin text-amber-500" strokeWidth={2.25} />
-            <p class="text-sm font-medium text-[var(--color-text)]">
-              Synchronisation des messages…
-            </p>
-            <p class="text-xs text-[var(--color-text-muted)]">Récupération après reconnexion</p>
-          </div>
-        </div>
-      {/if}
     </div>
 
     {#if sendError}
@@ -629,8 +610,29 @@
         {pendingFiles}
         {onRemovePendingFile}
         {isUploading}
+        interactionLocked={isCatchingUpMessages}
       />
     </div>
+
+    {#if isCatchingUpMessages}
+      <div
+        class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--color-bg)]/65 backdrop-blur-sm pointer-events-auto"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        aria-label="Synchronisation MLS en cours"
+      >
+        <div
+          class="flex flex-col items-center gap-3 rounded-2xl border border-black/8 dark:border-white/10 bg-[var(--color-surface)] px-6 py-5 shadow-lg"
+        >
+          <Loader2 size={28} class="animate-spin text-amber-500" strokeWidth={2.25} />
+          <p class="text-sm font-medium text-[var(--color-text)]">Synchronisation MLS…</p>
+          <p class="text-xs text-[var(--color-text-muted)] text-center max-w-[16rem]">
+            Mise à jour du chiffrement — envoi indisponible
+          </p>
+        </div>
+      </div>
+    {/if}
   {:else}
     {#if onBack}
       <!-- Safety net: when a conversation ID is selected but its object is null (e.g. load race),

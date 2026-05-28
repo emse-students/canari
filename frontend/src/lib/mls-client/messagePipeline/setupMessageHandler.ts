@@ -3,6 +3,7 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
+import { isGroupActiveOnServer } from '$lib/utils/chat/groupActions';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import {
@@ -138,6 +139,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
    */
   async function triggerEpochRecovery(convoKey: string, targetEpoch?: number): Promise<void> {
     if (epochRecoveryGroups.has(convoKey)) return;
+
+    const stillActive = await isGroupActiveOnServer(mlsService, userId, convoKey);
+    if (stillActive === false) {
+      log(`[RECOVER] Skip reinvite: groupe supprimé ou absent du serveur (${convoKey})`);
+      mlsService.forgetGroup(convoKey, targetEpoch);
+      return;
+    }
+
     epochRecoveryGroups.add(convoKey);
     const convo = conversations.get(convoKey);
     mlsService.forgetGroup(convoKey, targetEpoch);

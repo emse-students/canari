@@ -147,7 +147,7 @@ export function useMessaging() {
   /**
    * Marks MLS message catch-up (overlay and/or bulk buffer).
    * @param enableBulkBuffer Buffer incoming messages for one UI flush per conversation.
-   * @param showOverlay Show the blocking sync overlay (only for large queues, e.g. reconnect).
+   * @param showOverlay Show the blocking sync overlay while MLS state is catching up.
    */
   function beginBulkMessageIngest(enableBulkBuffer = false, showOverlay = false) {
     if (!enableBulkBuffer && !showOverlay) return;
@@ -441,6 +441,11 @@ export function useMessaging() {
       ctx.log('[SEND] Abort: pas de texte ni de fichier');
       return;
     }
+    if (isMessageCatchupActive) {
+      ctx.log('[SEND] Abort: synchronisation MLS en cours');
+      ctx.setSendError('Synchronisation en cours — réessayez dans un instant');
+      return;
+    }
     if (!ctx.selectedContact) {
       ctx.log('[SEND] Abort: aucun contact sélectionné');
       return;
@@ -582,16 +587,32 @@ export function useMessaging() {
           ctx.conversations.set(ctx.selectedContact, { ...staleConvo, isReady: false });
           ctx.saveConversation(ctx.selectedContact).catch(() => {});
           try {
-            ctx
-              .ensureMls()
-              .sendReinviteRequest(staleConvo.id)
-              .catch(() => {});
+            const { isGroupActiveOnServer } = await import('$lib/utils/chat/groupActions');
+            const active = await isGroupActiveOnServer(ctx.ensureMls(), ctx.userId, staleConvo.id);
+            if (active !== false) {
+              ctx
+                .ensureMls()
+                .sendReinviteRequest(staleConvo.id)
+                .catch(() => {});
+              ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
+              ctx.log(
+                `[SEND] GroupNotFound → isReady=false + reinvite_request (${ctx.selectedContact})`
+              );
+            } else {
+              ctx.setSendError('Ce groupe a été supprimé.');
+              ctx.log(
+                `[SEND] GroupNotFound → groupe supprimé, skip reinvite (${ctx.selectedContact})`
+              );
+            }
           } catch {
             /* non-blocking */
           }
+        } else {
+          ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
         }
-        ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
-        ctx.log(`[SEND] GroupNotFound → isReady=false + reinvite_request (${ctx.selectedContact})`);
+        if (!staleConvo) {
+          ctx.log(`[SEND] GroupNotFound → isReady=false (${ctx.selectedContact})`);
+        }
       } else {
         ctx.setSendError(errStr);
         ctx.log(`[SEND] Échec: ${errStr}`);

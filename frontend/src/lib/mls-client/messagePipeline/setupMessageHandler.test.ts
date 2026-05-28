@@ -64,7 +64,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const conversations = createTestConversations([
       [groupId, emptyConversation(groupId, { isReady: false })],
     ]);
-    const mls = createMlsServiceStub();
+    const mls = createMlsServiceStub({
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId, name: 'Test', isGroup: true }]),
+    });
     return {
       mlsService: mls,
       storage: null,
@@ -102,6 +104,23 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onChannelMemberJoined).toHaveBeenCalledWith(
       expect.objectContaining({ channelId: 'c1', channelName: 'general', workspaceId: 'ws1' })
     );
+  });
+
+  it('epoch_rejected skips reinvite when group is soft-deleted on server', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getUserGroups = vi
+      .fn()
+      .mockResolvedValue([
+        { groupId, name: 'Deleted', isGroup: true, deletedAt: '2026-01-01T00:00:00Z' },
+      ]);
+    setupMessageHandler(deps as any);
+    await mls.onChannelEvent({
+      type: 'epoch_rejected',
+      data: { groupId, currentEpoch: 3 },
+    });
+    expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 3);
+    expect(mls.sendReinviteRequest).not.toHaveBeenCalled();
   });
 
   it('epoch_rejected triggers forgetGroup, saveState, sendReinviteRequest', async () => {

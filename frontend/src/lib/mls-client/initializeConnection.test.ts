@@ -71,9 +71,12 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
       updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
-      getUserGroups: vi
-        .fn()
-        .mockResolvedValue([{ groupId: 'g-orphan', name: 'Orphan', isGroup: true }]),
+      getUserGroups: vi.fn().mockResolvedValue([
+        { groupId: 'g-pend', name: 'Pend', isGroup: true },
+        { groupId: 'g-stale', name: 'Stale', isGroup: true },
+        { groupId: 'g-miss', name: 'Miss', isGroup: true },
+        { groupId: 'g-orphan', name: 'Orphan', isGroup: true },
+      ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
     };
     const setIsWsConnected = vi.fn();
@@ -108,6 +111,52 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(mls.updateInvitationStatus).toHaveBeenCalled();
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-orphan');
     expect(sync).toHaveBeenCalled();
+  });
+
+  it('does not send reinvite for soft-deleted groups', async () => {
+    const mls = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      getDeviceMemberships: vi.fn().mockResolvedValue([{ status: 'stale', groupId: 'g-deleted' }]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-deleted']),
+      forgetGroup: vi.fn(),
+      sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([
+          {
+            groupId: 'g-deleted',
+            name: 'Deleted',
+            isGroup: true,
+            deletedAt: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+    };
+    const log = vi.fn();
+
+    const done = initializeConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      pin: 'pin1',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+    await done;
+
+    expect(mls.sendReinviteRequest).not.toHaveBeenCalled();
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('groupe supprimé'));
   });
 
   it('skips membership sync when connect throws', async () => {

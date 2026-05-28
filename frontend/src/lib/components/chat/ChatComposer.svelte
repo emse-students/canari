@@ -36,6 +36,8 @@
     onRemovePendingFile?: (index: number) => void;
     /** Whether an upload is currently in progress (disables the send button). */
     isUploading?: boolean;
+    /** When true, the composer is read-only (MLS catch-up in progress). */
+    interactionLocked?: boolean;
   }
 
   let {
@@ -49,6 +51,7 @@
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
+    interactionLocked = false,
   }: Props = $props();
 
   let mentionComposer = $state<MentionComposerInput | null>(null);
@@ -64,7 +67,9 @@
   const isVoiceRecordingSupported = $derived(hasMediaRecorder && isMobileViewport);
 
   const isSendDisabled = $derived(
-    (!messageText.trim() && pendingFiles.length === 0) || isUploading
+    interactionLocked ||
+      (!messageText.trim() && pendingFiles.length === 0) ||
+      isUploading
   );
 
   function toReplyPreview(value: string): string {
@@ -415,7 +420,7 @@
       <div class="shrink-0">
         <button
           onclick={() => fileInput?.click()}
-          disabled={isUploading}
+          disabled={isUploading || interactionLocked}
           title="Envoyer une image, vidéo ou fichier"
           aria-label="Joindre un fichier"
           class="chat-composer-icon-button"
@@ -451,8 +456,9 @@
         onchange={onMessageChange}
         class="flex-1 min-w-0"
         editorClass="chat-composer-textarea"
-        placeholder="Écrivez un message..."
+        placeholder={interactionLocked ? 'Synchronisation MLS…' : 'Écrivez un message...'}
         minHeight="44px"
+        disabled={interactionLocked}
         onfocus={() => onFocusChange?.(true)}
         onblur={() => onFocusChange?.(false)}
         onkeydown={handleComposerKeydown}

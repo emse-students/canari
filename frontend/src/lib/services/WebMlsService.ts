@@ -10,27 +10,10 @@ import {
 } from '$lib/mls-client';
 import { getToken } from '$lib/stores/auth';
 import { saveMlsState } from '$lib/utils/hex';
-import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
+import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
-
-/** Message pending in the processing queue */
-interface QueuedMessage {
-  senderId: string;
-  ciphertext: Uint8Array;
-  groupId?: string;
-  isWelcome: boolean;
-  isCommit: boolean;
-  ratchetTreeBytes?: Uint8Array;
-  /** ID from the delivery service queue - used for at-least-once ACK */
-  queuedMessageId?: string;
-  /** Server queue enqueue time (ms) - used as timestamp fallback when `sentAt` is absent. */
-  queuedCreatedAt?: number;
-}
-
-/** Queue depth above which incoming messages are batched into one UI update per conversation. */
-const BULK_CATCHUP_THRESHOLD = 3;
 
 /**
  * Worker result for key package generation done off the main thread.
@@ -85,9 +68,8 @@ export class WebMlsService implements IMlsService {
   /** Feature flag for workerized key package generation (enabled by default). */
   private readonly useKeyPackageWorker = import.meta.env.VITE_MLS_KEYPACKAGE_WORKER !== 'false';
 
-  // Message queue for sequential processing
-  private messageQueue: QueuedMessage[] = [];
-  private isProcessingQueue = false;
+  /** Per-conversation queues with round-robin scheduling and a global MLS mutex. */
+  private readonly messageScheduler = new MlsPerGroupScheduler('web');
   // Timer de retry in-session : si un message delivery-queue n'a pas été ACKé (return false),
   // on reprogramme fetchPendingMessages après PENDING_RETRY_DELAY_MS plutôt d'attendre reconnect.
   private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -97,8 +79,6 @@ export class WebMlsService implements IMlsService {
     enableBulkBuffer?: boolean,
     showOverlay?: boolean
   ) => void | Promise<void>;
-  // Groups currently being joined (Welcome in progress) - buffer messages for these
-  private pendingWelcomeGroups = new Map<string, QueuedMessage[]>();
   constructor() {
     // Device ID is initialized per-user in init() to avoid collisions when multiple
     // users share the same browser (e.g. two tabs in the same browser window).
@@ -416,47 +396,21 @@ export class WebMlsService implements IMlsService {
     this.messageCallback = callback;
   }
 
-  /**
-   * Enqueue a message for sequential processing.
-   * Welcome messages are prioritized and processed first.
-   * Messages for groups with pending Welcomes are buffered.
-   */
-  private enqueueMessage(msg: QueuedMessage) {
-    const groupId = msg.groupId;
-
-    // If a Welcome is being processed for this group, buffer the message
-    if (groupId && this.pendingWelcomeGroups.has(groupId) && !msg.isWelcome) {
-      console.log(`[QUEUE] Buffering message for group ${groupId} (Welcome in progress)`);
-      this.pendingWelcomeGroups.get(groupId)!.push(msg);
-      return;
-    }
-
-    // Welcome messages go to front of queue for priority processing
-    if (msg.isWelcome) {
-      // Mark this group as having a pending Welcome
-      if (groupId) {
-        this.pendingWelcomeGroups.set(groupId, []);
-      }
-      this.messageQueue.unshift(msg);
-    } else {
-      this.messageQueue.push(msg);
-    }
-
-    // Start processing if not already running
-    if (!this.isProcessingQueue) {
-      this.processQueue();
+  /** Enqueues a message and starts the per-group fair drain loop if idle. */
+  private enqueueMessage(msg: MlsQueuedMessage) {
+    this.messageScheduler.enqueue(msg);
+    if (!this.messageScheduler.draining) {
+      void this.processQueue();
     }
   }
 
-  /**
-   * Process messages from the queue one by one.
-   * This ensures Welcome messages complete before regular messages.
-   */
+  /** Resolves when all per-group MLS queues are drained. */
+  async waitForMessageQueueIdle(): Promise<void> {
+    return this.messageScheduler.waitUntilIdle();
+  }
+
+  /** Drains per-group queues (round-robin across conversations, sequential MLS mutex). */
   private async processQueue() {
-    if (this.isProcessingQueue) {
-      console.log('[QUEUE] Déjà en cours de traitement - déclenchement ignoré');
-      return;
-    }
     if (!this.messageCallback) {
       console.warn(
         '[QUEUE] messageCallback non défini - messages en attente ne seront pas traités'
@@ -464,21 +418,11 @@ export class WebMlsService implements IMlsService {
       return;
     }
 
-    this.isProcessingQueue = true;
-    const queuedAtStart = this.messageQueue.length;
-    const useBulkCatchup = queuedAtStart >= BULK_CATCHUP_THRESHOLD;
-    console.log(`[QUEUE] Démarrage traitement (${queuedAtStart} messages en file)`);
-
     const ackIds: string[] = [];
     let hadFailedQueuedMessage = false;
 
-    try {
-      if (queuedAtStart > 0) {
-        this.bulkIngestStart?.(useBulkCatchup, useBulkCatchup);
-      }
-
-      while (this.messageQueue.length > 0) {
-        const msg = this.messageQueue.shift()!;
+    await this.messageScheduler.drain(
+      async (msg) => {
         const groupId = msg.groupId;
 
         try {
@@ -494,7 +438,7 @@ export class WebMlsService implements IMlsService {
                   ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
                 }
               : undefined;
-          const cbResult = await this.messageCallback(
+          const cbResult = await this.messageCallback!(
             msg.senderId,
             msg.ciphertext,
             msg.groupId,
@@ -525,22 +469,8 @@ export class WebMlsService implements IMlsService {
             });
           }
 
-          // If this was a Welcome, process buffered messages for this group
-          if (msg.isWelcome && groupId && this.pendingWelcomeGroups.has(groupId)) {
-            const buffered = this.pendingWelcomeGroups.get(groupId)!;
-            console.log(
-              `[QUEUE] Welcome complete, processing ${buffered.length} buffered messages`
-            );
-            this.pendingWelcomeGroups.delete(groupId);
-
-            // Add buffered messages to front of queue (in order)
-            for (let i = buffered.length - 1; i >= 0; i--) {
-              this.messageQueue.unshift(buffered[i]);
-            }
-          }
-
-          // Notify Svelte that a Welcome has been fully processed
-          if (msg.isWelcome) {
+          if (msg.isWelcome && groupId) {
+            this.messageScheduler.reinjectAfterWelcome(groupId);
             this.welcomeProcessedCallback?.(groupId);
           }
         } catch (e) {
@@ -561,56 +491,38 @@ export class WebMlsService implements IMlsService {
               isCommit: msg.isCommit,
             });
           }
-          // Flush buffered messages back to the main queue so they are not lost.
-          // They will be processed normally (likely fail with group-not-found, get ACK'd).
-          if (groupId && this.pendingWelcomeGroups.has(groupId)) {
-            const buffered = this.pendingWelcomeGroups.get(groupId)!;
-            this.pendingWelcomeGroups.delete(groupId);
-            for (let i = buffered.length - 1; i >= 0; i--) {
-              this.messageQueue.unshift(buffered[i]);
-            }
+          if (groupId && this.messageScheduler.hasWelcomePending(groupId)) {
+            this.messageScheduler.reinjectAfterWelcome(groupId);
           }
         }
-
-        // Let the UI thread paint / handle input between MLS steps (cooperative, not parallel).
-        if (this.messageQueue.length > 0) {
-          await yieldToMainThread();
-        }
-      }
-
-      // Batch-ACK all processed real-time messages
-      if (ackIds.length > 0) {
-        logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
-        void this.delivery.deliveryPost('messages/ack', {
-          userId: this.userId,
-          deviceId: this.deviceId,
-          messageIds: ackIds,
-        });
-      }
-
-      // Si un message de la delivery queue n'a pas été ACKé (return false), programmer un
-      // retry in-session plutôt d'attendre la prochaine reconnexion (backoff ≤ 30s).
-      if (hadFailedQueuedMessage && this.ws?.readyState === WebSocket.OPEN) {
-        if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
-        this.pendingRetryTimer = setTimeout(() => {
-          this.pendingRetryTimer = null;
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            console.log('[QUEUE] Retry in-session: fetchPendingMessages (message non-ACKé)');
-            this.fetchPendingMessages();
+      },
+      {
+        onDrainStart: () => this.bulkIngestStart?.(true, true),
+        onDrainEnd: async () => {
+          if (ackIds.length > 0) {
+            logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
+            void this.delivery.deliveryPost('messages/ack', {
+              userId: this.userId,
+              deviceId: this.deviceId,
+              messageIds: ackIds,
+            });
           }
-        }, WebMlsService.PENDING_RETRY_DELAY_MS);
+
+          if (hadFailedQueuedMessage && this.ws?.readyState === WebSocket.OPEN) {
+            if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
+            this.pendingRetryTimer = setTimeout(() => {
+              this.pendingRetryTimer = null;
+              if (this.ws?.readyState === WebSocket.OPEN) {
+                console.log('[QUEUE] Retry in-session: fetchPendingMessages (message non-ACKé)');
+                this.fetchPendingMessages();
+              }
+            }, WebMlsService.PENDING_RETRY_DELAY_MS);
+          }
+
+          await this.bulkIngestEnd?.(true, true);
+        },
       }
-    } finally {
-      if (queuedAtStart > 0) {
-        try {
-          await this.bulkIngestEnd?.(useBulkCatchup, useBulkCatchup);
-        } catch (e) {
-          console.error('[QUEUE] bulkIngestEnd failed:', e);
-        }
-      }
-      this.isProcessingQueue = false;
-      console.log(`[QUEUE] Queue processing complete`);
-    }
+    );
   }
 
   onDisconnect(callback: () => void) {
@@ -780,6 +692,7 @@ export class WebMlsService implements IMlsService {
     } catch (e) {
       console.error('Failed to fetch pending messages', e);
     }
+    await this.waitForMessageQueueIdle();
   }
 
   /** WASM client wrapper - fetches all registered devices for a user from the delivery service, decoding base64 key packages. */

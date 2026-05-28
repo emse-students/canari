@@ -11,6 +11,7 @@ import {
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
   kickStaleLeaf,
+  isGroupActiveOnServer,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -96,16 +97,23 @@ export async function processPendingInvitations(params: {
         // peut-être déjà en transit depuis la queue - on ne réenvoie pas.
         const isAbsent = !conversations.has(origGroupId) && !conversations.has(resolved);
         if (isAbsent) {
-          const tsKey = `reinvite_requested:${resolved}`;
-          const lastTs = Number(localStorage.getItem(tsKey) ?? 0);
-          if (Date.now() - lastTs > REINVITE_COOLDOWN_MS) {
-            localStorage.setItem(tsKey, String(Date.now()));
-            mlsService.sendReinviteRequest(resolved).catch(() => {});
+          const active = await isGroupActiveOnServer(mlsService, userId, resolved);
+          if (active === false) {
             log(
-              `[PENDING] Groupe ${origGroupId} absent localement → reinvite_request envoyé pour ${resolved}`
+              `[PENDING] Groupe ${origGroupId} supprimé ou absent du serveur → skip reinvite (${resolved})`
             );
           } else {
-            log(`[PENDING] Groupe ${origGroupId}: reinvite_request déjà envoyé récemment - skip`);
+            const tsKey = `reinvite_requested:${resolved}`;
+            const lastTs = Number(localStorage.getItem(tsKey) ?? 0);
+            if (Date.now() - lastTs > REINVITE_COOLDOWN_MS) {
+              localStorage.setItem(tsKey, String(Date.now()));
+              mlsService.sendReinviteRequest(resolved).catch(() => {});
+              log(
+                `[PENDING] Groupe ${origGroupId} absent localement → reinvite_request envoyé pour ${resolved}`
+              );
+            } else {
+              log(`[PENDING] Groupe ${origGroupId}: reinvite_request déjà envoyé récemment - skip`);
+            }
           }
         } else {
           log(`[PENDING] Groupe ${groupId}: conversation locale non prête - skip`);

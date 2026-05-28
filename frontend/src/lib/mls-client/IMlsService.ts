@@ -130,6 +130,8 @@ export interface IMlsService {
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;
+  /** Resolves when the internal MLS message queue is drained (Web/Tauri implementations). */
+  waitForMessageQueueIdle?(): Promise<void>;
 
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
