@@ -1,6 +1,15 @@
 import { loadAndInitWasm } from '$lib/mls-client/mlsWasmLoader';
 
 /**
+ * Some generated WASM glue paths still reference `window` unconditionally.
+ * In worker context we alias it to globalThis to keep those paths functional.
+ */
+const workerGlobal = globalThis as any;
+if (typeof workerGlobal.window === 'undefined') {
+  workerGlobal.window = workerGlobal;
+}
+
+/**
  * Request payload for key package generation in the dedicated worker.
  * The worker owns a temporary WASM client instance so heavy crypto does not block UI rendering.
  */
