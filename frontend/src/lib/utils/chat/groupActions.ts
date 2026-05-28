@@ -1,5 +1,6 @@
 import { saveMlsState } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mlsService';
+import type { IStorage, StoredMessage } from '$lib/db';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
 /** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
@@ -139,5 +140,50 @@ export async function leaveGroupAndBroadcast(params: {
     saveMlsState(userId, stBytes);
   } catch {
     // Non-blocking
+  }
+}
+
+/**
+ * Envoie les `limit` derniers messages déchiffrés de `groupId` au nouveau membre
+ * comme AppMessage système (`history_bundle`), chiffré sous l'epoch courante.
+ *
+ * Appelé par l'invitant juste après `sendCommit` pour que le destinataire reçoive
+ * l'historique après avoir traité son Welcome (garantie d'ordre MLS).
+ * Fail-silently : si l'envoi échoue, le destinataire démarre avec une conversation vide.
+ */
+export async function sendHistoryBundle(
+  groupId: string,
+  deps: {
+    storage: IStorage | null;
+    pin: string;
+    mlsService: IMlsService;
+    log: (msg: string) => void;
+  },
+  limit = 50
+): Promise<void> {
+  const { storage, pin, mlsService, log } = deps;
+  if (!storage) return;
+
+  let messages: StoredMessage[];
+  try {
+    messages = await storage.getMessagesPage(groupId, pin, limit);
+  } catch {
+    return;
+  }
+  if (messages.length === 0) return;
+
+  const payload = messages.map((m) => ({
+    id: m.id,
+    senderId: m.senderId,
+    content: m.content,
+    timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
+  }));
+
+  const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: payload })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, true);
+    log(`[HISTORY_BUNDLE] ${payload.length} messages envoyés à ${groupId}`);
+  } catch (e) {
+    log(`[HISTORY_BUNDLE] Erreur envoi: ${String(e)}`);
   }
 }

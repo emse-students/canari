@@ -1,13 +1,11 @@
 import { saveMlsState } from '$lib/utils/hex';
 import { isRawId, parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 import { handleSystemEvent } from './systemMessageHandler';
+import { handleChannelEvent } from './channelEventHandler';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
   resetWasmDuplicateDeliveryFlag,
@@ -31,12 +29,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     addMessageToChat,
     batchAddMessages,
     loadHistoryForConversation,
-    onChannelMemberJoined,
-    onChannelMemberKicked,
-    onChannelUpdated,
-    onChannelDeleted,
-    onWorkspaceUpdated,
-    onReadReceiptReceived,
     onCallSignal,
     onGroupPoisoned,
     log,
@@ -170,167 +162,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   if ('onChannelEvent' in mlsService) {
     (mlsService as any).onChannelEvent = async (event: any) => {
-      log(`[Channel Event] ${event.type}`);
-      if (event.type === 'channel.member.joined') {
-        const data = event.data || {};
-        onChannelMemberJoined?.({
-          channelId: String(data.channelId || ''),
-          channelName: data.channelName,
-          workspaceId: data.workspaceId,
-          workspaceSlug: data.workspaceSlug,
-          workspaceName: data.workspaceName,
-          visibility: data.visibility,
-          roleName: data.roleName,
-          joinedBy: data.joinedBy,
-        });
-        return;
-      }
-
-      if (event.type === 'channel.member.kicked') {
-        const data = event.data || {};
-        onChannelMemberKicked?.({
-          channelId: String(data.channelId || ''),
-          channelName: data.channelName,
-          workspaceId: data.workspaceId,
-          kickedBy: data.kickedBy,
-        });
-        return;
-      }
-
-      if (event.type === 'channel.updated') {
-        const data = event.data || {};
-        onChannelUpdated?.({
-          channelId: String(data.channelId || ''),
-          name: data.name,
-          workspaceId: data.workspaceId,
-          imageMediaId: data.imageMediaId,
-        });
-        return;
-      }
-
-      if (event.type === 'workspace.updated') {
-        const data = event.data || {};
-        onWorkspaceUpdated?.({
-          workspaceId: String(data.workspaceId || ''),
-          imageMediaId: data.imageMediaId,
-        });
-        return;
-      }
-
-      if (event.type === 'channel.deleted') {
-        const data = event.data || {};
-        onChannelDeleted?.({
-          channelId: String(data.channelId || ''),
-          workspaceId: data.workspaceId,
-        });
-        return;
-      }
-
-      if (event.type === 'channel.key.rotated') {
-        const data = event.data || {};
-        const channelId = String(data.channelId || '');
-        const newEpochBaseKey = data.newEpochBaseKey;
-        const keyVersion = data.keyVersion;
-        if (channelId && newEpochBaseKey && keyVersion !== undefined) {
-          try {
-            if (!Number.isInteger(keyVersion) || keyVersion < 0) {
-              throw new Error(`Invalid keyVersion: ${keyVersion}`);
-            }
-            if (
-              typeof newEpochBaseKey !== 'string' ||
-              !/^[A-Za-z0-9+/]*={0,2}$/.test(newEpochBaseKey)
-            ) {
-              throw new Error('Invalid base64 format for epoch key');
-            }
-            const vault = channelKeyManager.getVault(channelId);
-            const rawKeyMat = new Uint8Array(
-              atob(newEpochBaseKey)
-                .split('')
-                .map((c) => c.charCodeAt(0))
-            );
-            if (rawKeyMat.length < 32) {
-              throw new Error(`Key material too short: ${rawKeyMat.length} bytes`);
-            }
-            await vault.rotateKey(keyVersion, rawKeyMat);
-            log(`[Key Rotation] Epoch ${keyVersion} stored for Channel ${channelId}`);
-          } catch (e) {
-            log(`[ERROR] Key rotation failed for channel ${channelId}: ${e}`);
-            console.error('[Key Rotation] failed for channel', channelId, e);
-          }
-        }
-        return;
-      }
-
-      if (event.type === 'epoch_rejected') {
-        const data = event.data || {};
-        const groupId = String(data.groupId || '');
-        const currentEpoch = Number(data.currentEpoch || 0);
-        log(
-          `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) - oubli MLS + reinvite_request`
-        );
-        if (groupId) {
-          await triggerEpochRecovery(groupId, currentEpoch);
-        }
-        return;
-      }
-
-      if (event.type === 'channel.message.created') {
-        const data = event.data;
-        const channelId = `channel_${data.channelId}`;
-        const sender = data.senderId;
-
-        // We now rely on the backend echo for our own messages in channels
-        // Check if we have this channel in our conversations list
-        // Since the map is keyed by id (= groupId), a direct has() check is sufficient.
-        const convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
-
-        if (convoKey) {
-          let content: string | undefined;
-          let appMessageId: string | undefined;
-          const channelServerMs = parseServerTimestampMs(data.createdAt);
-          try {
-            if (data.ciphertext) {
-              let bytes: Uint8Array;
-
-              if (data.nonce && data.keyVersion !== undefined) {
-                bytes = await channelKeyManager.decryptMessage(
-                  data.channelId,
-                  data.ciphertext,
-                  data.nonce,
-                  data.keyVersion
-                );
-              } else {
-                return true;
-              }
-
-              const msg = decodeAppMessage(bytes);
-              appMessageId = msg?.messageId || undefined;
-              if (msg) {
-                const envelope = appMsgToEnvelope(msg, channelServerMs);
-                if (envelope) content = envelope.content;
-              }
-            } else if (data.plaintext) {
-              content = serializeEnvelope(mkTextEnvelope(data.plaintext));
-            }
-          } catch (e) {
-            console.error('Failed to parse channel message:', e);
-          }
-
-          // Only persist if decryption succeeded - a missing key here means
-          // loadChannelHistory (with a fresh key hydration) will replay it cleanly.
-          if (content === undefined) return true;
-
-          addMessageToChat(sender, content, convoKey, {
-            messageId: appMessageId || data.messageId || data.id,
-            timestamp: channelServerMs !== undefined ? new Date(channelServerMs) : undefined,
-            skipDbSave: true,
-          }).catch((e) => console.error(e));
-        } else {
-          // We might want to auto-create the conversation if not found, but we skip for now
-          // or add a system message log
-          log(`Canal inconnu reçu: ${channelId}`);
-        }
-      }
+      await handleChannelEvent(event, { ...deps, triggerEpochRecovery });
     };
   }
 

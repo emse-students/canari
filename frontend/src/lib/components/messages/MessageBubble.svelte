@@ -13,6 +13,7 @@
   import MessageTextBody from './MessageTextBody.svelte';
   import MessageMetadata from './MessageMetadata.svelte';
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
+  import MessageMobileActions from './MessageMobileActions.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { onDestroy } from 'svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -190,6 +191,10 @@
       },
       {} as Record<string, string[]>
     )
+  );
+
+  const userOwnReactions = $derived(
+    reactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji)
   );
 
   function confirmEdit() {
@@ -608,6 +613,29 @@
     />
 
     <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
+
+    <MessageMobileActions
+      visible={showMobileActions && isMobile}
+      {isOwn}
+      {isDeleted}
+      hasMedia={!!mediaRef}
+      userReactions={userOwnReactions}
+      onReactEmoji={(emoji) => {
+        onReact?.(messageId, emoji);
+        showMobileActions = false;
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(12);
+        }
+      }}
+      onOpenFullPicker={() => {
+        showMobileActions = false;
+        showEmojiPicker = true;
+      }}
+      onReply={onReply && !isDeleted ? () => { onReply!(messageId); showMobileActions = false; } : undefined}
+      onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? () => { startInlineEdit(); showMobileActions = false; } : undefined}
+      onDelete={!isDeleted && isOwn && onDelete ? () => { showDeleteModal = true; showMobileActions = false; } : undefined}
+      onClose={() => { showMobileActions = false; }}
+    />
   </div>
 
   <Modal

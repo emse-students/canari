@@ -1,0 +1,198 @@
+import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { decodeAppMessage } from '$lib/proto/codec';
+import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import type { MessageHandlerDeps } from './deps';
+
+/**
+ * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
+ * trigger (a closure over local state in setupMessageHandler).
+ */
+export interface ChannelEventContext extends Pick<
+  MessageHandlerDeps,
+  | 'conversations'
+  | 'addMessageToChat'
+  | 'onChannelMemberJoined'
+  | 'onChannelMemberKicked'
+  | 'onChannelUpdated'
+  | 'onChannelDeleted'
+  | 'onWorkspaceUpdated'
+  | 'log'
+> {
+  /** Triggers epoch recovery for the given MLS group (forget + reinvite_request). */
+  triggerEpochRecovery: (groupId: string, targetEpoch?: number) => Promise<void>;
+}
+
+/**
+ * Dispatches a server-push channel event (received via mlsService.onChannelEvent) to
+ * the appropriate UI callback or local key-store mutation.
+ *
+ * The `epoch_rejected` event is also handled here because it arrives on the same
+ * transport as channel events from the delivery service.
+ */
+
+export async function handleChannelEvent(event: any, ctx: ChannelEventContext): Promise<void> {
+  const {
+    conversations,
+    addMessageToChat,
+    onChannelMemberJoined,
+    onChannelMemberKicked,
+    onChannelUpdated,
+    onChannelDeleted,
+    onWorkspaceUpdated,
+    log,
+    triggerEpochRecovery,
+  } = ctx;
+
+  log(`[Channel Event] ${event.type}`);
+
+  if (event.type === 'channel.member.joined') {
+    const data = event.data || {};
+    onChannelMemberJoined?.({
+      channelId: String(data.channelId || ''),
+      channelName: data.channelName,
+      workspaceId: data.workspaceId,
+      workspaceSlug: data.workspaceSlug,
+      workspaceName: data.workspaceName,
+      visibility: data.visibility,
+      roleName: data.roleName,
+      joinedBy: data.joinedBy,
+    });
+    return;
+  }
+
+  if (event.type === 'channel.member.kicked') {
+    const data = event.data || {};
+    onChannelMemberKicked?.({
+      channelId: String(data.channelId || ''),
+      channelName: data.channelName,
+      workspaceId: data.workspaceId,
+      kickedBy: data.kickedBy,
+    });
+    return;
+  }
+
+  if (event.type === 'channel.updated') {
+    const data = event.data || {};
+    onChannelUpdated?.({
+      channelId: String(data.channelId || ''),
+      name: data.name,
+      workspaceId: data.workspaceId,
+      imageMediaId: data.imageMediaId,
+    });
+    return;
+  }
+
+  if (event.type === 'workspace.updated') {
+    const data = event.data || {};
+    onWorkspaceUpdated?.({
+      workspaceId: String(data.workspaceId || ''),
+      imageMediaId: data.imageMediaId,
+    });
+    return;
+  }
+
+  if (event.type === 'channel.deleted') {
+    const data = event.data || {};
+    onChannelDeleted?.({
+      channelId: String(data.channelId || ''),
+      workspaceId: data.workspaceId,
+    });
+    return;
+  }
+
+  if (event.type === 'channel.key.rotated') {
+    const data = event.data || {};
+    const channelId = String(data.channelId || '');
+    const newEpochBaseKey = data.newEpochBaseKey;
+    const keyVersion = data.keyVersion;
+    if (channelId && newEpochBaseKey && keyVersion !== undefined) {
+      try {
+        if (!Number.isInteger(keyVersion) || keyVersion < 0) {
+          throw new Error(`Invalid keyVersion: ${keyVersion}`);
+        }
+        if (
+          typeof newEpochBaseKey !== 'string' ||
+          !/^[A-Za-z0-9+/]*={0,2}$/.test(newEpochBaseKey)
+        ) {
+          throw new Error('Invalid base64 format for epoch key');
+        }
+        const vault = channelKeyManager.getVault(channelId);
+        const rawKeyMat = new Uint8Array(
+          atob(newEpochBaseKey)
+            .split('')
+            .map((c) => c.charCodeAt(0))
+        );
+        if (rawKeyMat.length < 32) {
+          throw new Error(`Key material too short: ${rawKeyMat.length} bytes`);
+        }
+        await vault.rotateKey(keyVersion, rawKeyMat);
+        log(`[Key Rotation] Epoch ${keyVersion} stored for Channel ${channelId}`);
+      } catch (e) {
+        log(`[ERROR] Key rotation failed for channel ${channelId}: ${e}`);
+        console.error('[Key Rotation] failed for channel', channelId, e);
+      }
+    }
+    return;
+  }
+
+  if (event.type === 'epoch_rejected') {
+    const data = event.data || {};
+    const groupId = String(data.groupId || '');
+    const currentEpoch = Number(data.currentEpoch || 0);
+    log(
+      `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) - oubli MLS + reinvite_request`
+    );
+    if (groupId) {
+      await triggerEpochRecovery(groupId, currentEpoch);
+    }
+    return;
+  }
+
+  if (event.type === 'channel.message.created') {
+    const data = event.data;
+    const channelId = `channel_${data.channelId}`;
+    const sender = data.senderId;
+    const convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
+
+    if (convoKey) {
+      let content: string | undefined;
+      let appMessageId: string | undefined;
+      const channelServerMs = parseServerTimestampMs(data.createdAt);
+      try {
+        if (data.ciphertext) {
+          if (!data.nonce || data.keyVersion === undefined) return;
+          const bytes = await channelKeyManager.decryptMessage(
+            data.channelId,
+            data.ciphertext,
+            data.nonce,
+            data.keyVersion
+          );
+          const msg = decodeAppMessage(bytes);
+          appMessageId = msg?.messageId || undefined;
+          if (msg) {
+            const envelope = appMsgToEnvelope(msg, channelServerMs);
+            if (envelope) content = envelope.content;
+          }
+        } else if (data.plaintext) {
+          content = serializeEnvelope(mkTextEnvelope(data.plaintext));
+        }
+      } catch (e) {
+        console.error('Failed to parse channel message:', e);
+      }
+
+      // Only persist if decryption succeeded — a missing key means loadChannelHistory
+      // will replay it cleanly after a fresh key hydration.
+      if (content === undefined) return;
+
+      addMessageToChat(sender, content, convoKey, {
+        messageId: appMessageId || data.messageId || data.id,
+        timestamp: channelServerMs !== undefined ? new Date(channelServerMs) : undefined,
+        skipDbSave: true,
+      }).catch((e) => console.error(e));
+    } else {
+      log(`Canal inconnu reçu: ${channelId}`);
+    }
+  }
+}

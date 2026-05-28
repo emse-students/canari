@@ -31,7 +31,6 @@ import {
   repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
 import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
-import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
   pushHistoryOverlay,

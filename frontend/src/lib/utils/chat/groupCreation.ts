@@ -349,6 +349,75 @@ async function processBulkAddition(
 }
 
 /**
+ * Core direct-conversation setup: acquires the add-lock, calls addMembersBulk,
+ * delivers Welcomes and registers memberships per-device, saves state, then sends the commit.
+ *
+ * `contactDeviceIds` identifies which devices belong to the contact vs. the current user,
+ * so that registerMember uses the correct owner for each device.
+ *
+ * Shared by startNewConversation and repairDirectConversation — both do exactly this sequence.
+ */
+
+async function performDirectAdd(
+  groupId: string,
+  allDevices: any[],
+  contactDeviceIds: Set<string>,
+  contact: string,
+  deps: Pick<GroupCreationDeps, 'mlsService' | 'userId' | 'pin' | 'log'>
+): Promise<void> {
+  const { mlsService, userId, pin, log } = deps;
+
+  const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
+  try {
+    const bulk = await mlsService.addMembersBulk(groupId, allDevices);
+    log(
+      `[ADD] ${bulk.addedDeviceIds.length} appareil(s), welcome=${!!bulk.welcome}, commit=${!!bulk.commit}`
+    );
+
+    for (const did of bulk.addedDeviceIds) {
+      const owner = contactDeviceIds.has(did) ? contact : userId;
+      await mlsService.registerMember(groupId, owner);
+    }
+
+    if (bulk.welcome) {
+      for (const did of bulk.addedDeviceIds) {
+        const owner = contactDeviceIds.has(did) ? contact : userId;
+        try {
+          await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
+          log(`[ADD] Welcome → ${owner}:${did} ✓`);
+        } catch (e) {
+          log(
+            `[ADD] Welcome échoué → ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
+          );
+          console.warn(
+            `[ADD] sendWelcome failed for ${owner}:${did}:`,
+            e instanceof Error ? e.message : e
+          );
+        }
+      }
+    } else {
+      log('[ADD] addMembersBulk a retourné welcome=null');
+      console.warn('[ADD] addMembersBulk returned no welcome');
+    }
+
+    // Sauvegarder AVANT sendCommit (crash-safety : l'état local doit survivre à un crash ici)
+    const stBytes = await mlsService.saveState(pin);
+    saveMlsState(userId, stBytes);
+
+    if (bulk.commit) {
+      const excludeIds = bulk.addedDeviceIds.map((did) => {
+        const owner = contactDeviceIds.has(did) ? contact : userId;
+        return `${owner}:${did}`;
+      });
+      await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
+      log(`[ADD] Commit envoyé (exclu: ${excludeIds.join(', ')})`);
+    }
+  } finally {
+    if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
+  }
+}
+
+/**
  * Adds one or more users to an existing MLS group by their Canari user IDs.
  * All devices belonging to each user are added in a single bulk MLS commit.
  */
@@ -387,8 +456,7 @@ export async function startNewConversation(
   contactName: string,
   deps: GroupCreationDeps
 ): Promise<void> {
-  const { mlsService, userId, pin, conversations, selectConversation, saveConversation, log } =
-    deps;
+  const { mlsService, userId, conversations, selectConversation, saveConversation, log } = deps;
 
   const contact = contactName.trim().toLowerCase();
   if (!contact || contact === userId) return;
@@ -491,54 +559,7 @@ export async function startNewConversation(
       allDevices.map((d) => d.deviceId)
     );
 
-    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
-    try {
-      const bulk = await mlsService.addMembersBulk(groupId, allDevices);
-      log(
-        `[DM] addMembersBulk: added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')}), welcome=${bulk.welcome ? bulk.welcome.length + 'b' : 'null'}, commit=${bulk.commit ? bulk.commit.length + 'b' : 'null'}`
-      );
-      console.log(
-        `[DM] addMembersBulk result: added=${bulk.addedDeviceIds.length}, welcome=${!!bulk.welcome}`
-      );
-
-      for (const did of bulk.addedDeviceIds) {
-        const owner = contactDeviceIds.has(did) ? contact : userId;
-        await mlsService.registerMember(groupId, owner);
-      }
-
-      if (bulk.welcome) {
-        for (const did of bulk.addedDeviceIds) {
-          const owner = contactDeviceIds.has(did) ? contact : userId;
-          try {
-            log(`[DM] Envoi Welcome → ${owner}:${did}...`);
-            await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
-            log(`[DM] Welcome envoyé → ${owner}:${did} ✓`);
-            console.log(`[DM] Welcome delivered to ${owner}:${did}`);
-          } catch (e) {
-            const eMsg = e instanceof Error ? e.message : String(e);
-            log(`[DM] Welcome échoué → ${owner}:${did}: ${eMsg}`);
-            console.warn(`[DM] sendWelcome failed for ${owner}:${did}:`, eMsg);
-          }
-        }
-      } else {
-        log('[DM] AVERTISSEMENT: addMembersBulk a retourné welcome=null');
-        console.warn('[DM] addMembersBulk returned no welcome - contact may have no KeyPackage');
-      }
-
-      // Sauvegarder AVANT sendCommit (crash-safety)
-      const stBytes = await mlsService.saveState(pin);
-      saveMlsState(userId, stBytes);
-      if (bulk.commit) {
-        const excludeIds = bulk.addedDeviceIds.map((did) => {
-          const owner = contactDeviceIds.has(did) ? contact : userId;
-          return `${owner}:${did}`;
-        });
-        await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
-        log(`[DM] Commit envoyé (exclu: ${excludeIds.join(', ')})`);
-      }
-    } finally {
-      if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
-    }
+    await performDirectAdd(groupId, allDevices, contactDeviceIds, contact, deps);
 
     const convo = conversations.get(conversationKey)!;
     conversations.set(conversationKey, { ...convo, isReady: true });
@@ -575,7 +596,7 @@ export async function repairDirectConversation(
   conversationKey: string,
   deps: GroupCreationDeps
 ): Promise<boolean> {
-  const { mlsService, userId, pin, conversations, saveConversation, log } = deps;
+  const { mlsService, userId, conversations, saveConversation, log } = deps;
   const convo = conversations.get(conversationKey);
   if (!convo || convo.conversationType !== 'direct') return false;
 
@@ -607,45 +628,7 @@ export async function repairDirectConversation(
     const allDevices = [...devices, ...ownDevices];
     const contactDeviceIds = new Set(devices.map((d) => d.deviceId));
 
-    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
-    try {
-      const bulk = await mlsService.addMembersBulk(groupId, allDevices);
-
-      for (const did of bulk.addedDeviceIds) {
-        const owner = contactDeviceIds.has(did) ? contact : userId;
-        await mlsService.registerMember(groupId, owner);
-      }
-
-      if (bulk.welcome) {
-        for (const did of bulk.addedDeviceIds) {
-          const owner = contactDeviceIds.has(did) ? contact : userId;
-          try {
-            await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
-          } catch (e) {
-            log(
-              `[REPAIR] Welcome echoue ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
-            );
-            console.error(
-              `[REPAIR] Welcome failed for ${owner}:${did}:`,
-              e instanceof Error ? e.message : e
-            );
-          }
-        }
-      }
-
-      // Sauvegarder AVANT sendCommit (crash-safety)
-      const stBytes = await mlsService.saveState(pin);
-      saveMlsState(userId, stBytes);
-      if (bulk.commit) {
-        const excludeIds = bulk.addedDeviceIds.map((did) => {
-          const owner = contactDeviceIds.has(did) ? contact : userId;
-          return `${owner}:${did}`;
-        });
-        await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
-      }
-    } finally {
-      if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
-    }
+    await performDirectAdd(groupId, allDevices, contactDeviceIds, contact, deps);
 
     // The new groupId becomes the new conversation key.
     // Remove the old entry and re-insert under the new key.

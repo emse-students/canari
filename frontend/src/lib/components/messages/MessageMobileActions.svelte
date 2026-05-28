@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2 } from '@lucide/svelte';
+  import { Reply, Pencil, Trash2, SmilePlus } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
+
+  /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
+  const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡'] as const;
 
   interface Props {
     /** Whether the radial action menu overlay is visible. */
@@ -19,10 +22,14 @@
     canEdit?: boolean;
     /** When false, hides the delete button. */
     canDelete?: boolean;
+    /** Emojis the current user has already reacted with (highlights them in the strip). */
+    userReactions?: string[];
+    /** Called when the user taps a quick emoji in the reaction strip. */
+    onReactEmoji?: (emoji: string) => void;
+    /** Called when the user taps the "+" button to open the full emoji picker. */
+    onOpenFullPicker?: () => void;
     /** Called when the user taps the reply button. */
     onReply?: () => void;
-    /** Called when the user taps the react (emoji) button. */
-    onReact?: () => void;
     /** Called when the user taps the edit button. */
     onEdit?: () => void;
     /** Called when the user taps the delete button. */
@@ -40,8 +47,10 @@
     canReact = true,
     canEdit = true,
     canDelete = true,
+    userReactions = [],
+    onReactEmoji,
+    onOpenFullPicker,
     onReply,
-    onReact,
     onEdit,
     onDelete,
     onClose,
@@ -60,44 +69,60 @@
 
     <div
       data-keyboard-aware-actions
-      class="absolute inset-x-0 flex items-center justify-center"
+      class="absolute inset-x-0 flex flex-col items-center gap-4"
       transition:fly={{ y: 24, duration: 220 }}
     >
-      <div class="relative w-56 h-56">
-        <button
-          type="button"
-          class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-xl inline-flex items-center justify-center text-text-main"
-          onclick={onClose}
-          aria-label="Fermer"
+      {#if !isDeleted && canReact}
+        <!-- Quick emoji reaction strip (WhatsApp/Messenger style) -->
+        <div
+          class="flex items-center gap-1 px-3 py-2 bg-white/95 dark:bg-[var(--cn-surface)] rounded-full border border-black/10 dark:border-white/10 shadow-2xl"
         >
-          •••
-        </button>
+          {#each QUICK_EMOJIS as emoji (emoji)}
+            {@const isActive = userReactions.includes(emoji)}
+            <button
+              type="button"
+              class="w-11 h-11 rounded-full text-2xl leading-none flex items-center justify-center transition-transform active:scale-75 {isActive
+                ? 'bg-amber-400/20 ring-2 ring-amber-400'
+                : 'hover:bg-black/5 dark:hover:bg-white/10'}"
+              aria-label="Réagir avec {emoji}"
+              aria-pressed={isActive}
+              onclick={() => {
+                onReactEmoji?.(emoji);
+                onClose?.();
+              }}
+            >
+              {emoji}
+            </button>
+          {/each}
+          <button
+            type="button"
+            class="w-11 h-11 rounded-full flex items-center justify-center text-text-muted hover:bg-black/5 dark:hover:bg-white/10 transition-transform active:scale-75"
+            aria-label="Plus de réactions"
+            onclick={() => {
+              onOpenFullPicker?.();
+              onClose?.();
+            }}
+          >
+            <SmilePlus size={22} />
+          </button>
+        </div>
+      {/if}
 
+      <!-- Action buttons row -->
+      <div
+        class="flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-[var(--cn-surface)]/95 rounded-2xl border border-black/10 dark:border-white/10 shadow-xl"
+      >
         {#if !isDeleted && canReply}
           <button
             onclick={() => {
               onReply?.();
               onClose?.();
             }}
-            class="absolute left-1/2 top-1 -translate-x-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-text-main active:scale-95"
+            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
             aria-label="Répondre"
-            title="Répondre"
           >
             <Reply size={20} />
-          </button>
-        {/if}
-
-        {#if canReact}
-          <button
-            onclick={() => {
-              onReact?.();
-              onClose?.();
-            }}
-            class="absolute right-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-amber-500 active:scale-95"
-            aria-label="Réagir"
-            title="Réagir"
-          >
-            <Smile size={20} />
+            <span class="text-[10px] font-medium text-text-muted">Répondre</span>
           </button>
         {/if}
 
@@ -107,11 +132,11 @@
               onEdit?.();
               onClose?.();
             }}
-            class="absolute left-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/90 dark:bg-[var(--cn-surface)]/95 border border-black/10 dark:border-white/10 shadow-lg inline-flex items-center justify-center text-blue-500 active:scale-95"
+            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-blue-500 active:scale-95 transition-transform hover:bg-blue-500/10"
             aria-label="Modifier"
-            title="Modifier"
           >
             <Pencil size={20} />
+            <span class="text-[10px] font-medium">Modifier</span>
           </button>
         {/if}
 
@@ -121,11 +146,11 @@
               onDelete?.();
               onClose?.();
             }}
-            class="absolute left-1/2 bottom-1 -translate-x-1/2 w-14 h-14 rounded-full bg-red-500/90 border border-red-400/30 shadow-lg inline-flex items-center justify-center text-white active:scale-95"
+            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-red-500 active:scale-95 transition-transform hover:bg-red-500/10"
             aria-label="Supprimer"
-            title="Supprimer"
           >
             <Trash2 size={20} />
+            <span class="text-[10px] font-medium">Supprimer</span>
           </button>
         {/if}
       </div>

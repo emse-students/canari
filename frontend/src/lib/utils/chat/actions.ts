@@ -5,7 +5,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-import { sendHistoryBundle } from '$lib/utils/chat/history';
+import { sendHistoryBundle } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 
 /**
