@@ -38,6 +38,8 @@
   let authToken = $state('');
 
   let postsOverride = $state<PostEntity[] | null>(null);
+  /** Resolved value of data.posts — used as fallback when postsOverride is still null. */
+  let initialPostsResolved = $state<PostEntity[] | null>(null);
   let loading = $state(false);
   let loadingMore = $state(false);
   let hasMore = $state(true);
@@ -140,7 +142,21 @@
   $effect(() => {
     void page.url.search;
     postsOverride = null;
+    initialPostsResolved = null;
     hasMore = true;
+  });
+
+  // Cache the resolved initial posts so the IntersectionObserver can use them
+  // even before postsOverride is set (i.e., on first load).
+  // Also initialise hasMore: the first batch uses limit=20, PAGE_SIZE=10.
+  $effect(() => {
+    initialPostsResolved = null;
+    data.posts
+      .then((posts) => {
+        initialPostsResolved = posts;
+        if (posts.length < 20) hasMore = false;
+      })
+      .catch(() => {});
   });
 
   function buildListOptions(offset = 0) {
@@ -215,7 +231,8 @@
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          const current = postsOverride;
+          // postsOverride is null on first load — fall back to the cached initial posts
+          const current = postsOverride ?? initialPostsResolved;
           if (current) void loadMorePosts(current);
         }
       },
