@@ -323,7 +323,6 @@
         src={blobUrl}
         alt={mediaRef.fileName ?? 'Image'}
         class="max-h-full max-w-full object-contain select-none"
-        style="touch-action: pinch-zoom;"
       />
     {:else}
       <!-- svelte-ignore a11y_media_has_caption -->
@@ -332,7 +331,6 @@
         controls
         autoplay
         class="max-h-full max-w-full object-contain bg-black rounded-xl"
-        style="touch-action: pinch-zoom;"
       ></video>
     {/if}
   </MediaLightbox>

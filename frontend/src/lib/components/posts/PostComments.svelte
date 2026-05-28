@@ -151,17 +151,29 @@
     }
   });
 
-  const PREVIEW_COUNT = 3;
+  const PREVIEW_COUNT = 1;
 
-  /** Enters reply mode, targeting the given comment, and cancels any active edit. */
+  /**
+   * Enters reply mode targeting the given comment, and cancels any active edit.
+   * YouTube-style: replies to replies are threaded under the top-level comment (flat),
+   * with an @mention pre-filled so the author is still addressable.
+   */
   function initiateReply(comment: PostComment) {
-    replyingToId = comment.id;
+    // If replying to a reply, thread under the top-level to keep a flat structure
+    replyingToId = comment.parentId ?? comment.id;
     replyingToName = getCommentAuthorName(comment);
     editingCommentId = null;
+    // Pre-fill @mention when replying to a reply (YouTube-style)
+    if (comment.parentId) {
+      void onCommentTextChange(`@${replyingToName} `);
+    }
   }
 
-  /** Exits reply mode and clears the reply target name. */
+  /** Exits reply mode and clears the reply target name. Undoes @mention pre-fill if untouched. */
   function cancelReply() {
+    if (commentText === `@${replyingToName} `) {
+      void onCommentTextChange('');
+    }
     replyingToId = null;
     replyingToName = '';
   }
@@ -342,15 +354,13 @@
           {comment.likes?.length ? `${comment.likes.length} J'aime` : "J'aime"}
         </button>
 
-        {#if !isReply}
-          <button
-            type="button"
-            onclick={() => initiateReply(comment)}
-            class="text-[0.7rem] font-extrabold text-text-muted hover:text-text-main transition-colors outline-none focus-visible:underline"
-          >
-            Répondre
-          </button>
-        {/if}
+        <button
+          type="button"
+          onclick={() => initiateReply(comment)}
+          class="text-[0.7rem] font-extrabold text-text-muted hover:text-text-main transition-colors outline-none focus-visible:underline"
+        >
+          Répondre
+        </button>
 
         {#if isOwn && !isEditing}
           <button

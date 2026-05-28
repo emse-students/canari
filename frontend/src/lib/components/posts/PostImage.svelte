@@ -98,6 +98,13 @@
   function closeLightbox() {
     lightboxOpen = false;
   }
+
+  function downloadBlob(url: string, name: string) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+  }
 </script>
 
 {#if galleryMode}
@@ -154,13 +161,13 @@
     onClose={closeLightbox}
     ariaLabel="Image agrandie"
     title={media.fileName ?? 'Image'}
+    onDownload={blobUrl ? () => downloadBlob(blobUrl!, media.fileName ?? 'image') : undefined}
   >
     {#if blobUrl}
       <img
         src={blobUrl}
         alt={media.fileName ?? 'Image agrandie'}
         class="max-h-full max-w-full object-contain select-none"
-        style="touch-action: pinch-zoom;"
       />
     {/if}
   </MediaLightbox>
