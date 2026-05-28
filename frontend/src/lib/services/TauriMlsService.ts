@@ -676,8 +676,20 @@ export class TauriMlsService implements IMlsService {
     onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
     onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void {
-    this.bulkIngestStart = onStart;
-    this.bulkIngestEnd = onEnd;
+    const prevStart = this.bulkIngestStart;
+    const prevEnd = this.bulkIngestEnd;
+    if (onStart) {
+      this.bulkIngestStart = (enableBulkBuffer, showOverlay) => {
+        prevStart?.(enableBulkBuffer, showOverlay);
+        onStart(enableBulkBuffer, showOverlay);
+      };
+    }
+    if (onEnd) {
+      this.bulkIngestEnd = async (enableBulkBuffer, showOverlay) => {
+        await prevEnd?.(enableBulkBuffer, showOverlay);
+        await onEnd(enableBulkBuffer, showOverlay);
+      };
+    }
   }
 
   isWsOpen(): boolean {

@@ -112,6 +112,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       type: 'epoch_rejected',
       data: { groupId, currentEpoch: 7 },
     });
+    await vi.waitFor(() => expect(mls.saveState).toHaveBeenCalled());
     expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 7);
     expect(mls.saveState).toHaveBeenCalledWith('pin');
     expect(vi.mocked(saveMlsState)).toHaveBeenCalled();

@@ -1,4 +1,3 @@
-import { saveMlsState } from '$lib/utils/hex';
 import { isRawId, parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
@@ -11,6 +10,7 @@ import {
   resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
+import { createMlsStatePersister } from '../mlsStatePersister';
 import type { MessageHandlerDeps } from './deps';
 export type { MessageHandlerDeps } from './deps';
 
@@ -81,35 +81,24 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // immédiatement sans traitement. Aucun retry, aucune récupération possible.
   const poisonedGroups = new Set<string>();
 
-  // --- Persistence de l'état MLS -------------------------------------------
-  // L'état MLS doit être sauvegardé quand il change :
-  //   • Commits (transitions d'epoch) → immédiat, le groupe vient d'être muté.
-  //   • Messages applicatifs → la clé ratchet expéditeur est consommée ; on
-  //     persiste en différé (2 s) pour éviter Argon2 à chaque message.
-  let _saveStateTimer: ReturnType<typeof setTimeout> | null = null;
+  // --- Persistence de l'état MLS (coalescée) --------------------------------
+  const statePersister = createMlsStatePersister({ mlsService, pin, userId, log });
+
+  if (mlsService.setBulkIngestHooks) {
+    mlsService.setBulkIngestHooks(
+      () => statePersister.onBulkIngestStart(),
+      () => statePersister.onBulkIngestEnd()
+    );
+  }
 
   /** Persiste l'état MLS immédiatement (commits, Welcome, mutations de groupe). */
   function persistMlsStateNow(): void {
-    if (_saveStateTimer !== null) {
-      clearTimeout(_saveStateTimer);
-      _saveStateTimer = null;
-    }
-    mlsService
-      .saveState(pin)
-      .then((b) => saveMlsState(userId, b))
-      .catch(() => {});
+    statePersister.persistNow();
   }
 
   /** Persiste l'état MLS en différé (messages applicatifs non-commit). */
   function scheduleMlsStatePersist(): void {
-    if (_saveStateTimer !== null) return; // déjà planifié
-    _saveStateTimer = setTimeout(() => {
-      _saveStateTimer = null;
-      mlsService
-        .saveState(pin)
-        .then((b) => saveMlsState(userId, b))
-        .catch(() => {});
-    }, 2_000);
+    statePersister.scheduleDeferred();
   }
 
   // Groupes pour lesquels une récupération est déjà en cours.
@@ -237,8 +226,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         );
         try {
           const joinedGroupId = await mlsService.processWelcome(content, ratchetTreeBytes);
-          const stBytes = await mlsService.saveState(pin);
-          await saveMlsState(userId, stBytes);
+          await statePersister.flush();
 
           // registerMember et welcome_received sont idempotents côté serveur.
           // On les appelle pour le vrai MLS group ID (joinedGroupId) ET pour l'ID de l'enveloppe
@@ -351,8 +339,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           if (welcomeErrMsg.includes('GroupAlreadyExists')) {
             log(`[WELCOME] Groupe ${convoKey} déjà rejoint - sauvegarde état MLS avant ACK`);
             try {
-              const stBytes = await mlsService.saveState(pin);
-              await saveMlsState(userId, stBytes);
+              await statePersister.flush();
               const staleConvo = conversations.get(convoKey);
               if (staleConvo) {
                 conversations.set(convoKey, { ...staleConvo, isReady: true });
@@ -816,10 +803,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         // de groupe fantôme au prochain démarrage, qui lancerait recoverDeadGroup - chemin
         // de récupération acceptable. On ne bloque plus le pipeline de messages le temps
         // d'Argon2 (~1-2s sur mobile).
-        mlsService
-          .saveState(pin)
-          .then((b) => saveMlsState(userId, b))
-          .catch(() => {});
+        statePersister.persistNow();
 
         // Attendre les métadonnées - le fetch a démarré avant processWelcome, il est
         // souvent déjà résolu à ce stade (le RTT réseau était masqué par le WASM).
@@ -959,12 +943,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             }
           }
           // Sauvegarder l'état MLS une seule fois après tout le replay
-          try {
-            const stBytes = await mlsService.saveState(pin);
-            await saveMlsState(userId, stBytes);
-          } catch {
-            /* non-blocking */
-          }
+          await statePersister.flush().catch(() => {});
         }
 
         return true;
