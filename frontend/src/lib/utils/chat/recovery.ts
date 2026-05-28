@@ -305,7 +305,7 @@ export async function migrateConversation(
  * Called on WebSocket connect and every 5 minutes (leader tab only).
  */
 export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
-  const { mlsService, userId, conversations, log } = deps;
+  const { mlsService, userId, pin, conversations, log } = deps;
 
   let serverGroups: {
     groupId: string;
@@ -331,10 +331,17 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
         log(`[HEALTH] Erreur migration : ${String(e)}`)
       );
     } else if (conversations.has(g.groupId)) {
-      // Already migrated - remove the stale old entry
+      // Already migrated - remove the stale old entry and free WASM group state
       log(`[HEALTH] ${g.groupId} déjà migré vers ${successorId} - nettoyage`);
       conversations.delete(g.groupId);
       if (deps.deleteConversation) await deps.deleteConversation(g.groupId).catch(() => {});
+      try {
+        mlsService.forgetGroup(g.groupId);
+        const stBytes = await mlsService.saveState(pin);
+        saveMlsState(userId, stBytes);
+      } catch {
+        // Non-blocking
+      }
     }
 
     // ── Crash recovery ───────────────────────────────────────────────────────

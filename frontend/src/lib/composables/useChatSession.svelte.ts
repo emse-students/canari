@@ -43,6 +43,11 @@ import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 
+/** Returns true when running inside a Tauri native shell. */
+function isTauri(): boolean {
+  return !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+}
+
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
   /** Reactive map of all open conversations, keyed by conversation ID. */
@@ -228,13 +233,12 @@ export function useChatSession() {
 
       // Start MLS state load immediately - pure I/O, doesn't need the token.
       const { loadMlsState } = await import('$lib/utils/hex');
-      const _isTauri = !!(window as any).__TAURI_INTERNALS__;
       const mlsStatePromise = (async (): Promise<
         { bytes: Uint8Array; source: string } | undefined
       > => {
         const loaded = await loadMlsState(userId);
         if (loaded) return { bytes: loaded, source: 'indexeddb' };
-        if (_isTauri) {
+        if (isTauri()) {
           try {
             const { invoke } = await import('@tauri-apps/api/core');
             const fallback = await invoke<number[] | null>('load_mls_state');
@@ -334,8 +338,7 @@ export function useChatSession() {
       // prompt that follows will call BiometricService.enableBiometric(pin).
       // On web/desktop: store an AES-GCM encrypted blob in sessionStorage so
       // the PIN is never at rest in plaintext and is wiped on tab/session close.
-      const tauriEnv = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-      if (!tauriEnv) {
+      if (!isTauri()) {
         await savePin(pin);
       } else if (!(await BiometricService.isConfigured().catch(() => false))) {
         // Tauri but biometrics not yet enrolled: cache encrypted for this session
@@ -611,8 +614,7 @@ export function useChatSession() {
 
       startConnectionWatchdog(cb);
 
-      const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-      if (isTauri && !(await BiometricService.isConfigured()) && !isBiometricPromptDismissed()) {
+      if (isTauri() && !(await BiometricService.isConfigured()) && !isBiometricPromptDismissed()) {
         showBiometricEnrollPrompt = true;
       }
     } catch (_e: unknown) {
@@ -635,8 +637,7 @@ export function useChatSession() {
 
   /** On Tauri/Android (no biometrics), reads the PIN from push_context.json and delegates to login(). Returns true if login succeeded, false if manual PIN is still needed. */
   async function nativeStorageLogin(cb: ChatSessionCallbacks): Promise<boolean> {
-    const isTauri = !!(window as any).__TAURI_INTERNALS__;
-    if (!isTauri) return false;
+    if (!isTauri()) return false;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const ctx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
@@ -691,8 +692,7 @@ export function useChatSession() {
   async function dismissBiometricPrompt(): Promise<void> {
     showBiometricEnrollPrompt = false;
     localStorage.setItem(BIOMETRIC_DISMISSED_KEY, 'true');
-    const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-    if (isTauri) {
+    if (isTauri()) {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('set_native_flag', { key: 'biometricPromptDismissed', value: true }).catch(
         () => {}
@@ -962,11 +962,7 @@ export function useChatSession() {
   function initServices(log: (msg: string) => void) {
     if (mls) return; // already initialised
     mls = new MlsService();
-    log(
-      (window as any).__TAURI_INTERNALS__
-        ? 'Initialisé en mode TAURI'
-        : 'Initialisé en mode WEB (WASM)'
-    );
+    log(isTauri() ? 'Initialisé en mode TAURI' : 'Initialisé en mode WEB (WASM)');
     callService = new CallService(mls);
     callService.callState.subscribe((s: any) => (callState = s));
   }
