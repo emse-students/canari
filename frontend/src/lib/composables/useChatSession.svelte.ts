@@ -536,18 +536,7 @@ export function useChatSession() {
 
       // Discover groups the user belongs to on the server but doesn't have locally.
       // This catches cases where Welcomes were lost (device offline, state cleared, etc.)
-      const st0 = storage;
-      discoverMissingGroups({
-        mlsService,
-        userId,
-        pin,
-        conversations: cb.conversations,
-        saveConversation: cb.saveConversation,
-        deleteConversation: st0 ? (id) => st0.deleteConversation(id) : undefined,
-        log: cb.log,
-      }).catch((e) =>
-        cb.log(`[WARN] Echec decouverte groupes: ${e instanceof Error ? e.message : String(e)}`)
-      );
+      runGroupDiscovery(cb, mlsService);
 
       // discoverMissingGroups attend 30s (BOOTSTRAP_TIMEOUT_MS) avant de
       // tenter un re-bootstrap. On programme un retry à 35s pour que le
@@ -556,24 +545,9 @@ export function useChatSession() {
       // (ex: lock pris par un autre device qui n'a pas réussi).
       for (const delay of [35_000, 70_000]) {
         setTimeout(() => {
-          const hasPending = [...cb.conversations.values()].some((c) => !c.isReady);
-          if (!hasPending) return;
-          const svc = mlsService;
-          if (!svc) return;
-          const st1 = storage;
-          discoverMissingGroups({
-            mlsService: svc,
-            userId,
-            pin,
-            conversations: cb.conversations,
-            saveConversation: cb.saveConversation,
-            deleteConversation: st1 ? (id) => st1.deleteConversation(id) : undefined,
-            log: cb.log,
-          }).catch((e) =>
-            cb.log(
-              `[WARN] Echec decouverte groupes (retry): ${e instanceof Error ? e.message : String(e)}`
-            )
-          );
+          if ([...cb.conversations.values()].some((c) => !c.isReady)) {
+            runGroupDiscovery(cb, ensureMls(), 'retry');
+          }
         }, delay);
       }
 
@@ -774,6 +748,29 @@ export function useChatSession() {
     }
   }
 
+  /**
+   * Fires `discoverMissingGroups` and logs any error.
+   * Centralises the repeated 7-field spread so it isn't duplicated at every call site.
+   */
+  function runGroupDiscovery(cb: ChatSessionCallbacks, mlsService: IMlsService, label = ''): void {
+    const st = storage;
+    discoverMissingGroups({
+      mlsService,
+      userId,
+      pin,
+      conversations: cb.conversations,
+      saveConversation: cb.saveConversation,
+      deleteConversation: st ? (id) => st.deleteConversation(id) : undefined,
+      log: cb.log,
+    }).catch((e) =>
+      cb.log(
+        `[WARN] Echec decouverte groupes${label ? ` (${label})` : ''}: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      )
+    );
+  }
+
   /** Pauses the WebSocket connection and stops all background timers. Called when the app is backgrounded. */
   function pauseConnection() {
     if (reconnectTimer !== null) {
@@ -831,20 +828,7 @@ export function useChatSession() {
         return;
       }
       await syncConnectionAfterWsOpen(connectionDeps);
-      const st2 = storage;
-      discoverMissingGroups({
-        mlsService: ensureMls(),
-        userId,
-        pin,
-        conversations: cb.conversations,
-        saveConversation: cb.saveConversation,
-        deleteConversation: st2 ? (id) => st2.deleteConversation(id) : undefined,
-        log: cb.log,
-      }).catch((e) =>
-        cb.log(
-          `[WARN] Echec decouverte groupes (reconnect): ${e instanceof Error ? e.message : String(e)}`
-        )
-      );
+      runGroupDiscovery(cb, ensureMls(), 'reconnect');
     } catch (err) {
       cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
       console.error('[WS] Reconnection failed:', err instanceof Error ? err.message : err);
