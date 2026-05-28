@@ -22,8 +22,9 @@ import {
   renameGroupAndBroadcast,
   deleteGroupAndBroadcast,
   leaveGroupAndBroadcast,
+  isGroupActiveOnServer,
+  purgeOrphanGroup,
 } from '$lib/utils/chat/groupActions';
-import { isGroupActiveOnServer, purgeOrphanGroup } from '$lib/utils/chat/actions';
 import {
   createNewGroup as createGroup,
   inviteMembersToGroup,

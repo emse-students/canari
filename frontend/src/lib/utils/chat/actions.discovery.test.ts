@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import { discoverMissingGroups } from './actions';
 import {
-  discoverMissingGroups,
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
   purgeOrphanGroup,
-} from './actions';
+} from './groupActions';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),

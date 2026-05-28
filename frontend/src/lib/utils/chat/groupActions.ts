@@ -1,6 +1,7 @@
 import { saveMlsState } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
+import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 
 /** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
@@ -141,6 +142,122 @@ export async function leaveGroupAndBroadcast(params: {
   } catch {
     // Non-blocking
   }
+}
+
+/**
+ * Persists the WASM MLS blob to encrypted storage after forgetGroup / commits.
+ * Without this, IndexedDB still holds a stale OpenMLS tree on next reload.
+ */
+export async function persistMlsStateAfterMutation(
+  mlsService: IMlsService,
+  userId: string,
+  pin: string,
+  log?: (msg: string) => void
+): Promise<void> {
+  try {
+    const stBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stBytes);
+  } catch (e) {
+    log?.(`[MLS] Échec saveState après mutation: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * Drops one group from the in-memory WASM/OpenMLS state when the server no longer lists it.
+ * @returns true when forgetGroup was applied (caller should persist MLS state).
+ */
+export function forgetMlsGroupIfPresent(
+  mlsService: IMlsService,
+  groupId: string,
+  log?: (msg: string) => void
+): boolean {
+  if (!mlsService.getLocalGroups().includes(groupId)) {
+    return false;
+  }
+  try {
+    mlsService.forgetGroup(groupId, 0);
+    log?.(`[MLS] forgetGroup ${groupId} (absent côté serveur)`);
+    return true;
+  } catch (e) {
+    log?.(
+      `[MLS] forgetGroup échoué pour ${groupId}: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Removes a sidebar / IndexedDB conversation row only (no MLS mutation).
+ * Safe to call even when WASM no longer knows the groupId.
+ */
+export async function purgeLocalConversationRecord(params: {
+  conversations: Map<string, Conversation>;
+  contactKey: string;
+  groupId: string;
+  deleteConversation?: (key: string) => Promise<void>;
+  log?: (msg: string) => void;
+}): Promise<void> {
+  const { conversations, contactKey, groupId, deleteConversation, log } = params;
+  localStorage.removeItem(`discovery_pending:${groupId}`);
+  if (deleteConversation) {
+    await deleteConversation(contactKey).catch(() => {});
+  }
+  conversations.delete(contactKey);
+  log?.(`[UI] Conversation locale retirée (${groupId})`);
+}
+
+/**
+ * Full orphan cleanup: MLS state first (authoritative), then UI/IndexedDB row.
+ */
+export async function purgeOrphanGroup(params: {
+  conversations: Map<string, Conversation>;
+  mlsService: IMlsService;
+  userId: string;
+  pin: string;
+  contactKey: string;
+  groupId: string;
+  deleteConversation?: (key: string) => Promise<void>;
+  log?: (msg: string) => void;
+}): Promise<void> {
+  const { mlsService, userId, pin, groupId, log, ...uiParams } = params;
+  const mlsChanged = forgetMlsGroupIfPresent(mlsService, groupId, log);
+  if (mlsChanged) {
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+  }
+  await purgeLocalConversationRecord({ ...uiParams, groupId, log });
+}
+
+/** Returns whether the group is still active for this user on the server (null = unknown). */
+export async function isGroupActiveOnServer(
+  mlsService: IMlsService,
+  userId: string,
+  groupId: string
+): Promise<boolean | null> {
+  try {
+    const groups = await mlsService.getUserGroups(userId);
+    const row = groups.find((g) => g.groupId === groupId);
+    if (!row) return false;
+    return !row.deletedAt;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retire silencieusement le leaf stale d'un device de l'arbre MLS (best-effort).
+ * Encapsule removeMemberDevice + kickStaleDevice pour éviter la duplication.
+ */
+export async function kickStaleLeaf(
+  groupId: string,
+  targetUserId: string,
+  targetDeviceId: string,
+  mlsService: IMlsService,
+  log: (msg: string) => void
+): Promise<void> {
+  const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
+  await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
+  await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
+  log(`[KICK] Leaf stale ${targetUserId}:${targetDeviceId} retiré de ${groupId}`);
 }
 
 /**
