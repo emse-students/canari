@@ -321,10 +321,14 @@ h6,
 }
 
 html.keyboard-open .page-scroll-wrap {
-  overflow: hidden;
   scroll-padding-bottom: calc(
     4rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)
   );
+}
+
+/* Block background scroll only in chat (non-chat pages like forms must keep their scroll) */
+html.keyboard-open .page-scroll-wrap:has(.app-layout) {
+  overflow: hidden;
 }
 
 /* Fixed bottom bars on non-chat pages (forms, etc.) */

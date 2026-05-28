@@ -360,8 +360,12 @@
         hasMoreInDb = !isChannel;
         tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
         isNearBottom = true;
-      } else if (hasNewMessage && isNearBottom && !catchupActive) {
-        tick().then(() => scrollToBottom(true));
+      } else if (hasNewMessage && !catchupActive) {
+        // Always scroll to bottom for own messages; for others only if already near bottom.
+        const ownMessageAdded = c.messages.at(-1)?.isOwn === true;
+        if (isNearBottom || ownMessageAdded) {
+          tick().then(() => scrollToBottom(true));
+        }
       }
 
       lastConversationKey = convoKey;
