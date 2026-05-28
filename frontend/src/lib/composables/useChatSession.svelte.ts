@@ -42,11 +42,7 @@ import { startPushService, stopPushService } from '$lib/services/PushNotificatio
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
-
-/** Returns true when running inside a Tauri native shell. */
-function isTauri(): boolean {
-  return !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-}
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
@@ -238,7 +234,7 @@ export function useChatSession() {
       > => {
         const loaded = await loadMlsState(userId);
         if (loaded) return { bytes: loaded, source: 'indexeddb' };
-        if (isTauri()) {
+        if (isTauriRuntime()) {
           try {
             const { invoke } = await import('@tauri-apps/api/core');
             const fallback = await invoke<number[] | null>('load_mls_state');
@@ -338,7 +334,7 @@ export function useChatSession() {
       // prompt that follows will call BiometricService.enableBiometric(pin).
       // On web/desktop: store an AES-GCM encrypted blob in sessionStorage so
       // the PIN is never at rest in plaintext and is wiped on tab/session close.
-      if (!isTauri()) {
+      if (!isTauriRuntime()) {
         await savePin(pin);
       } else if (!(await BiometricService.isConfigured().catch(() => false))) {
         // Tauri but biometrics not yet enrolled: cache encrypted for this session
@@ -614,7 +610,11 @@ export function useChatSession() {
 
       startConnectionWatchdog(cb);
 
-      if (isTauri() && !(await BiometricService.isConfigured()) && !isBiometricPromptDismissed()) {
+      if (
+        isTauriRuntime() &&
+        !(await BiometricService.isConfigured()) &&
+        !isBiometricPromptDismissed()
+      ) {
         showBiometricEnrollPrompt = true;
       }
     } catch (_e: unknown) {
@@ -637,7 +637,7 @@ export function useChatSession() {
 
   /** On Tauri/Android (no biometrics), reads the PIN from push_context.json and delegates to login(). Returns true if login succeeded, false if manual PIN is still needed. */
   async function nativeStorageLogin(cb: ChatSessionCallbacks): Promise<boolean> {
-    if (!isTauri()) return false;
+    if (!isTauriRuntime()) return false;
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const ctx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
@@ -692,7 +692,7 @@ export function useChatSession() {
   async function dismissBiometricPrompt(): Promise<void> {
     showBiometricEnrollPrompt = false;
     localStorage.setItem(BIOMETRIC_DISMISSED_KEY, 'true');
-    if (isTauri()) {
+    if (isTauriRuntime()) {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('set_native_flag', { key: 'biometricPromptDismissed', value: true }).catch(
         () => {}
@@ -962,7 +962,7 @@ export function useChatSession() {
   function initServices(log: (msg: string) => void) {
     if (mls) return; // already initialised
     mls = new MlsService();
-    log(isTauri() ? 'Initialisé en mode TAURI' : 'Initialisé en mode WEB (WASM)');
+    log(isTauriRuntime() ? 'Initialisé en mode TAURI' : 'Initialisé en mode WEB (WASM)');
     callService = new CallService(mls);
     callService.callState.subscribe((s: any) => (callState = s));
   }

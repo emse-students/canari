@@ -5,6 +5,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { settings } from '$lib/stores/settingsStore.svelte';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -162,7 +163,7 @@ export function useNotifications() {
   async function requestSystemNotificationPermission() {
     if (typeof window === 'undefined') return;
 
-    if ((window as any).__TAURI_INTERNALS__) {
+    if (isTauriRuntime()) {
       // Sur Linux desktop, le plugin Tauri notification bloque la boucle principale GLib
       // (l'appel dbus ne revient jamais dans WebKitGTK). On skip Linux pur.
       // Sur Android 13+, la permission POST_NOTIFICATIONS DOIT être demandée au runtime
@@ -216,7 +217,7 @@ export function useNotifications() {
     if (now - lastAt < 800) return;
     lastNotifAtByConv.set(convKey, now);
 
-    if ((window as any).__TAURI_INTERNALS__) {
+    if (isTauriRuntime()) {
       try {
         const { isPermissionGranted, sendNotification } =
           await import('@tauri-apps/plugin-notification');

@@ -7,6 +7,7 @@ import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { sendHistoryBundle } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
  * Persists the WASM MLS blob to encrypted storage after forgetGroup / commits.
@@ -90,9 +91,6 @@ export async function purgeOrphanGroup(params: {
   }
   await purgeLocalConversationRecord({ ...uiParams, groupId, log });
 }
-
-/** @deprecated Prefer purgeOrphanGroup - kept as alias for call sites. */
-export const purgeLocalGroupConversation = purgeOrphanGroup;
 
 /** Returns whether the group is still active for this user on the server (null = unknown). */
 export async function isGroupActiveOnServer(
@@ -561,8 +559,7 @@ export async function exportUserBackup(params: {
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
 
-  const isTauri = !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-  if (isTauri) {
+  if (isTauriRuntime()) {
     // In Tauri (desktop/mobile) blob URLs and anchor downloads do not work.
     // Delegate file writing to the Rust side which saves to the Downloads
     // folder (desktop) or app data dir (mobile).

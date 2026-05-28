@@ -1,3 +1,5 @@
+import { isTauriRuntime } from '$lib/utils/openExternal';
+
 /** Converts a Uint8Array to a lowercase hex string (e.g. `Uint8Array([0xde,0xad])` → `"dead"`). */
 export function toHex(buffer: Uint8Array): string {
   return Array.from(buffer)
@@ -68,8 +70,7 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * Stores raw bytes - no base64 overhead.
  */
 export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
-  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
-  if (isTauri) {
+  if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       // Ensure native .bin file is written - fail fast so callers can handle errors.
@@ -98,8 +99,7 @@ export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<v
  * localStorage entry is removed.
  */
 export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
-  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
-  if (isTauri) {
+  if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const res = await invoke<number[] | null>('load_mls_state');
@@ -133,7 +133,6 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
 
 /** Remove the MLS state for `userId` from IndexedDB (and legacy localStorage). */
 export async function removeMlsState(userId: string): Promise<void> {
-  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
   // Remove legacy localStorage entry always
   try {
     localStorage.removeItem('mls_autosave_' + userId);
@@ -141,7 +140,7 @@ export async function removeMlsState(userId: string): Promise<void> {
     /* ignore */
   }
 
-  if (isTauri) {
+  if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('delete_mls_state');

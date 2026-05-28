@@ -7,6 +7,7 @@
  * - File selection + validation
  */
 import { tick } from 'svelte';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { saveMlsState } from '$lib/utils/hex';
 import { getToken } from '$lib/stores/auth';
@@ -293,10 +294,7 @@ export function useMessaging() {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
-    const isAndroidTauri =
-      typeof window !== 'undefined' &&
-      !!(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ &&
-      /android/i.test(navigator.userAgent);
+    const isAndroidTauri = isTauriRuntime() && /android/i.test(navigator.userAgent);
 
     const shouldSendSystemNotification =
       !isOwn &&

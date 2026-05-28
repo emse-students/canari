@@ -12,6 +12,7 @@
 
 import type { IStorage, StoredMessage } from '$lib/db';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /** Structure d'une entrée dans fcm_message_cache.ndjson (écrite par Kotlin/Rust). */
 interface FcmCacheEntry {
@@ -33,7 +34,7 @@ interface FcmCacheEntry {
  * No-op sur web/desktop (pas de cache natif disponible) → retourne [].
  */
 export async function consumeFcmCache(pin: string, storage: IStorage): Promise<StoredMessage[]> {
-  if (!(window as any).__TAURI_INTERNALS__) return [];
+  if (!isTauriRuntime()) return [];
 
   // Declared without initializer: catch always returns, so entries is definitely
   // assigned before use - TypeScript flow analysis confirms this.
