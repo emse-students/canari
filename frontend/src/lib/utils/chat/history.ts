@@ -7,7 +7,7 @@ import type {
   MessageReaction,
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import { decodeAppMessage } from '$lib/proto/codec';
+import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   appMsgToEnvelope,
@@ -18,7 +18,7 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
+import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -210,10 +210,10 @@ export async function replayConversationHistory(params: {
           const senderNorm = msg.sender_id.toLowerCase();
           const reactions = messageReactions.get(messageId) || [];
           const emoji = parsed.reaction.emoji ?? '';
-          const filtered = toggleMessageReaction(reactions, senderNorm, emoji);
-          if (!filtered) continue;
-          messageReactions.set(messageId, filtered);
-          reactionUpdates.set(messageId, filtered);
+          const updated = addMessageReaction(reactions, senderNorm, emoji);
+          if (!updated) continue; // déjà présente ou cap atteint — no-op
+          messageReactions.set(messageId, updated);
+          reactionUpdates.set(messageId, updated);
           mlsUpdated = true;
           continue;
         } else if (parsed?.system) {
@@ -319,6 +319,31 @@ export async function replayConversationHistory(params: {
               );
               messageReactions.set(data.messageId, trimmed);
               reactionUpdates.set(data.messageId, trimmed);
+            } else if (parsed.system.event === 'history_bundle') {
+              // Le bundle est livré via la queue de messages; le traiter ici garantit qu'un
+              // device arrivant en ligne après l'expiration de la queue (7 jours) récupère
+              // quand même l'historique depuis Redis Streams.
+              const bundleData = data.messages;
+              if (Array.isArray(bundleData) && bundleData.length > 0) {
+                const existingIds = new Set(
+                  (getConversation(contactName)?.messages ?? []).map((m) => m.id)
+                );
+                const serverMs = parseServerTimestampMs(msg.timestamp);
+                for (const m of bundleData) {
+                  if (m?.id && !existingIds.has(m.id) && m.senderId && m.content) {
+                    pendingMessages.push({
+                      senderId: String(m.senderId).toLowerCase(),
+                      content: String(m.content),
+                      messageId: String(m.id),
+                      timestamp:
+                        typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
+                      serverTimestamp: serverMs,
+                      ingestSequence: historyIngestSeq++,
+                    });
+                    addedMsg++;
+                  }
+                }
+              }
             }
           } catch {
             // Keep history replay robust even if a control payload is malformed.
@@ -498,6 +523,51 @@ export async function replayConversationHistory(params: {
     log(
       `[WARN] Echec replay historique pour ${contactName}: ${err instanceof Error ? err.message : String(err)}`
     );
+  }
+}
+
+/**
+ * Envoie les `limit` derniers messages déchiffrés de `groupId` au nouveau membre
+ * comme AppMessage système (`history_bundle`), chiffré sous l'epoch courante.
+ *
+ * Appelé par l'invitant juste après `sendCommit` pour que le destinataire reçoive
+ * l'historique après avoir traité son Welcome (garantie d'ordre MLS).
+ * Fail-silently : si l'envoi échoue, le destinataire démarre avec une conversation vide.
+ */
+export async function sendHistoryBundle(
+  groupId: string,
+  deps: {
+    storage: IStorage | null;
+    pin: string;
+    mlsService: IMlsService;
+    log: (msg: string) => void;
+  },
+  limit = 50
+): Promise<void> {
+  const { storage, pin, mlsService, log } = deps;
+  if (!storage) return;
+
+  let messages: StoredMessage[];
+  try {
+    messages = await storage.getMessagesPage(groupId, pin, limit);
+  } catch {
+    return;
+  }
+  if (messages.length === 0) return;
+
+  const payload = messages.map((m) => ({
+    id: m.id,
+    senderId: m.senderId,
+    content: m.content,
+    timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
+  }));
+
+  const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: payload })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, true);
+    log(`[HISTORY_BUNDLE] ${payload.length} messages envoyés à ${groupId}`);
+  } catch (e) {
+    log(`[HISTORY_BUNDLE] Erreur envoi: ${String(e)}`);
   }
 }
 

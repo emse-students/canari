@@ -62,6 +62,10 @@ export class Post {
   @Column({ type: 'boolean', default: false })
   pinned: boolean;
 
+  /** Set to true when the post is auto-hidden after reaching the report threshold. Moderators review and restore or delete. */
+  @Column({ type: 'boolean', default: false })
+  hiddenByModeration: boolean;
+
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;
 

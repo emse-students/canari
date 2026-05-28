@@ -352,6 +352,9 @@ export class PostsService {
     const promoParam = promo === undefined ? null : promo;
     const formationParam = formation === undefined || formation === '' ? null : formation;
 
+    // Non-admin viewers cannot see posts hidden by moderation.
+    const hiddenFilter = isAdmin ? '' : `AND NOT COALESCE(posts."hiddenByModeration", false)`;
+
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional)
       rawPosts = await this.postRepo.manager.query(
@@ -360,6 +363,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."associationId" IS NOT NULL
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${hiddenFilter}
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -372,6 +376,7 @@ export class PostsService {
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${hiddenFilter}
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -388,6 +393,7 @@ export class PostsService {
          OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[]))
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${hiddenFilter}
          ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -404,6 +410,7 @@ export class PostsService {
          AND ($3::integer IS NULL OR u.promo = $3::integer)
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         ${hiddenFilter}
          ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -475,6 +482,32 @@ export class PostsService {
     }
 
     return safe;
+  }
+
+  /**
+   * Returns all posts currently hidden by moderation, with their pending report count.
+   * Admin only.
+   */
+  async getHiddenPosts(): Promise<any[]> {
+    return this.postRepo.manager.query(
+      `SELECT p.id, p."authorId", p.markdown, p."createdAt", p."associationId",
+              (SELECT COUNT(*)::int FROM content_reports cr
+               WHERE cr."contentId" = p.id::text AND cr.status = 'pending') AS "pendingReportCount"
+       FROM posts p
+       WHERE p."hiddenByModeration" = true
+       ORDER BY p."createdAt" DESC
+       LIMIT 200`
+    );
+  }
+
+  /** Restores a moderation-hidden post back to the public feed. Admin only. */
+  async unhidePost(postId: string): Promise<{ ok: boolean }> {
+    await this.postRepo.manager.query(
+      `UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`,
+      [postId]
+    );
+    await this.invalidateListCache();
+    return { ok: true };
   }
 
   /** Returns posts that have at least one report, ordered by most recent. Admin only. */

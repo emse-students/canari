@@ -5,6 +5,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { sendHistoryBundle } from '$lib/utils/chat/history';
 
 /**
  * Persists the WASM MLS blob to encrypted storage after forgetGroup / commits.
@@ -715,6 +716,7 @@ const welcomeRequestInProgress = new Set<string>();
  */
 export async function handleWelcomeRequest(params: {
   mlsService: IMlsService;
+  storage: IStorage | null;
   userId: string;
   pin: string;
   conversations: Map<string, Conversation>;
@@ -725,6 +727,7 @@ export async function handleWelcomeRequest(params: {
 }) {
   const {
     mlsService,
+    storage,
     userId,
     pin,
     conversations,
@@ -838,6 +841,12 @@ export async function handleWelcomeRequest(params: {
         `${requesterUserId}:${requesterDeviceId}`,
       ]);
     }
+
+    // Envoyer l'historique chiffré au nouveau membre (best-effort, fire-and-forget).
+    // Le bundle arrive après le Welcome côté destinataire — ordre garanti par MLS.
+    sendHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+      log(`[HISTORY_BUNDLE] Erreur envoi historique à ${requesterUserId}: ${String(e)}`)
+    );
   } catch (e) {
     const errStr = String(e);
     if (errStr.includes('DuplicateSignatur') || errStr.includes('already')) {

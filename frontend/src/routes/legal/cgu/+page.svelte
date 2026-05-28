@@ -25,7 +25,7 @@
       </div>
       <h1 class="text-3xl font-bold text-text-main">Conditions Générales d'Utilisation</h1>
       <p class="mt-2 text-sm text-text-muted">Canari — Messagerie sécurisée EMSE</p>
-      <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 23/05/2026</p>
+      <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 28/05/2026</p>
     </div>
 
     <!-- Navigation rapide -->
@@ -180,7 +180,8 @@
         <h3 class="mb-2 font-semibold text-text-main">Signalement de contenu</h3>
         <p class="mb-3 text-text-muted">
           Si vous observez un contenu ou un comportement contraire aux présentes CGU, vous pouvez
-          le signaler à l'équipe de modération via :
+          le signaler directement depuis l'application via le bouton <em>« Signaler »</em> présent
+          sur chaque publication. Vous pouvez également contacter l'équipe de modération par e-mail :
         </p>
         <div class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5 mb-3">
           <p class="text-text-muted">
@@ -191,15 +192,47 @@
         </div>
         <p class="text-text-muted text-xs">
           Précisez la nature du contenu signalé, la date approximative, et l'identifiant de
-          l'utilisateur concerné si connu. Nous traiterons votre signalement dans les meilleurs délais.
+          l'utilisateur concerné si connu.
         </p>
 
-        <h3 class="mb-2 mt-4 font-semibold text-text-main">Modération</h3>
+        <h3 class="mb-2 mt-5 font-semibold text-text-main">Politique de modération</h3>
+        <p class="mb-3 text-text-muted">
+          La modération suit un processus en deux étapes visant à équilibrer la liberté d'expression
+          et la sécurité de la communauté :
+        </p>
+        <ul class="space-y-2 mb-4">
+          <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
+            <span class="font-semibold text-cn-yellow">Masquage automatique — </span>
+            <span class="text-text-muted">
+              Dès qu'un post accumule <strong>5 signalements distincts</strong> (de 5 utilisateurs
+              différents), il est automatiquement masqué des fils d'actualité et placé en file de
+              révision. L'auteur ne reçoit pas de notification à ce stade.
+            </span>
+          </li>
+          <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
+            <span class="font-semibold text-cn-yellow">Révision manuelle — </span>
+            <span class="text-text-muted">
+              Un modérateur (membre du BDE disposant du droit MODERATE, ou administrateur global)
+              examine le contenu masqué et décide de le <strong>restaurer</strong> si le signalement
+              est infondé, ou de le <strong>supprimer</strong> s'il viole les CGU. Dans ce dernier cas,
+              l'auteur peut également être restreint (muté) : il conserve l'accès en lecture mais ne
+              peut plus publier, commenter ou réagir.
+            </span>
+          </li>
+        </ul>
+        <p class="text-text-muted text-xs mb-4">
+          Les signalements abusifs ou de mauvaise foi peuvent eux-mêmes faire l'objet de
+          mesures de modération. Le seuil de masquage automatique peut évoluer en fonction de
+          l'usage réel de la plateforme.
+        </p>
+
+        <h3 class="mb-2 font-semibold text-text-main">Recours</h3>
         <p class="text-text-muted">
-          L'association Rootz se réserve le droit de supprimer tout contenu contraire aux présentes
-          CGU ou aux règles de l'École des Mines, et de suspendre les comptes responsables, sans
-          obligation de préavis. Les décisions de modération peuvent faire l'objet d'un recours
-          par e-mail à <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>.
+          Toute décision de modération (suppression de contenu, restriction de compte) peut faire
+          l'objet d'un recours par e-mail à
+          <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline">bureau@rootz-emse.fr</a>
+          en précisant l'objet du litige. L'association Rootz s'engage à examiner les recours dans
+          un délai raisonnable et à motiver sa réponse.
         </p>
       </section>
 

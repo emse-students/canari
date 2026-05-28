@@ -20,6 +20,8 @@ export interface ContentReport {
   details: string | null;
   status: 'pending' | 'reviewed' | 'dismissed';
   reviewedBy: string | null;
+  /** User ID of the reported content's author. Null for association posts or messages. */
+  reportedUserId: string | null;
   createdAt: string;
 }
 
@@ -38,11 +40,12 @@ export async function createReport(
   contentType: 'post' | 'comment' | 'message',
   contentId: string,
   reason: 'spam' | 'harassment' | 'inappropriate' | 'other',
-  details?: string
+  details?: string,
+  reportedUserId?: string | null
 ): Promise<ContentReport> {
   return request<ContentReport>('/api/moderation/reports', {
     method: 'POST',
-    body: JSON.stringify({ contentType, contentId, reason, details }),
+    body: JSON.stringify({ contentType, contentId, reason, details, reportedUserId }),
   });
 }
 

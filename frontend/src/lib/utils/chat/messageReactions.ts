@@ -15,6 +15,23 @@ export function canAddDistinctReactionEmoji(reactions: MessageReaction[], emoji:
 }
 
 /**
+ * Adds a user's reaction idempotently (add-only).
+ * Returns null when the reaction is already present (no-op) or the emoji cap is reached.
+ * Removal is handled by the `remove_reaction` system event — never by duplicate delivery.
+ */
+export function addMessageReaction(
+  reactions: MessageReaction[],
+  userId: string,
+  emoji: string
+): MessageReaction[] | null {
+  if (!emoji) return null;
+  const userNorm = userId.toLowerCase();
+  if (reactions.some((r) => r.userId === userNorm && r.emoji === emoji)) return null;
+  if (!canAddDistinctReactionEmoji(reactions, emoji)) return null;
+  return [...reactions, { emoji, userId: userNorm }];
+}
+
+/**
  * Toggles a user's reaction on a message.
  * Returns null when adding a 16th distinct emoji type (limit reached).
  */

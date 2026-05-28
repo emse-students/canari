@@ -90,6 +90,14 @@ export class PostsController {
     return this.service.getReportedPosts(Number(limit ?? 50), Number(offset ?? 0));
   }
 
+  /** Returns all posts currently hidden by moderation, with their pending report count. Global admin only. */
+  @UseGuards(NginxAuthGuard)
+  @Get('hidden')
+  getHiddenPosts(@Headers('x-global-admin') xGlobalAdmin: string | undefined) {
+    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    return this.service.getHiddenPosts();
+  }
+
   /** Returns posts matching the given search query. */
   @Get('search')
   searchPosts(
@@ -320,6 +328,17 @@ export class PostsController {
   ) {
     if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
     return this.service.setPinned(postId, false);
+  }
+
+  /** Restores a moderation-hidden post back to the public feed. Global admin only. */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':postId/unhide')
+  unhidePost(
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('postId') postId: string
+  ) {
+    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    return this.service.unhidePost(postId);
   }
 
   /** Submits a report for a post from the calling user. */

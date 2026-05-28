@@ -50,6 +50,7 @@ export class ModerationController {
       contentId: dto.contentId,
       reason: dto.reason,
       details: dto.details,
+      reportedUserId: dto.reportedUserId ?? null,
     });
   }
 

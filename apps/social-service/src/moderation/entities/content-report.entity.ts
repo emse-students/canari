@@ -31,6 +31,10 @@ export class ContentReport {
   @Column({ nullable: true })
   reviewedBy: string | null;
 
+  /** The user ID of the content's author, stored at report time to enable quick moderation actions. Null for association posts or messages. */
+  @Column({ nullable: true })
+  reportedUserId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

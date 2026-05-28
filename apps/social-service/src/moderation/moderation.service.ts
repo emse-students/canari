@@ -4,12 +4,17 @@ import { Repository } from 'typeorm';
 import { ContentReport } from './entities/content-report.entity';
 import { UserModeration } from './entities/user-moderation.entity';
 
+/** Number of distinct pending reports on the same content that triggers automatic hiding. */
+const AUTO_HIDE_THRESHOLD = 5;
+
 export interface CreateReportData {
   reporterId: string;
   contentType: 'post' | 'comment' | 'message';
   contentId: string;
   reason: string;
   details?: string;
+  /** User ID of the content author, used to enable quick moderation actions. */
+  reportedUserId?: string | null;
 }
 
 /** Handles content reports and user mute/unmute moderation actions. */
@@ -24,7 +29,11 @@ export class ModerationService {
 
   // ── Content reports ───────────────────────────────────────────────────────
 
-  /** Creates a new content report. Prevents duplicate reports from the same user on the same content. */
+  /**
+   * Creates a new content report. Prevents duplicate reports from the same user on the same content.
+   * If the number of pending reports for a post reaches AUTO_HIDE_THRESHOLD, the post is automatically
+   * hidden from public feeds until a moderator reviews it.
+   */
   async createReport(data: CreateReportData): Promise<ContentReport> {
     const existing = await this.reportRepo.findOne({
       where: {
@@ -43,8 +52,27 @@ export class ModerationService {
       contentId: data.contentId,
       reason: data.reason,
       details: data.details ?? null,
+      reportedUserId: data.reportedUserId ?? null,
     });
-    return this.reportRepo.save(report);
+    const saved = await this.reportRepo.save(report);
+
+    // Auto-hide posts that accumulate too many pending reports.
+    if (data.contentType === 'post') {
+      const pendingCount = await this.reportRepo.count({
+        where: { contentId: data.contentId, status: 'pending' },
+      });
+      if (pendingCount >= AUTO_HIDE_THRESHOLD) {
+        await this.reportRepo.manager.query(
+          `UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`,
+          [data.contentId]
+        );
+        console.log(
+          `[moderation] Post ${data.contentId} auto-hidden after ${pendingCount} pending reports`
+        );
+      }
+    }
+
+    return saved;
   }
 
   /** Returns all pending content reports, newest first. */

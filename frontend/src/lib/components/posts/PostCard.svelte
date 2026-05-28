@@ -365,7 +365,7 @@
     reportSubmitting = true;
     try {
       const value = REPORT_REASONS.find((r) => r.label === reportReason)?.value ?? 'other';
-      await createReport('post', localPost.id, value);
+      await createReport('post', localPost.id, value, undefined, localPost.authorId ?? null);
       actionMessage = 'Signalement envoyé. Merci !';
       reportOpen = false;
       reportReason = '';

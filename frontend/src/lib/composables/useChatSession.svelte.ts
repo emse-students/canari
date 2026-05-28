@@ -501,6 +501,7 @@ export function useChatSession() {
           try {
             await handleWelcomeRequest({
               mlsService: ensureMls(),
+              storage,
               userId,
               pin,
               conversations: cb.conversations,

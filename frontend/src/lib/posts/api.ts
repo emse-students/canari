@@ -302,6 +302,26 @@ export async function reportPost(
   });
 }
 
+/** A post hidden by moderation, with its pending report count. Admin only. */
+export interface HiddenPost {
+  id: string;
+  authorId: string | null;
+  associationId: string | null;
+  markdown: string;
+  createdAt: string;
+  pendingReportCount: number;
+}
+
+/** Returns all posts currently hidden by moderation. Global admin only. */
+export async function listHiddenPosts(): Promise<HiddenPost[]> {
+  return request<HiddenPost[]>('/api/posts/hidden');
+}
+
+/** Restores a moderation-hidden post back to the public feed. Global admin only. */
+export async function unhidePost(postId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/posts/${postId}/unhide`, { method: 'PATCH' });
+}
+
 export interface PostNotification {
   id: string;
   type: string;

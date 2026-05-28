@@ -19,6 +19,15 @@ export function installWasmDuplicateDeliveryLogInterceptor(): void {
   };
 }
 
+/**
+ * Remet le flag à zéro avant un appel WASM.
+ * À appeler systématiquement juste avant `processIncomingMessage` pour éviter
+ * qu'un flag residuel d'un appel précédent soit attribué au mauvais message.
+ */
+export function resetWasmDuplicateDeliveryFlag(): void {
+  lastWasmLogWasDuplicate = false;
+}
+
 /** Returns whether the last WASM log indicated duplicate delivery, then clears the flag. */
 export function consumeWasmDuplicateDeliveryFlag(): boolean {
   const v = lastWasmLogWasDuplicate;

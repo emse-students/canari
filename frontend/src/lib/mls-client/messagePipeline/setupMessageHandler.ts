@@ -1,17 +1,18 @@
 import { saveMlsState } from '$lib/utils/hex';
 import { isRawId } from '$lib/utils/chat/conversations';
-import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { toggleMessageReaction } from '$lib/utils/chat/messageReactions';
+import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
-import { compareMessageOrder, messageTime } from '$lib/utils/chat/messageOrder';
+import { messageTime } from '$lib/utils/chat/messageOrder';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
+  resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
 import type { MessageHandlerDeps } from './deps';
@@ -46,6 +47,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const { getSelectedContact } = deps;
 
   installWasmDuplicateDeliveryLogInterceptor();
+
+  // Signal envoyé dans le message d'erreur par le layer Rust/WASM quand il a
+  // mis un message en file SQLite (epoch gap Tauri). Centralisé ici pour ne pas
+  // dupliquer la chaîne magique dans le handler.
+  // TODO: remplacer par un type de retour discriminant dans processIncomingMessage
+  //       une fois l'interface WASM mise à jour.
+  const RUST_GAP_QUEUED_SIGNAL = 'GAP_QUEUED';
 
   // Compteur d'échecs MLS par conversation — détection des groupes fantômes
   const groupMlsFailures = new Map<string, number>();
@@ -83,6 +91,37 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // immédiatement sans traitement. Aucun retry, aucune récupération possible.
   const poisonedGroups = new Set<string>();
 
+  // --- Persistence de l'état MLS -------------------------------------------
+  // L'état MLS doit être sauvegardé quand il change :
+  //   • Commits (transitions d'epoch) → immédiat, le groupe vient d'être muté.
+  //   • Messages applicatifs → la clé ratchet expéditeur est consommée ; on
+  //     persiste en différé (2 s) pour éviter Argon2 à chaque message.
+  let _saveStateTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Persiste l'état MLS immédiatement (commits, Welcome, mutations de groupe). */
+  function persistMlsStateNow(): void {
+    if (_saveStateTimer !== null) {
+      clearTimeout(_saveStateTimer);
+      _saveStateTimer = null;
+    }
+    mlsService
+      .saveState(pin)
+      .then((b) => saveMlsState(userId, b))
+      .catch(() => {});
+  }
+
+  /** Persiste l'état MLS en différé (messages applicatifs non-commit). */
+  function scheduleMlsStatePersist(): void {
+    if (_saveStateTimer !== null) return; // déjà planifié
+    _saveStateTimer = setTimeout(() => {
+      _saveStateTimer = null;
+      mlsService
+        .saveState(pin)
+        .then((b) => saveMlsState(userId, b))
+        .catch(() => {});
+    }, 2_000);
+  }
+
   // Groupes pour lesquels une récupération est déjà en cours.
   // Limite à 1 tentative par session — escalade vers Poison Pill en cas d'échec.
   const recoveryInProgress = new Set<string>();
@@ -109,6 +148,26 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     log(`[POISON_PILL] Groupe ${groupId} purgé définitivement — aucun retry`);
     console.warn(`[POISON_PILL] Group ${groupId} permanently dropped`);
     onGroupPoisoned?.(groupId);
+  }
+
+  /**
+   * Déclenche la récupération d'epoch pour un groupe dont l'état MLS local est divergent
+   * (commit rejeté, gap d'epoch, SenderDataDecryption, null applicatif inexpliqué…).
+   *
+   * Idempotent — ignoré silencieusement si une récupération est déjà en cours pour ce groupe.
+   * Marque la conversation comme non prête, oublie l'état WASM, persiste, envoie reinvite_request.
+   */
+  async function triggerEpochRecovery(convoKey: string, targetEpoch?: number): Promise<void> {
+    if (epochRecoveryGroups.has(convoKey)) return;
+    epochRecoveryGroups.add(convoKey);
+    const convo = conversations.get(convoKey);
+    mlsService.forgetGroup(convoKey, targetEpoch);
+    if (convo) {
+      conversations.set(convoKey, { ...convo, isReady: false });
+      if (storage) saveConversation(convoKey).catch(() => {});
+    }
+    persistMlsStateNow();
+    await mlsService.sendReinviteRequest(convoKey);
   }
 
   if ('onChannelEvent' in mlsService) {
@@ -212,11 +271,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) — oubli MLS + reinvite_request`
         );
         if (groupId) {
-          epochRecoveryGroups.add(groupId);
-          mlsService.forgetGroup(groupId, currentEpoch);
-          const stBytes = await mlsService.saveState(pin);
-          await saveMlsState(userId, stBytes);
-          await mlsService.sendReinviteRequest(groupId);
+          await triggerEpochRecovery(groupId, currentEpoch);
         }
         return;
       }
@@ -321,22 +376,17 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           `[ROUTE] groupId="${groupId}" inconnu — ${conversations.size} convos locales, isWelcome=${!!isWelcome}` +
             (isWelcome ? ' → nouveau groupe' : ' → message bufferisé')
         );
-      } else {
-        log(`[ROUTE] Pas de groupId, fallback par sender="${senderNorm}"`);
       }
 
-      // Only fall back to sender-based routing when no groupId is provided.
-      // If a groupId is present but unknown, it is likely a Welcome for a new group
-      // — routing it to an existing 1-to-1 conversation would silently discard it.
+      // In the MLS model every message belongs to a group.
+      // A message without groupId is either a legacy artefact or a server bug.
+      // Attempting sender-based routing would silently process it in the wrong MLS
+      // group → decryption error → message blocks the queue forever (return false).
+      // Discard immediately with an explicit log instead.
       if (!convoKey && !groupId) {
-        const directEntry = Array.from(conversations.entries()).find(([, convo]) => {
-          if ((convo.conversationType ?? 'group') !== 'direct') return false;
-          const peer = (convo.directPeerId ?? convo.contactName).toLowerCase();
-          return peer === senderNorm;
-        });
-        if (directEntry) {
-          convoKey = directEntry[0];
-        }
+        log(`[ROUTE] Message de ${senderNorm} sans groupId — discard (hors modèle MLS)`);
+        console.warn(`[MLS] Received message from ${senderNorm} with no groupId — discarded`);
+        return true;
       }
 
       // Welcome pour un groupe connu.
@@ -468,12 +518,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // GroupAlreadyExists / "already" / "duplicate" / "exists" : le groupe est déjà
           // dans le WASM (Welcome re-livré après un saveState raté). On persiste maintenant
           // pour éviter de re-boucler indéfiniment sur SYNC après chaque reload, puis ACK.
-          if (
-            welcomeErrMsg.includes('GroupAlreadyExists') ||
-            welcomeErrMsg.includes('already') ||
-            welcomeErrMsg.includes('duplicate') ||
-            welcomeErrMsg.includes('exists')
-          ) {
+          if (welcomeErrMsg.includes('GroupAlreadyExists')) {
             log(`[WELCOME] Groupe ${convoKey} déjà rejoint — sauvegarde état MLS avant ACK`);
             try {
               const stBytes = await mlsService.saveState(pin);
@@ -519,17 +564,17 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       if (convoKey && !isWelcome) {
         const convo = conversations.get(convoKey)!;
         try {
+          resetWasmDuplicateDeliveryFlag(); // évite qu'un flag résiduel contamine ce message
           const decryptedBytes = await mlsService.processIncomingMessage(convo.id, content);
           log(
             `[MLS] processIncomingMessage(${convo.id}) → ${decryptedBytes ? decryptedBytes.length + ' octets déchiffrés' : 'null (commit structural ou payload vide)'}`
           );
 
-          // Auto-save MLS state
-          try {
-            const stBytes = await mlsService.saveState(pin);
-            await saveMlsState(userId, stBytes);
-          } catch {
-            // Silent fallback if autosave fails
+          // Persister l'état MLS : immédiat sur commit (epoch avancée), différé sinon.
+          if (isCommit) {
+            persistMlsStateNow();
+          } else {
+            scheduleMlsStatePersist();
           }
 
           if (decryptedBytes) {
@@ -572,9 +617,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               const msgId = msg.reaction.messageId ?? '';
               const reactions = messageReactions.get(msgId) || [];
               const emoji = msg.reaction.emoji ?? '';
-              const filtered = toggleMessageReaction(reactions, senderNorm, emoji);
-              if (!filtered) return true;
-              messageReactions.set(msgId, filtered);
+              // Add-idempotent: duplicate delivery must not cancel a reaction.
+              // Removal is handled exclusively by the remove_reaction system event.
+              const updated = addMessageReaction(reactions, senderNorm, emoji);
+              if (!updated) return true; // already present or cap reached — no-op
+              messageReactions.set(msgId, updated);
 
               // Also update the message object in conversations so the {#each} re-renders.
               // messageReactions.set() alone does not trigger Svelte's {#each} to re-evaluate
@@ -584,7 +631,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 const msgIdx = convo.messages.findIndex((m) => m.id === msgId);
                 if (msgIdx !== -1) {
                   const nextMsgs = [...convo.messages];
-                  nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: filtered };
+                  nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
                   conversations.set(convoKey, { ...convo, messages: nextMsgs });
                   if (storage) {
                     const target = nextMsgs[msgIdx];
@@ -597,7 +644,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                           content: target.content,
                           timestamp: target.timestamp.getTime(),
                           readBy: target.readBy,
-                          reactions: filtered,
+                          reactions: updated,
                         },
                         pin
                       );
@@ -621,7 +668,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
             if (msg?.system) {
               const event = msg.system.event;
-              const data = msg.system.data ? JSON.parse(msg.system.data) : {};
+
+              let data: any = {};
+              try {
+                if (msg.system.data) data = JSON.parse(msg.system.data);
+              } catch {
+                // Payload système malformé — ACK silencieux pour ne pas bloquer la queue.
+                log(`[MLS] system.data malformé pour event="${event}" sur "${convoKey}" — discard`);
+                return true;
+              }
 
               if (event === 'channel_key_distribution') {
                 const channelId = String(data.channelId || '');
@@ -708,12 +763,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                   } catch {
                     /* non-blocking */
                   }
-                  try {
-                    const stBytes = await mlsService.saveState(pin);
-                    await saveMlsState(userId, stBytes);
-                  } catch {
-                    /* non-blocking */
-                  }
+                  persistMlsStateNow();
                   if (deleteConversation) await deleteConversation(convoKey);
                   conversations.delete(convoKey);
                   if (getSelectedContact() === convoKey) setSelectedContact(null);
@@ -755,12 +805,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 } catch {
                   /* non-blocking */
                 }
-                try {
-                  const stBytes = await mlsService.saveState(pin);
-                  await saveMlsState(userId, stBytes);
-                } catch {
-                  /* non-blocking */
-                }
+                persistMlsStateNow();
                 if (deleteConversation) await deleteConversation(convoKey);
                 conversations.delete(convoKey);
                 if (getSelectedContact() === convoKey) setSelectedContact(null);
@@ -903,7 +948,40 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 }
                 return true;
               }
-              // Unknown system event — ignore silently
+              if (event === 'history_bundle') {
+                try {
+                  const msgs: Array<{
+                    id: string;
+                    senderId: string;
+                    content: string;
+                    timestamp: number;
+                  }> = Array.isArray(data.messages) ? data.messages : [];
+                  if (msgs.length > 0) {
+                    const existingIds = new Set(convo.messages.map((m) => m.id));
+                    const toAdd = msgs
+                      .filter((m) => !existingIds.has(m.id))
+                      .map((m) => ({
+                        senderId: m.senderId.toLowerCase(),
+                        content: m.content,
+                        messageId: m.id,
+                        timestamp: new Date(m.timestamp),
+                      }));
+                    if (toAdd.length > 0) {
+                      log(`[HISTORY_BUNDLE] ${toAdd.length} messages reçus depuis l'invitant`);
+                      if (batchAddMessages) {
+                        await batchAddMessages(toAdd, convoKey);
+                      } else {
+                        for (const item of toAdd) {
+                          await addMessageToChat(item.senderId, item.content, convoKey, item);
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                  /* bundle malformé — ignorer silencieusement */
+                }
+                return true;
+              }
               if (event === 'remove_reaction' && data.messageId && data.emoji) {
                 const reactions = messageReactions.get(data.messageId) || [];
                 const filtered = reactions.filter(
@@ -941,68 +1019,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
                 }
                 return true;
               }
-              // ── Relai peer-to-peer : un device en retard demande les messages manquants ──
-              //
-              // Répondre uniquement si le demandeur n'est pas nous-même.
-              // On renvoie jusqu'à 50 messages text/reply après lastTimestamp,
-              // encapsulés dans un unique sync_reply pour limiter le bruit réseau.
-              // Les messages media sont omis (clés CEK non stockées localement).
-              if (
-                event === 'sync_request' &&
-                data.requesterDeviceId &&
-                data.requesterDeviceId !== mlsService.getDeviceId()
-              ) {
-                const lastTs: number = data.lastTimestamp ?? 0;
-                const c = conversations.get(convoKey);
-                if (c) {
-                  const toRelay = c.messages
-                    .filter((m) => m.timestamp.getTime() > lastTs && !m.isSystem)
-                    .slice(-50) // cap à 50 pour éviter un message géant
-                    .map((m) => ({
-                      id: m.id,
-                      senderId: m.senderId,
-                      content: m.content,
-                      timestamp: m.timestamp.getTime(),
-                    }));
-
-                  if (toRelay.length > 0) {
-                    log(
-                      `[SYNC] sync_request de ${data.requesterDeviceId} — relai de ${toRelay.length} message(s) pour groupe=${convoKey}`
-                    );
-                    const replyPayload = encodeAppMessage(
-                      mkSystem('sync_reply', JSON.stringify({ messages: toRelay }))
-                    );
-                    mlsService.sendMessage(convoKey, replyPayload).catch(() => {});
-                  }
-                }
-                return true;
-              }
-
-              // ── Réception d'un relai peer-to-peer ──────────────────────────────────────
-              //
-              // Les messages sync_reply contiennent les `content` (enveloppes déjà
-              // sérialisées) d'un pair qui les a déchiffrés. On les injecte directement
-              // dans addMessageToChat : le dedup par messageId absorbe les doublons.
-              if (event === 'sync_reply' && Array.isArray(data.messages)) {
-                log(
-                  `[SYNC] sync_reply reçu — ${data.messages.length} message(s) à injecter pour groupe=${convoKey}`
-                );
-                const sorted = [...data.messages]
-                  .map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
-                  .sort(compareMessageOrder);
-                for (const m of sorted) {
-                  if (m.id && m.senderId && m.content) {
-                    await addMessageToChat(
-                      String(m.senderId).toLowerCase(),
-                      String(m.content),
-                      convoKey,
-                      { messageId: String(m.id), timestamp: new Date(m.timestamp) }
-                    );
-                  }
-                }
-                return true;
-              }
-
               // Unknown system event — ignore silently
               return true;
             }
@@ -1027,15 +1043,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               `[RECOVER] Message non-commit non déchiffrable sur "${convoKey}" (${nullCount}/${NULL_APP_THRESHOLD})`
             );
             if (nullCount >= NULL_APP_THRESHOLD) {
-              epochRecoveryGroups.add(convoKey);
               log(`[RECOVER] Etat MLS suspect sur "${convoKey}" — oubli MLS + reinvite_request`);
               console.warn(
                 `[RECOVER] MLS state suspect on "${convoKey}" — forget + reinvite_request`
               );
-              mlsService.forgetGroup(convo.id);
-              conversations.set(convoKey, { ...convo, isReady: false });
-              if (storage) saveConversation(convoKey).catch(() => {});
-              await mlsService.sendReinviteRequest(convo.id);
+              await triggerEpochRecovery(convoKey);
             }
           }
           // Reset phantom failure counter on any successful processing
@@ -1061,7 +1073,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // GAP_QUEUED: Rust stored the message in SQLite pending_mls_messages for
           // background retry. ACK the delivery-queue entry (the SQLite copy is the
           // durable retry buffer). For proactive epoch gaps, also trigger re-sync.
-          if (errMsg.includes('GAP_QUEUED')) {
+          if (errMsg.includes(RUST_GAP_QUEUED_SIGNAL)) {
             const meM = errMsg.match(/msg_epoch=(\d+)/);
             const geM = errMsg.match(/group_epoch=(\d+)/);
             if (meM && geM) {
@@ -1073,12 +1085,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               console.warn(
                 `[GAP_QUEUED] Epoch gap on "${convoKey}" (local=${ge}, msg=${me}) — queued in SQLite, triggering resync`
               );
-              if (me > ge && !epochRecoveryGroups.has(convoKey)) {
-                epochRecoveryGroups.add(convoKey);
-                mlsService.forgetGroup(convo.id, me);
-                conversations.set(convoKey, { ...convo, isReady: false });
-                if (storage) saveConversation(convoKey).catch(() => {});
-                await mlsService.sendReinviteRequest(convo.id);
+              if (me > ge) {
+                await triggerEpochRecovery(convoKey, me);
               }
             } else {
               log(`[GAP_QUEUED] Sender ratchet gap sur "${convoKey}" — message mis en SQLite`);
@@ -1102,36 +1110,24 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             if (me < ge) {
               return true; // Stale — already processed
             }
-            if (me > ge && !epochRecoveryGroups.has(convoKey)) {
-              epochRecoveryGroups.add(convoKey);
+            if (me > ge) {
               log(
                 `[RECOVER] Epoch périmée sur "${convoKey}" (local: ${ge}, msg: ${me}) — oubli MLS + reinvite_request`
               );
               console.warn(
                 `[RECOVER] Stale epoch on "${convoKey}" (local=${ge}, msg=${me}) — forget + reinvite`
               );
-              mlsService.forgetGroup(convo.id, me); // Fix F: min_epoch = me
-              conversations.set(convoKey, { ...convo, isReady: false });
-              if (storage) saveConversation(convoKey).catch(() => {});
-              await mlsService.sendReinviteRequest(convo.id);
+              await triggerEpochRecovery(convoKey, me);
             }
-            // Fix E: me === ge + SenderDataDecryption = secrets divergés (race condition)
-            if (
-              me === ge &&
-              errMsg.toLowerCase().includes('senderdata') &&
-              !epochRecoveryGroups.has(convoKey)
-            ) {
-              epochRecoveryGroups.add(convoKey);
+            // me === ge + SenderDataDecryption = secrets divergés (race condition)
+            if (me === ge && errMsg.toLowerCase().includes('senderdata')) {
               log(
                 `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" (epoch: ${ge}) — oubli MLS + reinvite_request`
               );
               console.warn(
                 `[RECOVER] SenderData secret divergence on "${convoKey}" (epoch=${ge}) — forget + reinvite`
               );
-              mlsService.forgetGroup(convo.id, ge); // Fix F: min_epoch = ge
-              conversations.set(convoKey, { ...convo, isReady: false });
-              if (storage) saveConversation(convoKey).catch(() => {});
-              await mlsService.sendReinviteRequest(convo.id);
+              await triggerEpochRecovery(convoKey, ge);
             }
             return true; // ACK toujours pour les erreurs d'epoch
           }
@@ -1140,19 +1136,15 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             return true; // WrongEpoch sans numéros parsables — ACK silencieux
           }
 
-          // Fix E fallback: SenderDataDecryption sans epoch parsable — même récupération
-          if (errMsg.toLowerCase().includes('senderdata') && !epochRecoveryGroups.has(convoKey)) {
-            epochRecoveryGroups.add(convoKey);
+          // SenderDataDecryption fallback sans epoch parsable — même récupération
+          if (errMsg.toLowerCase().includes('senderdata')) {
             log(
               `[RECOVER] Divergence secrets (SenderDataDecryption) sur "${convoKey}" — oubli MLS + reinvite_request`
             );
             console.warn(
               `[RECOVER] SenderData secret divergence (no epoch) on "${convoKey}" — forget + reinvite`
             );
-            mlsService.forgetGroup(convo.id);
-            conversations.set(convoKey, { ...convo, isReady: false });
-            if (storage) saveConversation(convoKey).catch(() => {});
-            await mlsService.sendReinviteRequest(convo.id);
+            await triggerEpochRecovery(convoKey);
             return true;
           }
 
@@ -1527,10 +1519,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           // Retourner false pour que le caller ACK ce Welcome (il est définitivement inutile).
           // On retire groupId de epochRecoveryGroups pour permettre à la prochaine erreur
           // de re-déclencher sendReinviteRequest si besoin.
+          // La one-time prekey est consommée — ce Welcome est définitivement inutile pour ce device.
+          // On a déjà envoyé un welcome_request pour se faire ré-inviter avec un nouveau KeyPackage.
+          // ACK (return true) : inutile de retenter à chaque reconnexion.
           epochRecoveryGroups.delete(groupId!);
-          return false;
+          return true;
         }
-        // Erreur inattendue (corruption, mismatch de cipher suite…) : on ne retourne PAS false.
+        // Erreur inattendue (corruption, mismatch de cipher suite…) : on ne retourne PAS true.
         // On relance l'exception pour que processQueue n'ACK PAS le message côté serveur.
         // Ainsi, le Welcome reste en file de livraison et sera retenté à la prochaine connexion.
         // On retire groupId de epochRecoveryGroups pour la même raison que ci-dessus.
