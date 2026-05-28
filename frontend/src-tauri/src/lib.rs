@@ -15,7 +15,7 @@ use tauri::{
 
 // State wrapper
 struct AppState {
-    mls_manager: Mutex<Option<MlsManager>>,
+    mls_manager: Arc<Mutex<Option<MlsManager>>>,
 }
 
 /// Pool SQLite dédié aux messages MLS en attente (gap du Sender Ratchet).
@@ -25,37 +25,84 @@ struct PendingDb(Arc<sqlx::SqlitePool>);
 /// Client HTTP réutilisable (pool de connexions) pour le gap fetching côté Rust.
 struct HttpClient(reqwest::Client);
 
+#[derive(serde::Serialize)]
+struct KeyPackageBatchResult {
+    fallback: Vec<u8>,
+    pool_packages: Vec<Vec<u8>>,
+    state: Vec<u8>,
+}
+
+fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    std::fs::write(data_dir.join("mls.bin"), data).map_err(|e| e.to_string())
+}
+
 // --- COMMANDS ---
 
 #[tauri::command]
-fn initialiser_mls(
+async fn initialiser_mls(
     user_id: String,
     device_id: String,
     pin: String,
     encrypted_state: Option<Vec<u8>>,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    let manager = MlsManager::load_encrypted(&user_id, &device_id, encrypted_state, &pin)
-        .map_err(|e| e.to_string())?;
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = MlsManager::load_encrypted(&user_id, &device_id, encrypted_state, &pin)
+            .map_err(|e| e.to_string())?;
 
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    *lock = Some(manager);
-
-    Ok("MLS Initialized".into())
+        let mut lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        *lock = Some(manager);
+        Ok::<String, String>("MLS Initialized".into())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn sauvegarder_mls(pin: String, state: tauri::State<AppState>) -> Result<Vec<u8>, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+async fn sauvegarder_mls(
+    pin: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let encrypted = manager.save_encrypted(&pin).map_err(|e| e.to_string())?;
+        Ok::<Vec<u8>, String>(encrypted)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
-    manager.save_encrypted(&pin).map_err(|e| e.to_string())
+#[tauri::command]
+async fn sauvegarder_mls_et_persister(
+    pin: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<u8>, String> {
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let encrypted = manager.save_encrypted(&pin).map_err(|e| e.to_string())?;
+        write_mls_state_blob(&app, &encrypted)?;
+        Ok::<Vec<u8>, String>(encrypted)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -70,30 +117,84 @@ fn creer_groupe(group_id: String, state: tauri::State<AppState>) -> Result<(), S
 }
 
 #[tauri::command]
-fn generer_key_package(state: tauri::State<AppState>) -> Result<Vec<u8>, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-
-    manager.generate_key_package().map_err(|e| e.to_string())
+async fn generer_key_package(state: tauri::State<'_, AppState>) -> Result<Vec<u8>, String> {
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let fallback = manager.generate_key_package().map_err(|e| e.to_string())?;
+        Ok::<Vec<u8>, String>(fallback)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn generer_key_packages(
+async fn generer_key_packages(
     count: usize,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<Vec<u8>>, String> {
-    let lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let generated = manager.generate_key_packages(count).map_err(|e| e.to_string())?;
+        Ok::<Vec<Vec<u8>>, String>(generated)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
-    manager
-        .generate_key_packages(count)
-        .map_err(|e| e.to_string())
+#[tauri::command]
+async fn generer_key_packages_et_persister(
+    pin: String,
+    count: usize,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<KeyPackageBatchResult, String> {
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+
+        log::debug!(
+            "generer_key_packages_et_persister start count={} (batch native path)",
+            count
+        );
+        let fallback = manager.generate_key_package().map_err(|e| e.to_string())?;
+        let pool_packages = if count > 0 {
+            manager.generate_key_packages(count).map_err(|e| e.to_string())?
+        } else {
+            Vec::new()
+        };
+        let encrypted_state = manager.save_encrypted(&pin).map_err(|e| e.to_string())?;
+        write_mls_state_blob(&app, &encrypted_state)?;
+        log::debug!(
+            "generer_key_packages_et_persister done count={} state_bytes={}",
+            count,
+            encrypted_state.len()
+        );
+
+        Ok::<KeyPackageBatchResult, String>(KeyPackageBatchResult {
+            fallback,
+            pool_packages,
+            state: encrypted_state,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1039,9 +1140,7 @@ fn store_push_context(
 /// wants to persist it to the native app data directory (avoid WebView eviction).
 #[tauri::command]
 fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join("mls.bin"), &data).map_err(|e| e.to_string())
+    write_mls_state_blob(&app, &data)
 }
 
 #[tauri::command]
@@ -1208,7 +1307,7 @@ pub fn run() {
 
     builder
         .manage(AppState {
-            mls_manager: Mutex::new(None),
+            mls_manager: Arc::new(Mutex::new(None)),
         })
         .manage(HttpClient(
             reqwest::Client::builder()
@@ -1426,6 +1525,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialiser_mls,
             sauvegarder_mls,
+            sauvegarder_mls_et_persister,
             creer_groupe,
             lister_groupes,
             oublier_groupe,
@@ -1433,6 +1533,7 @@ pub fn run() {
             obtenir_epoch,
             generer_key_package,
             generer_key_packages,
+            generer_key_packages_et_persister,
             ajouter_membre,
             ajouter_membres_bulk,
             retirer_membres,

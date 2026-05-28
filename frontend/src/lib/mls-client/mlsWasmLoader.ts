@@ -44,9 +44,11 @@ export async function loadAndInitWasm(
 
   await initWasm.default({ module_or_path: wasmResponse });
 
-  const w = window as Window & { wasm_bindings_log?: (level: string, msg: string) => void };
-  if (typeof w.wasm_bindings_log !== 'function') {
-    w.wasm_bindings_log = (level: string, msg: string) => {
+  const g = globalThis as typeof globalThis & {
+    wasm_bindings_log?: (level: string, msg: string) => void;
+  };
+  if (typeof g.wasm_bindings_log !== 'function') {
+    g.wasm_bindings_log = (level: string, msg: string) => {
       const isExpectedError =
         level === 'ERROR' &&
         (msg.includes('Wrong Epoch') ||

@@ -41,6 +41,13 @@ interface QueuedMessage {
   type?: string;
 }
 
+/** Native batch result for key package generation plus immediate `mls.bin` persistence. */
+interface NativeKeyPackageBatchResult {
+  fallback: number[];
+  pool_packages: number[][];
+  state: number[];
+}
+
 // Implémentation pour Tauri (App Mobile/Desktop)
 // Note: We use a dynamic import or checks to prevent this from crashing in pure web if invoked eagerly
 
@@ -987,24 +994,15 @@ export class TauriMlsService implements IMlsService {
 
   /** Tauri-native `invoke` wrapper — calls `sauvegarder_mls` to encrypt and persist the MLS state to the native mls.bin file. */
   async saveState(pin: string) {
-    const bytes = await invoke<Uint8Array>('sauvegarder_mls', { pin });
-    // Await the push-state write so mls.bin is guaranteed up-to-date
-    // before the app can be backgrounded. Fire-and-forget caused a race where
-    // the Android FCM service loaded a stale epoch and decryption failed.
-    try {
-      await invoke('save_mls_state', { data: Array.from(bytes) });
-    } catch {
-      // Non-blocking on desktop (no-op) and on write errors.
-    }
+    // Native command handles save_encrypted + mls.bin write in one invoke to
+    // avoid JS Array.from(...) conversion on large state blobs (notably Android).
+    const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { pin });
+    const bytes = Uint8Array.from(raw);
     return bytes;
   }
 
   /** Tauri-native `invoke` wrapper — calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
   async generateKeyPackage(pin: string) {
-    // Always generate a fresh static fallback KP for this device.
-    const fallbackRaw = await invoke<number[]>('generer_key_package');
-    const fallback = Uint8Array.from(fallbackRaw);
-
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
@@ -1018,15 +1016,18 @@ export class TauriMlsService implements IMlsService {
     // of unused private key bundles (each ~400 bytes encrypted in mls.bin).
     const existing = await this.delivery.fetchPrekeyCount();
     const needed = Math.max(0, 50 - existing);
+    console.log(`[MLS][Tauri] generateKeyPackage native batch path needed=${needed}`);
 
-    let poolPackages: Uint8Array[] = [];
-    if (needed > 0) {
-      const raw = await invoke<number[][]>('generer_key_packages', { count: needed });
-      poolPackages = raw.map((kp) => Uint8Array.from(kp));
-    }
-
-    // Force save state once after all generations.
-    await this.saveState(pin);
+    // Single native command: generate fallback + OTKPs + persist encrypted state.
+    const nativeBatch = await invoke<NativeKeyPackageBatchResult>(
+      'generer_key_packages_et_persister',
+      {
+        pin,
+        count: needed,
+      }
+    );
+    const fallback = Uint8Array.from(nativeBatch.fallback);
+    const poolPackages = nativeBatch.pool_packages.map((kp) => Uint8Array.from(kp));
 
     // Publish the static fallback KP (always refreshed on connection).
     await this.publishKeyPackage(fallback);
