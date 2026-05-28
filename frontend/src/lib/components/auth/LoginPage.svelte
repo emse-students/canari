@@ -10,6 +10,7 @@
   } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
 
   // ─── État de l'authentification ─────────────────────────────────────────────
   let isLoggingIn = $state(false);
@@ -48,7 +49,7 @@
 
     // 2. Vérification unifiée de la session et de la biométrie
     const initAuth = async () => {
-      const isTauri = '__TAURI_INTERNALS__' in window;
+      const isTauri = isTauriRuntime();
 
       // Vérification biométrique spécifique à Tauri
       if (isTauri) {
@@ -113,7 +114,7 @@
 
   async function resetAll() {
     // Nettoyage IndexedDB uniquement pour les utilisateurs Web
-    if (!('__TAURI_INTERNALS__' in window)) {
+    if (!isTauriRuntime()) {
       try {
         if (indexedDB.databases) {
           const allDbs = await indexedDB.databases();

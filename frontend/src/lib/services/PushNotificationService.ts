@@ -14,9 +14,10 @@
  * Sur desktop/web, toutes les méthodes sont des no-op silencieux.
  */
 
-import { isTauri, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { currentUserId } from '$lib/stores/user';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
@@ -24,11 +25,6 @@ const BACKGROUND_RETRY_DELAY_MS = 5000;
 
 // Évite le spam de tentatives si Google Play Services est indisponible.
 let pushAttempted = false;
-
-function isTauriRuntime(): boolean {
-  if (typeof window === 'undefined') return false;
-  return isTauri() || !!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-}
 
 /**
  * Lit le token FCM via la commande Rust `get_fcm_token` (lit fcm_token.txt).

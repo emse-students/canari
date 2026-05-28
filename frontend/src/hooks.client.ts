@@ -7,7 +7,7 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
-import { installExternalLinkClickHandler } from '$lib/utils/openExternal';
+import { installExternalLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 
 /** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
 export function handleError({ error }: { error: unknown }): void {
@@ -21,7 +21,7 @@ export function init(): void {}
 // EXTERNAL LINKS - Open in system browser / default app (not in WebView)
 // ════════════════════════════════════════════════════════════════════════════
 
-if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+if (isTauriRuntime()) {
   installExternalLinkClickHandler();
 }
 
@@ -40,7 +40,7 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
 // IMPORTANT: This MUST NOT use async/await at the module level.
 // The event can arrive before async setup completes → we use Promise.resolve().then()
 
-if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+if (isTauriRuntime()) {
   // Initialize deep-link listener immediately (no async race condition).
   Promise.resolve()
     .then(() => import('@tauri-apps/plugin-deep-link'))
@@ -222,7 +222,7 @@ if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
 // HTTP PLUGIN WRAPPER - Use Tauri native HTTP for external API calls
 // ════════════════════════════════════════════════════════════════════════════
 
-if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+if (isTauriRuntime()) {
   import('@tauri-apps/plugin-http')
     .then(({ fetch: tauriFetch }) => {
       const originalFetch = window.fetch;

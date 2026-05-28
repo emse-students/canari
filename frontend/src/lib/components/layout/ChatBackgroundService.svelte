@@ -31,6 +31,7 @@
   import { Bell, Fingerprint } from '@lucide/svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
   import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
   import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
@@ -330,7 +331,6 @@
 
     const w = window as Window & {
       wasm_bindings_log?: (level: string, msg: string) => void;
-      __TAURI_INTERNALS__?: unknown;
     };
     w.wasm_bindings_log = (level: string, msg: string) => appendLog(`[RUST::${level}] ${msg}`);
 
@@ -343,7 +343,7 @@
       try {
         const configured = await BiometricService.isConfigured().catch(() => false);
         biometricConfigured = configured;
-        if (configured && w.__TAURI_INTERNALS__) {
+        if (configured && isTauriRuntime()) {
           // Only invoke the biometric prompt if the device actually has enrolled
           // biometrics. If not (e.g., fingerprint hardware present but no fingerprint
           // set up), skip straight to PIN to avoid a confusing OS error dialog.
@@ -379,7 +379,7 @@
         } else if (savedUser) {
           globalSession.userId = savedUser;
           // On Tauri (Android, no biometrics): try silent login from push_context.json
-          if (w.__TAURI_INTERNALS__) {
+          if (isTauriRuntime()) {
             const ok = await globalSession.nativeStorageLogin({
               ...sessionCb(),
               onLoginFailed: (msg: string) => {
@@ -430,7 +430,7 @@
     // handler above only fires on background→foreground transitions, so those
     // messages would only appear after a restart. Poll every 5 s while visible.
     const FCM_POLL_INTERVAL = 5_000;
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__;
+    const isTauri = isTauriRuntime();
     const fcmPollTimer = isTauri
       ? setInterval(() => {
           if (document.hidden) return;

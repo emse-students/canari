@@ -14,6 +14,7 @@ import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/us
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -140,7 +141,7 @@ export async function handleOidcCallback(
   // is gone by the time the callback page loads. CSRF is also not a meaningful
   // threat in a local desktop webview, so we skip the check there.
   // In a normal browser (web deployment) the check is enforced strictly.
-  const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isDesktop = isTauriRuntime();
   console.debug('[auth] handleOidcCallback isDesktop:', isDesktop);
   const savedState = localStorage.getItem(OIDC_STATE_KEY);
   console.debug('[auth] savedState present:', !!savedState, 'matches:', savedState === state);

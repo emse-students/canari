@@ -13,6 +13,7 @@ export { SqliteStorage } from './db/sqlite';
 import { IndexedDbStorage } from './db/indexeddb';
 import { SqliteStorage } from './db/sqlite';
 import type { IStorage } from './db/types';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
  * Instantiate the correct storage backend for the current runtime.
@@ -20,7 +21,7 @@ import type { IStorage } from './db/types';
  * falling back to IndexedDbStorage for regular browser / PWA environments.
  */
 export async function getStorage(userId: string): Promise<IStorage> {
-  if ((window as any).__TAURI_INTERNALS__) {
+  if (isTauriRuntime()) {
     try {
       const s = new SqliteStorage(userId);
       await s.init();

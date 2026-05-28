@@ -34,6 +34,7 @@
   import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
 
   let { children } = $props();
 
@@ -82,7 +83,7 @@
     const teardownKeyboard = initKeyboardViewport();
 
     // Redirige console.log/warn/error vers tauri-plugin-log → adb logcat sur Android.
-    if (typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__) {
+    if (isTauriRuntime()) {
       attachConsole().catch(() => {});
     }
 
