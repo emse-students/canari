@@ -189,6 +189,18 @@
           <span class="text-xs text-text-muted">Titre du mois</span>
           <ColorPicker bind:value={opts.monthTitleColor} label="Titre du mois" />
         </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs text-text-muted">Ombres sur textes</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={opts.enableTextShadow}
+            onclick={() => (opts.enableTextShadow = !opts.enableTextShadow)}
+            class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.enableTextShadow ? 'bg-cn-yellow' : 'bg-cn-border'}"
+          >
+            <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.enableTextShadow ? 'translate-x-4' : 'translate-x-0'}"></span>
+          </button>
+        </div>
       </div>
 
       <hr class="border-cn-border/60" />

@@ -41,6 +41,8 @@ export interface CalendarExportOptions {
   gridOuterBorder?: string;
   /** Day number color on event-free cells (hex). Default: '#b8c4d0'. */
   emptyDayColor?: string;
+  /** Add a drop-shadow to the month title and weekday labels. Default: false. */
+  enableTextShadow?: boolean;
 }
 
 /** Default values matching the original hardcoded design. */
@@ -59,6 +61,7 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   borderColor: '#dde3ec',
   gridOuterBorder: '#122035',
   emptyDayColor: '#b8c4d0',
+  enableTextShadow: false,
 };
 
 type ResolvedOpts = Required<CalendarExportOptions>;
@@ -169,7 +172,7 @@ function buildCalendarHtml(
   logoMap: Map<string, string | null> | 'direct',
   faviconUrl: string | null
 ): string {
-  const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' })
+  const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long' })
     .format(new Date(year, month, 1))
     .replace(/^\w/, (c) => c.toUpperCase());
 
@@ -180,9 +183,10 @@ function buildCalendarHtml(
     Math.floor((CALENDAR_CONTAINER_HEIGHT - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows)
   );
 
+  const labelShadow = opts.enableTextShadow ? 'text-shadow:0 1px 5px rgba(0,0,0,0.4);' : '';
   const headerRow = WEEKDAYS.map(
     (w, i) =>
-      `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};">${w}</div>`
+      `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
   ).join('');
 
   const cellBgNormal = hexToRgba(opts.cellBg, opts.cellBgOpacity);
@@ -228,31 +232,45 @@ function buildCalendarHtml(
             : null;
 
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
+          // Watermark stays absolute — decorative only, doesn't affect flow.
           const watermark = logoSrc
-            ? `<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrc}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
+            ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrc}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
             : '';
 
-          // Day number pinned top-left on the first event slot only.
-          const DAY_NUM_H = idx === 0 ? 20 : 0;
-          const dayNum =
-            idx === 0
-              ? `<span style="position:absolute;top:5px;left:6px;font-size:11px;font-weight:800;color:${fg};z-index:2;line-height:1;">${day}</span>`
-              : '';
-
-          // Flex-centred text within the space below the day number.
-          // Font size scales with available height; title is clamped to avoid overflow.
-          const availH = slotH - DAY_NUM_H;
-          const fontSize = availH >= 52 ? 13 : availH >= 38 ? 12 : availH >= 28 ? 11 : 10;
-          const maxLines = Math.max(1, Math.floor(availH / (fontSize * 1.5)));
-          const ph = availH >= 40 ? 8 : 5;
-          const clampCss =
-            maxLines === 1
-              ? 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
-              : `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
-          const textHtml = `<div style="position:absolute;top:${DAY_NUM_H}px;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.3;text-align:center;${clampCss}">${safe(ev.title)}</span></div>`;
-
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
-          return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep}">${watermark}${dayNum}${textHtml}</div>`;
+
+          if (idx === 0) {
+            // First slot: day number on top, title below — flex column so html2canvas sees
+            // explicit heights and doesn't collapse the text area (fixes bottom:0 rendering bug).
+            const DAY_NUM_H = 20;
+            const availH = slotH - DAY_NUM_H;
+            const fontSize = availH >= 52 ? 13 : availH >= 38 ? 12 : availH >= 28 ? 11 : 10;
+            const maxLines = Math.max(1, Math.floor(availH / (fontSize * 1.5)));
+            const ph = availH >= 40 ? 8 : 5;
+            const clampCss =
+              maxLines === 1
+                ? 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+                : `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+            return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;flex-direction:column;box-sizing:border-box;">
+              ${watermark}
+              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:5px 0 0 6px;position:relative;"><span style="font-size:11px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
+              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.3;text-align:center;${clampCss}">${safe(ev.title)}</span></div>
+            </div>`;
+          } else {
+            // Subsequent slots: no day number, title fully centred.
+            const availH = slotH;
+            const fontSize = availH >= 52 ? 13 : availH >= 38 ? 12 : availH >= 28 ? 11 : 10;
+            const maxLines = Math.max(1, Math.floor(availH / (fontSize * 1.5)));
+            const ph = availH >= 40 ? 8 : 5;
+            const clampCss =
+              maxLines === 1
+                ? 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+                : `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+            return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;align-items:center;justify-content:center;padding:0 ${ph}px;box-sizing:border-box;">
+              ${watermark}
+              <span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.3;text-align:center;position:relative;${clampCss}">${safe(ev.title)}</span>
+            </div>`;
+          }
         }),
         ...(overflowCount > 0
           ? (() => {
@@ -283,7 +301,7 @@ function buildCalendarHtml(
     <div style="position:relative;">
       <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
         ${faviconHtml}
-        <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;">${safe(monthLabel)}</h1>
+        <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${opts.enableTextShadow ? 'text-shadow:0 2px 10px rgba(0,0,0,0.18);' : ''}">${safe(monthLabel)}</h1>
       </div>
       <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
