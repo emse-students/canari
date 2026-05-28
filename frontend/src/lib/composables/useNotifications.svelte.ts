@@ -4,6 +4,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import { settings } from '$lib/stores/settingsStore.svelte';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -34,6 +35,7 @@ export function useNotifications() {
   /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
   function playNotificationTone() {
     if (typeof window === 'undefined') return;
+    if (!settings.soundsEnabled) return;
     const now = Date.now();
     if (now - lastNotificationAt < 600) return;
     lastNotificationAt = now;
@@ -63,6 +65,7 @@ export function useNotifications() {
   /** Plays a short ascending chirp when the user sends a message (rate-limited to one every 200 ms). */
   function playSendTone() {
     if (typeof window === 'undefined') return;
+    if (!settings.soundsEnabled) return;
     const now = Date.now();
     if (now - lastSendToneAt < 200) return;
     lastSendToneAt = now;
@@ -97,6 +100,7 @@ export function useNotifications() {
   /** Plays a subtle descending tick when messages are marked as read (rate-limited to one every 250 ms). */
   function playReadTone() {
     if (typeof window === 'undefined') return;
+    if (!settings.soundsEnabled) return;
     const now = Date.now();
     if (now - lastReadToneAt < 250) return;
     lastReadToneAt = now;

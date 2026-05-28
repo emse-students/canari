@@ -25,7 +25,11 @@
     Loader2,
     AlertCircle,
     CheckCircle2,
+    Volume2,
+    VolumeX,
+    Settings,
   } from '@lucide/svelte';
+  import { settings } from '$lib/stores/settingsStore.svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -356,6 +360,53 @@
             </p>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Section Préférences -->
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      style="animation-fill-mode: backwards;"
+    >
+      <div class="flex items-center gap-3 mb-6">
+        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <Settings size={22} strokeWidth={2.5} />
+        </div>
+        <h2 class="text-lg font-extrabold text-text-main">Préférences</h2>
+      </div>
+
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5">
+          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+            {#if settings.soundsEnabled}
+              <Volume2 size={20} strokeWidth={2.5} />
+            {:else}
+              <VolumeX size={20} strokeWidth={2.5} />
+            {/if}
+          </div>
+          <div>
+            <p class="text-sm font-bold text-text-main">Bruitages</p>
+            <p class="text-xs font-medium text-text-muted mt-0.5">
+              Sons de réception, envoi et lecture des messages
+            </p>
+          </div>
+        </div>
+
+        <button
+          role="switch"
+          aria-checked={settings.soundsEnabled}
+          aria-label="Activer ou désactiver les bruitages"
+          onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
+          class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
+            {settings.soundsEnabled
+            ? 'bg-amber-500'
+            : 'bg-black/20 dark:bg-white/15'}"
+        >
+          <span
+            class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
+              {settings.soundsEnabled ? 'translate-x-6' : 'translate-x-0'}"
+          ></span>
+        </button>
       </div>
     </div>
 
