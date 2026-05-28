@@ -438,70 +438,62 @@ export async function replayConversationHistory(params: {
       await storage.saveMessages(toStore, pin);
     }
 
-    // Re-apply readBy updates AFTER the batch save, since the batch save wrote
-    // regular messages without readBy (IndexedDB put = full replace). Without
-    // this pass, read receipts processed from history are lost when the DB is
-    // reloaded in useConversations.loadHistoryForConversation.
-    if (storage && readReceiptDbUpdates.length > 0) {
+    // Single post-save read: apply readBy, reaction, delete/edit mutations in one pass.
+    // All three update types need the post-batch-save DB state and touch independent fields,
+    // so they can be merged and written back in a single saveMessages call.
+    const needsPostUpdate =
+      storage &&
+      (readReceiptDbUpdates.length > 0 ||
+        reactionUpdates.size > 0 ||
+        deletedMessageIds.size > 0 ||
+        editedMessages.size > 0);
+    if (needsPostUpdate) {
       try {
-        const allMessages = await storage.getMessages(id, pin);
-        const toUpdate: StoredMessage[] = [];
+        const allMessages = await storage!.getMessages(id, pin);
+        // Collect all mutations keyed by message ID, merging updates for the same message.
+        const updatesById = new Map<string, StoredMessage>();
+
         for (const { msgId, senderNorm, readAt } of readReceiptDbUpdates) {
-          const m = allMessages.find((x) => x.id === msgId);
-          if (m) {
-            const readBy = m.readBy ?? [];
+          const base = updatesById.get(msgId) ?? allMessages.find((x) => x.id === msgId);
+          if (base) {
+            const cur = updatesById.get(msgId) ?? base;
+            const readBy = cur.readBy ?? [];
             if (!readBy.includes(senderNorm)) {
-              toUpdate.push({
-                ...m,
+              updatesById.set(msgId, {
+                ...cur,
                 readBy: [...readBy, senderNorm],
-                ...(readAt != null && m.readAt == null ? { readAt } : {}),
+                ...(readAt != null && cur.readAt == null ? { readAt } : {}),
               });
             }
           }
         }
-        if (toUpdate.length > 0) {
-          await storage.saveMessages(toUpdate, pin);
-        }
-      } catch {
-        // Non-blocking
-      }
-    }
 
-    // Persist reaction mutations to DB. Reactions reference messages from previous
-    // sessions, so we fetch the affected rows and re-save with updated reactions.
-    if (storage && reactionUpdates.size > 0) {
-      try {
-        const allMessages = await storage.getMessages(id, pin);
-        const toUpdate: StoredMessage[] = [];
         for (const m of allMessages) {
           if (reactionUpdates.has(m.id)) {
-            toUpdate.push({ ...m, reactions: reactionUpdates.get(m.id) });
+            updatesById.set(m.id, {
+              ...(updatesById.get(m.id) ?? m),
+              reactions: reactionUpdates.get(m.id),
+            });
           }
-        }
-        if (toUpdate.length > 0) {
-          await storage.saveMessages(toUpdate, pin);
-        }
-      } catch {
-        // Non-blocking
-      }
-    }
-
-    // Persist delete/edit mutations from history to DB so they survive the DB reload
-    // that follows in loadExistingConversations (which overwrites in-memory state).
-    if (storage && (deletedMessageIds.size > 0 || editedMessages.size > 0)) {
-      try {
-        const allMessages = await storage.getMessages(id, pin);
-        const toUpdate: StoredMessage[] = [];
-        for (const m of allMessages) {
           if (deletedMessageIds.has(m.id)) {
-            toUpdate.push({ ...m, isDeleted: true, content: 'Ce message a été supprimé.' });
+            updatesById.set(m.id, {
+              ...(updatesById.get(m.id) ?? m),
+              isDeleted: true,
+              content: 'Ce message a été supprimé.',
+            });
           } else if (editedMessages.has(m.id)) {
             const edit = editedMessages.get(m.id)!;
-            toUpdate.push({ ...m, isEdited: true, content: edit.content });
+            updatesById.set(m.id, {
+              ...(updatesById.get(m.id) ?? m),
+              isEdited: true,
+              content: edit.content,
+            });
           }
         }
+
+        const toUpdate = [...updatesById.values()];
         if (toUpdate.length > 0) {
-          await storage.saveMessages(toUpdate, pin);
+          await storage!.saveMessages(toUpdate, pin);
         }
       } catch {
         // Non-blocking
