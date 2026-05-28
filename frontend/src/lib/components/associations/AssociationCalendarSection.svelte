@@ -24,6 +24,7 @@
     type AgendaExportEvent,
   } from '$lib/calendar/agendaExport';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import { portal } from '$lib/actions/portal';
   import {
     ChevronLeft,
     ChevronRight,
@@ -807,12 +808,13 @@
 </div>
 
 {#if modalOpen}
-  <div
-    data-keyboard-aware-overlay
-    class="z-50 flex items-end sm:items-center justify-center bg-black/40"
-    role="presentation"
-    onclick={(e) => e.target === e.currentTarget && closeModal()}
-  >
+  <div use:portal>
+    <div
+      data-keyboard-aware-overlay
+      class="z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+      role="presentation"
+      onclick={(e) => e.target === e.currentTarget && closeModal()}
+    >
     <div
       class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
       role="dialog"
@@ -1014,6 +1016,7 @@
           {saving ? 'Enregistrement…' : 'Enregistrer'}
         </button>
       </div>
+    </div>
     </div>
   </div>
 {/if}
