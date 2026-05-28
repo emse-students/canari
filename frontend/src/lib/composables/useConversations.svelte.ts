@@ -598,6 +598,47 @@ export function useConversations() {
 
   // ── Group operations ──────────────────────────────────────────────────────
 
+  /**
+   * Shared cleanup for delete and leave: calls an optional server action, then purges the
+   * local MLS + UI state regardless of whether the server call succeeds.
+   */
+  async function exitGroupAndCleanup(
+    contactKey: string,
+    convo: Conversation,
+    serverAction: (mlsService: IMlsService) => Promise<void>,
+    label: string,
+    ctx: ConversationContext
+  ) {
+    const mlsService = ctx.ensureMls();
+    try {
+      const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
+      if (onServer !== false) {
+        await serverAction(mlsService);
+      } else {
+        ctx.log(`[${label}] Groupe ${convo.id} absent du serveur - purge MLS/UI locale`);
+      }
+    } catch (e) {
+      ctx.log(
+        `[${label}] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
+      );
+    }
+    await purgeOrphanGroup({
+      conversations,
+      mlsService,
+      userId: ctx.userId,
+      pin: ctx.pin,
+      contactKey,
+      groupId: convo.id,
+      deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
+      log: ctx.log,
+    });
+    membershipCache.delete(convo.id);
+    selectedContact = null;
+    isConversationDrawerOpen = false;
+    sendError = '';
+    groupMembers = [];
+  }
+
   /** Creates a new named MLS group, persists it, and selects it in the UI. */
   async function createNewGroup(nameRaw: string, ctx: ConversationContext) {
     await createGroup(nameRaw, {
@@ -679,43 +720,19 @@ export function useConversations() {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
-    const contactKey = selectedContact;
-    const mlsService = ctx.ensureMls();
-
-    try {
-      const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
-      if (onServer !== false) {
-        await deleteGroupAndBroadcast({
-          mlsService,
+    await exitGroupAndCleanup(
+      selectedContact,
+      convo,
+      (mls) =>
+        deleteGroupAndBroadcast({
+          mlsService: mls,
           groupId: convo.id,
           userId: ctx.userId,
           pin: ctx.pin,
-        });
-      } else {
-        ctx.log(`[DELETE] Groupe ${convo.id} absent du serveur - purge MLS/UI locale`);
-      }
-    } catch (e) {
-      ctx.log(
-        `[DELETE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
-      );
-    }
-
-    await purgeOrphanGroup({
-      conversations,
-      mlsService,
-      userId: ctx.userId,
-      pin: ctx.pin,
-      contactKey,
-      groupId: convo.id,
-      deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
-      log: ctx.log,
-    });
-
-    membershipCache.delete(convo.id);
-    selectedContact = null;
-    isConversationDrawerOpen = false;
-    sendError = '';
-    groupMembers = [];
+        }),
+      'DELETE',
+      ctx
+    );
   }
 
   /** Sends a "memberLeft" broadcast, de-registers from the server, forgets local MLS state, deletes the DB entry, and clears the selection. */
@@ -723,43 +740,19 @@ export function useConversations() {
     if (!selectedContact) return;
     const convo = conversations.get(selectedContact);
     if (!convo) return;
-    const contactKey = selectedContact;
-    const mlsService = ctx.ensureMls();
-
-    try {
-      const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
-      if (onServer !== false) {
-        await leaveGroupAndBroadcast({
-          mlsService,
+    await exitGroupAndCleanup(
+      selectedContact,
+      convo,
+      (mls) =>
+        leaveGroupAndBroadcast({
+          mlsService: mls,
           groupId: convo.id,
           userId: ctx.userId,
           pin: ctx.pin,
-        });
-      } else {
-        ctx.log(`[LEAVE] Groupe ${convo.id} absent du serveur - purge MLS/UI locale`);
-      }
-    } catch (e) {
-      ctx.log(
-        `[LEAVE] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
-      );
-    }
-
-    await purgeOrphanGroup({
-      conversations,
-      mlsService,
-      userId: ctx.userId,
-      pin: ctx.pin,
-      contactKey,
-      groupId: convo.id,
-      deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
-      log: ctx.log,
-    });
-
-    membershipCache.delete(convo.id);
-    selectedContact = null;
-    isConversationDrawerOpen = false;
-    sendError = '';
-    groupMembers = [];
+        }),
+      'LEAVE',
+      ctx
+    );
   }
 
   /** Removes a member from the currently selected group via an MLS commit, broadcasts the removal, and refreshes the member list. */
