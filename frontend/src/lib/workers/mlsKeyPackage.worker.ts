@@ -1,4 +1,4 @@
-import { loadAndInitWasm } from '$lib/mls-client';
+import { loadAndInitWasm } from '$lib/mls-client/mlsWasmLoader';
 
 /**
  * Request payload for key package generation in the dedicated worker.
