@@ -126,16 +126,14 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
       updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
-      getUserGroups: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            groupId: 'g-deleted',
-            name: 'Deleted',
-            isGroup: true,
-            deletedAt: '2026-01-01T00:00:00Z',
-          },
-        ]),
+      getUserGroups: vi.fn().mockResolvedValue([
+        {
+          groupId: 'g-deleted',
+          name: 'Deleted',
+          isGroup: true,
+          deletedAt: '2026-01-01T00:00:00Z',
+        },
+      ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
     };
     const log = vi.fn();
