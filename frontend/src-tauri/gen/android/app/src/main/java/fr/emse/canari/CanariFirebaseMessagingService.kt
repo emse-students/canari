@@ -58,6 +58,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /** Verrou protégeant les écritures concurrentes dans fcm_message_cache.ndjson. */
         private val CACHE_LOCK = java.util.concurrent.locks.ReentrantLock()
+
+        /**
+         * Verrou protégeant getStableNotifId : lecture-incrémentation-écriture du compteur
+         * SharedPreferences n'est pas atomique, d'où la course entre threads FCM parallèles.
+         */
+        private val NOTIF_ID_LOCK = Any()
     }
 
     // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
@@ -130,7 +136,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Thread {
                 val _wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
                     .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:welcome_bg")
-                _wl.acquire(60_000L)
+                _wl.acquire(90_000L)
                 try {
                     processWelcomeRequestBackground(groupId, requesterUser, requesterDev)
                 } finally {
@@ -768,13 +774,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Retourne un ID de notification stable et unique pour [groupId], persisté en
      * SharedPreferences. Évite les collisions de groupId.hashCode() entre conversations.
      */
-    private fun getStableNotifId(groupId: String): Int {
+    private fun getStableNotifId(groupId: String): Int = synchronized(NOTIF_ID_LOCK) {
         val prefs = getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
         val existing = prefs.getInt(groupId, -1)
-        if (existing != -1) return existing
+        if (existing != -1) return@synchronized existing
         val next = prefs.getInt("__counter__", 1000)
-        prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).apply()
-        return next
+        // commit() garantit que le compteur est incrémenté avant la sortie du bloc synchronized.
+        prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).commit()
+        next
     }
 
     /**

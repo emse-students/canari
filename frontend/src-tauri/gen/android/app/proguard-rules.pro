@@ -33,6 +33,11 @@
 -keep class fr.emse.canari.MainActivity { *; }
 -keep class fr.emse.canari.CanariFirebaseMessagingService { *; }
 -keep class fr.emse.canari.PushSecretKeystore { *; }
+# WorkManager instancie MlsBackgroundWorker par réflexion (nom qualifié complet).
+# MlsStateLock est un singleton Kotlin `object` dont le nom est résolu par JNI.
+# Sans ces règles, R8 renomme les classes → ClassNotFoundException en release.
+-keep class fr.emse.canari.MlsBackgroundWorker { *; }
+-keep class fr.emse.canari.MlsStateLock { *; }
 
 # ─── FIREBASE / FCM ────────────────────────────────────────────────────────────
 -keep class com.google.firebase.** { *; }
