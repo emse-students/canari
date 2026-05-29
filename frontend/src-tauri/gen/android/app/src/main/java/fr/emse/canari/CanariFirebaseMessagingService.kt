@@ -13,7 +13,6 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.media.AudioAttributes
 import android.media.RingtoneManager
-import android.os.Build
 import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
@@ -43,10 +42,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /** Canal priorité normale : rappels de formulaires (silencieux). */
         const val CHANNEL_FORMS    = "canari_forms"
-
-        // Nom legacy conservé pour la compatibilité avec les constantes existantes
-        const val CHANNEL_ID   = CHANNEL_MESSAGES
-        const val CHANNEL_NAME = "Messages Canari"
 
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
@@ -904,8 +899,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Appelé en fallback si CanariApplication.createNotificationChannels() n'a pas tourné.
      */
     private fun ensureNotificationChannels(manager: NotificationManager) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-
         if (manager.getNotificationChannel(CHANNEL_MESSAGES) == null) {
             val audioAttrs = AudioAttributes.Builder()
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)

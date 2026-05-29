@@ -5,7 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
-import android.os.Build
 import android.util.Log
 import java.io.File
 
@@ -39,7 +38,6 @@ class CanariApplication : Application() {
      *  - canari_forms    : rappels de formulaires (IMPORTANCE_DEFAULT, silencieux)
      */
     private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
 
         // Canal messages : haute priorité avec son et vibration
