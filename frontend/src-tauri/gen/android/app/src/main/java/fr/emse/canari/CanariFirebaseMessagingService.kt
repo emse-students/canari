@@ -55,12 +55,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Durée de validité du cache fichier avatar : 24 heures. */
         private const val AVATAR_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
 
-        /**
-         * Verrou non-réentrant sur l'état MLS.
-         * Garantit que deux threads FCM parallèles ne lisent/écrivent pas mls.bin simultanément.
-         * Niveau companion object : survivre aux recréations du service entre deux FCM.
-         */
-        private val MLS_LOCK = java.util.concurrent.locks.ReentrantLock()
+        /** Verrou protégeant les écritures concurrentes dans fcm_message_cache.ndjson. */
+        private val CACHE_LOCK = java.util.concurrent.locks.ReentrantLock()
     }
 
     // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
@@ -244,8 +240,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         requesterUserId: String,
         requesterDeviceId: String,
     ) {
-        if (!MLS_LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)) {
-            Log.w(TAG, "processWelcomeRequestBackground: MLS_LOCK non acquis → abandon")
+        if (!MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)) {
+            Log.w(TAG, "processWelcomeRequestBackground: MlsStateLock non acquis → abandon")
             return
         }
         try {
@@ -321,7 +317,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "processWelcomeRequestBackground: verrou libéré pour group=$groupId")
             }
         } finally {
-            MLS_LOCK.unlock()
+            MlsStateLock.LOCK.unlock()
         }
     }
 
@@ -329,7 +325,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun acquireAddLock(ctx: PushContext, secret: String, groupId: String): Boolean {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/acquire-add-lock")
-            val body = """{"userId":"${ctx.userId}","deviceId":"${ctx.deviceId}","groupId":"$groupId"}"""
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("groupId", groupId)
+            }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
                 readTimeout    = 5_000
@@ -354,7 +354,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun releaseAddLock(ctx: PushContext, secret: String, groupId: String) {
         try {
             val url  = URL("${ctx.baseUrl}/api/mls/push/release-add-lock")
-            val body = """{"userId":"${ctx.userId}","deviceId":"${ctx.deviceId}","groupId":"$groupId"}"""
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("groupId", groupId)
+            }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
                 readTimeout    = 5_000
@@ -427,8 +431,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): Boolean {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/send-welcome-and-commit")
-            val ratchetJson = if (ratchetTree != null) "\"$ratchetTree\"" else "null"
-            val body = """{"userId":"${ctx.userId}","deviceId":"${ctx.deviceId}","groupId":"$groupId","targetUserId":"$targetUserId","targetDeviceId":"$targetDeviceId","welcomePayload":"$welcomePayload","ratchetTreePayload":$ratchetJson,"commitPayload":"$commitPayload"}"""
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("groupId", groupId)
+                put("targetUserId", targetUserId)
+                put("targetDeviceId", targetDeviceId)
+                put("welcomePayload", welcomePayload)
+                put("ratchetTreePayload", if (ratchetTree != null) ratchetTree else JSONObject.NULL)
+                put("commitPayload", commitPayload)
+            }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout    = 10_000
@@ -464,8 +476,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "tryDecrypt: queuedMessageId absent → abandon")
             return null
         }
-        if (!MLS_LOCK.tryLock(8, java.util.concurrent.TimeUnit.SECONDS)) {
-            Log.w(TAG, "tryDecrypt: lock non acquis après 8s → abandon (un autre thread déchiffre)")
+        if (!MlsStateLock.LOCK.tryLock(8, java.util.concurrent.TimeUnit.SECONDS)) {
+            Log.w(TAG, "tryDecrypt: MlsStateLock non acquis après 8s → abandon (un autre thread déchiffre)")
             return null
         }
         try {
@@ -488,7 +500,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             return decryptProto(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, protoB64)
         } finally {
-            MLS_LOCK.unlock()
+            MlsStateLock.LOCK.unlock()
         }
     }
 
@@ -629,7 +641,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 msg.mediaKind?.let { put("mediaKind", it) }
             }
             val file = File(filesDir.parentFile, "fcm_message_cache.ndjson")
-            file.appendText(entry.toString() + "\n")
+            CACHE_LOCK.lock()
+            try {
+                file.appendText(entry.toString() + "\n")
+            } finally {
+                CACHE_LOCK.unlock()
+            }
             Log.d(TAG, "writeFcmCache: ✓ messageId=${msg.messageId.take(8)} groupId=${groupId.take(8)}")
         } catch (e: Exception) {
             Log.w(TAG, "writeFcmCache: échec: ${e.message}")

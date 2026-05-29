@@ -44,6 +44,10 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         val filesDir = applicationContext.filesDir.parentFile!!.absolutePath
         Log.d(TAG, "doWork: état MLS=${stateBytes.size} octets, filesDir=$filesDir")
 
+        if (!MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)) {
+            Log.w(TAG, "doWork: MlsStateLock non acquis après 15s → retry")
+            return Result.retry()
+        }
         return try {
             val success = nativeProcessBackgroundTasks(filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId)
             if (success) {
@@ -59,6 +63,8 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         } catch (e: Exception) {
             Log.e(TAG, "doWork: exception inattendue → failure: ${e.message}")
             Result.failure()
+        } finally {
+            MlsStateLock.LOCK.unlock()
         }
     }
 
