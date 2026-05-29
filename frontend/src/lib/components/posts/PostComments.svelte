@@ -145,6 +145,18 @@
   let editInputEl = $state<HTMLInputElement | null>(null);
   let sortMode = $state<SortMode>('recent');
 
+  const COMMENT_TRUNCATE_THRESHOLD = 280;
+  let expandedComments = $state(new Set<string>());
+
+  /** Toggles the "voir plus / voir moins" expanded state for a comment. */
+  function toggleCommentExpanded(id: string) {
+    if (expandedComments.has(id)) {
+      expandedComments = new Set([...expandedComments].filter((c) => c !== id));
+    } else {
+      expandedComments = new Set([...expandedComments, id]);
+    }
+  }
+
   $effect(() => {
     if (editingCommentId && editInputEl) {
       void tick().then(() => editInputEl?.focus());
@@ -315,8 +327,10 @@
             {/if}
           {/if}
           {#if comment.text}
+            {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
+            {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0"
+              class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0 {isLong && !isExpanded ? 'line-clamp-5' : ''}"
             >
               <SvelteMarkdown
                 source={preprocessPostMarkdown(comment.text)}
@@ -324,6 +338,15 @@
                 options={{ gfm: true, breaks: true }}
               />
             </div>
+            {#if isLong}
+              <button
+                type="button"
+                onclick={() => toggleCommentExpanded(comment.id)}
+                class="text-[0.75rem] font-semibold text-primary mt-0.5 hover:underline focus-visible:underline outline-none"
+              >
+                {isExpanded ? 'Voir moins' : 'Voir plus'}
+              </button>
+            {/if}
           {/if}
           {#if comment.media && authToken}
             <div
