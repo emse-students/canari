@@ -2,6 +2,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,6 +15,8 @@ import { PushService } from '../push/push.service';
 /** Handles reactions, comments, polls, and form submissions on posts. */
 @Injectable()
 export class PostInteractionsService {
+  private readonly logger = new Logger(PostInteractionsService.name);
+
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly notifications: PostNotificationsService,
@@ -72,8 +75,11 @@ export class PostInteractionsService {
             `${actorName} a réagi à votre publication ${reactionType}`,
             { type: 'social', postId }
           );
-        } catch {
-          /* non-fatal */
+        } catch (e) {
+          this.logger.warn(
+            `[NOTIFY] reaction notification failed for post.authorId=${post.authorId}`,
+            e
+          );
         }
       })();
     }
@@ -138,15 +144,17 @@ export class PostInteractionsService {
     await this.postRepo.save(post);
 
     // Fire-and-forget: notify post author, parent comment author, and mentioned users.
+    // Each recipient is isolated in its own try/catch so that a DB failure for one
+    // recipient does not prevent the others from being notified.
     void (async () => {
-      try {
-        const text = data.text ?? (data.media ? '📷 Image' : '');
-        const preview = text.length > 60 ? text.slice(0, 57) + '…' : text;
-        const actorName = await this.notifications.resolveActorName(data.userId);
-        const alreadyNotified = new Set<string>([data.userId]);
+      const text = data.text ?? (data.media ? '📷 Image' : '');
+      const preview = text.length > 60 ? text.slice(0, 57) + '…' : text;
+      const actorName = await this.notifications.resolveActorName(data.userId);
+      const alreadyNotified = new Set<string>([data.userId]);
 
-        if (post.authorId && !post.associationId && !alreadyNotified.has(post.authorId)) {
-          alreadyNotified.add(post.authorId);
+      if (post.authorId && !post.associationId && !alreadyNotified.has(post.authorId)) {
+        alreadyNotified.add(post.authorId);
+        try {
           await this.notifications.createNotification({
             recipientId: post.authorId,
             type: 'comment',
@@ -160,12 +168,19 @@ export class PostInteractionsService {
             preview || 'Nouveau commentaire',
             { type: 'social', postId }
           );
+        } catch (e) {
+          this.logger.warn(
+            `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,
+            e
+          );
         }
+      }
 
-        if (data.parentId) {
-          const parent = post.comments.find((c: any) => c.id === data.parentId);
-          if (parent?.userId && !alreadyNotified.has(parent.userId)) {
-            alreadyNotified.add(parent.userId);
+      if (data.parentId) {
+        const parent = post.comments.find((c: any) => c.id === data.parentId);
+        if (parent?.userId && !alreadyNotified.has(parent.userId)) {
+          alreadyNotified.add(parent.userId);
+          try {
             await this.notifications.createNotification({
               recipientId: parent.userId,
               type: 'reply',
@@ -179,15 +194,22 @@ export class PostInteractionsService {
               preview || 'Nouvelle réponse',
               { type: 'social', postId }
             );
+          } catch (e) {
+            this.logger.warn(
+              `[NOTIFY] reply notification failed for parent.userId=${parent.userId}`,
+              e
+            );
           }
         }
+      }
 
-        // Mention notifications
-        if (data.text) {
-          const mentionedIds = this.notifications.resolveMentionedUserIds(data.text);
-          for (const recipientId of mentionedIds) {
-            if (alreadyNotified.has(recipientId)) continue;
-            alreadyNotified.add(recipientId);
+      // Mention notifications
+      if (data.text) {
+        const mentionedIds = this.notifications.resolveMentionedUserIds(data.text);
+        for (const recipientId of mentionedIds) {
+          if (alreadyNotified.has(recipientId)) continue;
+          alreadyNotified.add(recipientId);
+          try {
             await this.notifications.createNotification({
               recipientId,
               type: 'mention',
@@ -201,10 +223,13 @@ export class PostInteractionsService {
               preview || 'Vous avez été mentionné dans un commentaire',
               { type: 'social', postId }
             );
+          } catch (e) {
+            this.logger.warn(
+              `[NOTIFY] mention notification failed for recipientId=${recipientId}`,
+              e
+            );
           }
         }
-      } catch {
-        /* non-fatal */
       }
     })();
 
