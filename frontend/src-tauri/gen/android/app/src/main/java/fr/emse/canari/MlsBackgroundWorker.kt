@@ -2,6 +2,8 @@ package fr.emse.canari
 
 import android.content.Context
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.work.ForegroundInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import org.json.JSONObject
@@ -12,10 +14,29 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
 
     companion object {
         const val TAG = "CanariWorker"
+        /** ID de la notification foreground affichée quand le worker s'exécute en mode expedited. */
+        private const val FOREGROUND_NOTIF_ID = 9998
     }
 
     // Pont JNI spécifique pour le traitement de la file d'attente (Welcome, etc.)
     external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String, userId: String, deviceId: String): Boolean
+
+    /**
+     * Requis pour les workers expedited : fournit la notification foreground affichée
+     * si Android décide de promouvoir le worker en ForegroundService (rare en pratique).
+     */
+    override fun getForegroundInfo(): ForegroundInfo {
+        val notification = NotificationCompat.Builder(
+            applicationContext, CanariFirebaseMessagingService.CHANNEL_MESSAGES
+        )
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Canari")
+            .setContentText("Synchronisation des messages…")
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        return ForegroundInfo(FOREGROUND_NOTIF_ID, notification)
+    }
 
     override fun doWork(): Result {
         if (runAttemptCount >= 3) {

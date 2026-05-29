@@ -19,6 +19,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import java.util.concurrent.TimeUnit
@@ -46,7 +47,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
 
-        private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(0)
+        // Démarre à 10_000 pour ne pas chevaucher les IDs stables (1000–9998) ni le résumé (9999).
+        private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(10_000)
 
         /** Durée de validité du cache fichier avatar : 24 heures. */
         private const val AVATAR_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
@@ -154,6 +156,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val groupId = data["groupId"] ?: ""
             Log.d(TAG, "isWelcome=true → groupId=$groupId - enqueue worker, no notification")
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .build()
             WorkManager.getInstance(this).enqueue(workRequest)
@@ -183,6 +186,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (data["action"] == "process_queue") {
             Log.d(TAG, "action=process_queue → enqueue MlsBackgroundWorker")
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
                     WorkRequest.MIN_BACKOFF_MILLIS,
@@ -204,7 +208,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Thread {
             val _wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_decrypt")
-            _wl.acquire(30_000L)
+            _wl.acquire(60_000L)
             try {
                 val groupId         = data["groupId"] ?: ""
                 val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
@@ -222,6 +226,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // On enqueue le worker pour réessayer au prochain cycle.
                         if (!queuedMessageId.isNullOrEmpty()) {
                             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                                 .build()
                             WorkManager.getInstance(this@CanariFirebaseMessagingService).enqueue(workRequest)
