@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <!-- Partage de photos/vidéos depuis la galerie vers Canari (picker Intent) -->
+  <external-path name="shared_media" path="DCIM/" />
+  <external-path name="downloads" path="Download/" />
+  <!-- Fichiers temporaires créés par Tauri dans le cache interne de l'app -->
+  <cache-path name="tauri_cache" path="tauri/" />
 </paths>

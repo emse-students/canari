@@ -29,7 +29,7 @@ class MainActivity : TauriActivity() {
                 try {
                     File(filesDir.parentFile, "fcm_token.txt").writeText(token)
                     getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
-                        .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).commit()
+                        .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
                     Log.i("MainActivity", "FCM token synced (${token.take(20)}…)")
                 } catch (e: Exception) {
                     Log.w("MainActivity", "FCM token sync failed: ${e.message}")

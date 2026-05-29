@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
+import android.util.Log
 import java.io.File
 
 /**
@@ -95,10 +96,17 @@ class CanariApplication : Application() {
             val secret = file.readText().trim()
             if (secret.isNotEmpty()) {
                 PushSecretKeystore.store(this, secret)
+                Log.i(TAG, "processPendingPushSecret: secret stocké dans le Keystore")
             }
             // Overwrite before delete to prevent recovery from filesystem
             file.writeBytes(ByteArray(secret.length) { 0 })
             file.delete()
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            Log.e(TAG, "processPendingPushSecret: échec du transfert push secret: ${e.message}", e)
+        }
+    }
+
+    companion object {
+        private const val TAG = "CanariApp"
     }
 }
