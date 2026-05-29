@@ -596,6 +596,12 @@ export function useChatSession() {
       loginError = msg;
       cb.log(`Erreur: ${msg}`);
       console.error('[INIT] Login failed:', msg);
+      // Destroy the WASM MLS instance so the next login attempt gets a fresh one.
+      // A failed init() (wrong PIN → Argon2/aead failure) leaves the WASM decoder in a
+      // corrupted state; reusing it on the next attempt causes aead::Error even with the
+      // correct PIN. ensureMls() will allocate a new MlsService on the next call.
+      mls?.destroy?.();
+      mls = null;
       clearUserLocally();
       clearPin();
       if (cb.onLoginFailed) {

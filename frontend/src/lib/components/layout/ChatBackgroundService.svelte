@@ -86,9 +86,16 @@
   });
 
   let showPinModal = $state(false);
+  /** True when the user has no prior MLS device on this browser - shown as "choose your PIN". */
+  let isFirstPinSetup = $state(false);
   let pinError = $state('');
   let pinLoading = $state(false);
   let biometricConfigured = $state(false);
+
+  /** Returns true if this user has never initialised MLS on this browser (no device ID stored). */
+  function detectFirstPinSetup(uid: string): boolean {
+    return !localStorage.getItem(`mls_device_id_${uid}`);
+  }
 
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
@@ -356,6 +363,7 @@
             const savedUser2 = currentUserId();
             if (savedUser2) {
               globalSession.userId = savedUser2;
+              isFirstPinSetup = detectFirstPinSetup(savedUser2);
               showPinModal = true;
             } else {
               // No saved user - the layout auth guard will redirect to /login.
@@ -373,6 +381,7 @@
             onLoginFailed: (msg: string) => {
               // Le PIN sauvegardé est invalide - on demande à l'utilisateur
               pinError = msg;
+              isFirstPinSetup = false; // had a saved PIN already
               showPinModal = true;
             },
           });
@@ -384,11 +393,13 @@
               ...sessionCb(),
               onLoginFailed: (msg: string) => {
                 pinError = msg;
+                isFirstPinSetup = detectFirstPinSetup(savedUser);
                 showPinModal = true;
               },
             });
             if (ok) return;
           }
+          isFirstPinSetup = detectFirstPinSetup(savedUser);
           showPinModal = true;
         } else {
           // No saved user - the layout auth guard will redirect to /login.
@@ -525,6 +536,7 @@
         ...sessionCb(),
         onLoginFailed: (msg: string) => {
           pinError = msg;
+          isFirstPinSetup = false; // had a saved PIN already
           showPinModal = true;
           _loginInProgress = false;
         },
@@ -542,6 +554,7 @@
           _loginInProgress = false;
         }
       }
+      isFirstPinSetup = detectFirstPinSetup(uid);
       showPinModal = true;
     }
   });
@@ -561,6 +574,7 @@
   showBiometricButton={biometricConfigured}
   externalError={pinError}
   isLoading={pinLoading}
+  isFirstSetup={isFirstPinSetup}
 />
 
 <!-- Notice d'invitation de canal (toutes routes) -->

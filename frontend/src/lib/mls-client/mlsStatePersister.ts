@@ -12,7 +12,7 @@ export interface MlsStatePersisterConfig {
   deferredMs?: number;
 }
 
-/** Coalesced MLS state writer — batches saveState calls to reduce Argon2/WASM pressure on the UI thread. */
+/** Coalesced MLS state writer - batches saveState calls to reduce Argon2/WASM pressure on the UI thread. */
 export interface MlsStatePersister {
   /** Marks state dirty and flushes soon (same-tick calls are merged). */
   persistNow(): void;
@@ -20,9 +20,9 @@ export interface MlsStatePersister {
   scheduleDeferred(): void;
   /** Flushes immediately if dirty; returns the in-flight save promise. */
   flush(): Promise<void>;
-  /** Called when bulk message ingest starts — defers disk writes until ingest ends. */
+  /** Called when bulk message ingest starts - defers disk writes until ingest ends. */
   onBulkIngestStart(): void;
-  /** Called when bulk ingest ends — flushes once if state changed during ingest. */
+  /** Called when bulk ingest ends - flushes once if state changed during ingest. */
   onBulkIngestEnd(): Promise<void>;
 }
 
@@ -122,7 +122,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     async onBulkIngestEnd() {
       bulkIngestDepth = Math.max(0, bulkIngestDepth - 1);
       if (bulkIngestDepth > 0) return;
-      log?.('[MLS] Fin bulk ingest — flush persistance MLS si nécessaire');
+      log?.('[MLS] Fin bulk ingest - flush persistance MLS si nécessaire');
       await flushInternal();
     },
   };

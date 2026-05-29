@@ -8,7 +8,7 @@ import { messageTime } from '$lib/utils/chat/messageOrder';
 import type { MessageHandlerDeps } from './deps';
 
 /**
- * Context passed to handleSystemEvent — extends MessageHandlerDeps with
+ * Context passed to handleSystemEvent - extends MessageHandlerDeps with
  * per-message fields that are only known inside the message-processing callback.
  */
 export interface SystemEventContext extends MessageHandlerDeps {
@@ -28,7 +28,7 @@ export interface SystemEventContext extends MessageHandlerDeps {
  * Dispatches a decoded MLS system event to the appropriate handler.
  *
  * Called from setupMessageHandler after JSON-parsing `msg.system.data`.
- * Always returns `true` (ACK) — unknown events are silently ignored so
+ * Always returns `true` (ACK) - unknown events are silently ignored so
  * they don't block the delivery queue.
  */
 
@@ -134,7 +134,7 @@ export async function handleSystemEvent(
   if (event === 'memberRemoved' && data.targetUser) {
     const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
     if (data.targetUser.toLowerCase() === userId.toLowerCase()) {
-      // Current user was kicked — purge the conversation immediately
+      // Current user was kicked - purge the conversation immediately
       try {
         mlsService.forgetGroup(convo.id);
       } catch {
@@ -399,6 +399,6 @@ export async function handleSystemEvent(
     return true;
   }
 
-  // Unknown system event — ACK silently to avoid blocking the delivery queue
+  // Unknown system event - ACK silently to avoid blocking the delivery queue
   return true;
 }

@@ -355,7 +355,7 @@ async function processBulkAddition(
  * `contactDeviceIds` identifies which devices belong to the contact vs. the current user,
  * so that registerMember uses the correct owner for each device.
  *
- * Shared by startNewConversation and repairDirectConversation — both do exactly this sequence.
+ * Shared by startNewConversation and repairDirectConversation - both do exactly this sequence.
  */
 
 async function performDirectAdd(

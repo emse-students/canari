@@ -38,7 +38,7 @@
   let authToken = $state('');
 
   let postsOverride = $state<PostEntity[] | null>(null);
-  /** Resolved value of data.posts — used as fallback when postsOverride is still null. */
+  /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);
   let loading = $state(false);
   let loadingMore = $state(false);
@@ -231,7 +231,7 @@
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          // postsOverride is null on first load — fall back to the cached initial posts
+          // postsOverride is null on first load - fall back to the cached initial posts
           const current = postsOverride ?? initialPostsResolved;
           if (current) void loadMorePosts(current);
         }

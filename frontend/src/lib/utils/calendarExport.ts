@@ -232,7 +232,7 @@ function buildCalendarHtml(
             : null;
 
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
-          // Watermark stays absolute — decorative only, doesn't affect flow.
+          // Watermark stays absolute - decorative only, doesn't affect flow.
           const watermark = logoSrc
             ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrc}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
             : '';
@@ -240,7 +240,7 @@ function buildCalendarHtml(
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
 
           if (idx === 0) {
-            // First slot: day number on top, title below — flex column so html2canvas sees
+            // First slot: day number on top, title below - flex column so html2canvas sees
             // explicit heights and doesn't collapse the text area (fixes bottom:0 rendering bug).
             const DAY_NUM_H = 20;
             const availH = slotH - DAY_NUM_H;

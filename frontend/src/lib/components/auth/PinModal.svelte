@@ -1,6 +1,6 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { LoaderCircle, Fingerprint } from '@lucide/svelte';
+  import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -17,6 +17,11 @@
     externalError?: string;
     /** Whether a login attempt is in progress; disables inputs and shows a spinner. */
     isLoading?: boolean;
+    /**
+     * True when this is the very first time the user sets up their PIN on any device.
+     * Shows a "choose and save your PIN" message instead of the standard unlock message.
+     */
+    isFirstSetup?: boolean;
   }
 
   let {
@@ -27,10 +32,12 @@
     showBiometricButton = false,
     externalError = '',
     isLoading = false,
+    isFirstSetup = false,
   }: Props = $props();
 
   let pin = $state('');
   let internalError = $state('');
+  let showForgotPin = $state(false);
 
   $effect(() => {
     if (externalError) internalError = '';
@@ -45,17 +52,40 @@
       internalError = 'Veuillez entrer votre PIN.';
       return;
     }
+    if (trimmed.length < 4) {
+      internalError = 'Le PIN doit contenir au moins 4 caractères.';
+      return;
+    }
     internalError = '';
     onSubmit(trimmed);
   }
 </script>
 
-<Modal {open} title="PIN de chiffrement" onClose={onClose ?? (() => {})}>
+<Modal
+  {open}
+  title={isFirstSetup ? 'Choisir un PIN de chiffrement' : 'PIN de chiffrement'}
+  onClose={onClose ?? (() => {})}
+>
   <form onsubmit={handleSubmit} class="space-y-6 p-1">
-    <p class="text-sm text-text-muted leading-relaxed text-center">
-      Entrez votre PIN pour déverrouiller le chiffrement de bout en bout. Ce PIN est le même sur
-      tous vos appareils.
-    </p>
+    {#if isFirstSetup}
+      <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/10 px-4 py-3 space-y-1.5">
+        <p class="text-sm font-semibold text-cn-yellow">
+          Première connexion - choisissez votre PIN
+        </p>
+        <p class="text-sm text-text-muted leading-relaxed">
+          Ce PIN chiffre tous vos messages. Il n'est <strong class="text-text-main"
+            >jamais transmis au serveur</strong
+          >
+          et ne peut pas être récupéré si vous l'oubliez.<br />
+          <strong class="text-text-main">Notez-le et conservez-le précieusement.</strong>
+        </p>
+      </div>
+    {:else}
+      <p class="text-sm text-text-muted leading-relaxed text-center">
+        Entrez votre PIN pour déverrouiller le chiffrement de bout en bout. Ce PIN est le même sur
+        tous vos appareils.
+      </p>
+    {/if}
 
     {#if showBiometricButton && onBiometricRequest}
       <button
@@ -81,7 +111,7 @@
         id="encryption-pin"
         type="password"
         inputmode="numeric"
-        autocomplete="current-password"
+        autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
         bind:value={pin}
         oninput={() => {
           internalError = '';
@@ -90,6 +120,11 @@
         placeholder="••••••"
         class="w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3.5 text-center text-2xl tracking-[0.4em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50"
       />
+      <p class="text-xs text-text-muted text-center">
+        {isFirstSetup
+          ? 'Au moins 4 chiffres ou caractères de votre choix.'
+          : 'Entrez le PIN choisi lors de votre première connexion.'}
+      </p>
 
       {#if displayError}
         <p class="text-sm text-red-500 font-medium text-center">{displayError}</p>
@@ -104,9 +139,44 @@
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
         Vérification...
+      {:else if isFirstSetup}
+        Créer mon PIN
       {:else}
         Déverrouiller
       {/if}
     </button>
+
+    <!-- Forgot PIN section (only for returning users) -->
+    {#if !isFirstSetup}
+      <div class="border-t border-cn-border/30 pt-4">
+        <button
+          type="button"
+          onclick={() => (showForgotPin = !showForgotPin)}
+          class="w-full text-xs text-text-muted hover:text-text-main transition-colors text-center"
+        >
+          PIN oublié ?
+        </button>
+
+        {#if showForgotPin}
+          <div class="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 space-y-2">
+            <div class="flex items-start gap-2">
+              <AlertTriangle size={16} class="text-red-500 shrink-0 mt-0.5" />
+              <p class="text-xs text-text-muted leading-relaxed">
+                Le PIN n'est <strong class="text-text-main">jamais stocké sur nos serveurs</strong>
+                - il est impossible à récupérer. Si vous l'avez oublié, la seule option est de
+                <strong class="text-text-main">supprimer votre compte</strong> et d'en créer un nouveau.
+              </p>
+            </div>
+            <a
+              href="/profile"
+              onclick={() => onClose?.()}
+              class="block w-full text-center text-xs font-semibold text-red-500 hover:text-red-400 transition-colors py-1.5 rounded-lg border border-red-500/30 hover:border-red-400/40 hover:bg-red-500/5"
+            >
+              Aller à la suppression de compte →
+            </a>
+          </div>
+        {/if}
+      </div>
+    {/if}
   </form>
 </Modal>

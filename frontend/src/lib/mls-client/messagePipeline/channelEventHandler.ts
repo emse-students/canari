@@ -182,7 +182,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         console.error('Failed to parse channel message:', e);
       }
 
-      // Only persist if decryption succeeded — a missing key means loadChannelHistory
+      // Only persist if decryption succeeded - a missing key means loadChannelHistory
       // will replay it cleanly after a fresh key hydration.
       if (content === undefined) return;
 
