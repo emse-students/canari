@@ -765,9 +765,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // ── Affichage notifications ───────────────────────────────────────────────
 
     /**
+     * Retourne un ID de notification stable et unique pour [groupId], persisté en
+     * SharedPreferences. Évite les collisions de groupId.hashCode() entre conversations.
+     */
+    private fun getStableNotifId(groupId: String): Int {
+        val prefs = getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+        val existing = prefs.getInt(groupId, -1)
+        if (existing != -1) return existing
+        val next = prefs.getInt("__counter__", 1000)
+        prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).apply()
+        return next
+    }
+
+    /**
      * Affiche (ou met à jour) une notification pour un message MLS (DM ou groupe).
-     * Un seul ID stable par conversation (groupId.hashCode()) : chaque nouveau message
-     * écrase la notification précédente au lieu d'en empiler une nouvelle.
+     * Un seul ID stable par conversation : chaque nouveau message écrase la notification
+     * précédente au lieu d'en empiler une nouvelle.
      */
     private fun showNotification(
         senderName: String,
@@ -784,7 +797,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val notifBody  = if (isGroup && senderName.isNotEmpty()) "$senderName: $body" else body
 
         // ID stable par conversation : notify() avec le même ID met à jour la notif existante
-        val notifId = if (groupId.isNotEmpty()) groupId.hashCode() else 0
+        val notifId = if (groupId.isNotEmpty()) getStableNotifId(groupId) else 0
 
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW

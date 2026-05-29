@@ -156,6 +156,7 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
     implementation("org.slf4j:slf4j-nop:2.0.9")
+    implementation("androidx.core:core-splashscreen:1.0.1")
 }
 
 apply(from = "tauri.build.gradle.kts")

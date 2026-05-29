@@ -14,14 +14,6 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         const val TAG = "CanariWorker"
     }
 
-    init {
-        try {
-            System.loadLibrary("mines_app_lib")
-        } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "init: impossible de charger mines_app_lib: ${e.message}")
-        }
-    }
-
     // Pont JNI spécifique pour le traitement de la file d'attente (Welcome, etc.)
     external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String, userId: String, deviceId: String): Boolean
 
