@@ -331,7 +331,14 @@ export class SyncController {
       30,
     );
     const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
-    await this.redis.set(key, JSON.stringify(chunks), 'EX', ttlSeconds);
+
+    // Append each chunk individually so multiple batched uploads accumulate in order.
+    const pipeline = this.redis.pipeline();
+    for (const chunk of chunks) {
+      pipeline.rpush(key, JSON.stringify(chunk));
+    }
+    pipeline.expire(key, ttlSeconds);
+    await pipeline.exec();
 
     return {
       status: 'stored',
@@ -370,13 +377,18 @@ export class SyncController {
     }
 
     const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
-    const chunkRaw = await this.redis.get(key);
-    const chunks = chunkRaw
-      ? sanitizeSerializedChunks(JSON.parse(chunkRaw))
-      : [];
+
+    // Each item in the list is one serialized SyncSerializedChunk (batched uploads accumulate here).
+    const rawItems = await this.redis.lrange(key, 0, -1);
+    const chunks =
+      rawItems.length > 0
+        ? sanitizeSerializedChunks(
+            rawItems.map((item) => JSON.parse(item) as unknown),
+          )
+        : [];
 
     // One-shot pull acts as ACK.
-    if (chunkRaw) {
+    if (rawItems.length > 0) {
       await this.redis.del(key);
     }
 

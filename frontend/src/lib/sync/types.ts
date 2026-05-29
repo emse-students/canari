@@ -148,7 +148,7 @@ export interface SyncQrPayload {
 
 /**
  * Wire-format for a single encrypted message row: binary fields are serialised
- * as plain number arrays so they survive JSON transport without base64 overhead.
+ * as standard base64 strings for compact JSON transport (~3x smaller than number arrays).
  */
 export interface SyncSerializedEncryptedRow {
   /** Unique message ID. */
@@ -157,12 +157,12 @@ export interface SyncSerializedEncryptedRow {
   conversationId: string;
   /** Unix timestamp (ms) of the message. */
   timestamp: number;
-  /** AES-GCM initialisation vector as a byte array. */
-  iv: number[];
-  /** PBKDF2 salt used to derive the encryption key as a byte array. */
-  salt: number[];
-  /** AES-GCM ciphertext as a byte array. */
-  cipherText: number[];
+  /** AES-GCM initialisation vector as a base64 string. */
+  iv: string;
+  /** PBKDF2 salt used to derive the encryption key as a base64 string. */
+  salt: string;
+  /** AES-GCM ciphertext as a base64 string. */
+  cipherText: string;
 }
 
 /**

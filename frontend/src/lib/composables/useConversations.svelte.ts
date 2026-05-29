@@ -171,7 +171,8 @@ export function useConversations() {
       id: id,
       name: persistedName,
       isReady: convo.isReady,
-      updatedAt: Date.now(),
+      // Use the last-message timestamp so the sidebar sort order survives DB reloads.
+      updatedAt: convo.lastMessageAt ?? Date.now(),
     });
   }
 
@@ -461,7 +462,16 @@ export function useConversations() {
   /** Deselects the active conversation and closes the drawer (mobile back-button action). */
   function goBackToMenu() {
     if (mobileConvoHistoryClose) {
-      closeHistoryOverlayFromUi(mobileConvoHistoryClose);
+      // Clear state synchronously so any rapid click on a new conversation after
+      // pressing back pushes a fresh history overlay rather than reusing the stale one.
+      // abandonHistoryOverlay removes the entry from the stack and calls history.back()
+      // with ignoreNextPop=true, preventing the old close callback from firing and
+      // accidentally clearing a newly-selected conversation.
+      selectedContact = null;
+      isConversationDrawerOpen = false;
+      const ref = mobileConvoHistoryClose;
+      mobileConvoHistoryClose = null;
+      abandonHistoryOverlay(ref);
       return;
     }
     selectedContact = null;

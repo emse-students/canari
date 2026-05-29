@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
-  sanitizeByteArray,
+  sanitizeBase64BinaryField,
   sanitizeMessageIdList,
 } from './sanitize';
 
@@ -63,12 +63,12 @@ export interface SyncSerializedEncryptedRow {
   conversationId: string;
   /** Original message timestamp (ms) preserved for ordering after decryption. */
   timestamp: number;
-  /** AES-GCM initialisation vector (12 bytes). */
-  iv: number[];
-  /** PBKDF2 salt used to derive the AES key from the shared ECDH secret (16 bytes). */
-  salt: number[];
-  /** AES-256-GCM ciphertext of the serialised message. */
-  cipherText: number[];
+  /** AES-GCM initialisation vector as a base64 string. */
+  iv: string;
+  /** PBKDF2 salt used to derive the AES key from the shared ECDH secret, as a base64 string. */
+  salt: string;
+  /** AES-256-GCM ciphertext of the serialised message, as a base64 string. */
+  cipherText: string;
 }
 
 /** A batch of encrypted messages belonging to one conversation, transferred as a single unit. */
@@ -213,9 +213,9 @@ export function sanitizeSerializedChunks(
           typeof row.timestamp === 'number' && Number.isFinite(row.timestamp)
             ? Math.floor(row.timestamp)
             : Date.now(),
-        iv: sanitizeByteArray(row.iv, 'row.iv'),
-        salt: sanitizeByteArray(row.salt, 'row.salt'),
-        cipherText: sanitizeByteArray(row.cipherText, 'row.cipherText'),
+        iv: sanitizeBase64BinaryField(row.iv, 'row.iv'),
+        salt: sanitizeBase64BinaryField(row.salt, 'row.salt'),
+        cipherText: sanitizeBase64BinaryField(row.cipherText, 'row.cipherText'),
       };
     });
 

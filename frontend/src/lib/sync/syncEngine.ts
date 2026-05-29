@@ -222,19 +222,28 @@ export async function buildTransferChunksForMissing(
     .filter((chunk): chunk is SyncTransferChunk => Boolean(chunk));
 }
 
-/** Converts a Uint8Array to a plain number array for JSON serialisation. */
-function bytesToArray(bytes: Uint8Array): number[] {
-  return Array.from(bytes);
+/** Encodes a Uint8Array as a standard base64 string for JSON transport. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
-/** Converts a plain number array back to a Uint8Array after JSON deserialisation. */
-function arrayToBytes(input: number[]): Uint8Array {
-  return new Uint8Array(input);
+/** Decodes a standard base64 string back to a Uint8Array. */
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 /**
  * Converts in-memory transfer chunks (with Uint8Array fields) to the JSON-safe
- * wire format, encoding conversation IDs and converting binary fields to arrays.
+ * wire format, encoding conversation IDs and binary fields as base64 strings.
  */
 function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
   return chunks.map((chunk) => ({
@@ -247,16 +256,16 @@ function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
       id: row.id,
       conversationId: encodeConversationTransportId(normalizeConversationId(row.conversationId)),
       timestamp: row.timestamp,
-      iv: bytesToArray(row.iv),
-      salt: bytesToArray(row.salt),
-      cipherText: bytesToArray(row.cipherText),
+      iv: bytesToBase64(row.iv),
+      salt: bytesToBase64(row.salt),
+      cipherText: bytesToBase64(row.cipherText),
     })),
   }));
 }
 
 /**
- * Reverses `serializeChunks`: decodes conversation IDs and converts number
- * arrays back to Uint8Arrays, producing in-memory transfer chunks.
+ * Reverses `serializeChunks`: decodes conversation IDs and converts base64
+ * strings back to Uint8Arrays, producing in-memory transfer chunks.
  */
 function deserializeChunks(chunks: SyncSerializedChunk[]): SyncTransferChunk[] {
   return chunks.map((chunk) => ({
@@ -268,9 +277,9 @@ function deserializeChunks(chunks: SyncSerializedChunk[]): SyncTransferChunk[] {
       id: row.id,
       conversationId: normalizeConversationId(decodeConversationTransportId(row.conversationId)),
       timestamp: row.timestamp,
-      iv: arrayToBytes(row.iv),
-      salt: arrayToBytes(row.salt),
-      cipherText: arrayToBytes(row.cipherText),
+      iv: base64ToBytes(row.iv),
+      salt: base64ToBytes(row.salt),
+      cipherText: base64ToBytes(row.cipherText),
     })),
   }));
 }
@@ -412,12 +421,38 @@ export async function requestSyncDiff(
   return postJson<SyncDiffResponse>(`${historyBaseUrl}/api/mls/sync/session/diff`, payload);
 }
 
-/** Uploads serialised message chunks to the server so the peer can pull them. */
+/** Maximum number of conversations per upload request to keep payloads small. */
+const SYNC_UPLOAD_BATCH_SIZE = 20;
+
+/**
+ * Uploads serialised message chunks to the server in batches of `SYNC_UPLOAD_BATCH_SIZE`
+ * conversations so that no single request exceeds the body-size limit regardless of
+ * how many messages the user has.
+ */
 export async function uploadSyncChunks(
   historyBaseUrl: string,
   payload: UploadSyncChunksRequest
 ): Promise<{ status: string; chunkCount: number; rowCount: number }> {
-  return postJson(`${historyBaseUrl}/api/mls/sync/session/chunks/upload`, payload);
+  const { chunks, ...basePayload } = payload;
+
+  if (chunks.length === 0) {
+    return { status: 'stored', chunkCount: 0, rowCount: 0 };
+  }
+
+  let totalChunks = 0;
+  let totalRows = 0;
+
+  for (let i = 0; i < chunks.length; i += SYNC_UPLOAD_BATCH_SIZE) {
+    const batch = chunks.slice(i, i + SYNC_UPLOAD_BATCH_SIZE);
+    const result = await postJson<{ status: string; chunkCount: number; rowCount: number }>(
+      `${historyBaseUrl}/api/mls/sync/session/chunks/upload`,
+      { ...basePayload, chunks: batch }
+    );
+    totalChunks += result.chunkCount;
+    totalRows += result.rowCount;
+  }
+
+  return { status: 'stored', chunkCount: totalChunks, rowCount: totalRows };
 }
 
 /** Downloads the message chunks that the peer device uploaded for this device. */

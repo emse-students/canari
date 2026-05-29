@@ -134,6 +134,28 @@ export function sanitizeOptionalDeviceAppVersion(
   return version;
 }
 
+/**
+ * Validates that `value` is a non-empty standard base64 string.
+ * Rejects values longer than 128 KiB of encoded data (~96 KiB binary).
+ */
+export function sanitizeBase64BinaryField(
+  value: unknown,
+  fieldName: string,
+): string {
+  if (typeof value !== 'string' || !value) {
+    throw new BadRequestException(
+      `${fieldName} must be a non-empty base64 string`,
+    );
+  }
+  if (value.length > 131072) {
+    throw new BadRequestException(`${fieldName} is too large`);
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    throw new BadRequestException(`${fieldName} is not valid base64`);
+  }
+  return value;
+}
+
 /** Validates that `value` is an array of integers in `[0, 255]` (i.e. a byte array). */
 export function sanitizeByteArray(value: unknown, fieldName: string): number[] {
   if (!Array.isArray(value)) {

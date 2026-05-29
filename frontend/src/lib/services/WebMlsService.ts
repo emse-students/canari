@@ -497,7 +497,7 @@ export class WebMlsService implements IMlsService {
         }
       },
       {
-        onDrainStart: () => this.bulkIngestStart?.(true, true),
+        onDrainStart: (pendingCount) => this.bulkIngestStart?.(true, pendingCount > 1),
         onDrainEnd: async () => {
           if (ackIds.length > 0) {
             logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
