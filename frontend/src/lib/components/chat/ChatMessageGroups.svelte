@@ -4,7 +4,7 @@
   import MessageBubble from '../messages/MessageBubble.svelte';
   import type { ChatMessage, MessageReaction } from '$lib/types';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { ChevronUp } from '@lucide/svelte';
+  import { Loader2 } from '@lucide/svelte';
 
   interface MessageGroup {
     type: 'date_separator' | 'time_separator' | 'message';
@@ -16,12 +16,8 @@
   interface Props {
     /** Slice of message groups currently rendered in the DOM. */
     visibleMessageGroups: MessageGroup[];
-    /** Number of groups hidden above the render window (older messages). */
-    hiddenGroupCount: number;
-    /** Callback to expand the render window upwards or load older messages from DB. */
-    loadOlderGroups: () => void;
-    /** Whether the local DB may have messages older than those currently in memory. */
-    hasMoreInDb?: boolean;
+    /** Whether older messages are currently being fetched (shows a spinner at the top). */
+    isLoadingOlder?: boolean;
     /** Active search term used to highlight matching text in messages. */
     searchQuery?: string;
     /** Map of emoji reactions keyed by message ID. */
@@ -50,9 +46,7 @@
 
   let {
     visibleMessageGroups,
-    hiddenGroupCount,
-    loadOlderGroups,
-    hasMoreInDb = false,
+    isLoadingOlder = false,
     searchQuery = '',
     messageReactions,
     onReply,
@@ -129,21 +123,9 @@
   });
 </script>
 
-<!-- Bouton de chargement de l'historique (Sticky) -->
-{#if hiddenGroupCount > 0 || hasMoreInDb}
-  <div class="sticky top-2 z-10 flex justify-center mb-4 mt-2">
-    <button
-      type="button"
-      onclick={loadOlderGroups}
-      class="group inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-white/70 dark:bg-black/40 backdrop-blur-md border border-black/5 dark:border-white/10 text-[0.75rem] font-bold text-text-muted hover:text-text-main hover:bg-white/90 dark:hover:bg-black/60 transition-all shadow-sm hover:shadow-md active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-    >
-      <ChevronUp size={14} class="group-hover:-translate-y-0.5 transition-transform" />
-      {#if hiddenGroupCount > 0}
-        Charger l'historique ({hiddenGroupCount})
-      {:else}
-        Charger l'historique
-      {/if}
-    </button>
+{#if isLoadingOlder}
+  <div class="flex justify-center py-3">
+    <Loader2 size={18} class="animate-spin text-text-muted" />
   </div>
 {/if}
 

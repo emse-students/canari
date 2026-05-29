@@ -177,6 +177,9 @@
       chatContainer.scrollHeight - (chatContainer.scrollTop + chatContainer.clientHeight);
     isNearBottom = distanceFromBottom < 120;
     updateStickyDateIndicator();
+    if (chatContainer.scrollTop < 80) {
+      void loadOlderGroups();
+    }
   }
 
   function clearStickyDateTimer() {
@@ -544,9 +547,7 @@
         {:else}
           <ChatMessageGroups
             {visibleMessageGroups}
-            {hiddenGroupCount}
-            {loadOlderGroups}
-            hasMoreInDb={hasMoreInDb && !!onLoadOlderMessages}
+            {isLoadingOlder}
             {messageReactions}
             {currentUserId}
             searchQuery={searchQuery.trim()}
