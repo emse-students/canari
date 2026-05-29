@@ -82,6 +82,7 @@
   },
   "overrides": {
     "path-to-regexp": "8.4.0",
-    "picomatch": "4.0.4"
+    "picomatch": "4.0.4",
+    "qs": "6.15.2"
   }
 }

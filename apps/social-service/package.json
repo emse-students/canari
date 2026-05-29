@@ -54,6 +54,10 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.0"
   },
+  "overrides": {
+    "qs": "6.15.2",
+    "tmp": "0.2.6"
+  },
   "jest": {
     "moduleFileExtensions": [
       "js",
