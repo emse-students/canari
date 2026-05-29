@@ -6,8 +6,6 @@ import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
-import org.json.JSONObject
-import java.io.File
 
 class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     Worker(context, workerParams) {
@@ -44,12 +42,12 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             return Result.failure()
         }
         Log.d(TAG, "doWork: démarrage (attempt $runAttemptCount)")
-        val stateBytes = loadMlsState()
+        val stateBytes = MlsContextLoader.loadMlsState(applicationContext)
         if (stateBytes == null) {
             Log.e(TAG, "doWork: mls.bin absent → failure")
             return Result.failure()
         }
-        val ctx = loadPushContext()
+        val ctx = MlsContextLoader.loadPushContext(applicationContext)
         if (ctx == null) {
             Log.e(TAG, "doWork: push_context.json manquant ou invalide → failure")
             return Result.failure()
@@ -81,24 +79,4 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         }
     }
 
-    private fun loadMlsState(): ByteArray? {
-        val file = File(applicationContext.filesDir.parentFile, "mls.bin")
-        if (!file.exists()) return null
-        return try { file.readBytes() } catch (_: Exception) { null }
-    }
-
-    private data class PushContext(val pin: String, val userId: String, val deviceId: String)
-
-    private fun loadPushContext(): PushContext? {
-        val file = File(applicationContext.filesDir.parentFile, "push_context.json")
-        if (!file.exists()) return null
-        return try {
-            val j = JSONObject(file.readText())
-            PushContext(
-                pin      = j.optString("pin").takeIf      { it.isNotEmpty() } ?: return null,
-                userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
-                deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
-            )
-        } catch (_: Exception) { null }
-    }
 }

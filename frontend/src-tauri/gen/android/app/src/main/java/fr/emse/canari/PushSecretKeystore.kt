@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -11,6 +12,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 object PushSecretKeystore {
+    private const val TAG = "PushSecretKeystore"
     private const val KEY_ALIAS = "canari_push_secret_key"
     private const val PREFS_NAME = "canari_push_prefs"
     private const val PREFS_KEY_ENC = "push_secret_enc"
@@ -39,7 +41,10 @@ object PushSecretKeystore {
             val iv = Base64.decode(ivB64, Base64.NO_WRAP)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH, iv))
             String(cipher.doFinal(Base64.decode(encB64, Base64.NO_WRAP)), Charsets.UTF_8)
-        } catch (_: Exception) { null }
+        } catch (e: Exception) {
+            Log.e(TAG, "retrieve: échec Keystore AES-GCM: ${e.message}", e)
+            null
+        }
     }
 
     private fun getOrCreateKey(): SecretKey {

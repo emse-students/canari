@@ -31,60 +31,9 @@ class CanariApplication : Application() {
         processPendingPushSecret()
     }
 
-    /**
-     * Crée les trois canaux de notification :
-     *  - canari_messages : DMs et messages de groupe (IMPORTANCE_HIGH, vibration, son)
-     *  - canari_social   : réactions/commentaires sur les posts (IMPORTANCE_DEFAULT, silencieux)
-     *  - canari_forms    : rappels de formulaires (IMPORTANCE_DEFAULT, silencieux)
-     */
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java) ?: return
-
-        // Canal messages : haute priorité avec son et vibration
-        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
-            val audioAttrs = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                .build()
-            val messagesChannel = NotificationChannel(
-                CanariFirebaseMessagingService.CHANNEL_MESSAGES,
-                "Messages Canari",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Notifications de messages reçus via Canari"
-                enableVibration(true)
-                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
-            }
-            manager.createNotificationChannel(messagesChannel)
-        }
-
-        // Canal social : priorité normale, sans son (réactions, commentaires)
-        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_SOCIAL) == null) {
-            val socialChannel = NotificationChannel(
-                CanariFirebaseMessagingService.CHANNEL_SOCIAL,
-                "Activité sociale Canari",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Réactions et commentaires sur vos publications"
-                enableVibration(false)
-                setSound(null, null)
-            }
-            manager.createNotificationChannel(socialChannel)
-        }
-
-        // Canal formulaires : priorité normale, sans son (rappels planifiés)
-        if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_FORMS) == null) {
-            val formsChannel = NotificationChannel(
-                CanariFirebaseMessagingService.CHANNEL_FORMS,
-                "Rappels de formulaires",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Rappels avant l'ouverture des formulaires"
-                enableVibration(false)
-                setSound(null, null)
-            }
-            manager.createNotificationChannel(formsChannel)
-        }
+        ensureChannels(manager)
     }
 
     private fun processPendingPushSecret() {
@@ -106,5 +55,59 @@ class CanariApplication : Application() {
 
     companion object {
         private const val TAG = "CanariApp"
+
+        /**
+         * Crée les trois canaux de notification s'ils n'existent pas encore.
+         * Appelé depuis [CanariApplication.onCreate] et en fallback depuis
+         * [CanariFirebaseMessagingService.ensureNotificationChannels].
+         *  - canari_messages : DMs et messages de groupe (IMPORTANCE_HIGH, vibration, son)
+         *  - canari_social   : réactions/commentaires sur les posts (IMPORTANCE_DEFAULT, silencieux)
+         *  - canari_forms    : rappels de formulaires (IMPORTANCE_DEFAULT, silencieux)
+         */
+        internal fun ensureChannels(manager: NotificationManager) {
+            if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
+                val audioAttrs = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .build()
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CanariFirebaseMessagingService.CHANNEL_MESSAGES,
+                        "Messages Canari",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Notifications de messages reçus via Canari"
+                        enableVibration(true)
+                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+                    }
+                )
+            }
+            if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_SOCIAL) == null) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CanariFirebaseMessagingService.CHANNEL_SOCIAL,
+                        "Activité sociale Canari",
+                        NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = "Réactions et commentaires sur vos publications"
+                        enableVibration(false)
+                        setSound(null, null)
+                    }
+                )
+            }
+            if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_FORMS) == null) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CanariFirebaseMessagingService.CHANNEL_FORMS,
+                        "Rappels de formulaires",
+                        NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply {
+                        description = "Rappels avant l'ouverture des formulaires"
+                        enableVibration(false)
+                        setSound(null, null)
+                    }
+                )
+            }
+        }
     }
 }

@@ -1,6 +1,5 @@
 package fr.emse.canari
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -11,8 +10,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
-import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
@@ -29,6 +26,9 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+
+// Alias local : évite de renommer PushContext dans toutes les signatures de méthodes.
+private typealias PushContext = MlsContextLoader.PushContext
 
 class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -272,12 +272,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
         try {
-            val ctx = loadPushContext()
+            val ctx = MlsContextLoader.loadPushContext(this)
             if (ctx == null) {
                 Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent → abandon")
                 return
             }
-            val stateBytes = loadMlsState()
+            val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
                 Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent → abandon")
                 return
@@ -520,12 +520,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return null
         }
         try {
-            val ctx = loadPushContext()
+            val ctx = MlsContextLoader.loadPushContext(this)
             if (ctx == null) {
                 Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")
                 return null
             }
-            val stateBytes = loadMlsState()
+            val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
                 Log.e(TAG, "tryDecrypt: mls.bin absent → abandon")
                 return null
@@ -541,32 +541,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } finally {
             MlsStateLock.LOCK.unlock()
         }
-    }
-
-    private data class PushContext(
-        val pin: String,
-        val userId: String,
-        val deviceId: String,
-        val baseUrl: String,
-    )
-
-    private fun loadPushContext(): PushContext? {
-        val file = File(filesDir.parentFile, "push_context.json")
-        if (!file.exists()) return null
-        return try {
-            val j = JSONObject(file.readText())
-            PushContext(
-                pin      = j.optString("pin").takeIf      { it.isNotEmpty() } ?: return null,
-                userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
-                deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
-                baseUrl  = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null,
-            )
-        } catch (_: Exception) { null }
-    }
-
-    private fun loadMlsState(): ByteArray? {
-        val file = File(filesDir.parentFile, "mls.bin")
-        return if (file.exists()) try { file.readBytes() } catch (_: Exception) { null } else null
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
@@ -719,7 +693,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // 2. Fetch HTTP (app au premier plan ou cache expiré)
-        val ctx    = loadPushContext() ?: return null
+        val ctx    = MlsContextLoader.loadPushContext(this) ?: return null
         val secret = PushSecretKeystore.retrieve(this) ?: return null
         return try {
             val url = URL(
@@ -899,43 +873,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (senderName.isNotEmpty()) "Nouveau message de $senderName"
         else "Vous avez reçu un message chiffré"
 
-    /**
-     * Crée les canaux de notification s'ils n'existent pas encore.
-     * Appelé en fallback si CanariApplication.createNotificationChannels() n'a pas tourné.
-     */
-    private fun ensureNotificationChannels(manager: NotificationManager) {
-        if (manager.getNotificationChannel(CHANNEL_MESSAGES) == null) {
-            val audioAttrs = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                .build()
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_MESSAGES, "Messages Canari", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "Notifications de messages reçus via Canari"
-                    enableVibration(true)
-                    setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
-                }
-            )
-        }
-
-        if (manager.getNotificationChannel(CHANNEL_SOCIAL) == null) {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_SOCIAL, "Activité sociale Canari", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Réactions et commentaires sur vos publications"
-                    enableVibration(false)
-                    setSound(null, null)
-                }
-            )
-        }
-
-        if (manager.getNotificationChannel(CHANNEL_FORMS) == null) {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_FORMS, "Rappels de formulaires", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                    description = "Rappels avant l'ouverture des formulaires"
-                    enableVibration(false)
-                    setSound(null, null)
-                }
-            )
-        }
-    }
+    private fun ensureNotificationChannels(manager: NotificationManager) =
+        CanariApplication.ensureChannels(manager)
 }
