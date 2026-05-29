@@ -19,6 +19,11 @@ object PushSecretKeystore {
     private const val PREFS_KEY_IV = "push_secret_iv"
     private const val GCM_TAG_LENGTH = 128
 
+    /**
+     * Chiffre [secret] avec AES-256-GCM en utilisant une clé du Android Keystore,
+     * puis stocke le ciphertext et l'IV dans les SharedPreferences de l'app.
+     * Doit être appelé une seule fois depuis [CanariApplication] au démarrage.
+     */
     fun store(context: Context, secret: String) {
         val key = getOrCreateKey()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -31,6 +36,11 @@ object PushSecretKeystore {
             .apply()
     }
 
+    /**
+     * Déchiffre le secret stocké par [store] et retourne la valeur en clair.
+     * Retourne null si le secret n'a jamais été stocké ou si le Keystore échoue
+     * (panne TEE, réinitialisation appareil) — l'erreur est tracée en logcat.
+     */
     fun retrieve(context: Context): String? {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val encB64 = prefs.getString(PREFS_KEY_ENC, null) ?: return null
