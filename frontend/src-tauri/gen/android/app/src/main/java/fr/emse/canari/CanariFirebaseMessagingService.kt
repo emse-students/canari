@@ -64,6 +64,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * SharedPreferences n'est pas atomique, d'où la course entre threads FCM parallèles.
          */
         private val NOTIF_ID_LOCK = Any()
+
+        /** Clé de groupe Android pour regrouper les notifications de messages sous une seule ligne. */
+        private const val GROUP_KEY_MESSAGES = "canari_messages_group"
+
+        /** ID réservé pour la notification de résumé du groupe (ne doit pas collisionner avec getStableNotifId). */
+        private const val GROUP_SUMMARY_ID   = 9999
     }
 
     // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
@@ -359,12 +365,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 setRequestProperty("Authorization", "PushSecret $secret")
                 setRequestProperty("Content-Type", "application/json")
             }
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val code = conn.responseCode
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-            Log.d(TAG, "acquireAddLock: HTTP $code group=$groupId")
-            if (code == 201) JSONObject(text).optBoolean("acquired", false) else false
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                Log.d(TAG, "acquireAddLock: HTTP $code group=$groupId")
+                if (code == 201) JSONObject(text).optBoolean("acquired", false) else false
+            } finally {
+                conn.disconnect()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "acquireAddLock: exception: ${e.message}")
             false
@@ -388,10 +397,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 setRequestProperty("Authorization", "PushSecret $secret")
                 setRequestProperty("Content-Type", "application/json")
             }
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val code = conn.responseCode
-            conn.disconnect()
-            Log.d(TAG, "releaseAddLock: HTTP $code group=$groupId")
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                Log.d(TAG, "releaseAddLock: HTTP $code group=$groupId")
+            } finally {
+                conn.disconnect()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "releaseAddLock: exception: ${e.message}")
         }
@@ -421,15 +433,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 requestMethod  = "GET"
                 setRequestProperty("Authorization", "PushSecret $secret")
             }
-            val code = conn.responseCode
-            if (code != 200) {
-                Log.e(TAG, "fetchKeyPackage: HTTP $code target=$targetUserId:$targetDeviceId")
+            try {
+                val code = conn.responseCode
+                if (code != 200) {
+                    Log.e(TAG, "fetchKeyPackage: HTTP $code target=$targetUserId:$targetDeviceId")
+                    null
+                } else {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    JSONObject(text).optString("keyPackage").takeIf { it.isNotEmpty() }
+                }
+            } finally {
                 conn.disconnect()
-                return null
             }
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-            JSONObject(text).optString("keyPackage").takeIf { it.isNotEmpty() }
         } catch (e: Exception) {
             Log.e(TAG, "fetchKeyPackage: exception: ${e.message}")
             null
@@ -470,11 +485,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 setRequestProperty("Authorization", "PushSecret $secret")
                 setRequestProperty("Content-Type", "application/json")
             }
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val code = conn.responseCode
-            conn.disconnect()
-            Log.d(TAG, "sendWelcomeAndCommit: HTTP $code group=$groupId target=$targetUserId:$targetDeviceId")
-            code == 201
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                Log.d(TAG, "sendWelcomeAndCommit: HTTP $code group=$groupId target=$targetUserId:$targetDeviceId")
+                code == 201
+            } finally {
+                conn.disconnect()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.message}")
             false
@@ -585,17 +603,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             requestMethod  = "GET"
             setRequestProperty("Authorization", "PushSecret $secret")
         }
-        val code = conn.responseCode
-        if (code != 200) {
-            Log.e(TAG, "doFetchProto: HTTP $code")
+        try {
+            val code = conn.responseCode
+            if (code != 200) {
+                Log.e(TAG, "doFetchProto: HTTP $code")
+                return null
+            }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val proto = JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
+            Log.d(TAG, "doFetchProto: proto reçu=${proto != null} (${proto?.length ?: 0} chars)")
+            return proto
+        } finally {
             conn.disconnect()
-            return null
         }
-        val text = conn.inputStream.bufferedReader().use { it.readText() }
-        conn.disconnect()
-        val proto = JSONObject(text).optString("proto").takeIf { it.isNotEmpty() }
-        Log.d(TAG, "doFetchProto: proto reçu=${proto != null} (${proto?.length ?: 0} chars)")
-        return proto
     }
 
     /** Parse le JSON retourné par nativeDecryptMessage et retourne un DecryptedMessage structuré. */
@@ -714,21 +734,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 setRequestProperty("Authorization", "PushSecret $secret")
                 instanceFollowRedirects = true
             }
-            if (conn.responseCode == 200) {
-                val bytes = conn.inputStream.readBytes()
-                conn.disconnect()
-                // Sauvegarder en cache pour les prochaines notifications
-                try {
-                    cacheFile.writeBytes(bytes)
-                    Log.d(TAG, "fetchAvatar: avatar mis en cache pour ${userId.take(8)}")
-                } catch (e: Exception) {
-                    Log.w(TAG, "fetchAvatar: impossible de sauvegarder le cache: ${e.message}")
+            try {
+                val code = conn.responseCode
+                if (code == 200) {
+                    val bytes = conn.inputStream.readBytes()
+                    // Sauvegarder en cache pour les prochaines notifications
+                    try {
+                        cacheFile.writeBytes(bytes)
+                        Log.d(TAG, "fetchAvatar: avatar mis en cache pour ${userId.take(8)}")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "fetchAvatar: impossible de sauvegarder le cache: ${e.message}")
+                    }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circleCrop(it) }
+                } else {
+                    Log.d(TAG, "fetchAvatar: HTTP $code pour $userId → fallback initiales")
+                    null
                 }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circleCrop(it) }
-            } else {
-                Log.d(TAG, "fetchAvatar: HTTP ${conn.responseCode} pour $userId → fallback initiales")
+            } finally {
                 conn.disconnect()
-                null
             }
         } catch (e: Exception) {
             Log.d(TAG, "fetchAvatar: ${e.message} → fallback initiales")
@@ -809,7 +832,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             setData(android.net.Uri.parse("fr.emse.canari://chat/$groupId"))
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, notifId, tapIntent,
@@ -825,10 +848,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setLargeIcon(largeIcon)
+            .setGroup(GROUP_KEY_MESSAGES)
             .build()
 
         Log.d(TAG, "showNotification: notifId=$notifId title=$notifTitle body=${notifBody.take(40)}")
         manager.notify(notifId, notif)
+
+        // La notification de résumé est obligatoire sur Android 7+ pour que le groupement
+        // fonctionne : sans elle, les notifications individuelles ne sont pas regroupées.
+        val summary = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setGroup(GROUP_KEY_MESSAGES)
+            .setGroupSummary(true)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(GROUP_SUMMARY_ID, summary)
     }
 
     /**
@@ -842,7 +876,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val tapIntent   = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             setData(android.net.Uri.parse(deepLink))
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
             this, notifId, tapIntent,
