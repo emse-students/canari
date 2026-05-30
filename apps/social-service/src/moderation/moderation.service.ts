@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ContentReport } from './entities/content-report.entity';
 import { UserModeration } from './entities/user-moderation.entity';
+import { sanitizeLog } from '../common/log.utils';
 
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
@@ -67,7 +68,7 @@ export class ModerationService {
           [data.contentId]
         );
         console.log(
-          `[moderation] Post ${data.contentId} auto-hidden after ${pendingCount} pending reports`
+          `[moderation] Post ${sanitizeLog(data.contentId)} auto-hidden after ${pendingCount} pending reports`
         );
       }
     }

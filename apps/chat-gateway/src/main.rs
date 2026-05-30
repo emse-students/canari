@@ -57,11 +57,10 @@ fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
     }
 
     if origins.is_empty() {
-        tracing::error!(
-            "ALLOW_ORIGIN has no valid HTTP origins ('{}'). Falling back to *.",
+        panic!(
+            "ALLOW_ORIGIN has no valid HTTP origins ('{}'). Set ALLOW_ORIGIN to a comma-separated list of origins or '*' for development.",
             allow_origin
         );
-        return common.allow_origin(Any);
     }
 
     if origins.len() == 1 {

@@ -174,8 +174,8 @@ services:
       - "${MINIO_API_HOST_PORT:-19000}:9000"   # S3 API (host configurable)
       - "${MINIO_CONSOLE_HOST_PORT:-19001}:9001"   # Web console (host configurable)
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required - generate: openssl rand -hex 8}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required - generate: openssl rand -base64 24}
     volumes:
       - minio_data:/data
     healthcheck:
@@ -203,8 +203,8 @@ services:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-${MINIO_ROOT_USER}}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-${MINIO_ROOT_PASSWORD}}
       MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
@@ -228,7 +228,7 @@ services:
     environment:
       PORT: "3012"
       NODE_ENV: ${NODE_ENV:-production}
-      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate: openssl rand -hex 32}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
@@ -269,13 +269,13 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_DATABASE: auth_db
       REDIS_URL: redis://redis:6379
-      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
+      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - generate: openssl rand -hex 32}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=success
       STRIPE_CANCEL_URL: ${FRONTEND_URL:-https://canari-emse.fr}/posts?registration=cancel
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate: openssl rand -hex 32}
       MEDIA_SERVICE_URL: http://media-service:3011
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010

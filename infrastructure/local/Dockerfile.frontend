@@ -25,6 +25,10 @@ RUN printf 'server {\n\
     proxy_set_header X-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     \n\
+    add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' wss: ws:; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"';" always;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
+    \n\
     location = /internal/auth/verify {\n\
     internal;\n\
     set $upstream_auth core-service:3012;\n\

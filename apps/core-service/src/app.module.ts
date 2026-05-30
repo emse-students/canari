@@ -20,10 +20,10 @@ import { VersionModule } from './version/version.module';
         host: configService.get<string>('DB_HOST', 'postgres'),
         port: configService.get<number>('DB_PORT', 5432),
         username: configService.get<string>('DB_USERNAME', 'admin'),
-        password: configService.get<string>('DB_PASSWORD', 'password'),
+        password: configService.getOrThrow<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE', 'auth_db'), // Changed from users_db to auth_db globally
         entities: [User],
-        synchronize: true, // TODO : switch to dev only once stable
+        synchronize: process.env.NODE_ENV !== 'production',
       }),
       inject: [ConfigService],
     }),

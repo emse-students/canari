@@ -24,6 +24,7 @@ const workerScope = self as RtcTransformWorkerScope;
 
 /** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
 self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
+  if (event.origin && event.origin !== self.location.origin) return;
   if (event.data?.type === 'setKey') {
     const raw = event.data.payload;
     if (!raw || raw.byteLength !== 32) {

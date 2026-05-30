@@ -34,6 +34,7 @@ import {
 import { RedisService } from '../common/redis/redis.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PushService } from '../push/push.service';
+import { sanitizeLog } from '../common/log.utils';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -1134,7 +1135,7 @@ export class AssociationsService {
     const saved = await this.calendarRepo.save(row);
     const coOwners = await this.syncCoOwners(saved.id, targetId, dto.coOwnerIds ?? []);
     console.log(
-      `[Calendar] Event created: ${saved.id} for asso ${targetId} by ${userId} (status=${saved.status}, coOwners=${coOwners.length})`
+      `[Calendar] Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, coOwners=${coOwners.length})`
     );
     // Notify asso admins when BDE creates an event on their behalf
     if (canValidate && targetId !== associationId) {
@@ -1201,7 +1202,7 @@ export class AssociationsService {
         ? await this.syncCoOwners(saved.id, saved.associationId, dto.coOwnerIds)
         : await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
     console.log(
-      `[Calendar] Event updated: ${saved.id} by ${callerOpts?.callerUserId ?? 'unknown'} (coOwners=${coOwners.length})`
+      `[Calendar] Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
     );
     // Notify asso admins when BDE modifies an event from another asso
     if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
@@ -1281,7 +1282,7 @@ export class AssociationsService {
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
       console.log(
-        `[Calendar] Event deleted: ${eventId} by ${callerOpts?.callerUserId ?? 'unknown'}`
+        `[Calendar] Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
       if (targetAssocId !== associationId && callerOpts?.callerUserId) {
         void this.notifyAssocAdminsOfEventAction(
@@ -1296,7 +1297,7 @@ export class AssociationsService {
       if (!ev) throw new NotFoundException('Event not found');
       await this.calendarRepo.delete({ id: eventId });
       console.log(
-        `[Calendar] Event deleted: ${eventId} by ${callerOpts?.callerUserId ?? 'unknown'}`
+        `[Calendar] Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
     }
     return { ok: true };
@@ -1319,7 +1320,7 @@ export class AssociationsService {
 
     const key = randomBytes(32).toString('hex');
     await this.assoRepo.update(associationId, { documentVaultKey: key });
-    console.log(`[Vault] Generated new vault key for association ${associationId}`);
+    console.log(`[Vault] Generated new vault key for association ${sanitizeLog(associationId)}`);
     return key;
   }
 
@@ -1416,7 +1417,9 @@ export class AssociationsService {
       uploadedBy: userId,
     });
     const saved = await this.docRepo.save(doc);
-    console.log(`[Vault] Document "${saved.name}" (${saved.id}) created for asso ${associationId}`);
+    console.log(
+      `[Vault] Document "${sanitizeLog(saved.name)}" (${sanitizeLog(saved.id)}) created for asso ${sanitizeLog(associationId)}`
+    );
     return { ...saved, size: Number(saved.size) };
   }
 
@@ -1439,7 +1442,9 @@ export class AssociationsService {
     if (!doc) throw new NotFoundException('Document not found');
 
     await this.docRepo.delete(docId);
-    console.log(`[Vault] Document "${doc.name}" (${docId}) deleted from asso ${associationId}`);
+    console.log(
+      `[Vault] Document "${sanitizeLog(doc.name)}" (${sanitizeLog(docId)}) deleted from asso ${sanitizeLog(associationId)}`
+    );
 
     const bearer = authorization?.trim();
     if (bearer?.startsWith('Bearer ')) {

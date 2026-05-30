@@ -6,6 +6,18 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
+
+/** Strips control/format chars and applies NFKC normalization to prevent homoglyph attacks. */
+const NormalizeText = () =>
+  Transform(({ value }: { value: unknown }): unknown =>
+    typeof value === 'string'
+      ? value
+          .normalize('NFKC')
+          .replace(/[\p{Cc}\p{Cf}]/gu, '')
+          .trim()
+      : value,
+  );
 
 /** Payload for provisioning a new user record after OIDC sign-in. */
 export class CreateUserDto {
@@ -15,6 +27,7 @@ export class CreateUserDto {
   id!: string;
 
   /** Human-readable display name. */
+  @NormalizeText()
   @IsString()
   @IsOptional()
   displayName?: string;
@@ -26,16 +39,19 @@ export class CreateUserDto {
   promo?: number;
 
   /** Given name. */
+  @NormalizeText()
   @IsString()
   @IsOptional()
   firstName?: string;
 
   /** Family name. */
+  @NormalizeText()
   @IsString()
   @IsOptional()
   lastName?: string;
 
   /** EMSE formation / track. */
+  @NormalizeText()
   @IsString()
   @IsOptional()
   formation?: string;
@@ -49,6 +65,7 @@ export class CreateUserDto {
 /** Payload for updating mutable user profile fields. */
 export class UpdateUserDto {
   /** Short user biography (max 500 chars). */
+  @NormalizeText()
   @IsString()
   @MaxLength(500)
   @IsOptional()

@@ -43,9 +43,11 @@ const RedisProvider: Provider = {
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }]),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      url:
-        process.env.POSTGRES_URL ||
-        'postgres://admin:password@localhost:5432/auth_db',
+      url: (() => {
+        const v = process.env.POSTGRES_URL;
+        if (!v) throw new Error('POSTGRES_URL is required');
+        return v;
+      })(),
       entities: [
         QueuedMessage,
         KeyPackage,
@@ -57,7 +59,7 @@ const RedisProvider: Provider = {
         PushToken,
         RevokedDevice,
       ],
-      synchronize: true, // TODO : switch to dev only once stable
+      synchronize: process.env.NODE_ENV !== 'production',
     }),
     TypeOrmModule.forFeature([
       QueuedMessage,

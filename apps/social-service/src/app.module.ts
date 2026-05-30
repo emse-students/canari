@@ -25,11 +25,15 @@ import { RedisModule } from './common/redis';
         host: process.env.DB_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || '5432', 10),
         username: process.env.DB_USERNAME || 'postgres',
-        password: process.env.DB_PASSWORD || 'postgres',
+        password: (() => {
+          const v = process.env.DB_PASSWORD;
+          if (!v) throw new Error('DB_PASSWORD is required');
+          return v;
+        })(),
         database: process.env.DB_DATABASE || 'canari_social',
         url: process.env.DATABASE_URL,
         autoLoadEntities: true,
-        synchronize: true, // TODO : switch to dev only once stable
+        synchronize: process.env.NODE_ENV !== 'production',
       }),
     }),
     ChannelsModule,

@@ -59,6 +59,7 @@ const workerScope = self as KeyPackageWorkerScope;
 
 /** Worker-side message handler for MLS heavy startup operations. */
 workerScope.onmessage = async (event: MessageEvent<GenerateKeyPackageRequest>) => {
+  if (event.origin && event.origin !== self.location.origin) return;
   const msg = event.data;
   if (!msg || msg.type !== 'generateKeyPackage') return;
 
