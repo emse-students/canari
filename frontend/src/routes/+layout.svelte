@@ -16,6 +16,7 @@
   } from '$lib/utils/historyOverlayStack';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
   import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
+  import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
@@ -274,6 +275,7 @@
 <a href="#main-content" class="skip-link">Aller au contenu principal</a>
 
 <AppUpdateModal />
+<MlsFatalErrorBanner />
 
 <div
   role="presentation"
