@@ -498,6 +498,7 @@
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
       <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
 
+      <svelte:boundary onerror={(e) => appendLog(`[UI] Erreur ChatArea récupérée: ${e}`)}>
       {#key `${routeMode}-${convs.selectedContact ?? ''}`}
         <ChatArea
           currentUserId={session.userId}
@@ -555,6 +556,7 @@
           }}
         />
       {/key}
+      </svelte:boundary>
 
       {#if routeMode === 'communities'}
         {#if channels.selectedChannelConversationId}

@@ -97,8 +97,6 @@ export interface ChatSessionCallbacks {
   getSelectedContact: () => string | null;
   setSelectedContact: (v: string | null) => void;
   onLoadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;
-  /** Fired when a group transitions to isReady=true (Welcome processed). Used to drain pending auto-retry messages. */
-  onGroupReady?: (groupId: string) => void;
 }
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync, backup, and dev tools. */
@@ -143,6 +141,10 @@ export function useChatSession() {
   let incomingBytesHex = $state('');
   let lastCommit = $state('');
   let lastWelcome = $state('');
+
+  // ── Erreurs MLS fatales ───────────────────────────────────────────────────
+  /** Erreur MLS non récupérable nécessitant une action utilisateur (OOM, mode privé, Keystore perdu). */
+  let mlsFatalError = $state<'oom' | 'private_mode' | 'keystore_lost' | null>(null);
 
   const historyBaseUrl = (() => {
     const env = import.meta.env.VITE_DELIVERY_URL;
@@ -324,6 +326,30 @@ export function useChatSession() {
       console.log(`[INIT] MLS initialized for userId=${userId} device=${myDeviceId}`);
       cb.log('Base de donnees locale initialisee.');
 
+      // Vérifier si le stockage est persistant (absent en navigation privée).
+      // Safari Private/Firefox Private vident IndexedDB à la fermeture → nouveau device
+      // à chaque session, perte de tous les états MLS. Non-bloquant : ne bloque pas le login.
+      if (
+        typeof navigator !== 'undefined' &&
+        'storage' in navigator &&
+        'persisted' in navigator.storage
+      ) {
+        navigator.storage
+          .persisted()
+          .then((persisted) => {
+            if (!persisted) {
+              mlsFatalError = 'private_mode';
+              cb.log(
+                "[AVERT] Navigation privée détectée - l'état MLS ne sera pas conservé après fermeture."
+              );
+              appendLog(
+                "ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture de l'onglet."
+              );
+            }
+          })
+          .catch(() => {});
+      }
+
       authToken = await getToken();
 
       isLoggedIn = true;
@@ -341,6 +367,28 @@ export function useChatSession() {
         // only (will be cleared once the user completes biometric enrolment below).
         await savePin(pin);
       }
+      // Sur Android/Tauri : vérifier que le Keystore push est opérationnel.
+      // Si le secret est perdu (reset TEE), les notifications background échouent silencieusement.
+      if (isTauriRuntime()) {
+        import('@tauri-apps/api/core')
+          .then(({ invoke }) =>
+            invoke<{ ok: boolean; reason?: string }>('check_push_secret_health')
+              .then((health) => {
+                if (!health.ok && health.reason === 'no_secret') {
+                  mlsFatalError = 'keystore_lost';
+                  cb.log(
+                    '[AVERT] Keystore push perdu — les notifications background sont dégradées. Reconnectez-vous pour les réactiver.'
+                  );
+                  appendLog(
+                    '⚠️ Notifications push dégradées — reconnectez-vous pour les réactiver.'
+                  );
+                }
+              })
+              .catch(() => {})
+          )
+          .catch(() => {});
+      }
+
       // Android push: register (or refresh) this device token in delivery-service.
       // Non-blocking: messaging must continue even if push registration fails.
       void startPushService(historyBaseUrl, authToken, myDeviceId)
@@ -431,6 +479,25 @@ export function useChatSession() {
             `⚠️ Conversation ${label} corrompue - demandez à un autre membre de vous réinviter.`
           );
         },
+        onMlsFatalError: (kind) => {
+          mlsFatalError = kind;
+          if (kind === 'oom') {
+            cb.log("[FATAL] Mémoire WASM insuffisante - rechargez l'application.");
+            appendLog(
+              "⚠️ Mémoire insuffisante — rechargez l'application pour continuer à recevoir des messages."
+            );
+          } else if (kind === 'private_mode') {
+            cb.log(
+              "[AVERT] Navigation privée détectée - l'état MLS ne sera pas conservé après fermeture."
+            );
+            appendLog(
+              'ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture.'
+            );
+          } else if (kind === 'keystore_lost') {
+            cb.log('[AVERT] Keystore Android perdu — notifications push dégradées.');
+            appendLog('⚠️ Notifications push dégradées — reconnectez-vous pour les réactiver.');
+          }
+        },
         log: cb.log,
       });
 
@@ -468,7 +535,6 @@ export function useChatSession() {
             cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
               cb.log(`[WARN] Erreur refresh conv ${groupId}: ${e}`)
             );
-            cb.onGroupReady?.(groupId);
           } else {
             cb.log('[SYNC] Welcome traité, rafraîchissement des conversations...');
             cb.loadAndRestoreConversations().catch((e) =>
@@ -1034,6 +1100,16 @@ export function useChatSession() {
     },
     set callState(v: any) {
       callState = v;
+    },
+
+    // erreurs MLS fatales
+    /** Erreur MLS non récupérable : 'oom' (rechargement requis), 'private_mode' (stockage éphémère), 'keystore_lost' (reconnexion requise). */
+    get mlsFatalError() {
+      return mlsFatalError;
+    },
+    /** Réinitialise l'état d'erreur MLS fatale (ex: après que l'utilisateur a rechargé). */
+    clearMlsFatalError() {
+      mlsFatalError = null;
     },
 
     // backup status

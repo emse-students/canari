@@ -53,11 +53,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Compteur des retours `null` sur messages applicatifs (non-commit).
   // Si cela se produit, l'état local est probablement divergent même sans exception
   // (ex: SenderDataDecryption traité côté Rust comme message non-applicable).
-  // Seuil à 1 : tout null inexpliqué déclenche immédiatement la recovery pour ne pas
-  // laisser passer de messages silencieusement. Les duplicates légitimes sont filtrés
+  // Seuil à 3 : aligné sur PHANTOM_THRESHOLD pour tolérer les proposals MLS légitimes
+  // qui retournent null sans indiquer de divergence. Les duplicates légitimes sont filtrés
   // par consumeWasmDuplicateDeliveryFlag() avant d'atteindre ce compteur.
   const groupNullAppFailures = new Map<string, number>();
-  const NULL_APP_THRESHOLD = 1;
+  const NULL_APP_THRESHOLD = 3;
 
   // Groups for which an epoch recovery has already been triggered
   // (avoids spamming reinvite_request on a burst of future-epoch messages).
@@ -89,6 +89,19 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     mlsService.setBulkIngestHooks(
       () => statePersister.onBulkIngestStart(),
       () => statePersister.onBulkIngestEnd()
+    );
+  }
+
+  // Flush immédiat à chaque passage en arrière-plan : garantit que mls.bin est à jour
+  // avant que FCM (Android) lise l'état pour le déchiffrement background.
+  // Sans ce flush, la fenêtre stale est égale au délai du persister différé (~8s).
+  if (typeof document !== 'undefined') {
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.hidden) void statePersister.flush();
+      },
+      { passive: true }
     );
   }
 
@@ -546,6 +559,25 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           const errMsg = String(_e);
           if (errMsg.includes('CannotDecryptOwnMessage')) {
             return true; // ACK it so it isn't resent
+          }
+
+          // OOM WASM : signature détectée sur plusieurs moteurs (V8, SpiderMonkey, WASM trap).
+          // L'état WASM en mémoire est compromis - rechargement obligatoire.
+          // On ACK pour ne pas bloquer la queue définitivement, et on signale l'UI.
+          const isOom =
+            errMsg.includes('out of memory') ||
+            errMsg.includes('Out of memory') ||
+            errMsg.includes('memory access out of bounds') ||
+            errMsg.includes('unreachable') ||
+            (errMsg.toLowerCase().includes('oom') && errMsg.includes('wasm'));
+          if (isOom) {
+            log(`[FATAL] OOM WASM détecté sur "${convoKey}" - signal UI rechargement`);
+            console.error(
+              `[MLS] WASM OOM on "${convoKey}" - signaling UI reload:`,
+              errMsg.slice(0, 200)
+            );
+            deps.onMlsFatalError?.('oom');
+            return true;
           }
 
           // Ratchet de génération dépassé : message déjà traité ou rélivraison de l'historique

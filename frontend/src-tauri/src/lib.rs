@@ -814,6 +814,36 @@ fn exporter_secret(
 }
 
 /// Retourne le token FCM stocké par CanariFirebaseMessagingService.
+/// Vérifie que le Keystore Android peut lire le push secret (flag écrit par CanariApplication).
+/// Retourne `{"ok":true}` ou `{"ok":false,"reason":"no_context"|"no_secret"}`.
+/// Sur desktop/web, toujours OK (pas de Keystore Android).
+#[tauri::command]
+fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
+    #[cfg(target_os = "android")]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(_) => return serde_json::json!({"ok": false, "reason": "no_context"}),
+        };
+        // Si push_context.json absent → utilisateur non encore authentifié, situation normale.
+        if !data_dir.join("push_context.json").exists() {
+            return serde_json::json!({"ok": true});
+        }
+        // keystore_ok.flag écrit par CanariApplication.checkKeystoreHealth() au démarrage.
+        if data_dir.join("keystore_ok.flag").exists() {
+            serde_json::json!({"ok": true})
+        } else {
+            log::warn!("[PushHealth] keystore_ok.flag absent → Keystore perdu");
+            serde_json::json!({"ok": false, "reason": "no_secret"})
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        serde_json::json!({"ok": true})
+    }
+}
+
 /// Sur Android, lit {app_data_dir}/fcm_token.txt (écrit par onNewToken).
 /// Sur desktop/iOS, retourne None (pas de FCM).
 #[tauri::command]
@@ -1371,6 +1401,17 @@ pub fn run() {
                 Ok::<(), String>(())
             })
             .map_err(|e: String| format!("pending DB migration: {e}"))?;
+            // Migration silencieuse : ajoute attempt_count pour le circuit-breaker per-message.
+            tauri::async_runtime::block_on(async {
+                let _ = sqlx::query(
+                    "ALTER TABLE pending_mls_messages \
+                     ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+                )
+                .execute(&pending_pool)
+                .await; // duplicate column → erreur ignorée volontairement
+                Ok::<(), String>(())
+            })
+            .map_err(|e: String| format!("pending DB migration attempt_count: {e}"))?;
 
             // Chantier 3 : table de checkpoint d'état MLS (singleton row id=1).
             // Permet une sauvegarde atomique (même transaction que is_ready=1).
@@ -1552,6 +1593,7 @@ pub fn run() {
             recevoir_message_bytes,
             exporter_secret,
             get_fcm_token,
+            check_push_secret_health,
             store_push_context,
             load_push_context,
             save_mls_state,
@@ -1639,8 +1681,12 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .map_err(|e| e.to_string())?;
 
         for group_id in group_ids {
+            // Exclure les messages ayant dépassé 3 tentatives : ils bloquaient la queue entière
+            // (le message corrompu empêchait tous les suivants d'être traités via `break`).
             let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
-                "SELECT id, ciphertext FROM pending_mls_messages WHERE group_id = ? AND is_ready = 0 ORDER BY created_at ASC",
+                "SELECT id, ciphertext FROM pending_mls_messages \
+                 WHERE group_id = ? AND is_ready = 0 AND attempt_count < 3 \
+                 ORDER BY created_at ASC",
             )
             .bind(&group_id)
             .fetch_all(&pool)
@@ -1670,7 +1716,18 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                         }
                     }
                 } else {
-                    break;
+                    // Message irrécupérable : incrémenter le compteur et continuer avec le suivant
+                    // (avant : `break` → tout le groupe était bloqué jusqu'à l'expiration 7j).
+                    let _ = sqlx::query(
+                        "UPDATE pending_mls_messages SET attempt_count = attempt_count + 1 WHERE id = ?",
+                    )
+                    .bind(id)
+                    .execute(&pool)
+                    .await;
+                    log::warn!("Background Worker: group={} msg={} déchiffrement échoué, attempt_count incrémenté",
+                        &group_id, &id[..id.len().min(8)]);
+                    // Ne pas casser la boucle : les messages suivants peuvent être déchiffrés.
+                    continue;
                 }
             }
 
@@ -1679,6 +1736,22 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                 .execute(&pool)
                 .await;
         }
+
+        // Nettoyer les messages exhausted (attempt_count >= 3) après 1 heure.
+        // Ces messages ont définitivement échoué ; les garder 1h permet un diagnostic
+        // sans bloquer la queue (ils sont déjà exclus du SELECT ci-dessus).
+        let cutoff_attempt_ns: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64
+            - 3_600_000_000_000i64; // 1 heure en nanosecondes
+        let deleted_attempt = sqlx::query(
+            "DELETE FROM pending_mls_messages WHERE attempt_count >= 3 AND created_at < ?",
+        )
+        .bind(cutoff_attempt_ns)
+        .execute(&pool)
+        .await;
+        log::debug!("Background Worker: nettoyage exhausted → {:?}", deleted_attempt.map(|r| r.rows_affected()));
 
         // Nettoyer les messages périmés (> 7 jours) pour éviter la croissance unbounded.
         // created_at est stocké en nanosecondes depuis l'epoch Unix.

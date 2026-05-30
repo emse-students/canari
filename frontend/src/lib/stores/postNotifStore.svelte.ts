@@ -24,6 +24,7 @@ export const postNotifStore = {
   },
   /** Fetches the latest notifications from the backend and updates the store. */
   async load(limit = 30): Promise<void> {
+    if (loading) return;
     loading = true;
     try {
       notifications = await getPostNotifications(limit);

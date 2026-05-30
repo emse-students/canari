@@ -29,11 +29,36 @@ class CanariApplication : Application() {
         }
         createNotificationChannels()
         processPendingPushSecret()
+        checkKeystoreHealth()
     }
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java) ?: return
         ensureChannels(manager)
+    }
+
+    /**
+     * Vérifie que le Keystore Android peut lire le push secret (clé non perdue).
+     * Écrit `keystore_ok.flag` si OK, le supprime sinon.
+     * La commande Tauri `check_push_secret_health` lit ce flag pour signaler l'UI.
+     * Appel silencieux : une erreur ici ne doit pas bloquer le démarrage.
+     */
+    private fun checkKeystoreHealth() {
+        try {
+            val contextFile = File(filesDir.parentFile, "push_context.json")
+            if (!contextFile.exists()) return // pas encore authentifié, aucun secret attendu
+            val markerFile = File(filesDir.parentFile, "keystore_ok.flag")
+            val secret = PushSecretKeystore.retrieve(this)
+            if (secret != null) {
+                markerFile.writeText("ok")
+                Log.d(TAG, "checkKeystoreHealth: Keystore opérationnel")
+            } else {
+                markerFile.delete()
+                Log.e(TAG, "checkKeystoreHealth: Keystore perdu — push background désactivé")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "checkKeystoreHealth: exception: ${e.message}", e)
+        }
     }
 
     private fun processPendingPushSecret() {

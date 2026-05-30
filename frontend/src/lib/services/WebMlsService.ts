@@ -174,8 +174,8 @@ export class WebMlsService implements IMlsService {
         // un nouveau listener enregistré par le prochain appel à generateKeyPackage.
         this.keyPackageWorker?.terminate();
         this.keyPackageWorker = null;
-        reject(new Error('key package worker timeout after 30s'));
-      }, 30_000);
+        reject(new Error('key package worker timeout after 15s'));
+      }, 15_000);
 
       worker.addEventListener('message', onMessage);
       worker.addEventListener('error', onError);
@@ -874,12 +874,23 @@ export class WebMlsService implements IMlsService {
     try {
       this.client = await loadAndInitWasm(userId, this.deviceId, state, pin);
     } catch (e) {
-      // Credential identity mismatch: saved WASM state embeds a different device ID
-      // (e.g. localStorage cleared and device ID regenerated, or state imported from
-      // another device). Discard the stale state and start fresh.
-      if (String(e).includes('identity mismatch') || String(e).includes('Credential identity')) {
+      // Si l'init échoue ET qu'un état sauvegardé existait, c'est l'état qui est fautif
+      // (credential mismatch, corruption partielle, clé Argon2 invalide…).
+      // → fresh-start systématique pour ne pas bloquer l'utilisateur indéfiniment.
+      // Si state == null et erreur → crash réel (pas d'état à blâmer) → on remonte.
+      const errStr = String(e);
+      const isCredentialMismatch =
+        errStr.includes('identity mismatch') || errStr.includes('Credential identity');
+      if (isCredentialMismatch || state != null) {
         const oldDeviceId = this.deviceId;
-        console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
+        if (isCredentialMismatch) {
+          console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
+        } else {
+          console.warn(
+            '[MLS] État chargé inutilisable (corruption ?) → fresh-start:',
+            errStr.slice(0, 200)
+          );
+        }
         this.deviceId =
           'web-' +
           userId +

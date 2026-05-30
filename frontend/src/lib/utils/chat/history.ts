@@ -380,7 +380,7 @@ export async function replayConversationHistory(params: {
           // Recoverable epoch/ratchet gap: do NOT mark as seen so the entry is
           // retried on the next history load after epoch resync.
           skipSeenHash = true;
-          console.warn(`[History] GAP_QUEUED retryable: ${errStr.slice(0, 80)}`);
+          console.warn(`[History] GAP_QUEUED retryable: ${errStr.slice(0, 200)}`);
         } else {
           console.warn(`History msg error: ${err}`);
         }

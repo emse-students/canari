@@ -15,7 +15,54 @@ export function getIsTabLeader(): boolean {
 
 const LEADER_KEY = 'canari_tab_leader';
 const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
+/** Durée max sans heartbeat avant de considérer le leader mort (même valeur que dans initTabLeadershipAsync). */
+const HEARTBEAT_STALE_MS = 5_000;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+/** Poll côté follower pour détecter un leader crashé (heartbeat stale sans leader_closing). */
+let followerPollInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Poll côté follower pour détecter un leader crashé sans `leader_closing`.
+ * Vérifie toutes les 3 s si le heartbeat est stale (>5 s) ; si oui, tente de
+ * prendre le leadership avec le même délai aléatoire que le handler `leader_closing`
+ * pour éviter les races entre plusieurs followers.
+ */
+function startFollowerPoll(log: (msg: string) => void): void {
+  if (followerPollInterval) return;
+  followerPollInterval = setInterval(() => {
+    if (isTabLeader) {
+      clearInterval(followerPollInterval!);
+      followerPollInterval = null;
+      return;
+    }
+    const lastHb = parseInt(localStorage.getItem(HEARTBEAT_KEY) ?? '0', 10);
+    if (Date.now() - lastHb > HEARTBEAT_STALE_MS) {
+      clearInterval(followerPollInterval!);
+      followerPollInterval = null;
+      const delay = Math.random() * 300;
+      setTimeout(() => {
+        if (isTabLeader) return;
+        // Vérifier que le heartbeat est toujours stale après le délai (un autre follower
+        // peut avoir déjà pris le leadership et écrit un heartbeat frais).
+        const hbNow = parseInt(localStorage.getItem(HEARTBEAT_KEY) ?? '0', 10);
+        if (Date.now() - hbNow <= HEARTBEAT_STALE_MS) return;
+        try {
+          localStorage.setItem(LEADER_KEY, TAB_ID);
+        } catch {
+          /* quota */
+        }
+        try {
+          localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+        } catch {
+          /* quota */
+        }
+        isTabLeader = true;
+        startHeartbeat();
+        log('[TAB] Leader crashé détecté (heartbeat stale) - promotion en leader.');
+      }, delay);
+    }
+  }, 3_000);
+}
 
 /** Writes a fresh timestamp to localStorage every 4 s so other tabs can detect a stale leader. The staleness threshold is 5 s, giving a 1 s margin. */
 function startHeartbeat(): void {
@@ -76,7 +123,7 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
   const lastHeartbeat = parseInt(localStorage.getItem(HEARTBEAT_KEY) ?? '0', 10);
   const currentLeader = localStorage.getItem(LEADER_KEY);
 
-  if (!currentLeader || now - lastHeartbeat > 5000) {
+  if (!currentLeader || now - lastHeartbeat > HEARTBEAT_STALE_MS) {
     try {
       localStorage.setItem(LEADER_KEY, TAB_ID);
     } catch {
@@ -102,6 +149,7 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
   } else {
     isTabLeader = false;
     log('[TAB] Autre onglet actif - mode lecture seule (pas de WebSocket).');
+    startFollowerPoll(log);
   }
 
   if (typeof window !== 'undefined') {
@@ -114,6 +162,10 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
         }
       }
       if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (followerPollInterval) {
+        clearInterval(followerPollInterval);
+        followerPollInterval = null;
+      }
     });
   }
 
@@ -125,6 +177,10 @@ export function resetTabLeaderStateForTests(): void {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
+  }
+  if (followerPollInterval) {
+    clearInterval(followerPollInterval);
+    followerPollInterval = null;
   }
   try {
     tabChannel?.close();

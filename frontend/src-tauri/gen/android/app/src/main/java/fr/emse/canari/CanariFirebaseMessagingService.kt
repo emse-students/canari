@@ -155,7 +155,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                 .build()
-            WorkManager.getInstance(this).enqueue(workRequest)
+            enqueueWorkerIfHealthy(workRequest)
             return
         }
 
@@ -189,7 +189,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     TimeUnit.MILLISECONDS
                 )
                 .build()
-            WorkManager.getInstance(this).enqueue(workRequest)
+            enqueueWorkerIfHealthy(workRequest)
             if (!data.containsKey("groupId")) {
                 Log.d(TAG, "process_queue sans groupId → sync silencieux, pas de notification")
                 return
@@ -220,7 +220,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
                             .build()
-                        WorkManager.getInstance(this@CanariFirebaseMessagingService).enqueue(workRequest)
+                        enqueueWorkerIfHealthy(workRequest)
                         Log.w(TAG, "Déchiffrement échoué → MlsBackgroundWorker enqueued")
                     }
                     buildFallbackText(senderName).also { Log.w(TAG, "Fallback notification: $it") }
@@ -243,6 +243,48 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Enfile un [MlsBackgroundWorker] seulement si le flag d'échec persistant n'est pas levé.
+     * Si le flag est levé, le worker ne sera pas enfilé avant que l'utilisateur ouvre l'app
+     * (ce qui appelle [MlsBackgroundWorker.resetFailureFlag] depuis [MainActivity.onResume]).
+     */
+    private fun enqueueWorkerIfHealthy(workRequest: androidx.work.WorkRequest) {
+        val failed = getSharedPreferences(MlsBackgroundWorker.PREFS_WORKER, Context.MODE_PRIVATE)
+            .getBoolean(MlsBackgroundWorker.KEY_FAILED, false)
+        if (failed) {
+            Log.w(TAG, "enqueueWorkerIfHealthy: worker en état d'échec persistant → ignoré")
+            return
+        }
+        WorkManager.getInstance(this).enqueue(workRequest)
+    }
+
+    /**
+     * Retrieves the push secret, falling back to [pending_push_secret.txt] when the Keystore
+     * entry is absent. This covers the race where Tauri writes the secret while the app is
+     * already running (so [CanariApplication.onCreate] never ran to migrate the file).
+     * On a successful fallback read the secret is migrated into the Keystore immediately.
+     */
+    private fun retrievePushSecret(): String? {
+        val stored = PushSecretKeystore.retrieve(this)
+        if (stored != null) return stored
+
+        return try {
+            val file = File(filesDir.parentFile, "pending_push_secret.txt")
+            if (!file.exists()) return null
+            val rawBytes = file.readBytes()
+            val secret = rawBytes.toString(Charsets.UTF_8).trim()
+            if (secret.isEmpty()) return null
+            PushSecretKeystore.store(this, secret)
+            file.writeBytes(ByteArray(rawBytes.size) { 0 })
+            file.delete()
+            Log.i(TAG, "retrievePushSecret: secret migré depuis pending_push_secret.txt → Keystore")
+            secret
+        } catch (e: Exception) {
+            Log.e(TAG, "retrievePushSecret: fallback échoué: ${e.message}")
+            null
+        }
+    }
 
     /**
      * Starts a new named thread holding a partial WakeLock for at most [timeoutMs] ms.
@@ -284,7 +326,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent → abandon")
             return
         }
-        val secret = PushSecretKeystore.retrieve(this)
+        val secret = retrievePushSecret()
         if (secret == null) {
             Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent → abandon")
             return
@@ -583,9 +625,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
-        val secret = PushSecretKeystore.retrieve(this)
+        val secret = retrievePushSecret()
         if (secret == null) {
-            Log.e(TAG, "fetchProtoFromBackend: pushSecret absent du Keystore")
+            Log.e(TAG, "fetchProtoFromBackend: pushSecret absent")
             return null
         }
         var lastException: Exception? = null
@@ -741,7 +783,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // 2. Fetch HTTP (app au premier plan ou cache expiré)
         val ctx    = MlsContextLoader.loadPushContext(this) ?: return null
-        val secret = PushSecretKeystore.retrieve(this) ?: return null
+        val secret = retrievePushSecret() ?: return null
         return try {
             val url = URL(
                 "${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
@@ -832,6 +874,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Affiche (ou met à jour) une notification pour un message MLS (DM ou groupe).
      * Un seul ID stable par conversation : chaque nouveau message écrase la notification
      * précédente au lieu d'en empiler une nouvelle.
+     * Supprimée si l'app est au premier plan : le WebSocket a déjà livré le message à l'UI.
      */
     private fun showNotification(
         senderName: String,
@@ -840,6 +883,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         largeIcon: Bitmap,
         groupId: String,
     ) {
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "showNotification: app au premier plan → notification supprimée (groupId=${groupId.take(8)})")
+            return
+        }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
 

@@ -166,14 +166,26 @@ if (isTauriRuntime()) {
             if (error) {
               const msg = error_description || error;
               console.log('[hooks] Auth error:', msg);
-              window.location.href = `/auth/callback?error=${encodeURIComponent(msg)}`;
+              import('$app/navigation')
+                .then(({ goto }) => goto(`/auth/callback?error=${encodeURIComponent(msg)}`))
+                .catch(() => {
+                  window.location.href = `/auth/callback?error=${encodeURIComponent(msg)}`;
+                });
               return;
             }
 
             // Handle successful OIDC response
             if (code && state) {
               console.log('[hooks] Valid OIDC response, redirecting to /auth/callback');
-              window.location.href = `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+              import('$app/navigation')
+                .then(({ goto }) =>
+                  goto(
+                    `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
+                  )
+                )
+                .catch(() => {
+                  window.location.href = `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`;
+                });
               return;
             }
 

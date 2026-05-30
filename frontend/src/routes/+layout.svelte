@@ -283,7 +283,9 @@
   ontouchcancel={handleTouchCancel}
   class="flex h-[var(--app-viewport-height,100dvh)] w-screen overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
 >
-  <ChatBackgroundService />
+  <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash récupéré:', e)}>
+    <ChatBackgroundService />
+  </svelte:boundary>
 
   <!-- Sidebar (navigation principale) -->
   {#if !isLoginPage}
@@ -301,7 +303,21 @@
         bind:this={pageScrollWrap}
         class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0"
       >
-        {@render children?.()}
+        <svelte:boundary>
+          {@render children?.()}
+          {#snippet failed(error, reset)}
+            <div class="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
+              <p class="text-sm text-text-muted">Une erreur est survenue sur cette page.</p>
+              <button
+                type="button"
+                onclick={reset}
+                class="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold"
+              >
+                Réessayer
+              </button>
+            </div>
+          {/snippet}
+        </svelte:boundary>
       </div>
     </main>
 

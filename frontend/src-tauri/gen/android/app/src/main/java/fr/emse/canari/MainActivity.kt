@@ -11,6 +11,15 @@ import com.google.firebase.messaging.FirebaseMessaging
 import java.io.File
 
 class MainActivity : TauriActivity() {
+    companion object {
+        /**
+         * Vrai quand l'activité est au premier plan (entre onResume et onPause).
+         * Utilisé par CanariFirebaseMessagingService pour supprimer les notifications
+         * de messages MLS quand l'app est ouverte (le WebSocket les a déjà livrés).
+         */
+        @Volatile var isInForeground: Boolean = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -50,8 +59,17 @@ class MainActivity : TauriActivity() {
         webView.setBackgroundColor(Color.TRANSPARENT)
     }
 
+    override fun onResume() {
+        super.onResume()
+        isInForeground = true
+        MlsBackgroundWorker.resetFailureFlag(this)
+        Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
+    }
+
     override fun onPause() {
         super.onPause()
+        isInForeground = false
+        Log.d("MainActivity", "onPause: isInForeground=false")
         CookieManager.getInstance().flush()
     }
 

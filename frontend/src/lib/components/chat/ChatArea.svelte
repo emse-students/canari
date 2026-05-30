@@ -217,9 +217,11 @@
   }
 
   /**
-   * Single snapshot for the open chat UI. The template must only read `chatView`, never
-   * `conversation` directly - avoids `activeConversationView.contactName` races when
-   * `conversation` becomes null during route switches (chat ↔ communities).
+   * Single snapshot for the open chat UI. Props passed to children use `chatView?.xxx ?? default`
+   * (optional chaining) even inside `{#if chatView}` because Svelte 5 re-evaluates prop expressions
+   * during component teardown, after `chatView` has already transitioned to null. Without the
+   * optional chain, `chatView.contactName` throws "Cannot read properties of null" at teardown,
+   * which corrupts the signal graph and freezes the app on Android.
    */
   const chatView = $derived.by(() => {
     const c = conversation;
@@ -434,11 +436,11 @@
   {#if chatView}
     <div>
       <ChatHeader
-        contactName={chatView.contactName}
-        displayName={chatView.displayName}
-        isReady={chatView.isReady}
+        contactName={chatView?.contactName ?? ''}
+        displayName={chatView?.displayName ?? ''}
+        isReady={chatView?.isReady ?? false}
         {isChannel}
-        isGroupConversation={chatView.isGroup}
+        isGroupConversation={chatView?.isGroup ?? false}
         {imageMediaId}
         {onInviteMembers}
         {onBack}
@@ -558,7 +560,7 @@
             {onEdit}
             {switchTime}
             {authToken}
-            isDirect={chatView.isDirect}
+            isDirect={chatView?.isDirect ?? false}
             isMobile={_isMobile}
           />
         {/if}

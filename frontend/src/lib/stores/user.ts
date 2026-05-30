@@ -82,13 +82,28 @@ export async function fetchMyProfile(): Promise<UserProfile> {
   return (await res.json()) as UserProfile;
 }
 
+/** In-flight / short-lived cache for user profiles. TTL: 30 s. Deduplicates simultaneous fetches. */
+const profileCache = new Map<string, { promise: Promise<UserProfile>; expiresAt: number }>();
+
 /** Fetches the public profile of another user by their Canari user ID. */
-export async function fetchUserProfile(userId: string): Promise<UserProfile> {
-  const res = await apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch user (${res.status})`);
-  }
-  return (await res.json()) as UserProfile;
+export function fetchUserProfile(userId: string): Promise<UserProfile> {
+  const now = Date.now();
+  const cached = profileCache.get(userId);
+  if (cached && cached.expiresAt > now) return cached.promise;
+
+  const promise = apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}`).then(
+    async (res) => {
+      if (!res.ok) throw new Error(`Failed to fetch user (${res.status})`);
+      return (await res.json()) as UserProfile;
+    }
+  );
+
+  // Cache the promise so concurrent callers share the in-flight request.
+  // On rejection, evict immediately so the next caller retries rather than
+  // receiving the same cached error.
+  profileCache.set(userId, { promise, expiresAt: now + 30_000 });
+  promise.catch(() => profileCache.delete(userId));
+  return promise;
 }
 
 /** Searches users by display name (case-insensitive). Returns up to 10 results. */
