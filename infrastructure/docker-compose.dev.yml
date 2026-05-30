@@ -104,6 +104,7 @@ services:
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
 
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
@@ -130,6 +131,8 @@ services:
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -212,6 +215,7 @@ services:
     environment:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
@@ -253,6 +257,7 @@ services:
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
       USER_SERVICE_URL: http://core-service:3112
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       MEDIA_SERVICE_URL: http://media-service:3011
     depends_on:
       postgres:

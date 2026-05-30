@@ -114,6 +114,7 @@ services:
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
 
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
@@ -144,6 +145,8 @@ services:
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -229,6 +232,7 @@ services:
       PORT: "3012"
       NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
@@ -278,6 +282,7 @@ services:
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       MEDIA_SERVICE_URL: http://media-service:3011
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
     depends_on:
       postgres:

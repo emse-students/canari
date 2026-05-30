@@ -122,6 +122,7 @@ services:
       TURN_URL: ${TURN_URL:-turn:host.docker.internal:3478?transport=udp}
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
+      CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-dev-call-room-secret-change-me}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -152,6 +153,8 @@ services:
       TURN_USERNAME: ${TURN_USERNAME:-user}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
+      CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-dev-call-room-secret-change-me}
     depends_on:
       redis:
         condition: service_healthy
@@ -233,6 +236,7 @@ services:
       PORT: "3012"
       NODE_ENV: development
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       DB_HOST: postgres
       DB_PORT: "5432"
@@ -276,6 +280,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
     depends_on:
       postgres:

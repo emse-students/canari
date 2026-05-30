@@ -459,6 +459,8 @@ jobs:
           MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
           AVATAR_API_KEY: ${{ secrets.AVATAR_API_KEY }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
+          INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
+          CALL_ROOM_SECRET: ${{ secrets.CALL_ROOM_SECRET }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -565,6 +567,20 @@ jobs:
             upsert_env_var "CHANNELS_ENCRYPTION_SECRET" "$CHANNELS_ENCRYPTION_SECRET"
           else
             echo "::error::CHANNELS_ENCRYPTION_SECRET is not set - channel encryption will fail"
+            exit 1
+          fi
+
+          if [ -n "$INTERNAL_SHARED_SECRET" ]; then
+            upsert_env_var "INTERNAL_SHARED_SECRET" "$INTERNAL_SHARED_SECRET"
+          else
+            echo "::error::INTERNAL_SHARED_SECRET is not set - inter-service HMAC auth will be disabled (security risk)"
+            exit 1
+          fi
+
+          if [ -n "$CALL_ROOM_SECRET" ]; then
+            upsert_env_var "CALL_ROOM_SECRET" "$CALL_ROOM_SECRET"
+          else
+            echo "::error::CALL_ROOM_SECRET is not set - WebRTC room access control will be disabled (security risk)"
             exit 1
           fi
 
