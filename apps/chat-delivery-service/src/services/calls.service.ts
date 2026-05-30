@@ -88,6 +88,48 @@ export class CallsService {
   }
 
   /**
+   * Issues a room access token for an existing room ID (used by call recipients).
+   * Verifies group membership before signing the token.
+   */
+  async requestRoomToken(
+    userId: string,
+    groupId: string,
+    roomId: string,
+  ): Promise<{ roomToken: string }> {
+    this.logger.debug(
+      `[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`,
+    );
+
+    const membership = await this.groupMemberRepo.findOne({
+      where: { groupId, userId, leftAt: IsNull() },
+    });
+    if (!membership) {
+      this.logger.warn(
+        `[calls] user ${userId} is not a member of group ${groupId}`,
+      );
+      throw new ForbiddenException('Not a member of this group');
+    }
+
+    const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
+    if (!roomSecret) {
+      throw new ServiceUnavailableException(
+        'Call room tokens are not configured on this server',
+      );
+    }
+
+    const roomToken = jwt.sign(
+      { room_id: roomId, sub: userId, group_id: groupId },
+      roomSecret,
+      { expiresIn: '5m', algorithm: 'HS256' },
+    );
+
+    this.logger.debug(
+      `[calls] Issued join token for user=${userId} room=${roomId}`,
+    );
+    return { roomToken };
+  }
+
+  /**
    * Returns ICE server configuration for an authenticated group member.
    * Requires a valid `callId` so credentials are scoped per call session.
    */

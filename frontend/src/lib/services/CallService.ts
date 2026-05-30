@@ -6,7 +6,6 @@ import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
-import { getToken } from '$lib/stores/auth';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -51,6 +50,8 @@ export class CallService {
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
+  /** Room access token issued by chat-delivery-service, sent in the SFU Join message. */
+  private currentRoomToken: string | null = null;
   /** User id of the peer who rang (incoming); used for avatar when no conversation is selected. */
   public incomingCallerId: string | null = null;
   public incomingHasVideo = true;
@@ -97,10 +98,13 @@ export class CallService {
     if (get(this.callState) !== 'idle') return;
 
     this.currentGroupId = groupId;
-    this.currentCallId = crypto.randomUUID();
 
     try {
       this.callState.set('calling');
+      // Get server-issued room ID and access token before connecting.
+      const { roomId, roomToken } = await this.fetchInitiateCall(groupId);
+      this.currentCallId = roomId;
+      this.currentRoomToken = roomToken;
       await this.setupMedia(video);
       await this.setupEncryption(groupId, this.currentCallId!);
       await this.connectToSfu(this.currentCallId!);
@@ -124,6 +128,8 @@ export class CallService {
 
     try {
       this.callState.set('incall');
+      // Fetch our own room token before connecting (the initiator already has theirs).
+      this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
       await this.setupMedia(useVideo);
       await this.setupEncryption(groupId, callId);
       await this.connectToSfu(callId);
@@ -152,6 +158,7 @@ export class CallService {
     this.incomingCallerId = null;
     this.callKey = null;
     this.callKeyBytes = null;
+    this.currentRoomToken = null;
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
     this.incomingHasVideo = true;
@@ -178,6 +185,44 @@ export class CallService {
 
     this.remoteStream.set(null);
     this.remoteStreams.set(new Map());
+  }
+
+  /**
+   * Asks chat-delivery-service to create a new call room.
+   * Returns the server-generated `roomId` and a signed `roomToken` proving group membership.
+   */
+  private async fetchInitiateCall(groupId: string): Promise<{ roomId: string; roomToken: string }> {
+    const { historyUrl } = resolveMlsPublicUrls();
+    const url = new URL('/api/calls/initiate', historyUrl);
+    const res = await apiFetch(url.toString(), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupId }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`);
+    }
+    return res.json() as Promise<{ roomId: string; roomToken: string }>;
+  }
+
+  /**
+   * Fetches a room access token for an existing room (used by call recipients).
+   * The room ID comes from the MLS CallInvite message sent by the initiator.
+   */
+  private async fetchRoomToken(groupId: string, roomId: string): Promise<string> {
+    const { historyUrl } = resolveMlsPublicUrls();
+    const url = new URL('/api/calls/room-token', historyUrl);
+    url.searchParams.set('groupId', groupId);
+    url.searchParams.set('roomId', roomId);
+    const res = await apiFetch(url.toString(), { method: 'GET', credentials: 'include' });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`);
+    }
+    const data = (await res.json()) as { roomToken: string };
+    return data.roomToken;
   }
 
   /** Fetches short-lived TURN credentials from chat-delivery (Bearer auth, same as /api/mls). */
@@ -313,16 +358,9 @@ export class CallService {
       import.meta.env.VITE_CALL_URL ||
       (typeof window !== 'undefined' ? window.location.origin : '');
 
-    let tokenQuery = '';
-    try {
-      const token = await getToken();
-      if (token) tokenQuery = `?token=${encodeURIComponent(token)}`;
-    } catch {
-      appendLog('[Call] SFU WS: pas de JWT en mémoire, cookie canari_ws_token uniquement');
-    }
-
-    const wsUrl = callBaseUrl.replace(/^http/, 'ws') + `/api/call${tokenQuery}`;
-    appendLog(`[Call] connecting SFU WebSocket ${wsUrl.replace(/token=[^&]+/, 'token=***')}`);
+    // Auth via cookie canari_ws_token only (no query param to avoid token leakage in logs).
+    const wsUrl = callBaseUrl.replace(/^http/, 'ws') + '/api/call';
+    appendLog('[Call] connecting SFU WebSocket');
 
     return new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
@@ -365,7 +403,11 @@ export class CallService {
       ws.onopen = () => {
         window.clearTimeout(connectTimeout);
         appendLog('[Call] connected to SFU, joining room…');
-        this.sendSfuMessage({ type: 'Join', room_id: roomId });
+        this.sendSfuMessage({
+          type: 'Join',
+          room_id: roomId,
+          room_token: this.currentRoomToken ?? undefined,
+        });
         joinTimeout = window.setTimeout(() => {
           fail(new Error('SFU Join ack timeout (20s) - redéployer call-service'));
           ws.close();

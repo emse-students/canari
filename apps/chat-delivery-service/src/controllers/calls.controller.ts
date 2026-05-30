@@ -38,6 +38,24 @@ export class CallsController {
   }
 
   /**
+   * Returns a room access token for an existing room (used by call recipients).
+   * The initiator already holds a token from `POST /calls/initiate`; each other
+   * participant calls this endpoint with the room ID received via MLS to get theirs.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('calls/room-token')
+  async getRoomToken(
+    @Query('groupId') groupId: string,
+    @Query('roomId') roomId: string,
+    @Headers('x-user-id') userId?: string,
+  ) {
+    if (!userId) throw new BadRequestException('Missing X-User-Id header');
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const safeRoomId = sanitizeQueryValue(roomId, 'roomId');
+    return this.callsService.requestRoomToken(userId, safeGroupId, safeRoomId);
+  }
+
+  /**
    * Returns short-lived ICE server configuration (Cloudflare TURN or local Coturn).
    * Caller must be an active member of `groupId`.
    */
