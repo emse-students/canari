@@ -53,11 +53,6 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
 
   async function runSave(): Promise<void> {
     await yieldToMainThread();
-    if (typeof requestIdleCallback === 'function') {
-      await new Promise<void>((resolve) => {
-        requestIdleCallback(() => resolve(), { timeout: 5_000 });
-      });
-    }
     const bytes = await mlsService.saveState(pin);
     await saveMlsState(userId, bytes);
     log?.('[MLS] État MLS persisté (coalescé)');

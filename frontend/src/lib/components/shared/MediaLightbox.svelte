@@ -315,7 +315,7 @@
           <div
             bind:this={transformEl}
             role="presentation"
-            class="relative z-10 flex max-h-full max-w-full shrink-0 items-center justify-center pointer-events-auto select-none"
+            class="relative z-10 flex h-full w-full items-center justify-center pointer-events-auto select-none"
             style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging ? 'grabbing' : isZoomed ? 'grab' : 'zoom-in'};"
             onclick={(e) => e.stopPropagation()}
             ondblclick={handleDoubleClick}

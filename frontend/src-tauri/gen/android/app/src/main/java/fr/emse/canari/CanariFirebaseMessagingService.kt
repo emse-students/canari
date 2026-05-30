@@ -53,6 +53,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Durée de validité du cache fichier avatar : 24 heures. */
         private const val AVATAR_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1_000L
 
+        /** Nombre maximum d'entrées conservées dans fcm_message_cache.ndjson. */
+        private const val MAX_FCM_CACHE_ENTRIES = 50
+
         /** Verrou protégeant les écritures concurrentes dans fcm_message_cache.ndjson. */
         private val CACHE_LOCK = java.util.concurrent.locks.ReentrantLock()
 
@@ -260,91 +263,107 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * Traite une `welcome_request_pending` reçue via FCM quand l'app est tuée.
      * Séquence : acquiert le verrou Redis → fetche le key package → crée le Welcome
      * via JNI → envoie Welcome+commit au backend → libère le verrou.
-     * Tout se passe sous [MLS_LOCK] pour éviter les accès concurrents à mls.bin.
+     *
+     * [MlsStateLock] est tenu UNIQUEMENT pendant le JNI (lecture mls.bin + écriture mls.bin)
+     * pour ne pas bloquer les threads FCM de déchiffrement pendant les appels HTTP et les
+     * retries Redis (qui peuvent dormir 2s × 2 = 4s). Avant ce refactoring, MlsStateLock
+     * était tenu pour toute la durée (~30s), rendant tryDecrypt systématiquement timeout.
      */
     private fun processWelcomeRequestBackground(
         groupId: String,
         requesterUserId: String,
         requesterDeviceId: String,
     ) {
-        if (!MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)) {
-            Log.w(TAG, "processWelcomeRequestBackground: MlsStateLock non acquis → abandon")
+        // Chargements fichiers (lecture seule, hors verrou)
+        val ctx = MlsContextLoader.loadPushContext(this)
+        if (ctx == null) {
+            Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent → abandon")
             return
         }
+        val secret = PushSecretKeystore.retrieve(this)
+        if (secret == null) {
+            Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent → abandon")
+            return
+        }
+
+        // 1. Acquérir le verrou Redis add-lock (HTTP + retries) — hors MlsStateLock
+        var lockAcquired = false
+        for (attempt in 0..2) {
+            lockAcquired = acquireAddLock(ctx, secret, groupId)
+            if (lockAcquired) break
+            Log.w(TAG, "processWelcomeRequestBackground: verrou Redis non acquis (tentative ${attempt + 1}/3)")
+            if (attempt < 2) Thread.sleep(2_000)
+        }
+        if (!lockAcquired) {
+            Log.w(TAG, "processWelcomeRequestBackground: impossible d'acquérir le verrou pour group=$groupId → abandon")
+            return
+        }
+        Log.d(TAG, "processWelcomeRequestBackground: verrou Redis acquis pour group=$groupId")
+
         try {
-            val ctx = MlsContextLoader.loadPushContext(this)
-            if (ctx == null) {
-                Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent → abandon")
+            // 2. Récupérer le key package du requester (HTTP) — hors MlsStateLock
+            val keyPackage = fetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId)
+            if (keyPackage == null) {
+                Log.e(TAG, "processWelcomeRequestBackground: keyPackage introuvable pour $requesterUserId:$requesterDeviceId → abandon")
                 return
             }
-            val stateBytes = MlsContextLoader.loadMlsState(this)
-            if (stateBytes == null) {
-                Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent → abandon")
-                return
-            }
-            val secret = PushSecretKeystore.retrieve(this)
-            if (secret == null) {
-                Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent → abandon")
-                return
-            }
+            Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
 
-            // 1. Acquérir le verrou Redis add-lock (max 3 tentatives)
-            var lockAcquired = false
-            for (attempt in 0..2) {
-                lockAcquired = acquireAddLock(ctx, secret, groupId)
-                if (lockAcquired) break
-                Log.w(TAG, "processWelcomeRequestBackground: verrou non acquis (tentative ${attempt + 1}/3)")
-                if (attempt < 2) Thread.sleep(2_000)
-            }
-            if (!lockAcquired) {
-                Log.w(TAG, "processWelcomeRequestBackground: impossible d'acquérir le verrou pour group=$groupId → abandon")
+            // 3. Créer le Welcome via Rust JNI — MlsStateLock uniquement ici
+            //    (lecture mls.bin + Argon2 déchiffrement + add_member + écriture mls.bin ~5–8s).
+            // tryLock peut lever InterruptedException si le thread FCM est interrompu par Android.
+            val jniLockAcquired = try {
+                MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.e(TAG, "processWelcomeRequestBackground: thread interrompu pendant tryLock: ${e.message}")
                 return
             }
-            Log.d(TAG, "processWelcomeRequestBackground: verrou acquis pour group=$groupId")
-
+            if (!jniLockAcquired) {
+                Log.w(TAG, "processWelcomeRequestBackground: MlsStateLock non acquis → abandon")
+                return
+            }
+            val result: JSONObject
             try {
-                // 2. Récupérer le key package du requester
-                val keyPackage = fetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId)
-                if (keyPackage == null) {
-                    Log.e(TAG, "processWelcomeRequestBackground: keyPackage introuvable pour $requesterUserId:$requesterDeviceId → abandon")
+                val stateBytes = MlsContextLoader.loadMlsState(this)
+                if (stateBytes == null) {
+                    Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent → abandon")
                     return
                 }
-                Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
-
-                // 3. Créer le Welcome via Rust JNI
                 val filesDir = this.filesDir.parentFile!!.absolutePath
                 val jsonStr = nativeCreateWelcomeBackground(
                     filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId,
                     groupId, keyPackage,
                 )
-                val result = JSONObject(jsonStr)
-                if (!result.optBoolean("ok", false)) {
-                    Log.e(TAG, "processWelcomeRequestBackground: nativeCreateWelcomeBackground échoué: ${result.optString("error")}")
-                    return
-                }
-                val welcomePayload  = result.getString("welcome")
-                val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
-                val commitPayload   = result.getString("commit")
-                Log.d(TAG, "processWelcomeRequestBackground: Welcome créé, commit=${commitPayload.take(16)}…")
-
-                // 4. Envoyer Welcome + commit au backend
-                val sent = sendWelcomeAndCommit(
-                    ctx, secret, groupId,
-                    requesterUserId, requesterDeviceId,
-                    welcomePayload, ratchetTree, commitPayload,
-                )
-                if (sent) {
-                    Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome envoyé pour group=$groupId target=$requesterUserId:$requesterDeviceId")
-                } else {
-                    Log.e(TAG, "processWelcomeRequestBackground: sendWelcomeAndCommit échoué pour group=$groupId")
-                }
+                result = JSONObject(jsonStr)
             } finally {
-                // 5. Libérer le verrou dans tous les cas
-                releaseAddLock(ctx, secret, groupId)
-                Log.d(TAG, "processWelcomeRequestBackground: verrou libéré pour group=$groupId")
+                MlsStateLock.LOCK.unlock()
+            }
+
+            if (!result.optBoolean("ok", false)) {
+                Log.e(TAG, "processWelcomeRequestBackground: nativeCreateWelcomeBackground échoué: ${result.optString("error")}")
+                return
+            }
+            val welcomePayload  = result.getString("welcome")
+            val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
+            val commitPayload   = result.getString("commit")
+            Log.d(TAG, "processWelcomeRequestBackground: Welcome créé, commit=${commitPayload.take(16)}…")
+
+            // 4. Envoyer Welcome + commit au backend (HTTP) — hors MlsStateLock
+            val sent = sendWelcomeAndCommit(
+                ctx, secret, groupId,
+                requesterUserId, requesterDeviceId,
+                welcomePayload, ratchetTree, commitPayload,
+            )
+            if (sent) {
+                Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome envoyé pour group=$groupId target=$requesterUserId:$requesterDeviceId")
+            } else {
+                Log.e(TAG, "processWelcomeRequestBackground: sendWelcomeAndCommit échoué pour group=$groupId")
             }
         } finally {
-            MlsStateLock.LOCK.unlock()
+            // 5. Libérer le verrou Redis dans tous les cas
+            releaseAddLock(ctx, secret, groupId)
+            Log.d(TAG, "processWelcomeRequestBackground: verrou Redis libéré pour group=$groupId")
         }
     }
 
@@ -503,8 +522,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Tente de déchiffrer un message MLS en mode exclusif (MLS_LOCK).
-     * Le verrou garantit qu'un seul thread FCM accède à mls.bin à la fois,
-     * même si plusieurs notifications arrivent en rafale.
+     * Le verrou est acquis UNIQUEMENT pour l'accès à mls.bin et le JNI Argon2 — jamais
+     * pendant les appels HTTP (fetchProtoFromBackend), pour ne pas bloquer les autres
+     * threads FCM pendant les 5–11s que peut prendre un fetch réseau lent.
      */
     private fun tryDecrypt(
         queuedMessageId: String?,
@@ -515,28 +535,43 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "tryDecrypt: queuedMessageId absent → abandon")
             return null
         }
-        if (!MlsStateLock.LOCK.tryLock(8, java.util.concurrent.TimeUnit.SECONDS)) {
-            Log.w(TAG, "tryDecrypt: MlsStateLock non acquis après 8s → abandon (un autre thread déchiffre)")
+
+        // Charger le contexte push (lecture fichier) avant le verrou — lecture seule, thread-safe.
+        val ctx = MlsContextLoader.loadPushContext(this)
+        if (ctx == null) {
+            Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")
+            return null
+        }
+
+        // Récupérer le proto AVANT d'acquérir MlsStateLock : fetchProtoFromBackend peut
+        // prendre jusqu'à ~11s (2 tentatives × 5s timeout + 1s sleep). Tenir le verrou
+        // pendant ce temps bloquerait tryDecrypt des autres threads pendant toute la durée.
+        val protoB64: String = inlineProto
+            ?: fetchProtoFromBackend(queuedMessageId, ctx)
+                .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend a échoué") }
+            ?: return null
+
+        // Acquérir le verrou uniquement pour mls.bin + Argon2/JNI (~3–5s max).
+        // tryLock peut lever InterruptedException si le thread est interrompu par Android
+        // sous pression mémoire. On restaure le flag d'interruption pour ne pas l'avaler.
+        val lockAcquired = try {
+            MlsStateLock.LOCK.tryLock(5, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "tryDecrypt: thread interrompu pendant tryLock MlsStateLock: ${e.message}")
+            return null
+        }
+        if (!lockAcquired) {
+            Log.w(TAG, "tryDecrypt: MlsStateLock non acquis après 5s → abandon (un autre thread déchiffre)")
             return null
         }
         try {
-            val ctx = MlsContextLoader.loadPushContext(this)
-            if (ctx == null) {
-                Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")
-                return null
-            }
             val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
                 Log.e(TAG, "tryDecrypt: mls.bin absent → abandon")
                 return null
             }
             Log.d(TAG, "tryDecrypt: état MLS chargé (${stateBytes.size} octets), userId=${ctx.userId} deviceId=${ctx.deviceId}")
-
-            val protoB64 = inlineProto
-                ?: fetchProtoFromBackend(queuedMessageId, ctx)
-                    .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend a échoué") }
-                ?: return null
-
             return decryptProto(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, protoB64)
         } finally {
             MlsStateLock.LOCK.unlock()
@@ -631,7 +666,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Écrit une entrée dans fcm_message_cache.ndjson pour que l'app puisse
      * pré-injecter le message dans IndexedDB au boot (avant la sync MLS).
-     * Le fichier est en append : plusieurs messages peuvent s'accumuler entre deux ouvertures.
+     * Le fichier est borné à [MAX_FCM_CACHE_ENTRIES] lignes pour éviter la croissance
+     * unbounded quand l'app est fermée longtemps et reçoit beaucoup de notifications.
      */
     private fun writeFcmCache(
         groupId: String,
@@ -658,7 +694,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val file = File(filesDir.parentFile, "fcm_message_cache.ndjson")
             CACHE_LOCK.lock()
             try {
-                file.appendText(entry.toString() + "\n")
+                // Conserver au maximum MAX_FCM_CACHE_ENTRIES lignes : lire, tronquer, réécrire.
+                val existing = if (file.exists())
+                    file.readLines().filter { it.isNotBlank() }
+                else emptyList()
+                val kept = if (existing.size >= MAX_FCM_CACHE_ENTRIES)
+                    existing.drop(existing.size - MAX_FCM_CACHE_ENTRIES + 1)
+                else existing
+                file.writeText((kept + entry.toString()).joinToString("\n") + "\n")
             } finally {
                 CACHE_LOCK.unlock()
             }

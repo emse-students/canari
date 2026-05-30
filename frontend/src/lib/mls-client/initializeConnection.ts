@@ -44,6 +44,9 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     setReconnectAttempts(0);
     log('Connecté au réseau !');
     console.log('[WS] Connected to Chat Gateway');
+    // Register disconnect handler BEFORE fetching pending messages so that a WebSocket
+    // close that occurs during the (potentially long) fetch/drain is not missed.
+    mlsService.onDisconnect(scheduleReconnect);
     try {
       await mlsService.fetchPendingMessages();
     } catch (e) {
@@ -51,7 +54,6 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
         `[WARN] Echec récupération messages initiaux: ${e instanceof Error ? e.message : String(e)}`
       );
     }
-    mlsService.onDisconnect(scheduleReconnect);
 
     if (typeof window !== 'undefined') {
       const sendDisconnectOnUnload = () => mlsService.sendDisconnect();

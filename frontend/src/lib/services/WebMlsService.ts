@@ -107,15 +107,35 @@ export class WebMlsService implements IMlsService {
     this.client = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
   }
 
-  /** Runs key package generation in a worker and resolves with generated artifacts. */
+  /**
+   * Runs key package generation in a worker and resolves with generated artifacts.
+   *
+   * Garanties :
+   * - Timeout 30s : le timer est annulé dès que le worker répond (pas de fuite de timer).
+   * - Cleanup des listeners : `removeEventListener` est toujours appelé, qu'on résolve,
+   *   rejette ou timeout, grâce au flag `settled` et à `cleanup()`.
+   * - Fin de worker sur timeout : le worker est terminé (`terminate()`) et le singleton
+   *   mis à null pour éviter qu'une réponse tardive ne contamine le prochain appel.
+   * - Transfert du buffer d'état : le `ArrayBuffer` est transféré (pas copié) pour éviter
+   *   la duplication mémoire sur un snapshot qui peut peser plusieurs centaines de ko.
+   */
   private runWorkerKeyPackageGeneration(
     pin: string,
     needed: number,
     state?: Uint8Array
   ): Promise<WorkerKeyPackageResult> {
-    return new Promise((resolve, reject) => {
+    return new Promise<WorkerKeyPackageResult>((resolve, reject) => {
       const worker = this.getOrCreateKeyPackageWorker();
-      const onMessage = (event: MessageEvent) => {
+      let settled = false;
+
+      const cleanup = (): void => {
+        clearTimeout(timeoutId);
+        worker.removeEventListener('message', onMessage);
+        worker.removeEventListener('error', onError);
+      };
+
+      const onMessage = (event: MessageEvent): void => {
+        if (settled) return;
         const msg = event.data as
           | {
               type: 'generateKeyPackage:ok';
@@ -124,41 +144,58 @@ export class WebMlsService implements IMlsService {
           | { type: 'generateKeyPackage:error'; error: string };
         if (!msg) return;
         if (msg.type === 'generateKeyPackage:ok') {
-          worker.removeEventListener('message', onMessage);
-          worker.removeEventListener('error', onError);
+          settled = true;
+          cleanup();
           resolve({
             fallback: new Uint8Array(msg.payload.fallback),
             poolPackages: msg.payload.poolPackages.map((b) => new Uint8Array(b)),
             state: new Uint8Array(msg.payload.state),
           });
-          return;
-        }
-        if (msg.type === 'generateKeyPackage:error') {
-          worker.removeEventListener('message', onMessage);
-          worker.removeEventListener('error', onError);
+        } else if (msg.type === 'generateKeyPackage:error') {
+          settled = true;
+          cleanup();
           reject(new Error(msg.error));
         }
       };
-      const onError = (event: ErrorEvent) => {
-        worker.removeEventListener('message', onMessage);
-        worker.removeEventListener('error', onError);
-        reject(event.error ?? new Error(event.message));
+
+      const onError = (event: ErrorEvent): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(event.error ?? new Error(event.message || 'worker error'));
       };
+
+      // Le timer est annulé par cleanup() dans onMessage/onError — pas de fuite.
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        // Terminer l'instance worker pour qu'une réponse tardive n'arrive pas sur
+        // un nouveau listener enregistré par le prochain appel à generateKeyPackage.
+        this.keyPackageWorker?.terminate();
+        this.keyPackageWorker = null;
+        reject(new Error('key package worker timeout after 30s'));
+      }, 30_000);
 
       worker.addEventListener('message', onMessage);
       worker.addEventListener('error', onError);
 
+      // Transférer le buffer (ownership move, pas de copie) pour éviter de doubler
+      // la mémoire sur un snapshot pouvant peser plusieurs centaines de ko.
       const workerState = state ? state.slice() : undefined;
-      worker.postMessage({
-        type: 'generateKeyPackage',
-        payload: {
-          userId: this.userId,
-          deviceId: this.deviceId,
-          pin,
-          needed,
-          state: workerState?.buffer,
+      worker.postMessage(
+        {
+          type: 'generateKeyPackage',
+          payload: {
+            userId: this.userId,
+            deviceId: this.deviceId,
+            pin,
+            needed,
+            state: workerState?.buffer,
+          },
         },
-      });
+        workerState ? [workerState.buffer] : []
+      );
     });
   }
 
@@ -523,6 +560,11 @@ export class WebMlsService implements IMlsService {
         },
       }
     );
+
+    // Messages arrivés via WebSocket pendant onDrainEnd (isDraining=true) : relancer le drain.
+    if (this.messageScheduler.getPendingCount() > 0 && !this.messageScheduler.draining) {
+      void this.processQueue();
+    }
   }
 
   onDisconnect(callback: () => void) {
@@ -565,6 +607,10 @@ export class WebMlsService implements IMlsService {
     onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
     onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void {
+    // Deux appelants distincts (setupMessageHandler + useChatSession) enregistrent
+    // chacun leurs propres hooks ; on les chaîne pour que les deux s'exécutent.
+    // Chaque appelant fournit un onStart ET un onEnd symétriques, donc bulkIngestDepth
+    // reste équilibré (N incréments = N décréments) quelle que soit l'ordre d'enregistrement.
     const prevStart = this.bulkIngestStart;
     const prevEnd = this.bulkIngestEnd;
     if (onStart) {
@@ -900,26 +946,39 @@ export class WebMlsService implements IMlsService {
     let stateBytesToPersist: Uint8Array | undefined;
 
     if (this.useKeyPackageWorker && typeof Worker !== 'undefined') {
-      try {
-        console.log('[MLS] generateKeyPackage via worker');
-        const workerResult = await this.runWorkerKeyPackageGeneration(
-          pin,
-          needed,
-          this.lastKnownState
-        );
-        fallback = workerResult.fallback;
-        poolPackages = workerResult.poolPackages;
-        stateBytesToPersist = workerResult.state;
-      } catch (e) {
-        console.warn('[MLS] key package worker failed, fallback main thread path:', e);
-        fallback = this.client.generate_key_package() as Uint8Array;
-        if (needed > 0) {
-          poolPackages = [
-            ...(this.client.generate_key_packages(needed) as unknown as Iterable<Uint8Array>),
-          ];
+      // Le worker génère les KeyPackages off-thread, mais son résultat contient des clés
+      // privées issues d'un snapshot qui peut être périmé si des messages WebSocket ont été
+      // traités en parallèle. On tient le verrou MLS pendant toute la durée du worker pour
+      // empêcher tout traitement concurrent — reloadClientFromState est ainsi toujours sûr.
+      const workerGenResult = await this.messageScheduler.runUnderMlsLock(async () => {
+        try {
+          console.log('[MLS] generateKeyPackage via worker (sous mlsLock)');
+          const snapshot = (this.client.save_state(pin) as Uint8Array).slice();
+          const workerResult = await this.runWorkerKeyPackageGeneration(pin, needed, snapshot);
+          // Le verrou est tenu : aucun message n'a pu modifier l'état WASM pendant le worker.
+          await this.reloadClientFromState(workerResult.state, pin);
+          return {
+            fallback: workerResult.fallback,
+            poolPackages: workerResult.poolPackages,
+            stateBytesToPersist: workerResult.state,
+          };
+        } catch (e) {
+          console.warn('[MLS] key package worker failed, fallback main thread path:', e);
+          const fb = this.client.generate_key_package() as Uint8Array;
+          const pool =
+            needed > 0
+              ? [...(this.client.generate_key_packages(needed) as unknown as Iterable<Uint8Array>)]
+              : [];
+          return {
+            fallback: fb,
+            poolPackages: pool,
+            stateBytesToPersist: this.client.save_state(pin) as Uint8Array,
+          };
         }
-        stateBytesToPersist = this.client.save_state(pin) as Uint8Array;
-      }
+      });
+      fallback = workerGenResult.fallback;
+      poolPackages = workerGenResult.poolPackages;
+      stateBytesToPersist = workerGenResult.stateBytesToPersist;
     } else {
       // Always generate a fresh static fallback KP for this device.
       fallback = this.client.generate_key_package() as Uint8Array;
@@ -936,10 +995,6 @@ export class WebMlsService implements IMlsService {
       try {
         await saveMlsState(this.userId, stateBytesToPersist);
         this.lastKnownState = stateBytesToPersist.slice();
-        if (this.useKeyPackageWorker && typeof Worker !== 'undefined') {
-          // Worker generated private bundles must be reflected in the live client instance.
-          await this.reloadClientFromState(stateBytesToPersist, pin);
-        }
       } catch (e) {
         console.warn('Auto-save failed in WASM mode', e);
       }

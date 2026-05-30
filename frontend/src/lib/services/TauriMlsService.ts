@@ -482,11 +482,10 @@ export class TauriMlsService implements IMlsService {
             this.welcomeProcessedCallback?.(groupId);
           }
 
-          if (this._pin) {
-            await this.saveState(this._pin).catch((saveErr) => {
-              console.warn('[MLS] State save after message failed:', saveErr);
-            });
-          }
+          // L'état MLS est persisté par mlsStatePersister (enregistré via setBulkIngestHooks) :
+          // coalescement automatique (1 seul Argon2 à la fin du drain, pas 1 par message).
+          // L'ancienne sauvegarde directe ici causait N × Argon2 (~3s chacun) sur Android
+          // pendant le rattrapage des messages, ce qui bloquait le traitement pendant >30s.
 
           if (groupId) {
             await this.refreshEpochCache(groupId);
@@ -533,6 +532,12 @@ export class TauriMlsService implements IMlsService {
         },
       }
     );
+
+    // Messages that arrived via WebSocket while onDrainEnd was awaiting (isDraining=true)
+    // were enqueued but could not start a new drain. Restart here so they are not stuck.
+    if (this.messageScheduler.getPendingCount() > 0 && !this.messageScheduler.draining) {
+      void this.processQueue();
+    }
   }
 
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
@@ -543,6 +548,8 @@ export class TauriMlsService implements IMlsService {
     onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
     onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void {
+    // Deux appelants distincts (setupMessageHandler + useChatSession) enregistrent
+    // chacun leurs propres hooks ; on les chaîne pour que les deux s'exécutent.
     const prevStart = this.bulkIngestStart;
     const prevEnd = this.bulkIngestEnd;
     if (onStart) {

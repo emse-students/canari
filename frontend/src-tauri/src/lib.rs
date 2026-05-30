@@ -32,10 +32,19 @@ struct KeyPackageBatchResult {
     state: Vec<u8>,
 }
 
+/// Écrit `data` dans `path` de façon atomique : écriture dans un fichier temporaire
+/// suivi d'un `rename(2)`, qui est atomique sur Linux/Android au sein du même filesystem.
+/// Garantit que le lecteur ne voit jamais un fichier partiellement écrit.
+fn write_mls_bin_atomically(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("bin.tmp");
+    std::fs::write(&tmp, data).map_err(|e| format!("write mls.bin.tmp: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename mls.bin.tmp → mls.bin: {e}"))
+}
+
 fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join("mls.bin"), data).map_err(|e| e.to_string())
+    write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
 }
 
 // --- COMMANDS ---
@@ -763,9 +772,7 @@ async fn bootstrap_dead_conversation(
     .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| e.to_string())?;
 
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join("mls.bin"), &enc).map_err(|e| e.to_string())?;
+    write_mls_state_blob(&app, &enc)?;
 
     log::info!(
         "[BOOTSTRAP] Groupe {} re-bootstrappé avec succès ({} devices).",
@@ -1659,7 +1666,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                             .map_err(|e| e.to_string())?;
 
                         if tx.commit().await.is_ok() {
-                            let _ = std::fs::write(std::path::Path::new(&files_dir_str).join("mls.bin"), &enc);
+                            let _ = write_mls_bin_atomically(&std::path::Path::new(&files_dir_str).join("mls.bin"), &enc);
                         }
                     }
                 } else {
@@ -1672,6 +1679,19 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                 .execute(&pool)
                 .await;
         }
+
+        // Nettoyer les messages périmés (> 7 jours) pour éviter la croissance unbounded.
+        // created_at est stocké en nanosecondes depuis l'epoch Unix.
+        let cutoff_ns: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64
+            - 7i64 * 24 * 60 * 60 * 1_000_000_000;
+        let deleted = sqlx::query("DELETE FROM pending_mls_messages WHERE created_at < ?")
+            .bind(cutoff_ns)
+            .execute(&pool)
+            .await;
+        log::debug!("Background Worker: nettoyage périmés → {:?}", deleted.map(|r| r.rows_affected()));
 
         Ok::<(), String>(())
     });
@@ -1740,7 +1760,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
         // Sauvegarde atomique de l'état MLS mis à jour.
         let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        std::fs::write(&mls_path, &enc)
+        write_mls_bin_atomically(&mls_path, &enc)
             .map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
             "[BG_WELCOME] mls.bin mis à jour ({} octets) pour group={}",

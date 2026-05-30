@@ -39,6 +39,8 @@ export interface MlsPerGroupDrainHooks {
 export class MlsPerGroupScheduler {
   private readonly buckets = new Map<string, GroupBuckets>();
   private readonly rrKeys: string[] = [];
+  /** Set miroir de rrKeys pour les lookups O(1) en lieu de rrKeys.includes(). */
+  private readonly rrKeySet = new Set<string>();
   private rrIndex = 0;
   private isDraining = false;
   private readonly pendingWelcomeGroups = new Map<string, MlsQueuedMessage[]>();
@@ -220,8 +222,9 @@ export class MlsPerGroupScheduler {
     if (!bucket) {
       bucket = { control: [], welcome: [], messages: [] };
       this.buckets.set(key, bucket);
-      if (!this.rrKeys.includes(key)) {
+      if (!this.rrKeySet.has(key)) {
         this.rrKeys.push(key);
+        this.rrKeySet.add(key);
       }
     }
     return bucket;
@@ -233,6 +236,7 @@ export class MlsPerGroupScheduler {
       const b = this.buckets.get(key);
       if (!b || b.control.length + b.welcome.length + b.messages.length === 0) {
         this.rrKeys.splice(i, 1);
+        this.rrKeySet.delete(key);
         this.buckets.delete(key);
       }
     }
