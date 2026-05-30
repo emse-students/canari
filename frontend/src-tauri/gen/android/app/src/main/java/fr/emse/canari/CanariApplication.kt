@@ -40,13 +40,16 @@ class CanariApplication : Application() {
         try {
             val file = File(filesDir.parentFile, "pending_push_secret.txt")
             if (!file.exists()) return
-            val secret = file.readText().trim()
+            // Read raw bytes first so the overwrite covers the exact file size, including
+            // any trailing newline. secret.length is a char count and diverges from byte
+            // count for multi-byte UTF-8 sequences, leaving secret bytes unzeroed.
+            val rawBytes = file.readBytes()
+            val secret = rawBytes.toString(Charsets.UTF_8).trim()
             if (secret.isNotEmpty()) {
                 PushSecretKeystore.store(this, secret)
                 Log.i(TAG, "processPendingPushSecret: secret stocké dans le Keystore")
             }
-            // Overwrite before delete to prevent recovery from filesystem
-            file.writeBytes(ByteArray(secret.length) { 0 })
+            file.writeBytes(ByteArray(rawBytes.size) { 0 })
             file.delete()
         } catch (e: Exception) {
             Log.e(TAG, "processPendingPushSecret: échec du transfert push secret: ${e.message}", e)

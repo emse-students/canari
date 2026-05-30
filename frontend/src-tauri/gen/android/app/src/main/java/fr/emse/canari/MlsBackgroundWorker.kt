@@ -42,24 +42,35 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             return Result.failure()
         }
         Log.d(TAG, "doWork: démarrage (attempt $runAttemptCount)")
-        val stateBytes = MlsContextLoader.loadMlsState(applicationContext)
-        if (stateBytes == null) {
-            Log.e(TAG, "doWork: mls.bin absent → failure")
-            return Result.failure()
-        }
+
         val ctx = MlsContextLoader.loadPushContext(applicationContext)
         if (ctx == null) {
             Log.e(TAG, "doWork: push_context.json manquant ou invalide → failure")
             return Result.failure()
         }
         val filesDir = applicationContext.filesDir.parentFile!!.absolutePath
-        Log.d(TAG, "doWork: état MLS=${stateBytes.size} octets, filesDir=$filesDir")
 
-        if (!MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)) {
+        // Acquire lock BEFORE reading mls.bin: FCM threads write mls.bin concurrently
+        // (nativeDecryptMessage). Reading outside the lock risks JNI-processing stale state.
+        // tryLock throws InterruptedException under Android memory pressure — must be caught.
+        val lockAcquired = try {
+            MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "doWork: thread interrompu pendant tryLock: ${e.message}")
+            return Result.retry()
+        }
+        if (!lockAcquired) {
             Log.w(TAG, "doWork: MlsStateLock non acquis après 15s → retry")
             return Result.retry()
         }
         return try {
+            val stateBytes = MlsContextLoader.loadMlsState(applicationContext)
+            if (stateBytes == null) {
+                Log.e(TAG, "doWork: mls.bin absent → failure")
+                return Result.failure()
+            }
+            Log.d(TAG, "doWork: état MLS=${stateBytes.size} octets, filesDir=$filesDir")
             val success = nativeProcessBackgroundTasks(filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId)
             if (success) {
                 Log.d(TAG, "doWork: nativeProcessBackgroundTasks → succès")

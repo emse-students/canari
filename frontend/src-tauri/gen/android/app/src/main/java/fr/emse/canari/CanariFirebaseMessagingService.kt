@@ -139,16 +139,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "welcome_request_pending: champs manquants → abandon")
                 return
             }
-            Thread {
-                val _wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:welcome_bg")
-                _wl.acquire(90_000L)
-                try {
-                    processWelcomeRequestBackground(groupId, requesterUser, requesterDev)
-                } finally {
-                    if (_wl.isHeld) _wl.release()
-                }
-            }.start()
+            runWithWakeLock("welcome_bg", 90_000L) {
+                processWelcomeRequestBackground(groupId, requesterUser, requesterDev)
+            }
             return
         }
 
@@ -203,58 +196,69 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        // Message MLS chiffré : déchiffrement dans un thread dédié (max 10s)
-        val silent = data["silent"] == "true"
-        // Le thread tourne en parallèle - onMessageReceived retourne immédiatement
-        // (non-bloquant pour FCM, qui peut traiter le message suivant sans attendre).
+        // Message MLS chiffré : déchiffrement dans un thread dédié (max 60s).
+        // Non-bloquant pour FCM : onMessageReceived retourne immédiatement.
         // MLS_LOCK dans tryDecrypt garantit qu'un seul thread écrit mls.bin à la fois.
-        Thread {
-            val _wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_decrypt")
-            _wl.acquire(60_000L)
-            try {
-                val groupId         = data["groupId"] ?: ""
-                val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
-                val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
-                val senderId        = data["senderId"] ?: ""
-                val queuedMessageId = data["queuedMessageId"]
-                val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
+        val silent = data["silent"] == "true"
+        runWithWakeLock("fcm_decrypt") {
+            val groupId         = data["groupId"] ?: ""
+            val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
+            val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
+            val senderId        = data["senderId"] ?: ""
+            val queuedMessageId = data["queuedMessageId"]
+            val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
 
-                Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
+            Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
 
-                val decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
-                val body: String = decrypted?.text
-                    ?: run {
-                        // Déchiffrement échoué : groupe probablement pas encore dans l'état MLS.
-                        // On enqueue le worker pour réessayer au prochain cycle.
-                        if (!queuedMessageId.isNullOrEmpty()) {
-                            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
-                                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-                                .build()
-                            WorkManager.getInstance(this@CanariFirebaseMessagingService).enqueue(workRequest)
-                            Log.w(TAG, "Déchiffrement échoué → MlsBackgroundWorker enqueued")
-                        }
-                        buildFallbackText(senderName).also { Log.w(TAG, "Fallback notification: $it") }
+            val decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+            val body: String = decrypted?.text
+                ?: run {
+                    // Déchiffrement échoué : groupe probablement pas encore dans l'état MLS.
+                    // On enqueue le worker pour réessayer au prochain cycle.
+                    if (!queuedMessageId.isNullOrEmpty()) {
+                        val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+                            .build()
+                        WorkManager.getInstance(this@CanariFirebaseMessagingService).enqueue(workRequest)
+                        Log.w(TAG, "Déchiffrement échoué → MlsBackgroundWorker enqueued")
                     }
-
-                if (silent) {
-                    Log.d(TAG, "FCM silencieux → MLS state mis à jour, pas de notification affichée")
-                    return@Thread
+                    buildFallbackText(senderName).also { Log.w(TAG, "Fallback notification: $it") }
                 }
 
-                if (decrypted != null) {
-                    writeFcmCache(groupId, senderId, senderName, decrypted)
-                }
-
-                val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
-                val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
-                Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
-                showNotification(senderName, groupName, body, largeIcon, groupId)
-            } finally {
-                if (_wl.isHeld) _wl.release()
+            if (silent) {
+                Log.d(TAG, "FCM silencieux → MLS state mis à jour, pas de notification affichée")
+                return@runWithWakeLock
             }
-        }.start()
+
+            if (decrypted != null) {
+                writeFcmCache(groupId, senderId, senderName, decrypted)
+            }
+
+            val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+            val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
+            Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
+            showNotification(senderName, groupName, body, largeIcon, groupId)
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Starts a new named thread holding a partial WakeLock for at most [timeoutMs] ms.
+     * WakeLock tag: `"canari:<name>"`. Thread name: `"canari-<name>"` (visible in crash logs).
+     */
+    private fun runWithWakeLock(name: String, timeoutMs: Long = 60_000L, block: () -> Unit) {
+        Thread(null, {
+            val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
+            wl.acquire(timeoutMs)
+            try {
+                block()
+            } finally {
+                if (wl.isHeld) wl.release()
+            }
+        }, "canari-$name").start()
     }
 
     // ── Traitement background Welcome request ────────────────────────────────
