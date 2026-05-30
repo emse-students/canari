@@ -307,7 +307,7 @@
       >
         <svelte:boundary>
           {@render children?.()}
-          {#snippet failed(error, reset)}
+          {#snippet failed(_error, reset)}
             <div class="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
               <p class="text-sm text-text-muted">Une erreur est survenue sur cette page.</p>
               <button

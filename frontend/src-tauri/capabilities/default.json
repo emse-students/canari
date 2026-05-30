@@ -31,6 +31,7 @@
     "dialog:default",
     "websocket:default",
     "log:default",
-    "log:allow-log"
+    "log:allow-log",
+    "store:default"
   ]
 }

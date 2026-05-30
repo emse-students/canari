@@ -7,6 +7,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, IsNull } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
+import * as jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -18,6 +20,14 @@ export interface IceServerConfig {
 /** Response shape for `GET /api/calls/ice-servers`. */
 export interface IceServersResponse {
   iceServers: IceServerConfig[];
+}
+
+/** Response shape for `POST /api/calls/initiate`. */
+export interface InitiateCallResponse {
+  /** UUID identifying the WebRTC room in call-service. */
+  roomId: string;
+  /** Short-lived JWT (5 min) proving this user is allowed to join `roomId`. */
+  roomToken: string;
 }
 
 /**
@@ -32,6 +42,50 @@ export class CallsService {
     @InjectRepository(GroupMember)
     private readonly groupMemberRepo: Repository<GroupMember>,
   ) {}
+
+  /**
+   * Verifies group membership, generates a UUID room ID, and returns a signed
+   * room access token (TTL 5 min). The token must be sent to call-service in the
+   * `Join` message to prove the user is authorized for this room.
+   */
+  async initiateCall(
+    userId: string,
+    groupId: string,
+  ): Promise<InitiateCallResponse> {
+    this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
+
+    const membership = await this.groupMemberRepo.findOne({
+      where: { groupId, userId, leftAt: IsNull() },
+    });
+    if (!membership) {
+      this.logger.warn(
+        `[calls] user ${userId} is not a member of group ${groupId}`,
+      );
+      throw new ForbiddenException('Not a member of this group');
+    }
+
+    const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
+    if (!roomSecret) {
+      this.logger.error(
+        '[calls] CALL_ROOM_SECRET is not set — cannot issue room tokens',
+      );
+      throw new ServiceUnavailableException(
+        'Call room tokens are not configured on this server',
+      );
+    }
+
+    const roomId = uuidv4();
+    const roomToken = jwt.sign(
+      { room_id: roomId, sub: userId, group_id: groupId },
+      roomSecret,
+      { expiresIn: '5m', algorithm: 'HS256' },
+    );
+
+    this.logger.debug(
+      `[calls] Issued room token for user=${userId} room=${roomId}`,
+    );
+    return { roomId, roomToken };
+  }
 
   /**
    * Returns ICE server configuration for an authenticated group member.

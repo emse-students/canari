@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
+import { createHmac } from 'crypto';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 
@@ -47,6 +48,8 @@ export class AuthController {
   private readonly authentikClientSecret: string;
   private readonly devRoutesEnabled: boolean;
   private readonly isProduction: boolean;
+  /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
+  private readonly internalSecret: string;
 
   constructor(private readonly usersService: UsersService) {
     const secret = process.env.JWT_SECRET;
@@ -65,6 +68,7 @@ export class AuthController {
     this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
     this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
     this.devRoutesEnabled = isEnvFlagEnabled(process.env.ENABLE_DEV_ROUTES);
+    this.internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim() ?? '';
   }
 
   private isDevEnvironment(req: Request): boolean {
@@ -338,7 +342,9 @@ export class AuthController {
 
     let payload: { sub: string; type: string };
     try {
-      payload = jwt.verify(refresh_token, this.jwtSecret) as {
+      payload = jwt.verify(refresh_token, this.jwtSecret, {
+        algorithms: ['HS256'],
+      }) as {
         sub: string;
         type: string;
       };
@@ -419,7 +425,9 @@ export class AuthController {
     }
 
     try {
-      const payload = jwt.verify(token, this.jwtSecret) as {
+      const payload = jwt.verify(token, this.jwtSecret, {
+        algorithms: ['HS256'],
+      }) as {
         sub: string;
         admin?: boolean;
       };
@@ -427,6 +435,17 @@ export class AuthController {
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');
       res.set('X-Global-Admin', payload.admin ? 'true' : 'false');
+
+      // Mint a per-minute HMAC token so backend services can verify the request
+      // genuinely came through nginx (not from a compromised container).
+      if (this.internalSecret) {
+        const epochMinute = Math.floor(Date.now() / 60000);
+        const hmac = createHmac('sha256', this.internalSecret)
+          .update(`${payload.sub}:${epochMinute}`)
+          .digest('hex');
+        res.set('X-Internal-Token', hmac);
+      }
+
       return res.status(200).send();
     } catch {
       // Invalid/expired token - pass through as anonymous; the service decides

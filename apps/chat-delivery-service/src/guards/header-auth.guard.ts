@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 /**
  * NestJS guard that enforces authentication by inspecting the `x-user-logged-in`
@@ -23,20 +24,52 @@ export class HeaderAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const loggedIn = request.headers['x-user-logged-in'];
 
-    if (loggedIn === 'true') {
-      return true;
+    if (loggedIn !== 'true') {
+      const path = String(request?.originalUrl ?? request?.url ?? 'unknown');
+      if (path.includes('/push/')) {
+        this.logger.warn(
+          `[AUTH_GUARD] denied ${String(request?.method ?? 'UNKNOWN')} ${path} ` +
+            `x-user-logged-in=${String(loggedIn ?? '')} ` +
+            `x-user-id=${String(request?.headers?.['x-user-id'] ?? '')} ` +
+            `hasAuth=${request?.headers?.authorization ? 'yes' : 'no'}`,
+        );
+      }
+      throw new UnauthorizedException('User is not authenticated');
     }
 
-    const path = String(request?.originalUrl ?? request?.url ?? 'unknown');
-    if (path.includes('/push/')) {
-      this.logger.warn(
-        `[AUTH_GUARD] denied ${String(request?.method ?? 'UNKNOWN')} ${path} ` +
-          `x-user-logged-in=${String(loggedIn ?? '')} ` +
-          `x-user-id=${String(request?.headers?.['x-user-id'] ?? '')} ` +
-          `hasAuth=${request?.headers?.authorization ? 'yes' : 'no'}`,
-      );
+    // When INTERNAL_SHARED_SECRET is configured, verify the per-minute HMAC token
+    // to ensure the request came through nginx and not from a compromised container.
+    const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
+    if (internalSecret) {
+      const userId =
+        (request.headers['x-user-id'] as string | undefined)
+          ?.trim()
+          .toLowerCase() ?? '';
+      const token = (
+        request.headers['x-internal-token'] as string | undefined
+      )?.trim();
+      if (!token) {
+        throw new UnauthorizedException('Missing X-Internal-Token header');
+      }
+      const epochMinute = Math.floor(Date.now() / 60000);
+      const valid = [epochMinute, epochMinute - 1].some((min) => {
+        const expected = createHmac('sha256', internalSecret)
+          .update(`${userId}:${min}`)
+          .digest('hex');
+        try {
+          return timingSafeEqual(
+            Buffer.from(token, 'hex'),
+            Buffer.from(expected, 'hex'),
+          );
+        } catch {
+          return false;
+        }
+      });
+      if (!valid) {
+        throw new UnauthorizedException('Invalid X-Internal-Token');
+      }
     }
 
-    throw new UnauthorizedException('User is not authenticated');
+    return true;
   }
 }

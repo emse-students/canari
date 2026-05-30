@@ -142,26 +142,30 @@ impl Drop for ConnectionGuard {
 
 /// Axum handler for `GET /api/ws`.
 ///
-/// Validates the JWT from the `canari_ws_token` cookie or the `token` query
-/// parameter, then upgrades the HTTP connection to a WebSocket and hands off
-/// to `handle_socket`.  Returns `401 Unauthorized` if no valid token is found.
+/// Validates the JWT from the `canari_ws_token` cookie (query-param fallback is
+/// intentionally removed to prevent token leakage in proxy logs), then upgrades
+/// to a WebSocket.  Returns `401 Unauthorized` if no valid token is found.
+///
+/// Device ID is always generated server-side (UUID) to prevent clients from
+/// spoofing another user's device presence.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    Query(params): Query<AuthParams>,
+    Query(_params): Query<AuthParams>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let token = extract_cookie_value(&headers, "canari_ws_token").or(params.token);
-    let validation = Validation::new(Algorithm::HS256);
-    let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
-
-    let Some(token) = token else {
+    // Cookie-only: no query-param fallback to avoid token exposure in access logs.
+    let Some(token) = extract_cookie_value(&headers, "canari_ws_token") else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 
+    let validation = Validation::new(Algorithm::HS256);
+    let key = DecodingKey::from_secret(state.jwt_secret.as_bytes());
+
     match decode::<Claims>(&token, &key, &validation) {
         Ok(token_data) => {
-            let device_id = params.device_id.unwrap_or_else(|| "unknown".to_string());
+            // Device ID generated server-side so the client cannot spoof another device's presence.
+            let device_id = uuid::Uuid::new_v4().to_string();
             ws.on_upgrade(move |socket| {
                 handle_socket(socket, state, token_data.claims.sub, device_id)
             })

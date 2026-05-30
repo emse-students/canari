@@ -353,8 +353,9 @@ export class PaymentController {
   /**
    * Returns the Stripe customer ID for a user, creating one if necessary.
    * Called by social-service when creating a checkout session for a paid form.
-   * Not exposed to end-users - no auth guard needed (internal traffic only).
+   * Protected by NginxAuthGuard so it rejects direct requests bypassing nginx.
    */
+  @UseGuards(NginxAuthGuard)
   @Post('internal/customer-id')
   @HttpCode(200)
   async getOrCreateCustomerForUser(
@@ -460,7 +461,7 @@ export class PaymentController {
       return { ok: true, noPaymentRequired: true };
     }
 
-    // Charge
+    // Charge — idempotencyKey prevents double-charge on client retry.
     const result: ChargeResult =
       await this.paymentService.chargeWithSavedMethod({
         customerId,
@@ -469,6 +470,7 @@ export class PaymentController {
         currency: submissionData.currency ?? 'eur',
         metadata: { submissionId, userId },
         stripeConnectAccountId: submissionData.stripeAccountId ?? undefined,
+        idempotencyKey: `${submissionId}:${paymentMethodId}`,
       });
 
     if (result.ok) {

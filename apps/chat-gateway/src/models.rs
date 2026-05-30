@@ -10,10 +10,7 @@ pub struct Claims {
 }
 
 /// Query parameters accepted by the WebSocket upgrade endpoint.
+/// Note: authentication uses the `canari_ws_token` cookie only.
+/// Device ID is always generated server-side and is not accepted from the client.
 #[derive(Deserialize)]
-pub struct AuthParams {
-    /// Bearer token (fallback when no `canari_ws_token` cookie is present).
-    pub token: Option<String>,
-    /// Client-supplied device identifier, used to key presence and routing.
-    pub device_id: Option<String>,
-}
+pub struct AuthParams {}

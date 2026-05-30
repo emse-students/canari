@@ -65,6 +65,8 @@ export class PaymentService {
     stripeConnectAccountId?: string;
     customerId?: string;
     saveForFuture?: boolean;
+    /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
+    idempotencyKey?: string;
   }) {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
@@ -97,7 +99,15 @@ export class PaymentService {
       };
     }
 
-    const session = await this.stripe.checkout.sessions.create(sessionParams);
+    const requestOptions: Stripe.RequestOptions = {};
+    if (params.idempotencyKey) {
+      requestOptions.idempotencyKey = `checkout_${params.idempotencyKey}`;
+    }
+
+    const session = await this.stripe.checkout.sessions.create(
+      sessionParams,
+      requestOptions,
+    );
 
     return session;
   }
@@ -196,6 +206,8 @@ export class PaymentService {
     currency: string;
     metadata?: Record<string, string>;
     stripeConnectAccountId?: string;
+    /** Stable key for idempotency — prevents double-charge on network retry. */
+    idempotencyKey?: string;
   }): Promise<ChargeResult> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
@@ -215,8 +227,16 @@ export class PaymentService {
       };
     }
 
+    const requestOptions: Stripe.RequestOptions = {};
+    if (params.idempotencyKey) {
+      requestOptions.idempotencyKey = `charge_${params.idempotencyKey}`;
+    }
+
     try {
-      const intent = await this.stripe.paymentIntents.create(intentParams);
+      const intent = await this.stripe.paymentIntents.create(
+        intentParams,
+        requestOptions,
+      );
       if (intent.status === 'succeeded') {
         return { ok: true };
       }

@@ -42,14 +42,26 @@ struct Claims {
     exp: usize,
 }
 
-#[derive(Deserialize)]
-struct AuthParams {
-    token: Option<String>,
+/// Payload for short-lived room access tokens (issued by chat-delivery-service).
+#[derive(Serialize, Deserialize)]
+struct RoomClaims {
+    /// ID of the room the token grants access to.
+    room_id: String,
+    /// User ID of the token holder.
+    sub: String,
+    exp: usize,
 }
+
+/// Query parameters for the WebSocket upgrade endpoint.
+/// `token` is NOT accepted as a query param — authentication uses the `canari_ws_token` cookie only.
+#[derive(Deserialize)]
+struct AuthParams {}
 
 struct AppState {
     rooms: DashMap<RoomId, Arc<Room>>,
     jwt_secret: String,
+    /// Secret shared with chat-delivery-service to sign and verify room access tokens.
+    call_room_secret: String,
 }
 
 struct Room {
@@ -57,6 +69,8 @@ struct Room {
     peers: DashMap<PeerId, PeerContext>,
     /// Per-peer generation counter to debounce renegotiation (audio + video = one offer).
     renegotiate_gen: DashMap<PeerId, u64>,
+    /// Last signal activity timestamp — used to evict stale rooms.
+    last_activity: std::sync::Mutex<std::time::Instant>,
 }
 
 struct PeerContext {
@@ -69,7 +83,8 @@ struct PeerContext {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 enum SignalMessage {
-    Join { room_id: String },
+    /// Client must supply a `room_token` issued by chat-delivery-service to prove group membership.
+    Join { room_id: String, room_token: Option<String> },
     /// Sent when the peer is registered and ready to receive Offer/Answer signaling.
     Joined { room_id: String },
     Offer { sdp: String },
@@ -86,10 +101,19 @@ async fn main() -> anyhow::Result<()> {
         String::new()
     });
 
+    let call_room_secret = std::env::var("CALL_ROOM_SECRET").unwrap_or_default();
+    if call_room_secret.is_empty() {
+        warn!("CALL_ROOM_SECRET not set - room access control is DISABLED; any authenticated user can join any room");
+    }
+
     let state = Arc::new(AppState {
         rooms: DashMap::new(),
         jwt_secret,
+        call_room_secret,
     });
+
+    // Background task: evict rooms idle for more than 30 minutes.
+    tokio::spawn(cleanup_stale_rooms(state.clone()));
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
@@ -125,7 +149,7 @@ fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    Query(params): Query<AuthParams>,
+    Query(_params): Query<AuthParams>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
@@ -133,8 +157,8 @@ async fn ws_handler(
         return (StatusCode::INTERNAL_SERVER_ERROR, "JWT not configured").into_response();
     }
 
-    let token = extract_cookie_value(&headers, "canari_ws_token").or(params.token);
-    let Some(token) = token else {
+    // Token must come from the HttpOnly `canari_ws_token` cookie only — never from query params.
+    let Some(token) = extract_cookie_value(&headers, "canari_ws_token") else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 
@@ -162,6 +186,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
 
     info!("New WebSocket connection: {}", peer_id);
 
+    // Rate limiter: max 50 signal frames per second per peer.
+    let mut rate_count: u32 = 0;
+    let mut rate_window = std::time::Instant::now();
+
     let mut writer_socket = socket;
 
     loop {
@@ -169,9 +197,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
             msg = writer_socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                         match serde_json::from_str::<SignalMessage>(&text) {
+                        // Rate limiting: reset window every second, reject if over 50 msg/s.
+                        let now = std::time::Instant::now();
+                        if now.duration_since(rate_window) > std::time::Duration::from_secs(1) {
+                            rate_count = 0;
+                            rate_window = now;
+                        }
+                        rate_count += 1;
+                        if rate_count > 50 {
+                            warn!("[rate-limit] Peer {} exceeded 50 msg/s — disconnecting", peer_id);
+                            break;
+                        }
+
+                        match serde_json::from_str::<SignalMessage>(&text) {
                             Ok(signal) => {
-                                handle_signal(&state, &peer_id, &mut current_room_id, signal, tx.clone()).await;
+                                handle_signal(&state, &user_id, &peer_id, &mut current_room_id, signal, tx.clone()).await;
                             }
                             Err(e) => error!("JSON error: {}", e),
                         }
@@ -193,8 +233,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     }
 
     if let Some(room_id) = current_room_id {
-        if let Some(room) = state.rooms.get(&room_id) {
+        let remove_room = if let Some(room) = state.rooms.get(&room_id) {
             room.peers.remove(&peer_id);
+            room.peers.is_empty()
+        } else {
+            false
+        };
+        if remove_room {
+            state.rooms.remove(&room_id);
+            info!("Room {} removed — no peers remaining", room_id);
+        } else {
             info!("Peer {} removed from room {}", peer_id, room_id);
         }
     }
@@ -202,13 +250,43 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
 
 async fn handle_signal(
     state: &Arc<AppState>,
+    user_id: &str,
     peer_id: &String,
     current_room_id: &mut Option<String>,
     signal: SignalMessage,
     notify_tx: mpsc::Sender<SignalMessage>,
 ) {
     match signal {
-        SignalMessage::Join { room_id } => {
+        SignalMessage::Join { room_id, room_token } => {
+            // Validate room access token when CALL_ROOM_SECRET is configured.
+            if !state.call_room_secret.is_empty() {
+                let token = match room_token {
+                    Some(ref t) => t.as_str(),
+                    None => {
+                        warn!("[auth] Peer {} attempted Join without room_token — rejected", peer_id);
+                        return;
+                    }
+                };
+                let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
+                let validation = Validation::new(Algorithm::HS256);
+                match decode::<RoomClaims>(token, &key, &validation) {
+                    Ok(data) => {
+                        if data.claims.room_id != room_id {
+                            warn!("[auth] Peer {} room_id mismatch: token={} requested={}", peer_id, data.claims.room_id, room_id);
+                            return;
+                        }
+                        if data.claims.sub != user_id {
+                            warn!("[auth] Peer {} user_id mismatch: token={} ws={}", peer_id, data.claims.sub, user_id);
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("[auth] Peer {} invalid room_token: {}", peer_id, e);
+                        return;
+                    }
+                }
+            }
+
             info!("Peer {} joining room {}", peer_id, room_id);
             *current_room_id = Some(room_id.clone());
 
@@ -220,10 +298,16 @@ async fn handle_signal(
                         tracks: Mutex::new(Vec::new()),
                         peers: DashMap::new(),
                         renegotiate_gen: DashMap::new(),
+                        last_activity: std::sync::Mutex::new(std::time::Instant::now()),
                     })
                 })
                 .value()
                 .clone();
+
+            // Refresh activity timestamp.
+            if let Ok(mut ts) = room.last_activity.lock() {
+                *ts = std::time::Instant::now();
+            }
 
             let pc = match create_peer_connection().await {
                 Ok(pc) => pc,
@@ -373,6 +457,9 @@ async fn handle_signal(
         SignalMessage::Offer { sdp } => {
             if let Some(room_id) = current_room_id {
                 if let Some(room) = state.rooms.get(room_id) {
+                    if let Ok(mut ts) = room.last_activity.lock() {
+                        *ts = std::time::Instant::now();
+                    }
                     if let Some(ctx) = room.peers.get(peer_id) {
                         if let Ok(sdp_obj) = serde_json::from_str::<RTCSessionDescription>(&sdp) {
                             if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
@@ -415,6 +502,9 @@ async fn handle_signal(
         SignalMessage::Answer { sdp } => {
             if let Some(room_id) = current_room_id {
                 if let Some(room) = state.rooms.get(room_id) {
+                    if let Ok(mut ts) = room.last_activity.lock() {
+                        *ts = std::time::Instant::now();
+                    }
                     if let Some(ctx) = room.peers.get(peer_id) {
                         if let Ok(sdp_obj) = serde_json::from_str::<RTCSessionDescription>(&sdp) {
                             if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
@@ -431,6 +521,9 @@ async fn handle_signal(
         SignalMessage::IceCandidate { candidate } => {
             if let Some(room_id) = current_room_id {
                 if let Some(room) = state.rooms.get(room_id) {
+                    if let Ok(mut ts) = room.last_activity.lock() {
+                        *ts = std::time::Instant::now();
+                    }
                     if let Some(ctx) = room.peers.get(peer_id) {
                         if let Ok(cand) = serde_json::from_str::<RTCIceCandidateInit>(&candidate)
                         {
@@ -590,7 +683,7 @@ async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
     let ttl: u64 = std::env::var("CLOUDFLARE_TURN_TTL_SECONDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(7200);
+        .unwrap_or(3600);
 
     let url = format!(
         "https://rtc.live.cloudflare.com/v1/turn/keys/{}/credentials/generate-ice-servers",
@@ -724,6 +817,32 @@ async fn resolve_ice_servers() -> Vec<RTCIceServer> {
         return servers;
     }
     ice_servers_from_env()
+}
+
+/// Periodically removes rooms that have had no signal activity for more than 30 minutes.
+async fn cleanup_stale_rooms(state: Arc<AppState>) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+    loop {
+        interval.tick().await;
+        let before = state.rooms.len();
+        state.rooms.retain(|room_id, room| {
+            let idle = room
+                .last_activity
+                .lock()
+                .map(|ts| ts.elapsed())
+                .unwrap_or(std::time::Duration::ZERO);
+            if idle > std::time::Duration::from_secs(1800) {
+                info!("[cleanup] Evicting stale room {} (idle {:.0}s)", room_id, idle.as_secs_f32());
+                false
+            } else {
+                true
+            }
+        });
+        let removed = before.saturating_sub(state.rooms.len());
+        if removed > 0 {
+            info!("[cleanup] Removed {} stale room(s), {} remaining", removed, state.rooms.len());
+        }
+    }
 }
 
 async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {

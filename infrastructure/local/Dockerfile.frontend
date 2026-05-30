@@ -49,9 +49,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_http_version 1.1;\n\
@@ -71,9 +73,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
@@ -87,9 +91,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
@@ -103,9 +109,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_gateway chat-gateway:3000;\n\
     proxy_pass http://$upstream_gateway;\n\
     proxy_set_header Host $host;\n\
@@ -139,9 +147,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_calls chat-delivery-service:3010;\n\
     proxy_pass http://$upstream_calls;\n\
     proxy_set_header Host $host;\n\
@@ -155,9 +165,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_call call-service:3004;\n\
     rewrite ^/api/call(.*) /ws$1 break;\n\
     proxy_pass http://$upstream_call;\n\
@@ -178,9 +190,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_delivery chat-delivery-service:3010;\n\
     proxy_pass http://$upstream_delivery;\n\
     proxy_set_header Host $host;\n\
@@ -201,9 +215,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_media media-service:3011;\n\
     proxy_pass http://$upstream_media;\n\
     proxy_set_header Host $host;\n\
@@ -217,9 +233,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_post social-service:3014;\n\
     proxy_pass http://$upstream_post;\n\
     proxy_set_header Host $host;\n\
@@ -233,9 +251,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_payment core-service:3012;\n\
     proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
@@ -249,9 +269,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_form social-service:3014;\n\
     proxy_pass http://$upstream_form;\n\
     proxy_set_header Host $host;\n\
@@ -274,9 +296,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_asso social-service:3014;\n\
     proxy_pass http://$upstream_asso;\n\
     proxy_set_header Host $host;\n\
@@ -290,9 +314,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_moderation social-service:3014;\n\
     proxy_pass http://$upstream_moderation;\n\
     proxy_set_header Host $host;\n\
@@ -317,9 +343,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_channel social-service:3014;\n\
     proxy_pass http://$upstream_channel;\n\
     proxy_set_header Host $host;\n\
@@ -334,9 +362,11 @@ RUN printf 'server {\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
     auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
     proxy_set_header X-User-Id $user_id;\n\
     proxy_set_header X-User-Logged-In $user_logged_in;\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_user core-service:3012;\n\
     proxy_pass http://$upstream_user;\n\
     proxy_set_header Host $host;\n\

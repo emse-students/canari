@@ -252,7 +252,7 @@
   let windowEnd = $derived(Math.min(messageGroups.length, windowStart + MAX_RENDERED_GROUPS));
   let visibleMessageGroups = $derived(messageGroups.slice(windowStart, windowEnd));
   /** Groups hidden above the render window (older messages). */
-  let hiddenGroupCount = $derived(windowStart);
+  let _hiddenGroupCount = $derived(windowStart);
   /** Groups hidden below the render window (newer messages, while scrolled far up). */
   let hiddenBelowCount = $derived(messageGroups.length - windowEnd);
 

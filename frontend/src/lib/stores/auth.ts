@@ -18,6 +18,43 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
+const OIDC_STORE_FILE = 'oidc-state.json';
+
+/**
+ * Writes an OIDC state entry.
+ * On Tauri desktop uses `tauri-plugin-store` (survives WebKitGTK navigation
+ * which clears `localStorage`). Falls back to `localStorage` on web.
+ */
+async function setOidcEntry(key: string, value: string): Promise<void> {
+  if (isTauriRuntime()) {
+    const { load } = await import('@tauri-apps/plugin-store');
+    const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
+    await store.set(key, value);
+  } else {
+    localStorage.setItem(key, value);
+  }
+}
+
+/** Reads an OIDC state entry (Tauri Store on desktop, localStorage on web). */
+async function getOidcEntry(key: string): Promise<string | null> {
+  if (isTauriRuntime()) {
+    const { load } = await import('@tauri-apps/plugin-store');
+    const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
+    return (await store.get<string>(key)) ?? null;
+  }
+  return localStorage.getItem(key);
+}
+
+/** Removes an OIDC state entry (Tauri Store on desktop, localStorage on web). */
+async function removeOidcEntry(key: string): Promise<void> {
+  if (isTauriRuntime()) {
+    const { load } = await import('@tauri-apps/plugin-store');
+    const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
+    await store.delete(key);
+  } else {
+    localStorage.removeItem(key);
+  }
+}
 
 let _accessToken: string | null = null;
 // Shared in-flight refresh promise - prevents concurrent getToken() callers from
@@ -99,10 +136,12 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
     );
   }
 
-  // Generate random state for CSRF protection
+  // Generate random state for CSRF protection and persist it.
+  // On desktop (Tauri) we use the native Store plugin since WebKitGTK clears
+  // localStorage during full cross-origin navigation; on web localStorage is fine.
   const state = crypto.randomUUID();
-  localStorage.setItem(OIDC_STATE_KEY, state);
-  localStorage.setItem(OIDC_RETURN_KEY, returnTo);
+  await setOidcEntry(OIDC_STATE_KEY, state);
+  await setOidcEntry(OIDC_RETURN_KEY, returnTo);
 
   const redirectUri = oidcRedirectUri();
   const params = new URLSearchParams({
@@ -135,25 +174,16 @@ export async function handleOidcCallback(
   code: string,
   state: string
 ): Promise<{ id: string; email: string; displayName: string }> {
-  // CSRF state check.
-  // In a native Tauri desktop context, WebKitGTK clears localStorage during
-  // full cross-origin navigation (app → Authentik → back), so the saved state
-  // is gone by the time the callback page loads. CSRF is also not a meaningful
-  // threat in a local desktop webview, so we skip the check there.
-  // In a normal browser (web deployment) the check is enforced strictly.
-  const isDesktop = isTauriRuntime();
-  console.debug('[auth] handleOidcCallback isDesktop:', isDesktop);
-  const savedState = localStorage.getItem(OIDC_STATE_KEY);
+  // CSRF state check — enforced on all platforms.
+  // On desktop (Tauri) the state is read from the native Store plugin (survives
+  // WebKitGTK navigation that clears localStorage). On web, localStorage is used.
+  console.debug('[auth] handleOidcCallback isDesktop:', isTauriRuntime());
+  const savedState = await getOidcEntry(OIDC_STATE_KEY);
   console.debug('[auth] savedState present:', !!savedState, 'matches:', savedState === state);
-  if (!isDesktop) {
-    if (!savedState || savedState !== state) {
-      throw new Error('Invalid OIDC state - possible CSRF attack');
-    }
-  } else if (savedState && savedState !== state) {
-    // State was preserved but doesn't match - still reject.
+  if (!savedState || savedState !== state) {
     throw new Error('Invalid OIDC state - possible CSRF attack');
   }
-  localStorage.removeItem(OIDC_STATE_KEY);
+  await removeOidcEntry(OIDC_STATE_KEY);
 
   const redirectUri = oidcRedirectUri();
   console.debug('[auth] redirectUri:', redirectUri, 'coreUrl:', coreUrl());

@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 /**
  * Validates that the `X-User-Id` header is present on the request.
@@ -19,16 +20,39 @@ export class NginxAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase();
 
-    // En production, on peut exiger un header secret injecté par Nginx
-    // lorsque NGINX_AUTH_SECRET est configuré.
+    // En production, vérifier l'authenticité de la requête nginx.
     if (process.env.NODE_ENV === 'production') {
-      const expectedNginxSecret = process.env.NGINX_AUTH_SECRET?.trim();
-      if (expectedNginxSecret) {
-        const nginxSecret = request.headers['x-nginx-auth'] as string | undefined;
-        if (!nginxSecret || nginxSecret !== expectedNginxSecret) {
-          throw new UnauthorizedException(
-            'Requête non autorisée : header Nginx manquant ou invalide.'
-          );
+      const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
+      if (internalSecret && userId) {
+        // HMAC token validation: proves the request came through nginx with a valid JWT.
+        const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
+        if (!token) {
+          throw new UnauthorizedException('Missing X-Internal-Token header');
+        }
+        const epochMinute = Math.floor(Date.now() / 60000);
+        const valid = [epochMinute, epochMinute - 1].some((min) => {
+          const expected = createHmac('sha256', internalSecret)
+            .update(`${userId}:${min}`)
+            .digest('hex');
+          try {
+            return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
+          } catch {
+            return false;
+          }
+        });
+        if (!valid) {
+          throw new UnauthorizedException('Invalid X-Internal-Token');
+        }
+      } else {
+        // Fallback: static NGINX_AUTH_SECRET (legacy).
+        const expectedNginxSecret = process.env.NGINX_AUTH_SECRET?.trim();
+        if (expectedNginxSecret) {
+          const nginxSecret = request.headers['x-nginx-auth'] as string | undefined;
+          if (!nginxSecret || nginxSecret !== expectedNginxSecret) {
+            throw new UnauthorizedException(
+              'Requête non autorisée : header Nginx manquant ou invalide.'
+            );
+          }
         }
       }
       if (userId) {
