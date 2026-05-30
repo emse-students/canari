@@ -160,8 +160,8 @@ services:
       - "${MINIO_API_HOST_PORT:-19100}:9000"   # S3 API (host configurable)
       - "${MINIO_CONSOLE_HOST_PORT:-19101}:9001"   # Web console (host configurable)
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required - generate: openssl rand -hex 8}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required - generate: openssl rand -base64 24}
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required - see .env.example}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required - see .env.example}"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -211,7 +211,7 @@ services:
       - "3112:3012"
     environment:
       PORT: "3012"
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate: openssl rand -hex 32}
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
@@ -247,12 +247,12 @@ services:
       DB_USERNAME: admin
       DB_PASSWORD: password
       DB_DATABASE: auth_db
-      CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - generate: openssl rand -hex 32}
+      CHANNELS_ENCRYPTION_SECRET: "${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - see .env.example}"
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
       USER_SERVICE_URL: http://core-service:3112
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate: openssl rand -hex 32}
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       MEDIA_SERVICE_URL: http://media-service:3011
     depends_on:
       postgres:
