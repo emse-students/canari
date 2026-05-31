@@ -189,12 +189,16 @@
       />
     </div>
     <div class="md:col-span-5 min-w-0">
-      <label class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2">Type de réponse</label>
+      <label for="type-picker-{item.id}" class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2">Type de réponse</label>
       <div class="relative">
         {#if true}
           {@const cur = QUESTION_TYPES.find((t) => t.value === item.type)}
           <button
+            id="type-picker-{item.id}"
             type="button"
+            aria-label="Type de réponse : {cur?.label ?? item.type}"
+            aria-haspopup="listbox"
+            aria-expanded={showTypePicker}
             onclick={() => (showTypePicker = !showTypePicker)}
             class="{fieldClass} flex items-center gap-2 text-left cursor-pointer"
           >
@@ -209,7 +213,7 @@
           </button>
         {/if}
         {#if showTypePicker}
-          <div class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)}></div>
+          <div role="presentation" class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)} onkeydown={(e) => { if (e.key === 'Escape') showTypePicker = false; }}></div>
           <div
             class="absolute top-full left-0 right-0 mt-1 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-2"
           >

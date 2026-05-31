@@ -246,13 +246,13 @@
 
 {#if open}
   <div use:portal>
-    <!-- Backdrop: click outside the card to close -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- Backdrop: click outside the card to close. Escape key is handled by the inner dialog. -->
     <div
       role="presentation"
       class="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-lg sm:p-4"
       style="touch-action: none;"
       onclick={onClose}
-      onkeydown={undefined}
     >
       <!-- Floating card: full-screen on mobile, bounded on desktop -->
       <div
