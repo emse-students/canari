@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -59,9 +60,17 @@ export class ModerationController {
   /** Lists all content reports (pending first). Requires MODERATE or global admin. */
   @UseGuards(NginxAuthGuard)
   @Get('reports')
-  async listReports(@Headers('x-user-id') userId: string, @Headers('x-global-admin') ga?: string) {
+  async listReports(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string
+  ) {
     await this.assertModerator(userId, ga === 'true');
-    return this.service.listAllReports();
+    return this.service.listAllReports(
+      limit ? Math.min(parseInt(limit, 10) || 50, 200) : 50,
+      offset ? parseInt(offset, 10) || 0 : 0
+    );
   }
 
   /** Marks a report as reviewed or dismissed. Requires MODERATE or global admin. */

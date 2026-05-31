@@ -285,35 +285,42 @@ export class PostInteractionsService {
    * Also persists votesByUser so the frontend can restore the selection on reload.
    */
   async votePoll(postId: string, pollId: string, data: { userId: string; optionIds: string[] }) {
-    const post = await this.postRepo
-      .createQueryBuilder('post')
-      .where('post.id = :postId', { postId })
-      .getOne();
-    if (!post) throw new NotFoundException('Poll not found');
+    // Use a pessimistic write lock to prevent two concurrent votes from silently
+    // overwriting each other (check-then-act race on the JSON polls column).
+    let result: any;
+    await this.postRepo.manager.transaction(async (manager) => {
+      const post = await manager
+        .createQueryBuilder('post', 'post')
+        .where('post.id = :postId', { postId })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!post) throw new NotFoundException('Poll not found');
 
-    let updated = false;
-    for (const poll of post.polls ?? []) {
-      if (poll.id !== pollId) continue;
-      const selectedIds = data.optionIds;
-      for (const opt of poll.options) {
-        opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter(
-          (v: string) => v !== data.userId
-        );
+      let updated = false;
+      for (const poll of (post as any).polls ?? []) {
+        if (poll.id !== pollId) continue;
+        const selectedIds = data.optionIds;
+        for (const opt of poll.options) {
+          opt.votes = (Array.isArray(opt.votes) ? opt.votes : []).filter(
+            (v: string) => v !== data.userId
+          );
+        }
+        for (const opt of poll.options) {
+          if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);
+        }
+        if (!poll.votesByUser) poll.votesByUser = {};
+        poll.votesByUser[data.userId] = selectedIds;
+        updated = true;
       }
-      for (const opt of poll.options) {
-        if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);
-      }
-      if (!poll.votesByUser) poll.votesByUser = {};
-      poll.votesByUser[data.userId] = selectedIds;
-      updated = true;
-    }
 
-    if (updated) {
-      const saved = await this.postRepo.save(post);
-      const entity = Array.isArray(saved) ? saved[0] : saved;
-      return entity;
-    }
-    return post;
+      if (updated) {
+        const saved = await manager.save(post as any);
+        result = Array.isArray(saved) ? saved[0] : saved;
+      } else {
+        result = post;
+      }
+    });
+    return result;
   }
 
   /**

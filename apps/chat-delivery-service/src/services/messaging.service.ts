@@ -4,7 +4,9 @@ import {
   ForbiddenException,
   BadRequestException,
   Inject,
+  OnModuleInit,
 } from '@nestjs/common';
+import { LessThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import * as crypto from 'crypto';
@@ -86,8 +88,11 @@ export interface AckMessagesBody {
   messageIds: string[];
 }
 
+/** QueuedMessages older than this are deleted (devices that never reconnected). */
+const QUEUED_MESSAGE_TTL_DAYS = 7;
+
 @Injectable()
-export class MessagingService {
+export class MessagingService implements OnModuleInit {
   private readonly logger = new Logger(MessagingService.name);
 
   constructor(
@@ -104,6 +109,38 @@ export class MessagingService {
     private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
+
+  onModuleInit(): void {
+    // Run immediately at startup, then every 6 hours.
+    void this.purgeExpiredQueuedMessages();
+    const timer = setInterval(
+      () => void this.purgeExpiredQueuedMessages(),
+      6 * 60 * 60 * 1000,
+    );
+    timer.unref();
+  }
+
+  /** Deletes QueuedMessages that have been waiting for more than 7 days (device never reconnected). */
+  private async purgeExpiredQueuedMessages(): Promise<void> {
+    const cutoff = new Date(
+      Date.now() - QUEUED_MESSAGE_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
+    try {
+      const result = await this.queuedMessageRepo.delete({
+        createdAt: LessThan(cutoff),
+      });
+      const count = result.affected ?? 0;
+      if (count > 0) {
+        this.logger.log(
+          `[cleanup] Deleted ${count} expired QueuedMessage(s) (>${QUEUED_MESSAGE_TTL_DAYS}d)`,
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[cleanup] QueuedMessage purge failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 
   private makeTraceId(scope: string): string {
     const { randomUUID } = crypto;
@@ -487,8 +524,9 @@ export class MessagingService {
       body.senderId
     ) {
       try {
+        const historyKey = `history:${body.groupId}`;
         await this.redis.xadd(
-          `history:${body.groupId}`,
+          historyKey,
           'MAXLEN',
           '~',
           '1000',
@@ -500,6 +538,8 @@ export class MessagingService {
           'timestamp',
           new Date().toISOString(),
         );
+        // Refresh TTL on every write so abandoned groups are evicted after 7 days of inactivity.
+        await this.redis.expire(historyKey, 7 * 24 * 60 * 60);
         this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
       } catch (e) {
         this.logger.warn(

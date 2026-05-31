@@ -12,6 +12,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   Min,
   ValidateIf,
   ValidateNested,
@@ -293,6 +294,7 @@ export class AddCommentDto {
 export class AddReactionDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(20)
   reactionType: string; // J'aime, J'adore, Triste, Joyeux, Enervé, Canari, Marteau
 }
 

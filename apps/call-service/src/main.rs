@@ -287,6 +287,12 @@ async fn handle_signal(
                 }
             }
 
+            // Reject if peer is already in a room — prevents multi-room joins.
+            if let Some(existing) = current_room_id {
+                warn!("[busy] Peer {} tried to join room {} but is already in room {}", peer_id, room_id, existing);
+                return;
+            }
+
             info!("Peer {} joining room {}", peer_id, room_id);
             *current_room_id = Some(room_id.clone());
 
@@ -779,6 +785,13 @@ async fn apply_remote_ice_candidate(peer_id: &str, ctx: &PeerContext, cand: RTCI
         }
         let n = {
             let mut pending = ctx.pending_ice_candidates.lock().await;
+            // Hard cap: drop candidates if the buffer overflows (prevents memory leak when
+            // Offer never arrives — e.g. abandoned connections).
+            if pending.len() >= 200 {
+                warn!("[ICE] {} candidate buffer overflow (>=200) — clearing buffer", peer_id);
+                pending.clear();
+                return;
+            }
             pending.push(cand);
             pending.len()
         };

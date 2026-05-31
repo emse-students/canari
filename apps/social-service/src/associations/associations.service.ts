@@ -80,8 +80,14 @@ export class AssociationsService {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  /** Creates a new association. Throws if the slug is already taken. */
+  /** Creates a new association. Throws if the slug is already taken or has an invalid format. */
   async create(dto: CreateAssociationDto, userId: string) {
+    if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
+      throw new BadRequestException(
+        'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2–50 chars)'
+      );
+    }
+
     const existing = await this.assoRepo.findOne({
       where: { slug: dto.slug },
     });

@@ -164,6 +164,22 @@ pub async fn ws_handler(
 
     match decode::<Claims>(&token, &key, &validation) {
         Ok(token_data) => {
+            // Enforce a hard cap to prevent resource exhaustion under a connection flood.
+            const MAX_CONNECTIONS: usize = 1_000;
+            let total: usize = {
+                let map = state.connected_users.lock().unwrap();
+                map.values().map(|senders| senders.len()).sum()
+            };
+            if total >= MAX_CONNECTIONS {
+                tracing::warn!(
+                    "[ws] Connection limit reached ({}/{}) — rejecting upgrade for {}",
+                    total,
+                    MAX_CONNECTIONS,
+                    token_data.claims.sub
+                );
+                return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
+            }
+
             // Device ID generated server-side so the client cannot spoof another device's presence.
             let device_id = uuid::Uuid::new_v4().to_string();
             ws.on_upgrade(move |socket| {

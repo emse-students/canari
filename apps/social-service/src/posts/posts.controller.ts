@@ -87,7 +87,7 @@ export class PostsController {
     @Query('offset') offset?: string
   ) {
     if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
-    return this.service.getReportedPosts(Number(limit ?? 50), Number(offset ?? 0));
+    return this.service.getReportedPosts(Math.min(Number(limit ?? 50), 200), Number(offset ?? 0));
   }
 
   /** Returns all posts currently hidden by moderation, with their pending report count. Global admin only. */

@@ -198,7 +198,17 @@ export class FormsService {
     if (!form) throw new NotFoundException('Form not found');
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
-      throw new BadRequestException('Le formulaire n’est pas encore ouvert');
+      throw new BadRequestException("Le formulaire n'est pas encore ouvert");
+    }
+
+    // Validate answer sizes to prevent oversized payloads.
+    for (const [key, value] of Object.entries(input.answers ?? {})) {
+      if (typeof value === 'string' && (value as string).length > 2000) {
+        throw new BadRequestException(`Answer for field ${key} exceeds 2000 characters`);
+      }
+      if (Array.isArray(value) && (value as unknown[]).length > 50) {
+        throw new BadRequestException(`Answer for field ${key} has too many selections (max 50)`);
+      }
     }
 
     // Validation & Price Calculation
@@ -229,44 +239,51 @@ export class FormsService {
       }
     }
 
-    if (form.maxSubmissions) {
-      const count = await this.submissionRepo.count({
-        where: [
-          { formId: id, paymentStatus: 'paid' },
-          { formId: id, paymentStatus: 'free' },
-        ],
-      });
-      if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
-    }
+    // C1+C2: Wrap capacity check + submission upsert in a REPEATABLE READ transaction.
+    // Prevents two concurrent requests from both passing the capacity check (C2) and
+    // from both creating a new submission for the same user/form (C1 double-charge).
+    let savedSubmission!: Submission;
+    await this.submissionRepo.manager.transaction('REPEATABLE READ', async (manager) => {
+      if (form.maxSubmissions) {
+        const count = await manager.count(Submission, {
+          where: [
+            { formId: id, paymentStatus: 'paid' },
+            { formId: id, paymentStatus: 'free' },
+          ],
+        });
+        if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
+      }
 
-    // If a pending submission already exists for this user/form, reuse it to avoid duplicates
-    const existingPending =
-      totalCents > 0
-        ? await this.submissionRepo.findOne({
-            where: { formId: id, userId: input.userId, paymentStatus: 'pending' },
-            order: { createdAt: 'DESC' },
-          })
-        : null;
+      // If a pending submission already exists for this user/form, reuse it to avoid duplicates.
+      // Lock the row so a concurrent request cannot create a second one simultaneously.
+      const existingPending =
+        totalCents > 0
+          ? await manager.findOne(Submission, {
+              where: { formId: id, userId: input.userId, paymentStatus: 'pending' },
+              order: { createdAt: 'DESC' },
+              lock: { mode: 'pessimistic_write' },
+            })
+          : null;
 
-    let savedSubmission: Submission;
-    if (existingPending) {
-      existingPending.answers = input.answers;
-      existingPending.totalPaid = totalCents;
-      existingPending.email = input.email;
-      savedSubmission = await this.submissionRepo.save(existingPending);
-    } else {
-      const submission = this.submissionRepo.create({
-        formId: id,
-        userId: input.userId,
-        email: input.email,
-        answers: input.answers,
-        totalPaid: totalCents,
-        paymentStatus: totalCents > 0 ? 'pending' : 'free',
-        paymentMethod: null,
-        cashExpiresAt: null,
-      });
-      savedSubmission = await this.submissionRepo.save(submission);
-    }
+      if (existingPending) {
+        existingPending.answers = input.answers;
+        existingPending.totalPaid = totalCents;
+        existingPending.email = input.email;
+        savedSubmission = await manager.save(existingPending);
+      } else {
+        const submission = manager.create(Submission, {
+          formId: id,
+          userId: input.userId,
+          email: input.email,
+          answers: input.answers,
+          totalPaid: totalCents,
+          paymentStatus: totalCents > 0 ? 'pending' : 'free',
+          paymentMethod: null,
+          cashExpiresAt: null,
+        });
+        savedSubmission = await manager.save(submission);
+      }
+    });
 
     // Cash payment shortcut - skip Stripe entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {

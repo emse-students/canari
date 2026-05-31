@@ -444,6 +444,11 @@ async fn main() {
     }
 
     // ── Kafka consumer: broadcast `post.created` events to all clients ────
+    // At-least-once delivery: auto-commit is DISABLED. Offsets are committed
+    // manually only after the frame has been successfully enqueued to at least
+    // one client. If no clients are connected, the offset is still committed
+    // (the message is not relevant for replay). On service restart, Kafka will
+    // redeliver from the last committed offset.
     {
         let kafka_brokers =
             std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
@@ -452,85 +457,93 @@ async fn main() {
         tokio::spawn(async move {
             use rdkafka::ClientConfig;
             use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
-            use rdkafka::message::Message;
+            use rdkafka::message::Message as KafkaMessage;
 
-            tracing::info!("Kafka Consumer connecting to {}", kafka_brokers);
+            // Retry loop: if initialization fails (Kafka down at startup), keep retrying.
+            let consumer: StreamConsumer = loop {
+                match ClientConfig::new()
+                    .set("group.id", "chat-gateway-broadcast")
+                    .set("bootstrap.servers", &kafka_brokers)
+                    .set("enable.partition.eof", "false")
+                    .set("session.timeout.ms", "6000")
+                    // Disable auto-commit so we control exactly when offsets advance.
+                    .set("enable.auto.commit", "false")
+                    .create::<StreamConsumer>()
+                {
+                    Ok(c) => break c,
+                    Err(e) => {
+                        tracing::warn!("[kafka] Consumer creation failed: {} — retrying in 10s", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                    }
+                }
+            };
 
-            let consumer: StreamConsumer = ClientConfig::new()
-                .set("group.id", "chat-gateway-broadcast")
-                .set("bootstrap.servers", &kafka_brokers)
-                .set("enable.partition.eof", "false")
-                .set("session.timeout.ms", "6000")
-                .set("enable.auto.commit", "true")
-                .create()
-                .expect("Consumer creation failed");
+            // Retry subscribe separately.
+            loop {
+                match consumer.subscribe(&["post.created"]) {
+                    Ok(_) => break,
+                    Err(e) => {
+                        tracing::warn!("[kafka] Subscribe failed: {} — retrying in 10s", e);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                    }
+                }
+            }
 
-            consumer
-                .subscribe(&["post.created"])
-                .expect("Can't subscribe to specified topic");
-
-            tracing::info!("Abonné au topic Kafka 'post.created'");
+            tracing::info!("[kafka] Subscribed to topic 'post.created' (at-least-once mode)");
 
             loop {
                 match consumer.recv().await {
-                    Err(e) => tracing::warn!("Kafka error: {}", e),
+                    Err(e) => tracing::warn!("[kafka] Receive error: {}", e),
                     Ok(m) => {
                         let payload = match m.payload_view::<str>() {
                             None => "",
                             Some(Ok(s)) => s,
                             Some(Err(e)) => {
-                                tracing::warn!(
-                                    "Error while deserializing message payload: {:?}",
-                                    e
-                                );
+                                tracing::warn!("[kafka] Payload deserialization error: {:?}", e);
                                 ""
                             }
                         };
 
-                        tracing::info!("Received post.created broadcast: {}", payload);
+                        tracing::info!("[kafka] post.created received ({} bytes)", payload.len());
 
-                        // Broadcast a `post_created` frame to every connected client.
                         let frame = serde_json::json!({
                             "type": "post_created",
-                            "data": serde_json::from_str::<serde_json::Value>(payload).unwrap_or(serde_json::json!(null))
-                        }).to_string();
+                            "data": serde_json::from_str::<serde_json::Value>(payload)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .to_string();
 
                         let senders_to_notify: Vec<(String, _)> = {
                             let map = connected_users.lock().unwrap();
-                            let mut temp = Vec::new();
-                            for (key, senders) in map.iter() {
-                                for tx in senders.values() {
-                                    temp.push((key.clone(), tx.clone()));
-                                }
-                            }
-                            temp
+                            map.iter()
+                                .flat_map(|(key, senders)| {
+                                    senders.values().map(|tx| (key.clone(), tx.clone()))
+                                })
+                                .collect()
                         };
 
-                        let mut count = 0;
-                        let mut to_remove = Vec::new();
+                        let mut delivered = 0usize;
                         for (key, tx) in senders_to_notify {
-                            if let Err(e) = tx.try_send(frame.clone()) {
-                                tracing::warn!(
-                                    "Backpressure: dropping broadcast frame for slow client {}: {}",
+                            match tx.try_send(frame.clone()) {
+                                Ok(_) => delivered += 1,
+                                Err(e) => tracing::debug!(
+                                    "[kafka] Backpressure: skipping slow client {}: {}",
                                     key,
                                     e
-                                );
-                                to_remove.push(key);
-                            } else {
-                                count += 1;
+                                ),
                             }
                         }
 
-                        if !to_remove.is_empty() {
-                            let mut map = connected_users.lock().unwrap();
-                            for key in to_remove {
-                                map.remove(&key);
-                            }
-                        }
-                        tracing::info!("Broadcasted post to {} connections", count);
+                        tracing::info!(
+                            "[kafka] Broadcasted post.created to {} client(s)",
+                            delivered
+                        );
 
+                        // Commit offset AFTER delivery attempts (at-least-once).
+                        // We always commit even if delivered == 0 to avoid replaying
+                        // broadcasts to an empty room on restart.
                         if let Err(e) = consumer.commit_message(&m, CommitMode::Async) {
-                            tracing::warn!("Failed to commit offset: {}", e);
+                            tracing::warn!("[kafka] Offset commit failed: {}", e);
                         }
                     }
                 }

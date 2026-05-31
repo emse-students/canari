@@ -77,16 +77,22 @@ export class ModerationService {
   }
 
   /** Returns all pending content reports, newest first. */
-  async listPendingReports(): Promise<ContentReport[]> {
+  async listPendingReports(limit = 50, offset = 0): Promise<ContentReport[]> {
     return this.reportRepo.find({
       where: { status: 'pending' },
       order: { createdAt: 'DESC' },
+      take: Math.min(limit, 200),
+      skip: offset,
     });
   }
 
   /** Returns all content reports regardless of status, newest first. */
-  async listAllReports(): Promise<ContentReport[]> {
-    return this.reportRepo.find({ order: { createdAt: 'DESC' } });
+  async listAllReports(limit = 50, offset = 0): Promise<ContentReport[]> {
+    return this.reportRepo.find({
+      order: { createdAt: 'DESC' },
+      take: Math.min(limit, 200),
+      skip: offset,
+    });
   }
 
   /**

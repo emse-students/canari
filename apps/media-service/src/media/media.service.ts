@@ -381,5 +381,35 @@ export class MediaService {
       await this.persistMetadata();
       this.logger.log(`Purged ${purgedCount} expired media object(s) (retention 30 days)`);
     }
+
+    // Purge orphaned chunked upload temp files older than 24 hours.
+    // These are left behind when a client starts a chunked upload but never completes it.
+    await this.purgeOrphanedChunks();
+  }
+
+  /** Deletes temp files in CHUNK_DIR that are older than 24 hours (abandoned uploads). */
+  private async purgeOrphanedChunks(): Promise<void> {
+    const maxAgeMs = 24 * 60 * 60 * 1000;
+    let removed = 0;
+    try {
+      const entries = await fs.readdir(CHUNK_DIR);
+      for (const name of entries) {
+        const filePath = path.join(CHUNK_DIR, name);
+        try {
+          const stat = await fs.stat(filePath);
+          if (Date.now() - stat.mtimeMs > maxAgeMs) {
+            await fs.remove(filePath);
+            removed++;
+          }
+        } catch {
+          // File may have been removed concurrently — ignore.
+        }
+      }
+    } catch {
+      // CHUNK_DIR may not exist yet on first run — ignore.
+    }
+    if (removed > 0) {
+      this.logger.log(`Purged ${removed} orphaned chunked upload temp file(s) (>24h)`);
+    }
   }
 }

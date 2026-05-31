@@ -904,19 +904,21 @@ export class ChannelService {
     });
     if (!member) throw new NotFoundException('Member not found');
 
-    if (channel.isPrivate) {
-      const normalized = input.userId.trim().toLowerCase();
-      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
-      await this.channelRepo.save(channel);
-    } else {
-      await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
-    }
-
-    // Membership change => rotate key and distribute only to remaining members.
+    // Rotate the key BEFORE removing the member so there is no window where the member
+    // is absent but the key hasn't been rotated — which would let them decrypt messages
+    // sent with the still-valid old key during that gap.
     if (!channel.masterSecret) {
       channel.masterSecret = crypto.randomBytes(32).toString('base64');
     }
     channel.keyVersion += 1;
+
+    if (channel.isPrivate) {
+      const normalized = input.userId.trim().toLowerCase();
+      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
+    } else {
+      await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
+    }
+    // Single save: atomically persists both the key rotation and the membership change.
     await this.channelRepo.save(channel);
 
     const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
