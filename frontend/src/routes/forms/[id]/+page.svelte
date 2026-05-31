@@ -384,7 +384,7 @@
     >
       {#if form.imageUrl}
         <div class="relative">
-          <img src={form.imageUrl} alt="" class="w-full max-h-72 object-cover" />
+          <img src={form.imageUrl} alt="" class="w-full max-h-72 object-cover" loading="lazy" />
           <div
             class="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/60 to-transparent"
           ></div>
@@ -538,7 +538,7 @@
 
           {#if item.imageUrl}
             <div class="mb-3 ml-6 rounded-xl overflow-hidden border border-cn-border/60">
-              <img src={item.imageUrl} alt="" class="w-full max-h-48 object-cover" />
+              <img src={item.imageUrl} alt="" class="w-full max-h-48 object-cover" loading="lazy" />
             </div>
           {/if}
 

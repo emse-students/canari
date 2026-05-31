@@ -868,7 +868,7 @@
           <p class="text-sm font-bold text-text-main ml-1">Affiche / image (optionnel)</p>
           {#if formImageUrl}
             <div class="relative rounded-xl overflow-hidden border border-cn-border">
-              <img src={formImageUrl} alt="Affiche" class="w-full max-h-48 object-cover" />
+              <img src={formImageUrl} alt="Affiche" class="w-full max-h-48 object-cover" loading="lazy" />
               <button
                 type="button"
                 onclick={handleImageRemove}

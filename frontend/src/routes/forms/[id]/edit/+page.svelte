@@ -400,7 +400,7 @@
       {/if}
       {#if imageUrl}
         <div class="relative rounded-xl overflow-hidden border border-cn-border mb-2">
-          <img src={imageUrl} alt="Affiche" class="w-full max-h-56 object-cover" />
+          <img src={imageUrl} alt="Affiche" class="w-full max-h-56 object-cover" loading="lazy" />
           <button
             type="button"
             onclick={handleImageRemove}

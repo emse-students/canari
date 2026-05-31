@@ -353,7 +353,12 @@ export function useMessaging() {
     const toStore: StoredMessage[] = [];
     const newMessages: ChatMessage[] = [];
 
+    let processedCount = 0;
     for (const pm of messages) {
+      // Yield to the main thread every 50 messages to avoid UI freeze during large catch-ups.
+      processedCount++;
+      if (processedCount % 50 === 0) await yieldToMainThread();
+
       const id = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
       if (existingIds.has(id)) continue;
       existingIds.add(id);

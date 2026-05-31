@@ -278,7 +278,7 @@
     <div class="mb-4 sm:mb-5">
       {#if item.imageUrl}
         <div class="relative rounded-xl overflow-hidden border border-cn-border">
-          <img src={item.imageUrl} alt="Question" class="w-full max-h-40 object-cover" />
+          <img src={item.imageUrl} alt="Question" class="w-full max-h-40 object-cover" loading="lazy" />
           <button
             type="button"
             onclick={() => {
