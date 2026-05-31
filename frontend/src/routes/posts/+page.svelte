@@ -202,7 +202,10 @@
     try {
       const more = await listPosts(buildListOptions(currentPosts.length));
       if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
-      postsOverride = [...currentPosts, ...more];
+      // Deduplicate in case new posts were inserted between page fetches.
+      const existingIds = new Set(currentPosts.map((p) => p.id));
+      const newPosts = more.filter((p) => !existingIds.has(p.id));
+      postsOverride = [...currentPosts, ...newPosts];
     } catch {
       // silent - user can scroll back up and retry
     } finally {

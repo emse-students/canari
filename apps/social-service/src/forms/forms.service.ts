@@ -78,9 +78,19 @@ export class FormsService {
     );
   }
 
-  /** Returns a single form by ID, or null if not found. */
+  /** Returns a single form by ID with its current submission count, or null if not found. */
   async get(id: string) {
-    return this.formRepo.findOne({ where: { id } });
+    const form = await this.formRepo.findOne({ where: { id } });
+    if (!form) return null;
+    const submissionCount = await this.submissionRepo.count({
+      where: [
+        { formId: id, paymentStatus: 'paid' },
+        { formId: id, paymentStatus: 'free' },
+        { formId: id, paymentStatus: 'pending' },
+        { formId: id, paymentStatus: 'pending_cash' },
+      ],
+    });
+    return { ...form, submissionCount };
   }
 
   /**

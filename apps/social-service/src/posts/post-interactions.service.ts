@@ -128,6 +128,24 @@ export class PostInteractionsService {
       /* non-fatal */
     }
 
+    const existingComments: any[] = post.comments ?? [];
+
+    // Validate parentId references an actual comment on this post.
+    if (data.parentId) {
+      const parent = existingComments.find((c: any) => c.id === data.parentId);
+      if (!parent) throw new NotFoundException('Parent comment not found');
+
+      // Enforce max nesting depth of 3 to prevent DoS via deeply nested threads.
+      let depth = 1;
+      let current = parent;
+      while (current?.parentId) {
+        current = existingComments.find((c: any) => c.id === current.parentId);
+        depth++;
+        if (depth >= 3)
+          throw new BadRequestException('Comment nesting limit reached (max 3 levels)');
+      }
+    }
+
     const comment = {
       id: crypto.randomUUID(),
       userId: data.userId,
@@ -140,7 +158,7 @@ export class PostInteractionsService {
       createdAt: new Date().toISOString(),
       ...(data.media ? { media: data.media } : {}),
     };
-    post.comments = [...(post.comments ?? []), comment];
+    post.comments = [...existingComments, comment];
     await this.postRepo.save(post);
 
     // Fire-and-forget: notify post author, parent comment author, and mentioned users.

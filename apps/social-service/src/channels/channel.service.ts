@@ -282,12 +282,17 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
 
+    const channelName = (input.name ?? '').trim().toLowerCase();
+    if (!channelName) throw new BadRequestException('Channel name cannot be empty');
+    if (channelName.length > 80)
+      throw new BadRequestException('Channel name too long (max 80 characters)');
+
     const masterSecret = crypto.randomBytes(32).toString('base64');
     const isPrivate = input.visibility === 'private';
 
     const channel = this.channelRepo.create({
       workspaceId: input.workspaceId,
-      name: input.name,
+      name: channelName,
       isPrivate,
       allowedRoles: [],
       allowedUsers: isPrivate ? [input.actorUserId.trim().toLowerCase()] : [],
@@ -420,7 +425,12 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
 
-    channel.name = newName.trim().toLowerCase();
+    const trimmedName = newName.trim().toLowerCase();
+    if (!trimmedName) throw new BadRequestException('Channel name cannot be empty');
+    if (trimmedName.length > 80)
+      throw new BadRequestException('Channel name too long (max 80 characters)');
+
+    channel.name = trimmedName;
     await this.channelRepo.save(channel);
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);

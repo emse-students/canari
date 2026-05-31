@@ -53,4 +53,9 @@ export class PurchaseRecordService {
   async findByPaymentIntent(paymentIntentId: string): Promise<PurchaseRecord | null> {
     return this.repo.findOne({ where: { stripePaymentIntentId: paymentIntentId } });
   }
+
+  /** Returns an existing purchase record for a specific user + product combination. */
+  async findByUserAndProduct(userId: string, productId: string): Promise<PurchaseRecord | null> {
+    return this.repo.findOne({ where: { userId, productId } });
+  }
 }

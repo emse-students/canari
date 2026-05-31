@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { AssociationsService } from '../associations/associations.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -542,6 +547,9 @@ export class PostsService {
   async getById(id: string) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
+    // Hidden posts must not be accessible by direct ID — only admins can see them via
+    // the dedicated /posts/hidden endpoint, not the public fetch path.
+    if (post.hiddenByModeration) throw new ForbiddenException('Post not available');
     const shaped = await this.toPublicPostFromEntity(post);
     // Attach author name fields (same source as listPosts - local users table).
     if (!shaped.associationId && shaped.authorId) {

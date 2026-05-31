@@ -120,6 +120,12 @@ export class ProductsService {
       throw new BadRequestException('Association has not completed Stripe Connect onboarding');
     }
 
+    // Prevent duplicate purchases: check if user already has a completed purchase record.
+    const existing = await this.purchaseRecordService.findByUserAndProduct(userId, productId);
+    if (existing) {
+      throw new BadRequestException('You have already purchased this product');
+    }
+
     // Determine the final amount in cents
     let amountCents: number;
     if (product.amountCents !== null) {
