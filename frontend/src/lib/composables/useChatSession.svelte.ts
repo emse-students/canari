@@ -121,7 +121,11 @@ export function useChatSession() {
 
   // ── Reconnection bookkeeping ──────────────────────────────────────────────
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+  /** After MAX_RECONNECT_ATTEMPTS failures the circuit opens and the user must manually retry. */
+  const MAX_RECONNECT_ATTEMPTS = 20;
   let reconnectAttempts = 0;
+  /** True once the circuit is open; cleared by an explicit manual retry. */
+  let reconnectCircuitOpen = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Leader-tab periodic successor migration check (cleared on logout). */
   let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -224,6 +228,7 @@ export function useChatSession() {
       reconnectTimer = null;
     }
     reconnectAttempts = 0;
+    reconnectCircuitOpen = false;
 
     try {
       const mlsService = ensureMls();
@@ -784,6 +789,7 @@ export function useChatSession() {
     }
     stopConnectionWatchdog();
     reconnectAttempts = 0;
+    reconnectCircuitOpen = false;
     isLoggedIn = false;
     isWsConnected = false;
     cb.conversations.clear();
@@ -864,10 +870,22 @@ export function useChatSession() {
     if (!isLoggedIn) return;
     isWsConnected = false;
     if (reconnectTimer !== null || isReconnecting) return;
+
+    // Circuit breaker: stop retrying after MAX_RECONNECT_ATTEMPTS (≈5 min).
+    // The user must click "Réessayer" to reset.
+    if (reconnectCircuitOpen) return;
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      reconnectCircuitOpen = true;
+      cb.log(
+        `[WS] Connexion impossible après ${MAX_RECONNECT_ATTEMPTS} tentatives. Cliquez "Réessayer" pour reconnecter.`
+      );
+      return;
+    }
+
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
     reconnectAttempts++;
     cb.log(
-      `Connexion perdue. Nouvelle tentative dans ${delay / 1000}s... (tentative ${reconnectAttempts})`
+      `Connexion perdue. Nouvelle tentative dans ${delay / 1000}s... (tentative ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
     );
     reconnectTimer = setTimeout(() => attemptReconnect(cb), delay);
   }

@@ -73,6 +73,10 @@ export class IndexedDbStorage implements IStorage {
           const oldToNew = new Map<string, string>();
 
           const cursorReq = convStore.openCursor();
+          cursorReq.onerror = () => {
+            console.error('[IDB] Migration v2→v3: conversation cursor error', cursorReq.error);
+            tx.abort();
+          };
           cursorReq.onsuccess = () => {
             const cursor = cursorReq.result;
             if (cursor) {
@@ -96,6 +100,10 @@ export class IndexedDbStorage implements IStorage {
               // After conversations are migrated, update messages.conversationId
               if (oldToNew.size > 0) {
                 const msgCursorReq = msgStore.openCursor();
+                msgCursorReq.onerror = () => {
+                  console.error('[IDB] Migration v2→v3: message cursor error', msgCursorReq.error);
+                  tx.abort();
+                };
                 msgCursorReq.onsuccess = () => {
                   const c = msgCursorReq.result;
                   if (c) {
@@ -171,6 +179,10 @@ export class IndexedDbStorage implements IStorage {
   private deleteMessagesInTransaction(tx: IDBTransaction, conversationId: string): void {
     const index = tx.objectStore('messages').index('byConversation');
     const cursorReq = index.openCursor(IDBKeyRange.only(conversationId));
+    cursorReq.onerror = () => {
+      // Log but allow the transaction's own onerror to propagate the failure.
+      console.error('[IDB] deleteMessagesInTransaction cursor error', cursorReq.error);
+    };
     cursorReq.onsuccess = () => {
       const cursor = cursorReq.result;
       if (cursor) {

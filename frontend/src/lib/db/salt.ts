@@ -10,7 +10,7 @@
  */
 export function getOrCreateEncryptionSalt(storageId: string): Uint8Array {
   const lsKey = `canari_enc_salt:${storageId}`;
-  const stored = localStorage.getItem(lsKey);
+  const stored = localStorage.getItem(lsKey) ?? sessionStorage.getItem(lsKey);
   if (stored) {
     try {
       return Uint8Array.from(atob(stored), (c) => c.charCodeAt(0));
@@ -19,10 +19,21 @@ export function getOrCreateEncryptionSalt(storageId: string): Uint8Array {
     }
   }
   const salt = crypto.getRandomValues(new Uint8Array(16));
+  const encoded = btoa(Array.from(salt, (b) => String.fromCharCode(b)).join(''));
   try {
-    localStorage.setItem(lsKey, btoa(Array.from(salt, (b) => String.fromCharCode(b)).join('')));
+    localStorage.setItem(lsKey, encoded);
+    return salt;
   } catch {
-    // localStorage quota exceeded - graceful degradation: per-message random salt (no cache)
+    // localStorage quota exceeded or blocked — try sessionStorage as a session-scoped fallback.
+    // Without a stable salt, PBKDF2 is re-derived on every message (~100× slower).
+    console.warn(
+      "[salt] localStorage indisponible — tentative sessionStorage. Chiffrement plus lent en cas d'échec."
+    );
+    try {
+      sessionStorage.setItem(lsKey, encoded);
+    } catch {
+      // sessionStorage also unavailable — the random salt is returned as-is (per-message derivation).
+    }
+    return salt;
   }
-  return salt;
 }

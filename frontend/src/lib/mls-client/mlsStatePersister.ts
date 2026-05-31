@@ -70,7 +70,9 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
         log?.(`[MLS] Échec persistance état: ${msg}`);
-        console.warn('[MLS] state persist failed:', e);
+        // Rethrow so callers that await flush() can detect save failures
+        // (e.g. quota exceeded) and warn the user instead of silently losing state.
+        throw e;
       })
       .finally(() => {
         inFlight = null;

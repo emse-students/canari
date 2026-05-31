@@ -1,8 +1,13 @@
-// ─── Multi-tab coordination (preventive) ─────────────────────────────────
+// ─── Multi-tab coordination ───────────────────────────────────────────────
 // Only one browser tab should hold the WebSocket connection and run MLS
 // operations. Other tabs run in read-only mode and receive UI updates via
 // BroadcastChannel. This prevents two tabs from advancing the same MLS
 // ratchet concurrently (which would cause WrongEpoch / AeadError).
+//
+// Strategy: prefer the Web Locks API (navigator.locks) which guarantees
+// mutual exclusion at the browser level — no read-modify-write race on
+// localStorage. Falls back to the heartbeat approach on platforms where
+// navigator.locks is unavailable (Tauri WebKitGTK, very old browsers).
 
 const TAB_ID = crypto.randomUUID();
 let isTabLeader = false;
@@ -13,20 +18,110 @@ export function getIsTabLeader(): boolean {
   return isTabLeader;
 }
 
-const LEADER_KEY = 'canari_tab_leader';
-const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
-/** Durée max sans heartbeat avant de considérer le leader mort (même valeur que dans initTabLeadershipAsync). */
-const HEARTBEAT_STALE_MS = 5_000;
-let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-/** Poll côté follower pour détecter un leader crashé (heartbeat stale sans leader_closing). */
-let followerPollInterval: ReturnType<typeof setInterval> | null = null;
+// ── Web Locks implementation ───────────────────────────────────────────────
 
 /**
- * Poll côté follower pour détecter un leader crashé sans `leader_closing`.
- * Vérifie toutes les 3 s si le heartbeat est stale (>5 s) ; si oui, tente de
- * prendre le leadership avec le même délai aléatoire que le handler `leader_closing`
- * pour éviter les races entre plusieurs followers.
+ * Tries to become leader using the Web Locks API.
+ * - First tab acquires the exclusive lock and is the leader.
+ * - Subsequent tabs queue a non-ifAvailable request; they become leaders
+ *   automatically when the current lock holder's tab closes.
+ * Returns true if this tab immediately became leader.
  */
+async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
+  // Ensure we have a BroadcastChannel so promoted followers can notify the app.
+  if (!tabChannel) {
+    tabChannel = new BroadcastChannel('canari-mls-tab');
+  }
+
+  let gotLock = false;
+
+  // Attempt immediate acquisition (ifAvailable = don't block if lock is taken).
+  await navigator.locks.request(
+    'canari-tab-leader',
+    { mode: 'exclusive', ifAvailable: true },
+    async (lock) => {
+      if (lock === null) {
+        // Lock already held by another tab — we are a follower.
+        return;
+      }
+      gotLock = true;
+      isTabLeader = true;
+      log('[TAB] Leadership acquise (Web Locks).');
+
+      // Hold the lock until the tab is about to close.
+      return new Promise<void>((release) => {
+        if (typeof window !== 'undefined') {
+          window.addEventListener(
+            'beforeunload',
+            () => {
+              isTabLeader = false;
+              release();
+            },
+            { once: true }
+          );
+        }
+      });
+    }
+  );
+
+  if (!gotLock) {
+    log('[TAB] Autre onglet actif — mode lecture seule (Web Locks).');
+
+    // Queue a background request (no ifAvailable) so this tab automatically
+    // becomes leader when the current lock holder releases (tab closed / refreshed).
+    // This is race-free: the browser serialises lock hand-offs.
+    navigator.locks
+      .request('canari-tab-leader', { mode: 'exclusive' }, async () => {
+        if (isTabLeader) return; // Tab is already cleaning up.
+        isTabLeader = true;
+        log('[TAB] Promotion en leader (Web Locks).');
+        // Notify the rest of the app so reactive code can re-evaluate.
+        tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+
+        return new Promise<void>((release) => {
+          if (typeof window !== 'undefined') {
+            window.addEventListener(
+              'beforeunload',
+              () => {
+                isTabLeader = false;
+                release();
+              },
+              { once: true }
+            );
+          }
+        });
+      })
+      .catch(() => {
+        /* Tab is closing — ignore. */
+      });
+  }
+
+  return gotLock;
+}
+
+// ── Legacy localStorage/heartbeat fallback ────────────────────────────────
+
+const LEADER_KEY = 'canari_tab_leader';
+const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
+const HEARTBEAT_STALE_MS = 5_000;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let followerPollInterval: ReturnType<typeof setInterval> | null = null;
+
+function startHeartbeat(): void {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  heartbeatInterval = setInterval(() => {
+    if (!isTabLeader) {
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      return;
+    }
+    try {
+      localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+    } catch {
+      /* quota */
+    }
+  }, 4_000);
+}
+
 function startFollowerPoll(log: (msg: string) => void): void {
   if (followerPollInterval) return;
   followerPollInterval = setInterval(() => {
@@ -42,8 +137,6 @@ function startFollowerPoll(log: (msg: string) => void): void {
       const delay = Math.random() * 300;
       setTimeout(() => {
         if (isTabLeader) return;
-        // Vérifier que le heartbeat est toujours stale après le délai (un autre follower
-        // peut avoir déjà pris le leadership et écrit un heartbeat frais).
         const hbNow = parseInt(localStorage.getItem(HEARTBEAT_KEY) ?? '0', 10);
         if (Date.now() - hbNow <= HEARTBEAT_STALE_MS) return;
         try {
@@ -58,40 +151,13 @@ function startFollowerPoll(log: (msg: string) => void): void {
         }
         isTabLeader = true;
         startHeartbeat();
-        log('[TAB] Leader crashé détecté (heartbeat stale) - promotion en leader.');
+        log('[TAB] Leader crashé détecté (heartbeat stale) — promotion en leader.');
       }, delay);
     }
   }, 3_000);
 }
 
-/** Writes a fresh timestamp to localStorage every 4 s so other tabs can detect a stale leader. The staleness threshold is 5 s, giving a 1 s margin. */
-function startHeartbeat(): void {
-  if (heartbeatInterval) clearInterval(heartbeatInterval);
-  heartbeatInterval = setInterval(() => {
-    if (!isTabLeader) {
-      if (heartbeatInterval) clearInterval(heartbeatInterval);
-      return;
-    }
-    try {
-      localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
-    } catch {
-      /* quota */
-    }
-  }, 4000);
-}
-
-/**
- * Async leader election using localStorage heartbeat.
- * First tab claims leadership; subsequent tabs become followers.
- * Stale leader (>5s without heartbeat) is automatically replaced.
- */
-export async function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
-  // BroadcastChannel not available (e.g. Tauri desktop) - always leader.
-  if (typeof BroadcastChannel === 'undefined') {
-    isTabLeader = true;
-    return true;
-  }
-
+async function initWithLocalStorage(log: (msg: string) => void): Promise<boolean> {
   if (!tabChannel) {
     tabChannel = new BroadcastChannel('canari-mls-tab');
     tabChannel.addEventListener('message', (ev: MessageEvent) => {
@@ -113,7 +179,7 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
           }
           isTabLeader = true;
           startHeartbeat();
-          log('[TAB] Ancien leader fermé - promotion en leader.');
+          log('[TAB] Ancien leader fermé — promotion en leader.');
         }, delay);
       }
     });
@@ -138,17 +204,17 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
     if (localStorage.getItem(LEADER_KEY) === TAB_ID) {
       isTabLeader = true;
       startHeartbeat();
-      log('[TAB] Leadership acquise.');
+      log('[TAB] Leadership acquise (localStorage).');
     } else {
       isTabLeader = false;
-      log('[TAB] Race election - autre onglet leader.');
+      log('[TAB] Race election — autre onglet leader.');
     }
   } else if (currentLeader === TAB_ID) {
     isTabLeader = true;
     startHeartbeat();
   } else {
     isTabLeader = false;
-    log('[TAB] Autre onglet actif - mode lecture seule (pas de WebSocket).');
+    log('[TAB] Autre onglet actif — mode lecture seule (localStorage).');
     startFollowerPoll(log);
   }
 
@@ -172,7 +238,30 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
   return isTabLeader;
 }
 
-/** @internal Resets module state between Vitest cases (BroadcastChannel, timers, localStorage keys). */
+// ── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Elects this tab as leader or follower.
+ * Uses Web Locks when available (race-free); falls back to localStorage heartbeat.
+ */
+export async function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
+  // Single-tab environments (Tauri desktop, service workers without BroadcastChannel)
+  // are always leader.
+  if (typeof BroadcastChannel === 'undefined') {
+    isTabLeader = true;
+    return true;
+  }
+
+  // Prefer Web Locks (race-free, no polling required).
+  if (typeof navigator !== 'undefined' && 'locks' in navigator) {
+    return initWithWebLocks(log);
+  }
+
+  // Legacy fallback for environments without navigator.locks.
+  return initWithLocalStorage(log);
+}
+
+/** @internal Resets module state between Vitest cases. */
 export function resetTabLeaderStateForTests(): void {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);

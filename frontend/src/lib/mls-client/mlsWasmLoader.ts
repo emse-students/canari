@@ -21,7 +21,28 @@ export async function loadAndInitWasm(
   ]);
 
   const wasmUrl = (wasmAsset as { default: string }).default;
-  const wasmResponse = await fetch(wasmUrl, { credentials: 'same-origin' });
+
+  // Abort the fetch if it takes more than 15 seconds — prevents the app from hanging
+  // indefinitely when the WASM file is unavailable or the network is degraded.
+  const fetchAbort = new AbortController();
+  const fetchTimeout = setTimeout(() => fetchAbort.abort(), 15_000);
+  let wasmResponse: Response;
+  try {
+    wasmResponse = await fetch(wasmUrl, {
+      credentials: 'same-origin',
+      signal: fetchAbort.signal,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error(`Chargement WASM timeout (15 s) depuis ${wasmUrl} — vérifiez le réseau`, {
+        cause: e,
+      });
+    }
+    throw e;
+  } finally {
+    clearTimeout(fetchTimeout);
+  }
+
   if (!wasmResponse.ok) {
     throw new Error(
       `Chargement WASM impossible (${wasmResponse.status} ${wasmResponse.statusText}) depuis ${wasmUrl}`

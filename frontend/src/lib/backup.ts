@@ -193,9 +193,13 @@ export async function importBackup(
   if (backup.messages.length > 500_000) {
     throw new Error('Sauvegarde trop volumineuse : trop de messages');
   }
+  // M3: Validate string field sizes to prevent OOM on malformed backups.
   for (const conv of backup.conversations) {
     if (typeof conv.id !== 'string' || !conv.id.trim()) {
       throw new Error('ID de conversation invalide dans la sauvegarde');
+    }
+    if (typeof conv.name === 'string' && conv.name.length > 500) {
+      throw new Error(`Nom de conversation trop long (max 500 caractères) : ${conv.id}`);
     }
   }
 
@@ -211,6 +215,20 @@ export async function importBackup(
   // group, causing duplicated UI entries that share a single MLS state.
   const existingConvs = await storage.getConversations();
   const existingGroupIds = new Set(existingConvs.map((c) => c.id));
+
+  // H4: Validate all message rows before writing anything.
+  // This prevents partial imports where conversations are inserted but messages fail.
+  for (const msg of backup.messages) {
+    if (typeof msg.id !== 'string' || !msg.id.trim()) {
+      throw new Error('Message avec ID invalide dans la sauvegarde');
+    }
+    if (typeof msg.conversationId !== 'string') {
+      throw new Error(`Message sans conversationId : ${msg.id}`);
+    }
+    if (!Array.isArray(msg.iv) || !Array.isArray(msg.salt) || !Array.isArray(msg.cipherText)) {
+      throw new Error(`Message avec données chiffrées invalides : ${msg.id}`);
+    }
+  }
 
   // Merge conversation metadata: INSERT OR IGNORE so a device that already
   // has the conversation keeps its live (newer) state.

@@ -761,11 +761,11 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
               const t = setTimeout(() => {
                 welcomeTimeouts.delete(groupId);
                 log(
-                  `[POISON_PILL] Welcome non reçu après 30s pour ${groupId} - Poison Pill (timeout)`
+                  `[POISON_PILL] Welcome non reçu après 90s pour ${groupId} - Poison Pill (timeout)`
                 );
                 console.warn(`[POISON_PILL] Welcome timeout for group ${groupId}`);
                 poisonPill(groupId);
-              }, 30_000);
+              }, 90_000);
               welcomeTimeouts.set(groupId, t);
             }
           }

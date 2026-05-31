@@ -61,6 +61,10 @@ export class WebMlsService implements IMlsService {
   private _visibilityHandler: (() => void) | null = null;
   private _onlineHandler: (() => void) | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** Consecutive pings sent without any incoming data frame from the server. */
+  private missedHeartbeats = 0;
+  /** Maximum consecutive pings without any server activity before we force-close. */
+  private static readonly MAX_MISSED_HEARTBEATS = 3;
   /** Last persisted MLS state snapshot used as worker bootstrap input. */
   private lastKnownState: Uint8Array | undefined;
   /** Dedicated worker for expensive key package generation. */
@@ -212,9 +216,22 @@ export class WebMlsService implements IMlsService {
 
   private startHeartbeat(): void {
     this.clearHeartbeat();
+    this.missedHeartbeats = 0;
     this.heartbeatTimer = setInterval(() => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         this.clearHeartbeat();
+        this.disconnectCallback?.();
+        return;
+      }
+      // Check if the server has sent anything since the last ping.
+      // If not, the connection may be a TCP zombie (NAT timeout, silent drop).
+      this.missedHeartbeats += 1;
+      if (this.missedHeartbeats > WebMlsService.MAX_MISSED_HEARTBEATS) {
+        console.warn(
+          `[WS] ${this.missedHeartbeats} pings sans réponse serveur — fermeture connexion zombie`
+        );
+        this.clearHeartbeat();
+        this.ws.close(1001, 'heartbeat timeout');
         this.disconnectCallback?.();
         return;
       }
@@ -225,6 +242,11 @@ export class WebMlsService implements IMlsService {
         this.disconnectCallback?.();
       }
     }, 8_000);
+  }
+
+  /** Call whenever a data frame is received to reset the heartbeat counter. */
+  private resetHeartbeatCounter(): void {
+    this.missedHeartbeats = 0;
   }
 
   isWsOpen(): boolean {
@@ -332,6 +354,8 @@ export class WebMlsService implements IMlsService {
         }
       };
       this.ws.onmessage = async (event) => {
+        // Any incoming frame proves the server is alive — reset heartbeat miss counter.
+        this.resetHeartbeatCounter();
         try {
           // Gateway sends JSON text frames: { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
           const text: string =
