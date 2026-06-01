@@ -213,6 +213,7 @@
 
   function closeNewChannelModal() {
     showNewChannelModal = false;
+    channelName = '';
   }
 
   function closeCommunityAdminModal() {

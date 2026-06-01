@@ -120,6 +120,8 @@
     }
 
     const loadToken = ++membersLoadToken;
+    communityMembers = [];
+    resolvedMemberNames = {};
     membersLoading = true;
     membersError = '';
     try {
@@ -182,6 +184,13 @@
     if (open && activeTab === 'members') {
       void loadCommunityMembers();
     }
+    if (!open) {
+      inviteStatus = '';
+      inviteUserId = '';
+      inviteRole = 'member';
+      imageUploadError = '';
+      activeTab = 'overview';
+    }
   });
 
   function handleGenerateInvitation() {
@@ -202,9 +211,10 @@
     }
 
     onInviteCommunityMember(memberId, inviteRole);
-    inviteStatus = `Invitation envoyée à ${memberId} (${inviteRole}).`;
     inviteUserId = '';
     inviteRole = 'member';
+    inviteStatus = `Invitation envoyée à ${memberId}.`;
+    setTimeout(() => { inviteStatus = ''; }, 4000);
     void loadCommunityMembers();
   }
 

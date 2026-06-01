@@ -143,6 +143,11 @@
       accessLoaded = false;
       accessSaved = false;
       accessError = '';
+      accessIsPrivate = false;
+      accessAllowedUserIds = [];
+      addingUserId = '';
+      permissionMembersId = '';
+      permissionRole = 'member';
     }
   });
 
