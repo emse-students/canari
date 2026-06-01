@@ -38,6 +38,9 @@ import {
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
+  private readonly deliveryUrl =
+    process.env.DELIVERY_INTERNAL_URL ?? 'http://chat-delivery-service:3010';
+  private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
 
   /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
   private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
@@ -620,13 +623,16 @@ export class ChannelService {
     };
   }
 
-  /** Advances a key-distribution record through its lifecycle (pending → sent → received → acked). Enforces valid state transitions. */
+  /** Advances a key-distribution record through its lifecycle (pending → sent → received → acked). Enforces valid state transitions. Accepts either an already-loaded entity or its UUID to avoid redundant DB round-trips. */
   private async updateDistributionStatus(
-    distributionId: string,
+    distributionOrId: ChannelKeyDistribution | string,
     status: ChannelKeyDistributionStatus,
     actorUserId?: string
   ) {
-    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
+    const distribution =
+      typeof distributionOrId === 'string'
+        ? await this.keyDistributionRepo.findOne({ where: { id: distributionOrId } })
+        : distributionOrId;
     if (!distribution) throw new NotFoundException('Channel key distribution not found');
 
     if (actorUserId && distribution.targetUserId !== actorUserId) {
@@ -779,6 +785,54 @@ export class ChannelService {
     return { success: true };
   }
 
+  /**
+   * Returns false when the user has no active MLS device registered in chat-delivery.
+   * Fails open (returns true) on network error so a misconfigured secret never blocks invitations.
+   */
+  private async userHasMlsDevices(userId: string): Promise<boolean> {
+    if (!this.internalSecret) return true;
+    try {
+      const res = await fetch(`${this.deliveryUrl}/mls/devices/${encodeURIComponent(userId)}`, {
+        headers: { 'X-Internal-Secret': this.internalSecret },
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (!res.ok) return true;
+      const devices: unknown[] = await res.json();
+      return devices.length > 0;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Validates an active key-distribution record for the given target user and returns the loaded
+   * entities. Shared by markKeyDistributionReceived and ackKeyDistribution to avoid duplication.
+   */
+  private async resolveDistributionForTarget(
+    channelId: string,
+    distributionId: string,
+    actorUserId: string,
+    keyVersion: number
+  ): Promise<{ distribution: ChannelKeyDistribution; member: ChannelMember; channel: Channel }> {
+    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
+    if (!distribution || distribution.channelId !== channelId) {
+      throw new NotFoundException('Channel key distribution not found');
+    }
+    if (distribution.keyVersion !== keyVersion) {
+      throw new ForbiddenException('Distribution keyVersion mismatch');
+    }
+    const [member, channel] = await Promise.all([
+      this.memberRepo.findOne({
+        where: { workspaceId: distribution.workspaceId, userId: actorUserId },
+      }),
+      this.channelRepo.findOne({ where: { id: distribution.channelId } }),
+    ]);
+    if (!member || !channel || !this.canAccessChannel(channel, member)) {
+      throw new ForbiddenException('Target user no longer authorized for this channel');
+    }
+    return { distribution, member, channel };
+  }
+
   /** Invites a user to a channel. Rotates the channel key if it's a new member, then returns a full key-distribution payload so the invitee can decrypt all past messages. */
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
@@ -803,6 +857,14 @@ export class ChannelService {
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
+
+    // Reject early if the invitee has no MLS device — the key DM could never be delivered.
+    const hasDevices = await this.userHasMlsDevices(input.targetUserId);
+    if (!hasDevices) {
+      throw new BadRequestException(
+        `L'utilisateur ${input.targetUserId} n'a pas encore configuré Canari sur un appareil.`
+      );
+    }
 
     // Add target user as member if not already
     let targetMember = await this.memberRepo.findOne({
@@ -879,15 +941,33 @@ export class ChannelService {
       };
     });
 
-    const distribution = this.keyDistributionRepo.create({
-      workspaceId: channel.workspaceId,
-      channelId: channel.id,
-      targetUserId: input.targetUserId,
-      invitedBy: input.actorUserId,
-      keyVersion: channel.keyVersion,
-      status: 'pending_key_distribution',
+    // Upsert: reuse any in-flight distribution for same channel/user/version to prevent
+    // duplicates when two admins invite simultaneously or the inviter retries.
+    const existingDist = await this.keyDistributionRepo.findOne({
+      where: {
+        channelId: channel.id,
+        targetUserId: input.targetUserId,
+        keyVersion: channel.keyVersion,
+        status: In(['pending_key_distribution', 'key_sent']),
+      },
+      order: { createdAt: 'DESC' },
     });
-    const savedDistribution = await this.keyDistributionRepo.save(distribution);
+    const savedDistribution = await this.keyDistributionRepo.save(
+      existingDist
+        ? {
+            ...existingDist,
+            invitedBy: input.actorUserId,
+            status: 'pending_key_distribution' as const,
+          }
+        : this.keyDistributionRepo.create({
+            workspaceId: channel.workspaceId,
+            channelId: channel.id,
+            targetUserId: input.targetUserId,
+            invitedBy: input.actorUserId,
+            keyVersion: channel.keyVersion,
+            status: 'pending_key_distribution',
+          })
+    );
 
     const payload = this.toDistributionPayload(
       savedDistribution,
@@ -956,7 +1036,7 @@ export class ChannelService {
     if (distribution.invitedBy !== actorUserId) {
       throw new ForbiddenException('Only inviter can mark distribution as sent');
     }
-    await this.updateDistributionStatus(distributionId, 'key_sent');
+    await this.updateDistributionStatus(distribution, 'key_sent');
     return { success: true, distributionId, status: 'key_sent' };
   }
 
@@ -967,21 +1047,13 @@ export class ChannelService {
     actorUserId: string,
     keyVersion: number
   ) {
-    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
-    if (!distribution || distribution.channelId !== channelId) {
-      throw new NotFoundException('Channel key distribution not found');
-    }
-    if (distribution.keyVersion !== keyVersion) {
-      throw new ForbiddenException('Distribution keyVersion mismatch');
-    }
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: distribution.workspaceId, userId: actorUserId },
-    });
-    const channel = await this.channelRepo.findOne({ where: { id: distribution.channelId } });
-    if (!member || !channel || !this.canAccessChannel(channel, member)) {
-      throw new ForbiddenException('Target user no longer authorized for this channel');
-    }
-    await this.updateDistributionStatus(distributionId, 'key_received', actorUserId);
+    const { distribution } = await this.resolveDistributionForTarget(
+      channelId,
+      distributionId,
+      actorUserId,
+      keyVersion
+    );
+    await this.updateDistributionStatus(distribution, 'key_received', actorUserId);
     return { success: true, distributionId, status: 'key_received' };
   }
 
@@ -992,21 +1064,13 @@ export class ChannelService {
     actorUserId: string,
     keyVersion: number
   ) {
-    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
-    if (!distribution || distribution.channelId !== channelId) {
-      throw new NotFoundException('Channel key distribution not found');
-    }
-    if (distribution.keyVersion !== keyVersion) {
-      throw new ForbiddenException('Distribution keyVersion mismatch');
-    }
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: distribution.workspaceId, userId: actorUserId },
-    });
-    const channel = await this.channelRepo.findOne({ where: { id: distribution.channelId } });
-    if (!member || !channel || !this.canAccessChannel(channel, member)) {
-      throw new ForbiddenException('Target user no longer authorized for this channel');
-    }
-    await this.updateDistributionStatus(distributionId, 'key_acked', actorUserId);
+    const { distribution } = await this.resolveDistributionForTarget(
+      channelId,
+      distributionId,
+      actorUserId,
+      keyVersion
+    );
+    await this.updateDistributionStatus(distribution, 'key_acked', actorUserId);
     return { success: true, distributionId, status: 'key_acked' };
   }
 
