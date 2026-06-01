@@ -5,6 +5,10 @@ import {
   isGroupEligibleForMlsRecovery,
   resolveActiveGroupTarget,
 } from '$lib/utils/chat/groupSyncEligibility';
+import {
+  forgetMlsGroupIfPresent,
+  persistMlsStateAfterMutation,
+} from '$lib/utils/chat/groupActions';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 export interface ConnectionDeps {
@@ -94,6 +98,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   }
   const syncIndex = userGroups.length > 0 ? buildUserGroupSyncIndex(userGroups) : null;
 
+  /** True when forgetGroup removed stale WASM state — triggers one IndexedDB save at end. */
+  let mlsStateMutated = false;
+
+  const dropIneligibleGroup = (groupId: string, reason: string): void => {
+    if (!forgetMlsGroupIfPresent(mlsService, groupId)) return;
+    mlsStateMutated = true;
+    log(`[MLS] État local retiré (${reason}): ${groupId.slice(0, 8)}…`);
+  };
+
   // Bloc 1 : réconciliation des memberships connus (pending/stale/welcome_received).
   // Si getDeviceMemberships échoue, membershipGroupIds reste vide et le bloc 2 prend le relais.
   let membershipGroupIds = new Set<string>();
@@ -103,9 +116,8 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     membershipGroupIds = new Set(memberships.map((m) => m.groupId));
     const myDeviceId = mlsService.getDeviceId();
     for (const m of memberships) {
-      if (!isGroupEligibleForMlsRecovery(m.groupId, syncIndex, log)) {
-        mlsService.forgetGroup(m.groupId);
-        mlsService.deleteDeviceMembership(userId, myDeviceId, m.groupId).catch(() => {});
+      if (!isGroupEligibleForMlsRecovery(m.groupId, syncIndex)) {
+        dropIneligibleGroup(m.groupId, 'groupe supprimé ou absent du serveur');
         continue;
       }
 
@@ -114,9 +126,8 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
           ? (resolveActiveGroupTarget(m.groupId, syncIndex) ?? m.groupId)
           : m.groupId;
 
-      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex, log)) {
-        mlsService.forgetGroup(m.groupId);
-        mlsService.deleteDeviceMembership(userId, myDeviceId, m.groupId).catch(() => {});
+      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex)) {
+        dropIneligibleGroup(m.groupId, 'successeur introuvable');
         continue;
       }
 
@@ -124,7 +135,9 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
         mlsService.sendWelcomeRequest(targetGroupId);
         log(`[SYNC] welcome_request envoyé pour groupe ${targetGroupId}`);
       } else if (m.status === 'stale') {
-        mlsService.forgetGroup(m.groupId);
+        if (forgetMlsGroupIfPresent(mlsService, m.groupId)) {
+          mlsStateMutated = true;
+        }
         await mlsService.sendReinviteRequest(targetGroupId);
         log(
           `[SYNC] reinvite_request envoyé (stale sur groupe ${targetGroupId}, état local effacé)`
@@ -149,7 +162,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       if (group.deletedAt) continue;
 
       const targetGroupId = group.successorId ?? group.groupId;
-      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex, log)) continue;
+      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex)) continue;
 
       if (!membershipGroupIds.has(targetGroupId) && !localGroups.has(targetGroupId)) {
         mlsService.sendWelcomeRequest(targetGroupId).catch(() => {});
@@ -163,6 +176,10 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   } catch (e) {
     log(`[SYNC] Échec réconciliation groupes actifs: ${e}`);
     console.error('[SYNC] Failed active group reconciliation:', e);
+  }
+
+  if (mlsStateMutated) {
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
   }
 
   await new Promise((r) => setTimeout(r, 500));

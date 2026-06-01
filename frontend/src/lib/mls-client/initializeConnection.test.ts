@@ -66,8 +66,9 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
         { status: 'stale', groupId: 'g-stale' },
         { status: 'welcome_received', groupId: 'g-miss' },
       ]),
-      getLocalGroups: vi.fn().mockReturnValue([]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-stale']),
       forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
       updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
@@ -106,7 +107,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(mls.onDisconnect).toHaveBeenCalledWith(scheduleReconnect);
     expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1');
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-pend');
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stale');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stale', 0);
+    expect(mls.saveState).toHaveBeenCalledWith('pin1');
     expect(mls.sendReinviteRequest).toHaveBeenCalled();
     expect(mls.updateInvitationStatus).toHaveBeenCalled();
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-orphan');
@@ -123,6 +125,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       getDeviceMemberships: vi.fn().mockResolvedValue([{ status: 'stale', groupId: 'g-deleted' }]),
       getLocalGroups: vi.fn().mockReturnValue(['g-deleted']),
       forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
       updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
@@ -153,8 +156,9 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await done;
 
     expect(mls.sendReinviteRequest).not.toHaveBeenCalled();
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted');
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('groupe supprimé'));
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted', 0);
+    expect(mls.saveState).toHaveBeenCalledWith('pin1');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('État local retiré'));
   });
 
   it('skips membership sync when connect throws', async () => {
