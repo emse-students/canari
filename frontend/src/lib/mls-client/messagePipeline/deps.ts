@@ -69,7 +69,7 @@ export interface MessageHandlerDeps {
   /**
    * Appelé sur une erreur MLS fatale non récupérable nécessitant une action utilisateur.
    * - `'oom'` : OOM WASM détecté → rechargement de l'app recommandé.
-   * - `'private_mode'` : storage non persistant (navigation privée) → état perdu à la fermeture.
+   * - `'private_mode'` : navigation privée détectée (stockage indisponible) → état perdu à la fermeture.
    * - `'keystore_lost'` : Keystore Android perdu (TEE reset) → reconnexion recommandée.
    */
   onMlsFatalError?: (kind: 'oom' | 'private_mode' | 'keystore_lost') => void;

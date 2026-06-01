@@ -43,6 +43,7 @@ import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
 export interface ChatSessionCallbacks {
@@ -331,29 +332,20 @@ export function useChatSession() {
       console.log(`[INIT] MLS initialized for userId=${userId} device=${myDeviceId}`);
       cb.log('Base de donnees locale initialisee.');
 
-      // Vérifier si le stockage est persistant (absent en navigation privée).
-      // Safari Private/Firefox Private vident IndexedDB à la fermeture → nouveau device
-      // à chaque session, perte de tous les états MLS. Non-bloquant : ne bloque pas le login.
-      if (
-        typeof navigator !== 'undefined' &&
-        'storage' in navigator &&
-        'persisted' in navigator.storage
-      ) {
-        navigator.storage
-          .persisted()
-          .then((persisted) => {
-            if (!persisted) {
-              mlsFatalError = 'private_mode';
-              cb.log(
-                "[AVERT] Navigation privée détectée - l'état MLS ne sera pas conservé après fermeture."
-              );
-              appendLog(
-                "ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture de l'onglet."
-              );
-            }
-          })
-          .catch(() => {});
-      }
+      // Avertir uniquement en navigation privée réelle (stockage bloqué / éphémère).
+      // navigator.storage.persisted() est volontairement évité : false par défaut hors privé.
+      void isLikelyPrivateBrowsing()
+        .then((privateBrowsing) => {
+          if (!privateBrowsing) return;
+          mlsFatalError = 'private_mode';
+          cb.log(
+            "[AVERT] Navigation privée détectée - l'état MLS ne sera pas conservé après fermeture."
+          );
+          appendLog(
+            "ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture de l'onglet."
+          );
+        })
+        .catch(() => {});
 
       authToken = await getToken();
 
