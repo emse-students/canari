@@ -166,6 +166,14 @@
     selectedCommunityWorkspaceId = channelWorkspaces[0].id;
   });
 
+  // Clear stale workspace selection if the workspace was removed from the server.
+  $effect(() => {
+    if (!selectedCommunityWorkspaceId) return;
+    if (!channelWorkspaces.some((w) => w.id === selectedCommunityWorkspaceId)) {
+      selectedCommunityWorkspaceId = '';
+    }
+  });
+
   interface ChannelItem {
     id: string;
     name: string;

@@ -1,4 +1,4 @@
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
@@ -62,6 +62,7 @@ export interface ChannelWorkspaceContext {
 export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
   let selectedChannelConversationId = $state('');
+  let isLoadingWorkspaces = false;
 
   const service = new ChannelService();
 
@@ -192,14 +193,18 @@ export function useChannelWorkspaces() {
 
   /** Fetches all workspaces and their channels from the backend, hydrates channel encryption keys, and prunes stale local channel entries. */
   async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext) {
+    if (isLoadingWorkspaces) return;
+    isLoadingWorkspaces = true;
     try {
       const backendWorkspaces = await service.listUserWorkspaces();
       const validChannelConversationIds: string[] = [];
+      const validWorkspaceSlugs = new SvelteSet<string>();
 
       for (const workspace of backendWorkspaces) {
         const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
         const workspaceId = sidebarWorkspace.workspaceDbId;
         if (!workspaceId) continue;
+        validWorkspaceSlugs.add(sidebarWorkspace.id);
 
         const channels = await service.listChannels(workspaceId);
         for (const channel of channels as ChannelDto[]) {
@@ -255,9 +260,14 @@ export function useChannelWorkspaces() {
         }
         await ctx.deleteConversation?.(staleId).catch(() => {});
       }
+
+      // Prune workspaces that no longer exist on the server.
+      channelWorkspaces = channelWorkspaces.filter((ws) => validWorkspaceSlugs.has(ws.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.log(`Chargement des communautés/canaux impossible: ${message}`);
+    } finally {
+      isLoadingWorkspaces = false;
     }
   }
 

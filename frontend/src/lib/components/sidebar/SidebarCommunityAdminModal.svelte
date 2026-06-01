@@ -125,12 +125,20 @@
     membersLoading = true;
     membersError = '';
     try {
-      const perChannelMembers = await Promise.all(
-        selectedWorkspace.channels.map((channel) => channelService.listMembers(channel.id))
-      );
+      // Batch requests to avoid saturating the server on workspaces with many channels.
+      const BATCH = 5;
+      const channels = selectedWorkspace.channels;
+      const allBatches: ChannelMemberDto[][] = [];
+      for (let i = 0; i < channels.length; i += BATCH) {
+        if (loadToken !== membersLoadToken) return;
+        const batch = await Promise.all(
+          channels.slice(i, i + BATCH).map((ch) => channelService.listMembers(ch.id))
+        );
+        allBatches.push(...(batch as ChannelMemberDto[][]));
+      }
 
       const aggregate = new SvelteMap<string, 'member' | 'moderator' | 'admin'>();
-      for (const members of perChannelMembers) {
+      for (const members of allBatches) {
         for (const member of members as ChannelMemberDto[]) {
           const userId = member.userId?.trim().toLowerCase();
           if (!userId) continue;
