@@ -11,11 +11,17 @@ BEGIN;
 ALTER TABLE association_members ADD COLUMN IF NOT EXISTS permissions INTEGER NOT NULL DEFAULT 0;
 
 -- 2. Migrate ex-admins (old permission = '1' = Admin) to ALL_CORE_FLAGS = 287.
-UPDATE association_members SET permissions = 287 WHERE permission::text = '1';
-
--- 3. Drop the old enum column (TypeORM synchronize would do this anyway, but we do it here
---    explicitly so the data is already migrated when synchronize runs).
-ALTER TABLE association_members DROP COLUMN IF EXISTS permission;
+--    Only runs if the old enum column still exists (idempotent guard).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'association_members' AND column_name = 'permission'
+  ) THEN
+    UPDATE association_members SET permissions = 287 WHERE permission::text = '1';
+    ALTER TABLE association_members DROP COLUMN permission;
+  END IF;
+END $$;
 DROP TYPE IF EXISTS association_permission_enum;
 
 -- 4. New columns on associations (TypeORM synchronize will also add these,
