@@ -138,18 +138,24 @@
   $effect(() => {
     void snapshotComposerDraft();
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
+    let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
     draftSaveTimer = setTimeout(() => {
       const snap = snapshotComposerDraft();
       if (snap.markdown.trim() || snap.includePoll || snap.includeForm) {
         savePostComposerDraft(snap);
         draftSaved = true;
-        setTimeout(() => {
+        feedbackTimer = setTimeout(() => {
           draftSaved = false;
         }, 1800);
       } else {
         clearPostComposerDraft();
       }
     }, 800);
+    // Clear both timers on re-run or component destruction.
+    return () => {
+      if (draftSaveTimer) clearTimeout(draftSaveTimer);
+      if (feedbackTimer) clearTimeout(feedbackTimer);
+    };
   });
 
   /** Auto-clear error banner after 5 seconds. */

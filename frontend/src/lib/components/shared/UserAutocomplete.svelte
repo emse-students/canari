@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { Search } from '@lucide/svelte';
@@ -39,6 +40,11 @@
   let selectedIndex = $state(-1);
   let inputText = $state('');
   let selectedUser = $state<User | null>(null);
+
+  // Cancel pending debounce/blur timers on unmount to avoid API calls on a destroyed component.
+  onDestroy(() => {
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+  });
 
   async function searchUsers(query: string) {
     if (!query || query.length < 2) {
