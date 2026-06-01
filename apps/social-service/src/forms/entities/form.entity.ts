@@ -39,6 +39,10 @@ export class Form {
   @Column({ type: 'timestamptz', nullable: true })
   opensAt: Date | null;
 
+  /** When set, submissions are rejected after this instant (automatic form closure). */
+  @Column({ type: 'timestamptz', nullable: true })
+  closedAt: Date | null;
+
   @Column({ default: false })
   requiresPayment: boolean;
 

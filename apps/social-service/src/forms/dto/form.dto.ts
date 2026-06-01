@@ -114,6 +114,11 @@ export class CreateFormDto {
   @IsOptional()
   opensAt?: string;
 
+  /** ISO date string; when set, the form closes at this instant. */
+  @IsDateString()
+  @IsOptional()
+  closedAt?: string;
+
   @IsBoolean()
   @IsOptional()
   requiresPayment?: boolean;

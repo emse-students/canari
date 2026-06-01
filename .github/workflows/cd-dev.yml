@@ -497,6 +497,12 @@ jobs:
             exit 1
           fi
 
+          # MINIO_ACCESS_KEY/SECRET_KEY are the S3 client credentials for media-service.
+          # They mirror MINIO_ROOT_USER/ROOT_PASSWORD; written explicitly so that
+          # Docker Compose does not need nested variable interpolation (not universally supported).
+          upsert_env_var "MINIO_ACCESS_KEY" "$MINIO_ROOT_USER"
+          upsert_env_var "MINIO_SECRET_KEY" "$MINIO_ROOT_PASSWORD"
+
           if [ -n "$AVATAR_API_KEY" ]; then
             upsert_env_var "AVATAR_API_KEY" "$AVATAR_API_KEY"
           else

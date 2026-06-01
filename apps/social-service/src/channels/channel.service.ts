@@ -83,12 +83,13 @@ export class ChannelService {
   }
 
   /** Returns true if the user can access a private channel.
-   * Prefers member-based access (allowedUsers) over role-based (allowedRoles). Public channels always return true. */
+   * When allowedUsers is set, the check is user-based only (role fallthrough is not allowed
+   * because it would bypass the allowlist when userId is absent). Public channels always return true. */
   private canAccessChannel(channel: Channel, member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
     const allowedUsers = channel.allowedUsers || [];
-    if (allowedUsers.length > 0 && userId) {
-      return allowedUsers.includes(userId.trim().toLowerCase());
+    if (allowedUsers.length > 0) {
+      return !!userId && allowedUsers.includes(userId.trim().toLowerCase());
     }
     const roleIds = member.roleIds || [];
     const allowed = channel.allowedRoles || [];

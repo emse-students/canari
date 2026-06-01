@@ -43,10 +43,11 @@ export class FormsService {
         throw new ForbiddenException('Vous n\'êtes pas membre de cette association');
       }
     }
-    const { opensAt: opensAtRaw, ...rest } = input;
+    const { opensAt: opensAtRaw, closedAt: closedAtRaw, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
+      closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
       items: input.items.map((item: any) => ({
         ...item,
         id: item.id || makeId('item'),
@@ -117,10 +118,11 @@ export class FormsService {
   /** Updates a form's metadata and items. Only owner, co-owner, global admin, or MANAGE_FORMS flag may update. */
   async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    const { opensAt: opensAtRaw, ownerId: _ownerId, ...rest } = input;
+    const { opensAt: opensAtRaw, closedAt: closedAtRaw, ownerId: _ownerId, ...rest } = input;
     Object.assign(form, {
       ...rest,
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
+      closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
       items: (input.items ?? form.items).map((item: any) => ({
         ...item,
         id: item.id || makeId('item'),
@@ -209,6 +211,10 @@ export class FormsService {
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
       throw new BadRequestException("Le formulaire n'est pas encore ouvert");
+    }
+
+    if (form.closedAt && new Date(form.closedAt) < new Date()) {
+      throw new BadRequestException('Le formulaire est fermé');
     }
 
     // Validate answer sizes to prevent oversized payloads.
