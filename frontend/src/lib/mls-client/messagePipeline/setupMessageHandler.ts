@@ -69,7 +69,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Taille maximale du buffer par groupe avant d'écrêter les plus anciens.
   // Ne déclenche plus de Poison Pill directement - voir welcomeTimeouts pour la limite temporelle.
   const BUFFER_MAX_PER_GROUP = 20;
-  // Minuteries de sécurité : si Welcome n'arrive pas dans 30s après le premier commit bufférisé,
+  // Minuteries de sécurité : si Welcome n'arrive pas dans 90s après le premier commit bufférisé,
   // le groupe est empoisonné. Annulées dès que le Welcome est traité.
   const welcomeTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -137,7 +137,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       welcomeTimeouts.delete(groupId);
     }
     mlsService.dropGroup(groupId);
+    // forceLeaveGroup removes the DeviceGroupMembership and Redis routing entry.
+    // removeMemberFromServer removes the GroupMember record (user-level) so the group
+    // no longer appears in getUserGroups() on reconnect — prevents an infinite
+    // welcome_request loop where the device keeps requesting a Welcome it can never
+    // accept (WASM epoch tombstone from drop_group).
     mlsService.forceLeaveGroup(groupId).catch(() => {});
+    mlsService.removeMemberFromServer(groupId, userId).catch(() => {});
     log(`[POISON_PILL] Groupe ${groupId} purgé définitivement - aucun retry`);
     console.warn(`[POISON_PILL] Group ${groupId} permanently dropped`);
     onGroupPoisoned?.(groupId);
@@ -755,7 +761,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             welcomeRequestedForUnknownGroups.add(groupId);
             mlsService.sendWelcomeRequest(groupId).catch(() => {});
             log(`[BUFFER] welcome_request envoyé (premier commit pour groupe inconnu ${groupId})`);
-            // Démarre le minuteur de sécurité : si Welcome n'arrive pas dans 30s, Poison Pill.
+            // Démarre le minuteur de sécurité : si Welcome n'arrive pas dans 90s, Poison Pill.
             // Annulé dans le handler Welcome dès que processWelcome réussit.
             if (!welcomeTimeouts.has(groupId)) {
               const t = setTimeout(() => {
@@ -771,7 +777,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           }
           if (buf.length >= BUFFER_MAX_PER_GROUP) {
             // Buffer plein : écrêter en supprimant le message le plus ancien pour faire de la place.
-            // On ne déclenche plus Poison Pill ici - le timer de 30s s'en charge si Welcome ne vient pas.
+            // On ne déclenche plus Poison Pill ici - le timer de 90s s'en charge si Welcome ne vient pas.
             buf.shift();
             log(
               `[BUFFER] Buffer plein pour ${groupId} - oldest message écrêté (${BUFFER_MAX_PER_GROUP} max)`

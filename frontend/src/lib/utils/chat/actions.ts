@@ -169,12 +169,22 @@ export async function processPendingInvitations(params: {
 
       for (const inv of currentPending) {
         try {
-          // Fetch fresh KeyPackage for the pending device
+          // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
+          // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
+          // older ones. null from the fallback means the device was deregistered.
           const devices = await mlsService.fetchUserDevices(inv.userId);
-          const targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
+          let targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
           if (!targetDevice) {
-            log(`[PENDING] KeyPackage introuvable pour ${inv.deviceId} - skip`);
-            continue;
+            const fallback = await mlsService
+              .fetchDeviceKeyPackage(inv.userId, inv.deviceId)
+              .catch(() => null);
+            if (!fallback) {
+              log(`[PENDING] Device ${inv.deviceId} introuvable (désenregistré) → nettoyage`);
+              mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
+              continue;
+            }
+            targetDevice = fallback;
+            log(`[PENDING] KeyPackage récupéré via fallback pour ${inv.deviceId} (> 30 jours)`);
           }
 
           // Check if device is already in the MLS group (idempotency).
