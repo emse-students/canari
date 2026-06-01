@@ -101,9 +101,11 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     const memberships = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
     const localGroups = new Set(mlsService.getLocalGroups());
     membershipGroupIds = new Set(memberships.map((m) => m.groupId));
+    const myDeviceId = mlsService.getDeviceId();
     for (const m of memberships) {
       if (!isGroupEligibleForMlsRecovery(m.groupId, syncIndex, log)) {
         mlsService.forgetGroup(m.groupId);
+        mlsService.deleteDeviceMembership(userId, myDeviceId, m.groupId).catch(() => {});
         continue;
       }
 
@@ -114,6 +116,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
 
       if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex, log)) {
         mlsService.forgetGroup(m.groupId);
+        mlsService.deleteDeviceMembership(userId, myDeviceId, m.groupId).catch(() => {});
         continue;
       }
 

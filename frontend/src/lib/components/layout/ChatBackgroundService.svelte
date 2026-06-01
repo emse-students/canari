@@ -275,11 +275,13 @@
       onChannelDeleted: (event: { channelId: string }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
+        globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
         void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
         if (globalConvs.selectedContact === channelConversationId) {
           globalConvs.selectedContact = null;
+          globalConvs.sendError = '';
         }
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';

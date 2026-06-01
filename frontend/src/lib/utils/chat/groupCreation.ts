@@ -468,8 +468,13 @@ export async function startNewConversation(
   });
 
   if (existingDirect) {
-    selectConversation(existingDirect[0]);
-    return;
+    const [existingKey, existingConvo] = existingDirect;
+    if (existingConvo.isReady) {
+      selectConversation(existingKey);
+      return;
+    }
+    // Conversation exists locally but MLS state is missing (e.g. backup on another device).
+    // Fall through to the server check so we attempt repair below.
   }
 
   // Check server-side: a direct group might exist but not be loaded locally yet
@@ -489,6 +494,35 @@ export async function startNewConversation(
         `[1v1] Groupe serveur existant trouvé (${existing.groupId}) - chargement sans recréation.`
       );
       const key = existing.groupId;
+
+      // If local MLS state exists for this group, just ensure the conversation is ready.
+      if (mlsService.getLocalGroups().includes(key)) {
+        if (!conversations.has(key)) {
+          conversations.set(key, {
+            id: key,
+            contactName: contact,
+            name: contact,
+            messages: [],
+            isReady: true,
+            mlsStateHex: null,
+            conversationType: 'direct',
+            directPeerId: contact,
+          });
+          if (saveConversation) await saveConversation(key);
+        } else {
+          const convo = conversations.get(key)!;
+          if (!convo.isReady) {
+            conversations.set(key, { ...convo, isReady: true });
+            if (saveConversation) await saveConversation(key);
+          }
+        }
+        selectConversation(key);
+        return;
+      }
+
+      // MLS state missing locally — repair by recreating the group and re-inviting all parties.
+      // Don't navigate before repair: repairDirectConversation replaces `key` with a new groupId.
+      log(`[1v1] État MLS absent pour ${key} - déclenchement de la réparation...`);
       if (!conversations.has(key)) {
         conversations.set(key, {
           id: key,
@@ -500,13 +534,25 @@ export async function startNewConversation(
           conversationType: 'direct',
           directPeerId: contact,
         });
-        if (saveConversation) await saveConversation(key);
       }
-      selectConversation(key);
+      const repaired = await repairDirectConversation(key, deps);
+      if (repaired) {
+        // repairDirectConversation deleted `key` and inserted a new groupId — find it.
+        const newEntry = Array.from(conversations.entries()).find(
+          ([, c]) =>
+            c.conversationType === 'direct' &&
+            (c.directPeerId ?? c.contactName) === contact &&
+            c.isReady
+        );
+        if (newEntry) selectConversation(newEntry[0]);
+      } else if (conversations.has(key)) {
+        selectConversation(key);
+      }
       return;
     }
-  } catch {
-    // Non-bloquant : on continue avec la création normale
+  } catch (e) {
+    // Non-bloquant : on continue avec la création normale, mais on log l'erreur.
+    console.warn(`[1v1] getUserGroups a échoué, risque de groupe dupliqué :`, e);
   }
 
   // IMPORTANT: Check if contact is available BEFORE creating the group

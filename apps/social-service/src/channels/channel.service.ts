@@ -695,7 +695,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member)) {
+    if (!this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -714,7 +714,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member)) {
+    if (!this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -827,7 +827,7 @@ export class ChannelService {
       }),
       this.channelRepo.findOne({ where: { id: distribution.channelId } }),
     ]);
-    if (!member || !channel || !this.canAccessChannel(channel, member)) {
+    if (!member || !channel || !this.canAccessChannel(channel, member, actorUserId)) {
       throw new ForbiddenException('Target user no longer authorized for this channel');
     }
     return { distribution, member, channel };
@@ -1221,7 +1221,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member)) {
+    if (!this.canAccessChannel(channel, member, input.senderId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
     if (input.keyVersion === undefined || input.keyVersion === null) {
@@ -1276,7 +1276,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member)) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 

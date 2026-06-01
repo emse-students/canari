@@ -100,8 +100,13 @@ export async function processPendingInvitations(params: {
           const active = await isGroupActiveOnServer(mlsService, userId, resolved);
           if (active === false) {
             log(
-              `[PENDING] Groupe ${origGroupId} supprimé ou absent du serveur → skip reinvite (${resolved})`
+              `[PENDING] Groupe ${origGroupId} supprimé ou absent du serveur → nettoyage invitations (${resolved})`
             );
+            for (const inv of invitations) {
+              mlsService
+                .deleteDeviceMembership(inv.userId, inv.deviceId, origGroupId)
+                .catch(() => {});
+            }
           } else {
             const tsKey = `reinvite_requested:${resolved}`;
             const lastTs = Number(localStorage.getItem(tsKey) ?? 0);
