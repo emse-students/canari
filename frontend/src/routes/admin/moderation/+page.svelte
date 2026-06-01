@@ -14,16 +14,24 @@
     Copy,
   } from '@lucide/svelte';
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
+  import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import {
     listReports,
     reviewReport,
     muteUser,
     unmuteUser,
     listMutedUsers,
+    deleteReportedComment,
     type ContentReport,
     type MutedUser,
   } from '$lib/moderation/api';
-  import { listHiddenPosts, unhidePost, deletePost, type HiddenPost } from '$lib/posts/api';
+  import {
+    listHiddenPosts,
+    unhidePost,
+    hidePost,
+    deletePost,
+    type HiddenPost,
+  } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
   import Avatar from '$lib/components/shared/Avatar.svelte';
@@ -44,6 +52,13 @@
   let names = $state<Record<string, string>>({});
   let previewOpen = $state(false);
   let previewPostId = $state<string | null>(null);
+  let muteDialogOpen = $state(false);
+  let muteDialogLoading = $state(false);
+  let muteDialogTarget = $state<{
+    userId: string;
+    displayName: string;
+    reportId: string;
+  } | null>(null);
 
   function openPostPreview(postId: string) {
     previewPostId = postId;
@@ -142,14 +157,79 @@
     }
   }
 
-  async function handleMuteAuthor(report: ContentReport) {
-    if (!report.reportedUserId) return;
-    processingId = report.id;
+  function displayNameFor(userId: string): string {
+    return names[userId] ?? `${userId.slice(0, 8)}…`;
+  }
+
+  function openMuteDialog(userId: string, displayName: string, reportId: string) {
+    muteDialogTarget = { userId, displayName, reportId };
+    muteDialogOpen = true;
+  }
+
+  function closeMuteDialog() {
+    if (muteDialogLoading) return;
+    muteDialogOpen = false;
+    muteDialogTarget = null;
+  }
+
+  async function confirmMuteDialog(userVisibleReason: string) {
+    if (!muteDialogTarget) return;
+    muteDialogLoading = true;
+    processingId = muteDialogTarget.reportId;
+    error = '';
     try {
-      await muteUser(report.reportedUserId);
+      await muteUser(muteDialogTarget.userId, userVisibleReason);
+      await handleReview(muteDialogTarget.reportId, 'reviewed');
+      muteDialogOpen = false;
+      muteDialogTarget = null;
+      if (tab === 'muted') void loadMuted();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur lors du mute.';
+    } finally {
+      muteDialogLoading = false;
+      processingId = null;
+    }
+  }
+
+  async function handleHidePost(report: ContentReport) {
+    if (report.contentType !== 'post') return;
+    processingId = report.id;
+    error = '';
+    try {
+      await hidePost(report.contentId);
+      await handleReview(report.id, 'reviewed');
+      if (tab === 'hidden') void loadHidden();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur lors du masquage.';
+      processingId = null;
+    }
+  }
+
+  async function handleDeletePost(report: ContentReport) {
+    if (report.contentType !== 'post') return;
+    if (!confirm('Supprimer définitivement cette publication ?')) return;
+    processingId = report.id;
+    error = '';
+    try {
+      await deletePost(report.contentId);
+      await handleReview(report.id, 'reviewed');
+      hiddenPosts = hiddenPosts.filter((p) => p.id !== report.contentId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Erreur lors de la suppression.';
+      processingId = null;
+    }
+  }
+
+  async function handleDeleteComment(report: ContentReport) {
+    if (report.contentType !== 'comment') return;
+    if (!confirm('Supprimer ce commentaire et ses réponses ?')) return;
+    processingId = report.id;
+    error = '';
+    try {
+      await deleteReportedComment(report.contentId);
       await handleReview(report.id, 'reviewed');
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : 'Erreur lors de la suppression du commentaire.';
       processingId = null;
     }
   }
@@ -418,34 +498,93 @@
               </div>
 
               <!-- Actions -->
-              <div class="flex items-center gap-2 pt-2 border-t border-cn-border/40">
-                <button
-                  onclick={() => handleReview(report.id, 'reviewed')}
-                  disabled={processingId === report.id}
-                  class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
-                >
-                  <Check size={13} />
-                  Traité
-                </button>
-                {#if report.reportedUserId}
+              <div class="pt-2 border-t border-cn-border/40 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
                   <button
-                    onclick={() => handleMuteAuthor(report)}
+                    type="button"
+                    onclick={() => handleReview(report.id, 'reviewed')}
                     disabled={processingId === report.id}
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
-                    title="Traite le signalement et restreint l'auteur du contenu"
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
+                  >
+                    <Check size={13} />
+                    Marquer traité
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => handleReview(report.id, 'dismissed')}
+                    disabled={processingId === report.id}
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-40"
+                  >
+                    <X size={13} />
+                    Ignorer
+                  </button>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onclick={() =>
+                      openMuteDialog(
+                        report.reporterId,
+                        displayNameFor(report.reporterId),
+                        report.id
+                      )}
+                    disabled={processingId === report.id}
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-orange-600 hover:border-orange-400 transition-colors disabled:opacity-40"
+                    title="Restreindre le compte de la personne qui a signalé"
                   >
                     <UserX size={13} />
-                    Muter l'auteur
+                    Muter le signaleur
+                  </button>
+                  {#if report.reportedUserId}
+                    <button
+                      type="button"
+                      onclick={() =>
+                        openMuteDialog(
+                          report.reportedUserId!,
+                          displayNameFor(report.reportedUserId!),
+                          report.id
+                        )}
+                      disabled={processingId === report.id}
+                      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
+                      title="Restreindre l'auteur du contenu signalé"
+                    >
+                      <UserX size={13} />
+                      Muter l'auteur
+                    </button>
+                  {/if}
+                </div>
+                {#if report.contentType === 'post'}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onclick={() => handleHidePost(report)}
+                      disabled={processingId === report.id}
+                      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-amber-600 hover:border-amber-400 transition-colors disabled:opacity-40"
+                    >
+                      <EyeOff size={13} />
+                      Masquer le post
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => handleDeletePost(report)}
+                      disabled={processingId === report.id}
+                      class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
+                    >
+                      <Trash2 size={13} />
+                      Supprimer le post
+                    </button>
+                  </div>
+                {:else if report.contentType === 'comment'}
+                  <button
+                    type="button"
+                    onclick={() => handleDeleteComment(report)}
+                    disabled={processingId === report.id}
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
+                  >
+                    <Trash2 size={13} />
+                    Supprimer le commentaire
                   </button>
                 {/if}
-                <button
-                  onclick={() => handleReview(report.id, 'dismissed')}
-                  disabled={processingId === report.id}
-                  class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-40 ml-auto"
-                >
-                  <X size={13} />
-                  Ignorer
-                </button>
               </div>
             </div>
           {/each}
@@ -680,3 +819,11 @@
 </div>
 
 <ModerationPostPreviewModal open={previewOpen} postId={previewPostId} onClose={closePostPreview} />
+
+<ModerationMuteDialog
+  open={muteDialogOpen}
+  targetLabel={muteDialogTarget?.displayName ?? ''}
+  loading={muteDialogLoading}
+  onClose={closeMuteDialog}
+  onConfirm={confirmMuteDialog}
+/>

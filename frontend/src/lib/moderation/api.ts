@@ -86,7 +86,21 @@ export async function listMutedUsers(): Promise<MutedUser[]> {
   return request<MutedUser[]>('/api/moderation/muted');
 }
 
-/** Returns whether the authenticated user is currently muted. */
-export async function getMyMuteStatus(): Promise<{ isMuted: boolean }> {
-  return request<{ isMuted: boolean }>('/api/moderation/me/mute-status');
+/** Mute status returned to the restricted user (banner in the app). */
+export interface UserMuteStatus {
+  isMuted: boolean;
+  mutedReason: string | null;
+  mutedAt: string | null;
+}
+
+/** Returns whether the authenticated user is currently muted and the visible reason. */
+export async function getMyMuteStatus(): Promise<UserMuteStatus> {
+  return request<UserMuteStatus>('/api/moderation/me/mute-status');
+}
+
+/** Deletes a reported comment by id (moderator). */
+export async function deleteReportedComment(commentId: string): Promise<{ postId: string }> {
+  return request<{ postId: string }>(`/api/moderation/comments/${commentId}/delete`, {
+    method: 'POST',
+  });
 }

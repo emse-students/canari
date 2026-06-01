@@ -151,6 +151,60 @@ export class ModerationService {
     return record?.isMuted ?? false;
   }
 
+  /** Mute status for the authenticated user, including the reason shown in the app. */
+  async getUserMuteStatus(userId: string): Promise<{
+    isMuted: boolean;
+    mutedReason: string | null;
+    mutedAt: string | null;
+  }> {
+    const record = await this.muteRepo.findOne({ where: { userId } });
+    if (!record?.isMuted) {
+      return { isMuted: false, mutedReason: null, mutedAt: null };
+    }
+    return {
+      isMuted: true,
+      mutedReason: record.mutedReason ?? null,
+      mutedAt: record.mutedAt ? record.mutedAt.toISOString() : null,
+    };
+  }
+
+  /** Locates the parent post of a comment by scanning JSON comment arrays. */
+  async findPostIdForComment(commentId: string): Promise<string | null> {
+    const rows: { id: string }[] = await this.reportRepo.manager.query(
+      `SELECT id FROM posts
+       WHERE EXISTS (
+         SELECT 1 FROM jsonb_array_elements(COALESCE(comments, '[]'::jsonb)) elem
+         WHERE elem->>'id' = $1
+       )
+       LIMIT 1`,
+      [commentId]
+    );
+    return rows[0]?.id ?? null;
+  }
+
+  /**
+   * Removes a comment (and its replies) from any post that contains it.
+   * Used by moderators when acting on comment reports.
+   */
+  async deleteCommentById(commentId: string): Promise<{ postId: string }> {
+    const postId = await this.findPostIdForComment(commentId);
+    if (!postId) throw new NotFoundException('Comment not found');
+
+    await this.reportRepo.manager.query(
+      `UPDATE posts SET comments = COALESCE(
+         (
+           SELECT jsonb_agg(elem)
+           FROM jsonb_array_elements(COALESCE(comments, '[]'::jsonb)) elem
+           WHERE elem->>'id' != $2 AND COALESCE(elem->>'parentId', '') != $2
+         ),
+         '[]'::jsonb
+       )
+       WHERE id = $1`,
+      [postId, commentId]
+    );
+    return { postId };
+  }
+
   /** Returns all currently muted users. */
   async listMutedUsers(): Promise<UserModeration[]> {
     return this.muteRepo.find({ where: { isMuted: true }, order: { mutedAt: 'DESC' } });

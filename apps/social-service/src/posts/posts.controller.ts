@@ -330,6 +330,17 @@ export class PostsController {
     return this.service.setPinned(postId, false);
   }
 
+  /** Hides a post from public feeds (moderation). Global admin only. */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':postId/hide')
+  hidePost(
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('postId') postId: string
+  ) {
+    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    return this.service.hidePostByModeration(postId);
+  }
+
   /** Restores a moderation-hidden post back to the public feed. Global admin only. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/unhide')

@@ -17,6 +17,7 @@
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
   import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
+  import MutedUserBanner from '$lib/components/shared/MutedUserBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
@@ -276,6 +277,9 @@
 
 <AppUpdateModal />
 <MlsFatalErrorBanner />
+{#if !isLoginPage}
+  <MutedUserBanner />
+{/if}
 
 <div
   role="presentation"

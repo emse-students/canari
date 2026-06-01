@@ -128,7 +128,18 @@ export class ModerationController {
   @UseGuards(NginxAuthGuard)
   @Get('me/mute-status')
   async myMuteStatus(@Headers('x-user-id') userId: string) {
-    const isMuted = await this.service.isUserMuted(userId);
-    return { isMuted };
+    return this.service.getUserMuteStatus(userId);
+  }
+
+  /** Deletes a reported comment (and replies). Requires MODERATE or global admin. */
+  @UseGuards(NginxAuthGuard)
+  @Post('comments/:commentId/delete')
+  async deleteReportedComment(
+    @Param('commentId') commentId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    await this.assertModerator(userId, ga === 'true');
+    return this.service.deleteCommentById(commentId);
   }
 }

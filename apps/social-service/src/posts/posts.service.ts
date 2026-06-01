@@ -505,6 +505,18 @@ export class PostsService {
     );
   }
 
+  /** Hides a post from public feeds pending moderator review. Admin only. */
+  async hidePostByModeration(postId: string): Promise<{ ok: boolean }> {
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+    if (!post.hiddenByModeration) {
+      post.hiddenByModeration = true;
+      await this.postRepo.save(post);
+      await this.invalidateListCache();
+    }
+    return { ok: true };
+  }
+
   /** Restores a moderation-hidden post back to the public feed. Admin only. */
   async unhidePost(postId: string): Promise<{ ok: boolean }> {
     await this.postRepo.manager.query(

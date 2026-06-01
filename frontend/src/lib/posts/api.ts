@@ -317,6 +317,11 @@ export async function listHiddenPosts(): Promise<HiddenPost[]> {
   return request<HiddenPost[]>('/api/posts/hidden');
 }
 
+/** Hides a post from public feeds (moderation). Global admin only. */
+export async function hidePost(postId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/posts/${postId}/hide`, { method: 'PATCH' });
+}
+
 /** Restores a moderation-hidden post back to the public feed. Global admin only. */
 export async function unhidePost(postId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/posts/${postId}/unhide`, { method: 'PATCH' });
