@@ -36,11 +36,11 @@
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
     /** Callback fired when the current user leaves the selected workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
-    /** Callback to send a community membership invitation with the given role. */
+    /** Callback to send a community membership invitation with the given role. Rejects on key-distribution failure. */
     onInviteCommunityMember?: (
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'
-    ) => void;
+    ) => Promise<void>;
   }
 
   let {
@@ -193,7 +193,9 @@
     }
   });
 
-  function handleGenerateInvitation() {
+  let inviteLoading = $state(false);
+
+  async function handleGenerateInvitation() {
     const memberId = inviteUserId.trim();
     if (!selectedWorkspace?.name) {
       inviteStatus = "Sélectionnez d'abord une communauté.";
@@ -210,12 +212,24 @@
       return;
     }
 
-    onInviteCommunityMember(memberId, inviteRole);
+    inviteLoading = true;
+    inviteStatus = '';
+    const savedId = inviteUserId;
+    const savedRole = inviteRole;
     inviteUserId = '';
     inviteRole = 'member';
-    inviteStatus = `Invitation envoyée à ${memberId}.`;
-    setTimeout(() => { inviteStatus = ''; }, 4000);
-    void loadCommunityMembers();
+    try {
+      await onInviteCommunityMember(savedId, savedRole);
+      inviteStatus = `Invitation envoyée à ${savedId}.`;
+      setTimeout(() => { inviteStatus = ''; }, 4000);
+      void loadCommunityMembers();
+    } catch (e) {
+      inviteStatus = e instanceof Error ? e.message : 'Échec de la distribution de clé.';
+      inviteUserId = savedId;
+      inviteRole = savedRole;
+    } finally {
+      inviteLoading = false;
+    }
   }
 
   async function handleImageFileChange(event: Event) {
@@ -370,10 +384,11 @@
             <div class="p-4 flex items-center justify-between border-b border-cn-border bg-black/5">
               <span class="font-semibold text-text-main">{communityMembers.length} Membre(s)</span>
               <button
-                class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition"
+                class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 onclick={handleGenerateInvitation}
+                disabled={inviteLoading}
               >
-                Générer une invitation
+                {inviteLoading ? 'Envoi…' : 'Générer une invitation'}
               </button>
             </div>
             <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">

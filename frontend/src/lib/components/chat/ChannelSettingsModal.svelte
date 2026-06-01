@@ -41,12 +41,12 @@
     channelWorkspaces: ChannelSidebarWorkspace[];
     /** Optional media ID for the channel's current avatar image. */
     imageMediaId?: string | null;
-    /** Callback to invite a user to the channel with a given role. */
+    /** Callback to invite a user to the channel with a given role. Rejects on key-distribution failure. */
     onInviteMember: (
       channelId: string,
       memberId: string,
       role: 'member' | 'moderator' | 'admin'
-    ) => void;
+    ) => Promise<void>;
     /** Callback to update the role of an existing channel member. */
     onUpdateMemberRole: (
       channelId: string,
@@ -107,12 +107,26 @@
 
   let permissionMembersId = $state('');
   let permissionRole = $state<'member' | 'moderator' | 'admin'>('member');
+  let inviteLoading = $state(false);
+  let inviteError = $state('');
 
-  function handleInviteAction() {
-    if (permissionMembersId.trim()) {
-      onInviteMember(selectedChannelId, permissionMembersId, permissionRole);
-      permissionMembersId = '';
-      permissionRole = 'member';
+  async function handleInviteAction() {
+    const id = permissionMembersId.trim();
+    if (!id) return;
+    inviteLoading = true;
+    inviteError = '';
+    const savedId = permissionMembersId;
+    const savedRole = permissionRole;
+    permissionMembersId = '';
+    permissionRole = 'member';
+    try {
+      await onInviteMember(selectedChannelId, savedId, savedRole);
+    } catch (e) {
+      inviteError = e instanceof Error ? e.message : 'Échec de la distribution de clé';
+      permissionMembersId = savedId;
+      permissionRole = savedRole;
+    } finally {
+      inviteLoading = false;
     }
   }
 
@@ -148,6 +162,8 @@
       addingUserId = '';
       permissionMembersId = '';
       permissionRole = 'member';
+      inviteError = '';
+      inviteLoading = false;
     }
   });
 
@@ -631,10 +647,11 @@
               <button
                 type="button"
                 onclick={handleInviteAction}
-                disabled={!permissionMembersId.trim()}
+                disabled={!permissionMembersId.trim() || inviteLoading}
                 class="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 disabled:shadow-none"
               >
-                <UserPlus size={18} strokeWidth={2.5} /> Envoyer l'invitation
+                <UserPlus size={18} strokeWidth={2.5} />
+                {inviteLoading ? 'Envoi…' : "Envoyer l'invitation"}
               </button>
 
               <button
@@ -646,6 +663,9 @@
                 <Shield size={18} strokeWidth={2.5} /> Mettre à jour
               </button>
             </div>
+            {#if inviteError}
+              <p class="mt-2 text-xs font-medium text-red-600 dark:text-red-400">{inviteError}</p>
+            {/if}
           </div>
         </div>
       {/if}

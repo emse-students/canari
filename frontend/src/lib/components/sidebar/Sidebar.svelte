@@ -530,11 +530,10 @@
   onClose={closeCommunityAdminModal}
   {onUpdateWorkspaceImage}
   {onLeaveWorkspace}
-  onInviteCommunityMember={(memberId, roleName) => {
+  onInviteCommunityMember={async (memberId, roleName) => {
     const workspace = selectedCommunityWorkspace;
     if (!workspace) {
-      alert("Veuillez sélectionner une communauté d'abord");
-      return;
+      throw new Error("Veuillez sélectionner une communauté d'abord");
     }
 
     const targetChannel =
@@ -542,11 +541,10 @@
       workspace.channels[0];
 
     if (!targetChannel) {
-      alert("Aucun canal disponible dans cette communauté pour envoyer l'invitation");
-      return;
+      throw new Error("Aucun canal disponible dans cette communauté pour envoyer l'invitation");
     }
 
-    onInviteChannelMember?.(targetChannel.id, memberId, roleName);
+    await onInviteChannelMember?.(targetChannel.id, memberId, roleName);
   }}
 />
 

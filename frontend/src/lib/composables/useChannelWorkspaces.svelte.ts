@@ -467,7 +467,9 @@ export function useChannelWorkspaces() {
 
       ctx.log(`Membre invité dans le canal (${roleName}) : ${memberId}`);
     } catch (error) {
-      ctx.log(toUiActionError(`Invitation dans le canal (${roleName})`, error));
+      const msg = toUiActionError(`Invitation dans le canal (${roleName})`, error);
+      ctx.log(msg);
+      throw error;
     }
   }
 
