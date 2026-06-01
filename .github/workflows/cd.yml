@@ -705,6 +705,45 @@ jobs:
 
           echo "✅ Services deployed"
 
+      - name: Run database migrations
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+        run: |
+          echo "🗄️ Running database migrations..."
+
+          # Wait for PostgreSQL to accept connections (up to 60s).
+          # psql and pg_isready connect via unix socket inside the container → trust auth, no password needed.
+          for i in $(seq 1 30); do
+            if eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T postgres pg_isready -U \"$POSTGRES_USER\" -d auth_db" >/dev/null 2>&1; then
+              echo "✅ PostgreSQL is ready"
+              break
+            fi
+            echo "⏳ Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+            if [ "$i" -eq 30 ]; then
+              echo "❌ PostgreSQL did not become ready in time"
+              exit 1
+            fi
+          done
+
+          # Run all *.sql files found under apps/*/src/migrations/, sorted by filename (001_, 002_, ...).
+          # All migration files must be idempotent (use IF NOT EXISTS / ON CONFLICT DO NOTHING).
+          MIGRATIONS=$(find apps/*/src/migrations -name "*.sql" 2>/dev/null | sort)
+
+          if [ -z "$MIGRATIONS" ]; then
+            echo "ℹ️ No migration files found - skipping"
+          else
+            for migration in $MIGRATIONS; do
+              echo "▶️ Applying: $migration"
+              eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T postgres \
+                psql -U \"$POSTGRES_USER\" -d auth_db -v ON_ERROR_STOP=1" < "$migration"
+              echo "✅ Done: $migration"
+            done
+          fi
+
+          echo "✅ All migrations applied"
+
       - name: Verify runtime secrets are applied
         working-directory: ${{ env.DEPLOY_PATH }}
         env:

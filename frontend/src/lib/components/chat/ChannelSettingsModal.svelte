@@ -86,7 +86,7 @@
     onUpdateChannelAccess,
   }: Props = $props();
 
-  let activeTab = $state<'overview' | 'permissions' | 'invites'>('permissions');
+  let activeTab = $state<'overview' | 'permissions' | 'invites'>('overview');
 
   let selectedWorkspace = $derived(
     channelWorkspaces.find((w) => w.channels.some((c) => c.id === selectedChannelId))
@@ -139,6 +139,7 @@
       void loadChannelAccess();
     }
     if (!open) {
+      activeTab = 'overview';
       accessLoaded = false;
       accessSaved = false;
       accessError = '';

@@ -424,6 +424,17 @@ export function useConversations() {
 
   // ── Selection + navigation ────────────────────────────────────────────────
 
+  function dismissChannelMembersDrawerIfAny() {
+    if (!channelMembersDrawerHistoryClose) {
+      isChannelMembersDrawerOpen = false;
+      return;
+    }
+    const ref = channelMembersDrawerHistoryClose;
+    channelMembersDrawerHistoryClose = null;
+    isChannelMembersDrawerOpen = false;
+    abandonHistoryOverlay(ref);
+  }
+
   /** Selects a conversation (sets selectedContact, clears unread badge and send error). Use this version when no ctx is available (e.g. from channel event handlers). */
   function dismissDrawerHistoryIfAny() {
     if (!drawerHistoryClose) return;
@@ -435,6 +446,7 @@ export function useConversations() {
 
   function selectConversation(name: string) {
     dismissDrawerHistoryIfAny();
+    dismissChannelMembersDrawerIfAny();
     selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
@@ -448,6 +460,7 @@ export function useConversations() {
   /** Call this version when you have the ctx available (inside handlers). */
   function selectConversationWithCtx(name: string, ctx: ConversationContext) {
     dismissDrawerHistoryIfAny();
+    dismissChannelMembersDrawerIfAny();
     selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
@@ -461,6 +474,8 @@ export function useConversations() {
 
   /** Deselects the active conversation and closes the drawer (mobile back-button action). */
   function goBackToMenu() {
+    isChannelSettingsModalOpen = false;
+    dismissChannelMembersDrawerIfAny();
     if (mobileConvoHistoryClose) {
       // Clear state synchronously so any rapid click on a new conversation after
       // pressing back pushes a fresh history overlay rather than reusing the stale one.

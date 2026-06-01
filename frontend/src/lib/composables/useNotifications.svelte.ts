@@ -26,11 +26,6 @@ export function useNotifications() {
   const lastNotifAtByConv = new SvelteMap<string, number>();
   let browserPermissionRetryAbort: AbortController | null = null;
 
-  // Channel membership notice banner
-  let channelMembershipNotice = $state('');
-  let channelMembershipActionChannelId = $state<string | null>(null);
-  let channelMembershipNoticeTimer: ReturnType<typeof setTimeout> | null = null;
-
   // ---------- Audio ----------
 
   /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
@@ -269,59 +264,12 @@ export function useNotifications() {
     }
   }
 
-  // ---------- Channel membership banner ----------
-
-  /** Displays a banner notice at the top of the chat (e.g. "You joined #general"). Clears automatically after 5 s. */
-  function showChannelMembershipNotice(message: string, actionChannelId?: string) {
-    channelMembershipNotice = message;
-    channelMembershipActionChannelId = actionChannelId ?? null;
-
-    if (channelMembershipNoticeTimer) clearTimeout(channelMembershipNoticeTimer);
-    channelMembershipNoticeTimer = setTimeout(() => {
-      channelMembershipNotice = '';
-      channelMembershipActionChannelId = null;
-      channelMembershipNoticeTimer = null;
-    }, 5000);
-  }
-
-  /** Called when the user clicks the "Go to channel" action on the membership banner. Selects the channel and clears the notice. */
-  function openJoinedChannelFromNotice(
-    selectConversation: (id: string) => void,
-    setSelectedChannelId: (id: string) => void
-  ) {
-    if (!channelMembershipActionChannelId) return;
-    setSelectedChannelId(channelMembershipActionChannelId);
-    selectConversation(channelMembershipActionChannelId);
-    channelMembershipNotice = '';
-    channelMembershipActionChannelId = null;
-    if (channelMembershipNoticeTimer) {
-      clearTimeout(channelMembershipNoticeTimer);
-      channelMembershipNoticeTimer = null;
-    }
-  }
-
-  /** Clears the action channel pointer (e.g. when the user was already kicked from the channel before clicking). */
-  function clearActionChannel(channelId: string) {
-    if (channelMembershipActionChannelId === channelId) {
-      channelMembershipActionChannelId = null;
-    }
-  }
-
   return {
-    get channelMembershipNotice() {
-      return channelMembershipNotice;
-    },
-    get channelMembershipActionChannelId() {
-      return channelMembershipActionChannelId;
-    },
     playNotificationTone,
     playSendTone,
     playReceiveTone,
     playReadTone,
     requestSystemNotificationPermission,
     sendSystemNotification,
-    showChannelMembershipNotice,
-    openJoinedChannelFromNotice,
-    clearActionChannel,
   };
 }

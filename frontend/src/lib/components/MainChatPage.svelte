@@ -440,6 +440,8 @@
       }
       pendingReadReceipts = [];
       convs.selectedContact = null;
+      convs.isChannelSettingsModalOpen = false;
+      convs.isChannelMembersDrawerOpen = false;
       convs.sendError = '';
       messageText = '';
     });
@@ -509,7 +511,10 @@
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
-          onBack={convs.goBackToMenu}
+          onBack={() => {
+            channels.selectedChannelConversationId = '';
+            convs.goBackToMenu();
+          }}
           onOpenConversations={convs.openConversationDrawer}
           onOpenSettings={isSelectedChannel
             ? () => (convs.isChannelSettingsModalOpen = true)

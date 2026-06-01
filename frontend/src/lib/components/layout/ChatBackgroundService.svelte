@@ -11,10 +11,11 @@
    * En utilisant les singletons globaux (globalChatSingleton.svelte.ts), la
    * connexion persiste sur toutes les routes et non seulement sur /chat.
    */
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
+  import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import {
     globalSession,
@@ -28,7 +29,7 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import { Bell, Fingerprint } from '@lucide/svelte';
+  import { Fingerprint } from '@lucide/svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -92,9 +93,37 @@
   let pinLoading = $state(false);
   let biometricConfigured = $state(false);
 
-  /** Returns true if this user has never initialised MLS on this browser (no device ID stored). */
-  function detectFirstPinSetup(uid: string): boolean {
-    return !localStorage.getItem(`mls_device_id_${uid}`);
+  /** Opens the PIN modal for the given user, computing isFirstSetup from the server. */
+  async function openPinModal(uid: string) {
+    globalSession.userId = uid;
+    isFirstPinSetup = await detectFirstPinSetup(uid);
+    showPinModal = true;
+  }
+
+  /** Called when a stored PIN is rejected; resets state and shows the PIN modal. */
+  function onSavedPinFailed(msg: string) {
+    pinError = msg;
+    isFirstPinSetup = false;
+    showPinModal = true;
+  }
+
+  /**
+   * Returns true only if the user has zero MLS devices on the server — i.e. a genuinely
+   * new account, not an existing user on a new device. Falls back to the localStorage
+   * heuristic when the network is unavailable.
+   */
+  async function detectFirstPinSetup(uid: string): Promise<boolean> {
+    try {
+      const token = await getToken();
+      const res = await fetch(`/api/mls/devices/${encodeURIComponent(uid)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return !localStorage.getItem(`mls_device_id_${uid}`);
+      const devices: unknown[] = await res.json();
+      return devices.length === 0;
+    } catch {
+      return !localStorage.getItem(`mls_device_id_${uid}`);
+    }
   }
 
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
@@ -206,15 +235,6 @@
             mlsStateHex: null,
           });
         }
-        globalNotifs.showChannelMembershipNotice(
-          `Je t'invite à rejoindre #${event.channelName || event.channelId}`,
-          channelConversationId
-        );
-        void globalNotifs.sendSystemNotification(
-          'Canal rejoint',
-          `Je t'invite à rejoindre #${event.channelName || event.channelId}`,
-          channelConversationId
-        );
         appendLog(`Ajout au canal #${event.channelName || event.channelId}`);
       },
       onChannelMemberKicked: (event: any) => {
@@ -230,14 +250,6 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        globalNotifs.clearActionChannel(channelConversationId);
-        globalNotifs.showChannelMembershipNotice(
-          `Vous avez été retiré du canal #${event.channelName || event.channelId}`
-        );
-        void globalNotifs.sendSystemNotification(
-          'Canal quitté',
-          `Vous avez été retiré du canal #${event.channelName || event.channelId}`
-        );
         appendLog(`Retiré du canal #${event.channelName || event.channelId}`);
       },
       onChannelUpdated: (event: { channelId: string; name?: string; imageMediaId?: string }) => {
@@ -357,9 +369,7 @@
             // Biométrie annulée, échouée ou non disponible → fallback modal PIN
             const savedUser2 = currentUserId();
             if (savedUser2) {
-              globalSession.userId = savedUser2;
-              isFirstPinSetup = detectFirstPinSetup(savedUser2);
-              showPinModal = true;
+              await openPinModal(savedUser2);
             } else {
               // No saved user - the layout auth guard will redirect to /login.
             }
@@ -373,12 +383,7 @@
           globalSession.pin = savedPin;
           void globalSession.login({
             ...sessionCb(),
-            onLoginFailed: (msg: string) => {
-              // Le PIN sauvegardé est invalide - on demande à l'utilisateur
-              pinError = msg;
-              isFirstPinSetup = false; // had a saved PIN already
-              showPinModal = true;
-            },
+            onLoginFailed: onSavedPinFailed,
           });
         } else if (savedUser) {
           globalSession.userId = savedUser;
@@ -386,16 +391,11 @@
           if (isTauriRuntime()) {
             const ok = await globalSession.nativeStorageLogin({
               ...sessionCb(),
-              onLoginFailed: (msg: string) => {
-                pinError = msg;
-                isFirstPinSetup = detectFirstPinSetup(savedUser);
-                showPinModal = true;
-              },
+              onLoginFailed: onSavedPinFailed,
             });
             if (ok) return;
           }
-          isFirstPinSetup = detectFirstPinSetup(savedUser);
-          showPinModal = true;
+          await openPinModal(savedUser);
         } else {
           // No saved user - the layout auth guard will redirect to /login.
         }
@@ -530,9 +530,7 @@
       void globalSession.login({
         ...sessionCb(),
         onLoginFailed: (msg: string) => {
-          pinError = msg;
-          isFirstPinSetup = false; // had a saved PIN already
-          showPinModal = true;
+          onSavedPinFailed(msg);
           _loginInProgress = false;
         },
       });
@@ -549,8 +547,7 @@
           _loginInProgress = false;
         }
       }
-      isFirstPinSetup = detectFirstPinSetup(uid);
-      showPinModal = true;
+      await openPinModal(uid);
     }
   });
 </script>
@@ -572,47 +569,6 @@
   isFirstSetup={isFirstPinSetup}
 />
 
-<!-- Notice d'invitation de canal (toutes routes) -->
-{#if globalNotifs.channelMembershipNotice}
-  <div
-    class="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+4.5rem)] z-50 w-[min(92vw,32rem)] -translate-x-1/2 transition-all duration-300"
-  >
-    <div
-      class="pointer-events-auto flex items-center gap-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/80 dark:bg-black/50 px-4 py-3 shadow-xl shadow-black/5 dark:shadow-black/20 backdrop-blur-2xl"
-    >
-      <div
-        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400"
-      >
-        <Bell size={16} />
-      </div>
-      <p class="flex-1 text-sm font-semibold text-text-main leading-snug">
-        {globalNotifs.channelMembershipNotice}
-      </p>
-      {#if globalNotifs.channelMembershipActionChannelId}
-        <button
-          type="button"
-          class="shrink-0 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-[#151B2C] shadow-sm transition-all hover:-translate-y-0.5 hover:bg-amber-400 hover:shadow-md"
-          onclick={async () => {
-            const channelId = globalNotifs.channelMembershipActionChannelId;
-            if (!channelId) return;
-            globalNotifs.openJoinedChannelFromNotice(
-              globalConvs.selectConversation,
-              (id) => (globalChannels.selectedChannelConversationId = id)
-            );
-            await goto('/communities');
-            // La navigation déclenche un $effect dans MainChatPage qui remet
-            // selectedContact à null. On re-sélectionne le canal après le flush.
-            await tick();
-            globalChannels.selectedChannelConversationId = channelId;
-            globalConvs.selectConversation(channelId);
-          }}
-        >
-          Rejoindre
-        </button>
-      {/if}
-    </div>
-  </div>
-{/if}
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}
   <CallOverlay
