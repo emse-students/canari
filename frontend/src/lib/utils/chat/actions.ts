@@ -14,6 +14,7 @@ import {
   isGroupActiveOnServer,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
+import { collectKnownSuccessorIds } from '$lib/utils/chat/groupSyncEligibility';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -350,6 +351,7 @@ export async function discoverMissingGroups(params: {
   // Only when getUserGroups succeeded (never purge on transient network errors).
   if (serverFetchSucceeded) {
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
+    const knownSuccessorIds = collectKnownSuccessorIds(uniqueServerGroups);
     let mlsMutated = false;
 
     for (const groupId of mlsService.getLocalGroups()) {
@@ -389,6 +391,12 @@ export async function discoverMissingGroups(params: {
       }
 
       if (!serverGroupIds.has(convo.id)) {
+        if (knownSuccessorIds.has(convo.id)) {
+          log(
+            `[DISCOVERY] Conversation successeur ${convo.id.slice(0, 8)}… conservée (tombstone serveur)`
+          );
+          continue;
+        }
         log(`[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur - retrait`);
         await purgeLocalConversationRecord({
           conversations,

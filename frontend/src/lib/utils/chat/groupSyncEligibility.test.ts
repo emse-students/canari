@@ -3,6 +3,7 @@ import {
   buildUserGroupSyncIndex,
   isGroupEligibleForMlsRecovery,
   resolveActiveGroupTarget,
+  findActiveDirectGroupForPeer,
 } from './groupSyncEligibility';
 
 describe('groupSyncEligibility', () => {
@@ -37,5 +38,33 @@ describe('groupSyncEligibility', () => {
     ]);
     expect(resolveActiveGroupTarget('old', index)).toBe('new');
     expect(isGroupEligibleForMlsRecovery('old', index, vi.fn())).toBe(false);
+  });
+
+  it('resolves successor id even when successor is not yet in getUserGroups', () => {
+    const index = buildUserGroupSyncIndex([
+      {
+        groupId: 'old',
+        name: 'alice::bob',
+        isGroup: false,
+        deletedAt: '2026-01-01',
+        successorId: 'new',
+      },
+    ]);
+    expect(resolveActiveGroupTarget('old', index)).toBe('new');
+    expect(
+      findActiveDirectGroupForPeer(
+        [
+          {
+            groupId: 'old',
+            name: 'alice::bob',
+            isGroup: false,
+            deletedAt: '2026-01-01',
+            successorId: 'new',
+          },
+        ],
+        'alice',
+        'bob'
+      )
+    ).toEqual({ groupId: 'new', tombstoneGroupId: 'old' });
   });
 });

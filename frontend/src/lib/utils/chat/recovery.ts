@@ -105,8 +105,56 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
       }
     }
   } else {
-    // Step 4 - successorId was already set server-side: just migrate locally
+    // Step 4 - successorId was already set server-side: join + migrate locally
+    await ensureSuccessorAccessible(deadGroupId, successorId, deps);
     await migrateConversation(deadGroupId, successorId, deps);
+  }
+}
+
+/**
+ * Ensures this device is registered on the successor group and requests a Welcome when needed.
+ */
+async function ensureSuccessorAccessible(
+  deadGroupId: string,
+  successorId: string,
+  deps: RecoveryDeps
+): Promise<void> {
+  const { mlsService, userId, conversations, log } = deps;
+
+  try {
+    await mlsService.registerMember(successorId, userId);
+    log(`[RECOVER] Membre enregistré sur successeur ${successorId.slice(0, 8)}…`);
+  } catch (e) {
+    log(
+      `[RECOVER] registerMember successeur (${successorId.slice(0, 8)}…): ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    );
+  }
+
+  const hasLocal = mlsService.getLocalGroups().includes(successorId);
+  if (!hasLocal) {
+    try {
+      mlsService.sendWelcomeRequest(successorId);
+      log(`[RECOVER] welcome_request envoyé pour successeur ${successorId.slice(0, 8)}…`);
+    } catch (e) {
+      log(
+        `[RECOVER] welcome_request successeur échoué: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    return;
+  }
+
+  if (mlsService.getEpoch(successorId) === 0) {
+    log(`[RECOVER] Successeur ${successorId.slice(0, 8)}… epoch=0 - ré-invitation membres`);
+    await inviteOldMembers(deadGroupId, successorId, deps).catch((e) =>
+      log(`[RECOVER] Erreur ré-invitation : ${String(e)}`)
+    );
+    const convo = conversations.get(successorId);
+    if (convo && !convo.isReady) {
+      conversations.set(successorId, { ...convo, isReady: true });
+      await deps.saveConversation(successorId).catch(() => {});
+    }
   }
 }
 

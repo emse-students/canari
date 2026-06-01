@@ -6,6 +6,8 @@ import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { recoverDeadGroup } from '$lib/utils/chat/recovery';
+import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
+import { isRawId } from '$lib/utils/chat/conversations';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -481,62 +483,60 @@ export async function startNewConversation(
   // Names can be "alice::bob" or "bob::alice" - check both orderings.
   try {
     const serverGroups = await mlsService.getUserGroups(userId);
-    const expectedNames = [
-      `${userId.toLowerCase()}::${contact}`,
-      `${contact}::${userId.toLowerCase()}`,
-    ];
-    const existing = serverGroups.find(
-      (g) => !g.isGroup && expectedNames.includes((g.name ?? '').toLowerCase())
-    );
-    if (existing) {
+    const resolved = findActiveDirectGroupForPeer(serverGroups, userId, contact);
+    if (resolved) {
+      const key = resolved.groupId;
+      const deadKey = resolved.tombstoneGroupId;
       log(
-        `[1v1] Groupe serveur existant trouvé (${existing.groupId}) - chargement sans recréation.`
+        deadKey
+          ? `[1v1] Groupe actif ${key.slice(0, 8)}… (successeur de ${deadKey.slice(0, 8)}…) - chargement.`
+          : `[1v1] Groupe serveur existant trouvé (${key}) - chargement sans recréation.`
       );
-      const key = existing.groupId;
+
+      const ensureDirectConvo = async (convoKey: string, ready: boolean) => {
+        const existing = conversations.get(convoKey);
+        const base = {
+          id: convoKey,
+          contactName: contact,
+          name: contact,
+          messages: existing?.messages ?? [],
+          isReady: ready,
+          mlsStateHex: null as string | null,
+          conversationType: 'direct' as const,
+          directPeerId: contact,
+        };
+        if (existing) {
+          const fixName = isRawId(existing.name) || isRawId(existing.contactName ?? '');
+          conversations.set(convoKey, {
+            ...existing,
+            ...base,
+            name: fixName ? contact : existing.name,
+            contactName: fixName ? contact : existing.contactName,
+            directPeerId: contact,
+            isReady: ready || existing.isReady,
+          });
+        } else {
+          conversations.set(convoKey, base);
+        }
+        if (saveConversation) await saveConversation(convoKey);
+      };
 
       // If local MLS state exists for this group, just ensure the conversation is ready.
       if (mlsService.getLocalGroups().includes(key)) {
-        if (!conversations.has(key)) {
-          conversations.set(key, {
-            id: key,
-            contactName: contact,
-            name: contact,
-            messages: [],
-            isReady: true,
-            mlsStateHex: null,
-            conversationType: 'direct',
-            directPeerId: contact,
-          });
-          if (saveConversation) await saveConversation(key);
-        } else {
-          const convo = conversations.get(key)!;
-          if (!convo.isReady) {
-            conversations.set(key, { ...convo, isReady: true });
-            if (saveConversation) await saveConversation(key);
-          }
-        }
+        await ensureDirectConvo(key, true);
         selectConversation(key);
         return;
       }
 
-      // MLS state missing locally — recover via CAS-safe successor creation.
-      // getSelectedContact returns `key` so migrateConversation auto-redirects the UI
-      // to the new groupId once the successor is established.
+      // MLS state missing locally — recover via successor / welcome flow.
       log(`[1v1] État MLS absent pour ${key} - déclenchement de la récupération...`);
-      if (!conversations.has(key)) {
-        conversations.set(key, {
-          id: key,
-          contactName: contact,
-          name: contact,
-          messages: [],
-          isReady: false,
-          mlsStateHex: null,
-          conversationType: 'direct',
-          directPeerId: contact,
-        });
+      if (deadKey && conversations.has(deadKey) && !conversations.has(key)) {
+        await ensureDirectConvo(deadKey, false);
+      } else {
+        await ensureDirectConvo(key, false);
       }
       try {
-        await recoverDeadGroup(key, {
+        await recoverDeadGroup(deadKey ?? key, {
           mlsService,
           storage: deps.storage,
           userId,
@@ -550,7 +550,6 @@ export async function startNewConversation(
           log,
         });
       } catch {
-        // Recovery failed (e.g. contact offline) — stay on the current entry.
         if (conversations.has(key)) selectConversation(key);
       }
       return;
