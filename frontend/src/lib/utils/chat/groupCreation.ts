@@ -5,6 +5,7 @@ import { saveMlsState } from '$lib/utils/hex';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -354,8 +355,6 @@ async function processBulkAddition(
  *
  * `contactDeviceIds` identifies which devices belong to the contact vs. the current user,
  * so that registerMember uses the correct owner for each device.
- *
- * Shared by startNewConversation and repairDirectConversation - both do exactly this sequence.
  */
 
 async function performDirectAdd(
@@ -520,9 +519,10 @@ export async function startNewConversation(
         return;
       }
 
-      // MLS state missing locally — repair by recreating the group and re-inviting all parties.
-      // Don't navigate before repair: repairDirectConversation replaces `key` with a new groupId.
-      log(`[1v1] État MLS absent pour ${key} - déclenchement de la réparation...`);
+      // MLS state missing locally — recover via CAS-safe successor creation.
+      // getSelectedContact returns `key` so migrateConversation auto-redirects the UI
+      // to the new groupId once the successor is established.
+      log(`[1v1] État MLS absent pour ${key} - déclenchement de la récupération...`);
       if (!conversations.has(key)) {
         conversations.set(key, {
           id: key,
@@ -535,18 +535,23 @@ export async function startNewConversation(
           directPeerId: contact,
         });
       }
-      const repaired = await repairDirectConversation(key, deps);
-      if (repaired) {
-        // repairDirectConversation deleted `key` and inserted a new groupId — find it.
-        const newEntry = Array.from(conversations.entries()).find(
-          ([, c]) =>
-            c.conversationType === 'direct' &&
-            (c.directPeerId ?? c.contactName) === contact &&
-            c.isReady
-        );
-        if (newEntry) selectConversation(newEntry[0]);
-      } else if (conversations.has(key)) {
-        selectConversation(key);
+      try {
+        await recoverDeadGroup(key, {
+          mlsService,
+          storage: deps.storage,
+          userId,
+          pin: deps.pin,
+          conversations,
+          getSelectedContact: () => key,
+          setSelectedContact: (id) => {
+            if (id) selectConversation(id);
+          },
+          saveConversation,
+          log,
+        });
+      } catch {
+        // Recovery failed (e.g. contact offline) — stay on the current entry.
+        if (conversations.has(key)) selectConversation(key);
       }
       return;
     }
@@ -634,77 +639,5 @@ export async function startNewConversation(
         // Non-blocking: orphan will be cleaned up on next server-side GC
       }
     }
-  }
-}
-
-/** Repairs a broken direct conversation by recreating its MLS group and re-inviting both parties. Returns true on success, false if the contact has no reachable devices. */
-export async function repairDirectConversation(
-  conversationKey: string,
-  deps: GroupCreationDeps
-): Promise<boolean> {
-  const { mlsService, userId, conversations, saveConversation, log } = deps;
-  const convo = conversations.get(conversationKey);
-  if (!convo || convo.conversationType !== 'direct') return false;
-
-  const contact = (convo.directPeerId ?? convo.contactName).toLowerCase();
-  const groupName = `${userId}::${contact}`;
-
-  // Check contact availability first
-  log(`Vérification de la disponibilité de ${contact}...`);
-  const devices = await fetchDevicesWithRetry(mlsService, contact, log, 3, 1000);
-  if (devices.length === 0) {
-    log(`Échec de la réparation : aucun appareil pour ${contact}`);
-    console.error(`[REPAIR] No devices found for ${contact} - cannot repair`);
-    return false;
-  }
-
-  let groupId: string | undefined;
-  try {
-    log(`Réparation automatique de la connexion avec ${contact}...`);
-    console.log(`[REPAIR] Starting repair for direct conversation with ${contact}`);
-    groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
-
-    await mlsService.createGroup(groupId);
-    await mlsService.registerMember(groupId, userId);
-
-    // Collect ALL devices (contact + own) for a single bulk add
-    const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
-      (d) => d.deviceId !== mlsService.getDeviceId()
-    );
-    const allDevices = [...devices, ...ownDevices];
-    const contactDeviceIds = new Set(devices.map((d) => d.deviceId));
-
-    await performDirectAdd(groupId, allDevices, contactDeviceIds, contact, deps);
-
-    // The new groupId becomes the new conversation key.
-    // Remove the old entry and re-insert under the new key.
-    conversations.delete(conversationKey);
-    conversations.set(groupId, { ...convo, id: groupId, isReady: true });
-    await saveConversation(groupId);
-    log(`[OK] Connexion réparée avec ${contact}.`);
-    console.log(`[REPAIR] Direct conversation with ${contact} repaired (newGroupId=${groupId})`);
-    return true;
-  } catch (e) {
-    log(`Erreur de réparation : ${toUiDiscussionError(e)}`);
-    console.error(`[REPAIR] repairDirectConversation failed for ${contact}:`, e);
-
-    // Clean up local MLS state (epoch may have advanced after addMembersBulk)
-    if (groupId) {
-      try {
-        mlsService.forgetGroup(groupId, 0);
-      } catch {
-        // Non-blocking
-      }
-    }
-
-    // Best-effort: clean up the orphan remote group
-    if (groupId) {
-      try {
-        await mlsService.deleteGroupOnServer(groupId);
-      } catch {
-        // Non-blocking
-      }
-    }
-    return false;
   }
 }

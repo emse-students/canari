@@ -29,8 +29,8 @@ import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
   startNewConversation as startConversation,
-  repairDirectConversation,
 } from '$lib/utils/chat/groupCreation';
+import { recoverDeadGroup } from '$lib/utils/chat/recovery';
 import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
@@ -592,20 +592,24 @@ export function useConversations() {
           return true;
         }
 
-        const repaired = await repairDirectConversation(contactName, {
-          mlsService,
-          storage: ctx.storage,
-          userId: ctx.userId,
-          pin: ctx.pin,
-          historyBaseUrl: ctx.historyBaseUrl,
-          conversations,
-          selectConversation: (name) => selectConversationWithCtx(name, ctx),
-          saveConversation: (name) => saveConversation(name, ctx),
-          log: ctx.log,
-        });
-        if (repaired) {
-          console.log(`[VERIFY] Direct conversation ${convo.id} repaired successfully`);
+        try {
+          await recoverDeadGroup(contactName, {
+            mlsService,
+            storage: ctx.storage,
+            userId: ctx.userId,
+            pin: ctx.pin,
+            conversations,
+            getSelectedContact: () => selectedContact,
+            setSelectedContact: (id) => {
+              if (id) selectConversationWithCtx(id, ctx);
+            },
+            saveConversation: (name) => saveConversation(name, ctx),
+            log: ctx.log,
+          });
+          console.log(`[VERIFY] Direct conversation ${convo.id} recovered successfully`);
           return true;
+        } catch {
+          // Recovery failed — fall through to show removal notice
         }
       }
       const notice =
