@@ -253,7 +253,12 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
   }
 
   // Prefer Web Locks (race-free, no polling required).
-  if (typeof navigator !== 'undefined' && 'locks' in navigator) {
+  // happy-dom exposes `locks` on navigator but leaves it null; Tauri WebKitGTK may lack the API.
+  if (
+    typeof navigator !== 'undefined' &&
+    navigator.locks != null &&
+    typeof navigator.locks.request === 'function'
+  ) {
     return initWithWebLocks(log);
   }
 
