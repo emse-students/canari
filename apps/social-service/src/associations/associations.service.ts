@@ -1070,26 +1070,33 @@ export class AssociationsService {
       action === 'rejected' && rejectionReason ? ` Motif : ${rejectionReason}` : '';
     const text = `L'événement "${eventTitle}" a été ${actionLabel} par le BDE.${reasonSuffix}`;
 
-    await Promise.all(
-      proposers.map(async (m) => {
-        if (m.userId === actorId) return;
-        // In-app notification (reuses post_notifications table; postId = eventId placeholder)
-        const notif = this.notifRepo.create({
-          recipientId: m.userId,
-          type: 'event_action',
-          postId: associationId, // closest available context ID
-          actorId,
-          text,
-          read: false,
-        });
-        await this.notifRepo.save(notif);
-        // Push notification (fire-and-forget)
-        await this.push.notify(m.userId, 'Événement association', text, {
-          type: 'event_action',
-          associationId,
-          action,
-        });
+    const targets = proposers.filter((m) => m.userId !== actorId);
+    if (targets.length === 0) return;
+
+    // Batch-insert all in-app notifications in one round trip instead of one per member.
+    const notifs = targets.map((m) =>
+      this.notifRepo.create({
+        recipientId: m.userId,
+        type: 'event_action',
+        postId: associationId, // closest available context ID
+        actorId,
+        text,
+        read: false,
       })
+    );
+    await this.notifRepo.save(notifs);
+
+    // Push notifications are fire-and-forget — failures do not block the response.
+    void Promise.all(
+      targets.map((m) =>
+        this.push
+          .notify(m.userId, 'Événement association', text, {
+            type: 'event_action',
+            associationId,
+            action,
+          })
+          .catch((e) => this.logger.warn(`[notify] push failed for ${m.userId}: ${String(e)}`))
+      )
     );
   }
 

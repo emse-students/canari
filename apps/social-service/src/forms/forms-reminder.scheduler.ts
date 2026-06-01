@@ -35,6 +35,10 @@ export class FormReminderScheduler {
       const title = '⏰ Formulaire bientôt disponible';
       const body = 'Un formulaire que vous suivez ouvre dans 5 minutes !';
       try {
+        // Mark as notified BEFORE sending to avoid duplicate notifications if the process
+        // crashes between the push and the flag update.  Worst case: the notification is
+        // silently lost; acceptable vs spamming the user on every cron tick.
+        await this.reminderRepo.update(r.id, { notified5min: true });
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
         // Notification in-app dans la cloche : postId contient le formId pour le deep link
         await this.notifications.createNotification({
@@ -45,7 +49,6 @@ export class FormReminderScheduler {
           actorName: 'Canari',
           text: body,
         });
-        await this.reminderRepo.update(r.id, { notified5min: true });
         this.logger.log(
           `[REMINDER] 5min notifié: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
         );
@@ -65,6 +68,8 @@ export class FormReminderScheduler {
       const title = '🟢 Formulaire maintenant ouvert !';
       const body = 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !';
       try {
+        // Mark as notified BEFORE sending to avoid duplicate notifications (same rationale as above).
+        await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
         // Notification in-app dans la cloche
         await this.notifications.createNotification({
@@ -75,7 +80,6 @@ export class FormReminderScheduler {
           actorName: 'Canari',
           text: body,
         });
-        await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
         this.logger.log(
           `[REMINDER] ouverture notifiée: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
         );

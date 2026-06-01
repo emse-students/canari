@@ -65,15 +65,17 @@ export class FormsService {
     if (!ownerId) {
       return this.formRepo.find({ order: { createdAt: 'DESC' } });
     }
-    // TypeORM simple-array can't be queried with LIKE efficiently; fetch both conditions
-    const [owned, all] = await Promise.all([
+    // Fetch owned forms and co-owned forms in parallel without loading the entire table.
+    // simple-array stores as CSV so a LIKE scan on UUID is safe (UUIDs don't overlap as substrings).
+    const [owned, coOwned] = await Promise.all([
       this.formRepo.find({ where: { ownerId }, order: { createdAt: 'DESC' } }),
-      this.formRepo.find({ order: { createdAt: 'DESC' } }),
+      this.formRepo
+        .createQueryBuilder('f')
+        .where('"f"."ownerId" != :ownerId', { ownerId })
+        .andWhere('"f"."coOwners" LIKE :pattern', { pattern: `%${ownerId}%` })
+        .orderBy('"f"."createdAt"', 'DESC')
+        .getMany(),
     ]);
-    const ownedIds = new Set(owned.map((f) => f.id));
-    const coOwned = all.filter(
-      (f) => !ownedIds.has(f.id) && Array.isArray(f.coOwners) && f.coOwners.includes(ownerId)
-    );
     return [...owned, ...coOwned].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
@@ -144,30 +146,42 @@ export class FormsService {
 
   /** Adds a co-owner to a form. Only the owner or global admin may do this. */
   async addCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
-    const form = await this.formRepo.findOne({ where: { id: formId } });
-    if (!form) throw new NotFoundException('Form not found');
-    if (!isGlobalAdmin && form.ownerId !== callerId) {
-      throw new ForbiddenException('Only the form owner can manage co-owners');
-    }
-    const coOwners = Array.isArray(form.coOwners) ? [...form.coOwners] : [];
-    if (!coOwners.includes(coUserId)) {
-      coOwners.push(coUserId);
-      await this.formRepo.update(formId, { coOwners });
-    }
+    // Pessimistic write lock prevents two concurrent add/remove calls from overwriting each other.
+    await this.formRepo.manager.transaction(async (manager) => {
+      const form = await manager.findOne(Form, {
+        where: { id: formId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!form) throw new NotFoundException('Form not found');
+      if (!isGlobalAdmin && form.ownerId !== callerId) {
+        throw new ForbiddenException('Only the form owner can manage co-owners');
+      }
+      const coOwners = Array.isArray(form.coOwners) ? [...form.coOwners] : [];
+      if (!coOwners.includes(coUserId)) {
+        coOwners.push(coUserId);
+        await manager.update(Form, formId, { coOwners });
+      }
+    });
     return { ok: true };
   }
 
   /** Removes a co-owner from a form. Only the owner or global admin may do this. */
   async removeCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
-    const form = await this.formRepo.findOne({ where: { id: formId } });
-    if (!form) throw new NotFoundException('Form not found');
-    if (!isGlobalAdmin && form.ownerId !== callerId) {
-      throw new ForbiddenException('Only the form owner can manage co-owners');
-    }
-    const coOwners = (Array.isArray(form.coOwners) ? form.coOwners : []).filter(
-      (id) => id !== coUserId
-    );
-    await this.formRepo.update(formId, { coOwners });
+    // Pessimistic write lock prevents two concurrent add/remove calls from overwriting each other.
+    await this.formRepo.manager.transaction(async (manager) => {
+      const form = await manager.findOne(Form, {
+        where: { id: formId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!form) throw new NotFoundException('Form not found');
+      if (!isGlobalAdmin && form.ownerId !== callerId) {
+        throw new ForbiddenException('Only the form owner can manage co-owners');
+      }
+      const coOwners = (Array.isArray(form.coOwners) ? form.coOwners : []).filter(
+        (id) => id !== coUserId
+      );
+      await manager.update(Form, formId, { coOwners });
+    });
     return { ok: true };
   }
 

@@ -6,14 +6,61 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   MaxLength,
   Min,
   ValidateNested,
+  registerDecorator,
+  ValidationOptions,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+/** Max keys per answers record — prevents oversized payloads. */
+const ANSWERS_MAX_KEYS = 50;
+/** Max character length per string answer. */
+const ANSWERS_MAX_STRING_LEN = 2000;
+/** Max number of selected options per multi-select answer. */
+const ANSWERS_MAX_ARRAY_LEN = 50;
+
+/**
+ * Validates that `answers` is a shallow Record whose values are strings, string arrays, or numbers,
+ * all within accepted size bounds.
+ */
+function IsValidAnswers(options?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isValidAnswers',
+      target: (object as { constructor: new (...args: unknown[]) => unknown }).constructor,
+      propertyName,
+      options,
+      validator: {
+        validate(value: unknown): boolean {
+          if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+          const entries = Object.entries(value as Record<string, unknown>);
+          if (entries.length > ANSWERS_MAX_KEYS) return false;
+          for (const [, v] of entries) {
+            if (typeof v === 'string') {
+              if (v.length > ANSWERS_MAX_STRING_LEN) return false;
+            } else if (Array.isArray(v)) {
+              if (v.length > ANSWERS_MAX_ARRAY_LEN) return false;
+              if (
+                v.some((item) => typeof item !== 'string' || item.length > ANSWERS_MAX_STRING_LEN)
+              )
+                return false;
+            } else if (typeof v !== 'number') {
+              return false;
+            }
+          }
+          return true;
+        },
+        defaultMessage() {
+          return `answers doit contenir au plus ${ANSWERS_MAX_KEYS} clés ; chaque valeur doit être une chaîne (max ${ANSWERS_MAX_STRING_LEN} car.), un tableau de chaînes (max ${ANSWERS_MAX_ARRAY_LEN} éléments) ou un nombre`;
+        },
+      },
+    });
+  };
+}
 
 export class FormOptionDto {
   @IsString()
@@ -174,8 +221,8 @@ export class SubmitFormDto {
   @IsOptional()
   email?: string;
 
-  @IsObject()
-  answers: Record<string, string | string[] | number | Record<string, any>>;
+  @IsValidAnswers()
+  answers: Record<string, string | string[] | number>;
 
   @IsString()
   @IsOptional()

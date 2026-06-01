@@ -60,6 +60,14 @@ export class ProductsService {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
 
+    if (
+      dto.customAmountMinCents !== undefined &&
+      dto.customAmountMaxCents !== undefined &&
+      dto.customAmountMinCents > dto.customAmountMaxCents
+    ) {
+      throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
+    }
+
     const { webhookUrl, webhookSecret, ...rest } = dto;
 
     const product = this.productRepo.create({
@@ -83,6 +91,18 @@ export class ProductsService {
       where: { id: productId, associationId },
     });
     if (!product) throw new NotFoundException('Product not found');
+
+    const minCents = dto.customAmountMinCents ?? product.customAmountMinCents;
+    const maxCents = dto.customAmountMaxCents ?? product.customAmountMaxCents;
+    if (
+      minCents !== null &&
+      maxCents !== null &&
+      minCents !== undefined &&
+      maxCents !== undefined &&
+      minCents > maxCents
+    ) {
+      throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
+    }
 
     Object.assign(product, dto);
     return this.productRepo.save(product);

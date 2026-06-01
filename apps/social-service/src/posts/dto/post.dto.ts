@@ -170,6 +170,7 @@ export class CreatePostDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(50_000)
   markdown: string;
 
   @IsArray()
@@ -307,6 +308,7 @@ export class EditCommentDto {
 export class UpdatePostDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(50_000)
   markdown: string;
 }
 
