@@ -544,12 +544,12 @@ export class PostsService {
   }
 
   /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
-  async getById(id: string) {
+  async getById(id: string, opts?: { allowHidden?: boolean }) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
-    // Hidden posts must not be accessible by direct ID — only admins can see them via
-    // the dedicated /posts/hidden endpoint, not the public fetch path.
-    if (post.hiddenByModeration) throw new ForbiddenException('Post not available');
+    if (post.hiddenByModeration && !opts?.allowHidden) {
+      throw new ForbiddenException('Post not available');
+    }
     const shaped = await this.toPublicPostFromEntity(post);
     // Attach author name fields (same source as listPosts - local users table).
     if (!shaped.associationId && shaped.authorId) {

@@ -11,9 +11,9 @@
     EyeOff,
     Eye,
     Trash2,
-    ExternalLink,
     Copy,
   } from '@lucide/svelte';
+  import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import {
     listReports,
     reviewReport,
@@ -42,6 +42,18 @@
   let processingId = $state<string | null>(null);
   /** Resolved display names keyed by user ID. */
   let names = $state<Record<string, string>>({});
+  let previewOpen = $state(false);
+  let previewPostId = $state<string | null>(null);
+
+  function openPostPreview(postId: string) {
+    previewPostId = postId;
+    previewOpen = true;
+  }
+
+  function closePostPreview() {
+    previewOpen = false;
+    previewPostId = null;
+  }
 
   onMount(() => {
     if (!isGlobalAdmin()) {
@@ -393,16 +405,15 @@
                   <Copy size={11} />
                 </button>
                 {#if report.contentType === 'post'}
-                  <a
-                    href="/?postId={report.contentId}"
-                    target="_blank"
-                    rel="noopener"
-                    class="flex items-center gap-1 text-[11px] text-cn-yellow hover:underline"
-                    title="Voir le post (ouvre l'accueil)"
+                  <button
+                    type="button"
+                    onclick={() => openPostPreview(report.contentId)}
+                    class="flex items-center gap-1 text-[11px] font-semibold text-cn-yellow hover:underline"
+                    title="Aperçu de la publication"
                   >
-                    <ExternalLink size={11} />
+                    <Eye size={11} />
                     Voir
-                  </a>
+                  </button>
                 {/if}
               </div>
 
@@ -465,6 +476,16 @@
                   - {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
                 </span>
               {/if}
+              {#if report.contentType === 'post'}
+                <button
+                  type="button"
+                  onclick={() => openPostPreview(report.contentId)}
+                  class="flex items-center gap-1 text-[11px] text-cn-yellow hover:underline shrink-0"
+                  title="Aperçu de la publication"
+                >
+                  <Eye size={11} />
+                </button>
+              {/if}
               <span class="ml-auto text-[11px] text-text-muted/60 shrink-0"
                 >{formatDate(report.createdAt)}</span
               >
@@ -524,9 +545,14 @@
             </div>
 
             <!-- Excerpt -->
-            <p class="text-sm text-text-main leading-relaxed mb-3">
+            <button
+              type="button"
+              onclick={() => openPostPreview(post.id)}
+              class="text-left w-full text-sm text-text-main leading-relaxed mb-3 hover:opacity-90 transition-opacity"
+              title="Aperçu complet"
+            >
               {excerpt(post.markdown)}
-            </p>
+            </button>
 
             <!-- Report count + ID -->
             <div class="flex items-center gap-2 mb-3">
@@ -548,12 +574,20 @@
               class="flex items-center gap-2 pt-2 border-t border-orange-200/60 dark:border-orange-900/30"
             >
               <button
+                type="button"
+                onclick={() => openPostPreview(post.id)}
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-cn-yellow hover:border-amber-400 transition-colors"
+                title="Aperçu complet de la publication"
+              >
+                <Eye size={13} />
+                Aperçu
+              </button>
+              <button
                 onclick={() => handleRestore(post.id)}
                 disabled={processingId === post.id}
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
                 title="Remettre le post dans les fils d'actualité"
               >
-                <Eye size={13} />
                 Restaurer
               </button>
               {#if post.authorId}
@@ -644,3 +678,5 @@
     {/if}
   {/if}
 </div>
+
+<ModerationPostPreviewModal open={previewOpen} postId={previewPostId} onClose={closePostPreview} />

@@ -189,10 +189,10 @@ export class PostsController {
     return { linkedEvent };
   }
 
-  /** Returns a single post by its ID. */
+  /** Returns a single post by its ID. Global admins may load moderation-hidden posts. */
   @Get(':postId')
-  getPost(@Param('postId') postId: string) {
-    return this.service.getById(postId);
+  getPost(@Param('postId') postId: string, @Headers('x-global-admin') xGlobalAdmin?: string) {
+    return this.service.getById(postId, { allowHidden: xGlobalAdmin === 'true' });
   }
 
   /** Updates the markdown content of a post. Author or global admin may edit. */

@@ -18,9 +18,11 @@
     post: PostEntity;
     /** Bearer token forwarded to PostImage for downloading and decrypting images. */
     authToken?: string;
+    /** When true, always show the full markdown (no truncation). */
+    fullContent?: boolean;
   }
 
-  let { post, authToken = '' }: Props = $props();
+  let { post, authToken = '', fullContent = false }: Props = $props();
 
   onMount(() => {
     ensureHljsTheme();
@@ -52,7 +54,7 @@
 
   const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };
 
-  const isTruncatable = $derived((post.markdown?.length ?? 0) > MAX_CHARS);
+  const isTruncatable = $derived(!fullContent && (post.markdown?.length ?? 0) > MAX_CHARS);
   const rawMarkdown = $derived(
     isTruncatable && !expanded ? post.markdown!.slice(0, MAX_CHARS) + '…' : (post.markdown ?? '')
   );
