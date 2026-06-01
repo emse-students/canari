@@ -218,16 +218,6 @@ export async function migrateConversation(
     return;
   }
 
-  // Court-circuit : si le groupe source a été purgé via drop_group (Poison Pill),
-  // getEpoch lève une exception car le groupe n'est plus dans l'état WASM.
-  // Dans ce cas la migration n'a plus de sens - on abandonne sans erreur.
-  try {
-    mlsService.getEpoch(fromGroupId);
-  } catch {
-    log(`[MIGRATE] Court-circuit : état MLS ${fromGroupId} purgé (drop_group) - migration annulée`);
-    return;
-  }
-
   log(`[MIGRATE] ${fromGroupId} → ${toGroupId} ("${oldConvo.name}")`);
 
   // If the target conversation already has local MLS state loaded (e.g. a re-invite
