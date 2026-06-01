@@ -12,10 +12,69 @@
 const TAB_ID = crypto.randomUUID();
 let isTabLeader = false;
 let tabChannel: BroadcastChannel | null = null;
+let leaderPromotedHandler: (() => void) | null = null;
 
 /** Returns true if this tab is the active MLS leader (holds the WebSocket). */
 export function getIsTabLeader(): boolean {
   return isTabLeader;
+}
+
+/**
+ * Registers a callback invoked when this tab becomes leader after starting as a
+ * follower (Web Locks promotion or stale-heartbeat takeover).
+ */
+export function setTabLeaderPromotedHandler(handler: (() => void) | null): void {
+  leaderPromotedHandler = handler;
+}
+
+function notifyTabLeaderPromoted(): void {
+  leaderPromotedHandler?.();
+}
+
+function holdLeaderLockUntilUnload(): Promise<void> {
+  return new Promise<void>((release) => {
+    if (typeof window === 'undefined') {
+      release();
+      return;
+    }
+    window.addEventListener(
+      'beforeunload',
+      () => {
+        isTabLeader = false;
+        release();
+      },
+      { once: true }
+    );
+  });
+}
+
+function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
+  if (tabChannel) return;
+  tabChannel = new BroadcastChannel('canari-mls-tab');
+  tabChannel.addEventListener('message', (ev: MessageEvent) => {
+    if (ev.data?.type === 'leader_closing' && !isTabLeader) {
+      const delay = Math.random() * 300;
+      setTimeout(() => {
+        if (isTabLeader) return;
+        const current = localStorage.getItem(LEADER_KEY);
+        if (current && current !== ev.data.tabId) return;
+        try {
+          localStorage.setItem(LEADER_KEY, TAB_ID);
+        } catch {
+          /* quota */
+        }
+        try {
+          localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
+        } catch {
+          /* quota */
+        }
+        isTabLeader = true;
+        startHeartbeat();
+        log('[TAB] Ancien leader fermé — promotion en leader.');
+        notifyTabLeaderPromoted();
+      }, delay);
+    }
+  });
 }
 
 // ── Web Locks implementation ───────────────────────────────────────────────
@@ -28,75 +87,46 @@ export function getIsTabLeader(): boolean {
  * Returns true if this tab immediately became leader.
  */
 async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
-  // Ensure we have a BroadcastChannel so promoted followers can notify the app.
   if (!tabChannel) {
     tabChannel = new BroadcastChannel('canari-mls-tab');
   }
 
-  let gotLock = false;
-
-  // Attempt immediate acquisition (ifAvailable = don't block if lock is taken).
-  await navigator.locks.request(
-    'canari-tab-leader',
-    { mode: 'exclusive', ifAvailable: true },
-    async (lock) => {
-      if (lock === null) {
-        // Lock already held by another tab — we are a follower.
-        return;
-      }
-      gotLock = true;
-      isTabLeader = true;
-      log('[TAB] Leadership acquise (Web Locks).');
-
-      // Hold the lock until the tab is about to close.
-      return new Promise<void>((release) => {
-        if (typeof window !== 'undefined') {
-          window.addEventListener(
-            'beforeunload',
-            () => {
-              isTabLeader = false;
-              release();
-            },
-            { once: true }
-          );
+  const acquired = await new Promise<boolean>((resolveLeadership) => {
+    void navigator.locks
+      .request('canari-tab-leader', { mode: 'exclusive', ifAvailable: true }, async (lock) => {
+        if (lock === null) {
+          resolveLeadership(false);
+          return;
         }
+        isTabLeader = true;
+        log('[TAB] Leadership acquise (Web Locks).');
+        resolveLeadership(true);
+        await holdLeaderLockUntilUnload();
+      })
+      .catch(() => {
+        resolveLeadership(false);
       });
-    }
-  );
+  });
 
-  if (!gotLock) {
+  if (!acquired) {
     log('[TAB] Autre onglet actif — mode lecture seule (Web Locks).');
 
-    // Queue a background request (no ifAvailable) so this tab automatically
-    // becomes leader when the current lock holder releases (tab closed / refreshed).
-    // This is race-free: the browser serialises lock hand-offs.
-    navigator.locks
+    void navigator.locks
       .request('canari-tab-leader', { mode: 'exclusive' }, async () => {
-        if (isTabLeader) return; // Tab is already cleaning up.
+        if (isTabLeader) return;
         isTabLeader = true;
         log('[TAB] Promotion en leader (Web Locks).');
-        // Notify the rest of the app so reactive code can re-evaluate.
         tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+        notifyTabLeaderPromoted();
 
-        return new Promise<void>((release) => {
-          if (typeof window !== 'undefined') {
-            window.addEventListener(
-              'beforeunload',
-              () => {
-                isTabLeader = false;
-                release();
-              },
-              { once: true }
-            );
-          }
-        });
+        await holdLeaderLockUntilUnload();
       })
       .catch(() => {
         /* Tab is closing — ignore. */
       });
   }
 
-  return gotLock;
+  return acquired;
 }
 
 // ── Legacy localStorage/heartbeat fallback ────────────────────────────────
@@ -152,38 +182,14 @@ function startFollowerPoll(log: (msg: string) => void): void {
         isTabLeader = true;
         startHeartbeat();
         log('[TAB] Leader crashé détecté (heartbeat stale) — promotion en leader.');
+        notifyTabLeaderPromoted();
       }, delay);
     }
   }, 3_000);
 }
 
 async function initWithLocalStorage(log: (msg: string) => void): Promise<boolean> {
-  if (!tabChannel) {
-    tabChannel = new BroadcastChannel('canari-mls-tab');
-    tabChannel.addEventListener('message', (ev: MessageEvent) => {
-      if (ev.data?.type === 'leader_closing' && !isTabLeader) {
-        const delay = Math.random() * 300;
-        setTimeout(() => {
-          if (isTabLeader) return;
-          const current = localStorage.getItem(LEADER_KEY);
-          if (current && current !== ev.data.tabId) return;
-          try {
-            localStorage.setItem(LEADER_KEY, TAB_ID);
-          } catch {
-            /* quota */
-          }
-          try {
-            localStorage.setItem(HEARTBEAT_KEY, String(Date.now()));
-          } catch {
-            /* quota */
-          }
-          isTabLeader = true;
-          startHeartbeat();
-          log('[TAB] Ancien leader fermé — promotion en leader.');
-        }, delay);
-      }
-    });
-  }
+  ensureTabChannelForLocalStorage(log);
 
   const now = Date.now();
   const lastHeartbeat = parseInt(localStorage.getItem(HEARTBEAT_KEY) ?? '0', 10);
@@ -282,6 +288,7 @@ export function resetTabLeaderStateForTests(): void {
     /* ignore */
   }
   tabChannel = null;
+  leaderPromotedHandler = null;
   isTabLeader = false;
   try {
     localStorage.removeItem(LEADER_KEY);

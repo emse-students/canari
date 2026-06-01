@@ -21,6 +21,29 @@ describe('tabLeader (preventive: single MLS ratchet per browser)', () => {
     vi.restoreAllMocks();
   });
 
+  it('returns immediately when Web Locks grant leadership (does not block on lock hold)', async () => {
+    const origLocks = navigator.locks;
+    const request = vi.fn(
+      (_name: string, _opts: unknown, callback: (lock: { mode: string } | null) => void) => {
+        callback({ mode: 'exclusive' });
+        return Promise.resolve();
+      }
+    );
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: { request },
+    });
+    try {
+      const started = Date.now();
+      const ok = await initTabLeadershipAsync(log);
+      expect(Date.now() - started).toBeLessThan(200);
+      expect(ok).toBe(true);
+      expect(getIsTabLeader()).toBe(true);
+    } finally {
+      Object.defineProperty(navigator, 'locks', { configurable: true, value: origLocks });
+    }
+  });
+
   it('claims leadership when BroadcastChannel is undefined (Tauri-like)', async () => {
     const orig = globalThis.BroadcastChannel;
     // @ts-expect-error simulate missing API

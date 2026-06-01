@@ -6,6 +6,7 @@ export {
   syncConnectionAfterWsOpen,
   initTabLeadershipAsync,
   getIsTabLeader,
+  setTabLeaderPromotedHandler,
   type MessageHandlerDeps,
   type ConnectionDeps,
   type SyncAfterConnectDeps,

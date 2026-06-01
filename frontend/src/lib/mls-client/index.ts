@@ -14,7 +14,7 @@ export {
 export { commitBaseEpochForValidation } from './mlsDesyncPrevention';
 export { logMlsMetric, type MlsMetricEvent } from './mlsRecoveryMetrics';
 
-export { initTabLeadershipAsync, getIsTabLeader } from './tabLeader';
+export { initTabLeadershipAsync, getIsTabLeader, setTabLeaderPromotedHandler } from './tabLeader';
 export {
   setupMessageHandler,
   type MessageHandlerDeps,

@@ -34,6 +34,7 @@ import {
   syncConnectionAfterWsOpen,
   initTabLeadershipAsync,
   getIsTabLeader,
+  setTabLeaderPromotedHandler,
 } from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
@@ -135,6 +136,15 @@ export function useChatSession() {
   const CONNECTION_WATCHDOG_MS = 30_000;
   let isReconnecting = false;
   let isSyncing = false;
+  /** Latest session callbacks for tab-leader promotion → WebSocket reconnect. */
+  let tabLeaderSessionCb: ChatSessionCallbacks | null = null;
+
+  setTabLeaderPromotedHandler(() => {
+    const cb = tabLeaderSessionCb;
+    if (!cb || !isLoggedIn || !getIsTabLeader()) return;
+    cb.log('[TAB] Promotion leader — connexion WebSocket...');
+    void attemptReconnect(cb);
+  });
 
   // ── Backup ────────────────────────────────────────────────────────────────
   let isExporting = $state(false);
@@ -230,6 +240,8 @@ export function useChatSession() {
     }
     reconnectAttempts = 0;
     reconnectCircuitOpen = false;
+
+    tabLeaderSessionCb = cb;
 
     try {
       const mlsService = ensureMls();
@@ -581,7 +593,10 @@ export function useChatSession() {
       );
 
       // Multi-tab leadership: only the leader tab opens the WebSocket.
-      await initTabLeadershipAsync(cb.log);
+      const tabLeaderNow = await initTabLeadershipAsync(cb.log);
+      if (!tabLeaderNow) {
+        cb.log('[TAB] Onglet follower — WebSocket actif dans un autre onglet Canari.');
+      }
 
       await initializeConnection({
         mlsService,
@@ -782,6 +797,7 @@ export function useChatSession() {
     stopConnectionWatchdog();
     reconnectAttempts = 0;
     reconnectCircuitOpen = false;
+    tabLeaderSessionCb = null;
     isLoggedIn = false;
     isWsConnected = false;
     cb.conversations.clear();
