@@ -29,6 +29,8 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@fontsource-variable/fredoka": "^5.2.10",
+    "@fontsource-variable/nunito": "^5.2.7",
     "@humanspeak/svelte-markdown": "^1.5.0",
     "@impierce/tauri-plugin-keystore": "^2.1.0-alpha.1",
     "@lucide/svelte": "^1.16.0",
