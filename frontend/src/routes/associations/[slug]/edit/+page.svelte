@@ -204,6 +204,8 @@
   let formsLoading = $state(false);
   let formsError = $state('');
   let pendingCash = $state<Record<string, PendingCashSubmission[]>>({});
+  /** True when at least one association form requires online payment (basePrice > 0). */
+  let hasPaidForms = $derived(forms.some((f) => f.basePrice > 0));
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -922,8 +924,7 @@
           <div>
             <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
             <p class="text-sm text-text-muted mt-1">
-              Rôles affichés sur la page publique. Les admins peuvent gérer l’agenda et les
-              paiements.
+              Rôles affichés sur la page publique. Gérez les droits d’accès de chaque membre.
             </p>
           </div>
           <button
@@ -1479,6 +1480,30 @@
           </p>
         </div>
 
+        {#if hasPaidForms && !asso.stripeOnboardingComplete}
+          <div
+            class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 flex items-start gap-2.5"
+          >
+            <AlertTriangle size={15} class="shrink-0 mt-0.5" />
+            <span>
+              {#if canManageStripeConnect}
+                Certains formulaires sont payants mais <strong>Stripe Connect n'est pas encore configuré</strong>.
+                Les paiements en ligne ne fonctionneront pas tant que vous n'aurez pas
+                <button
+                  type="button"
+                  class="underline font-semibold hover:no-underline"
+                  onclick={() => {
+                    editSection = 'payments';
+                  }}
+                >configuré Stripe dans l'onglet Paiements</button>.
+              {:else}
+                Certains formulaires sont payants mais <strong>Stripe Connect n'est pas configuré</strong>.
+                Demandez à un responsable disposant de l'accès <em>Gérer Stripe Connect</em> de l'activer.
+              {/if}
+            </span>
+          </div>
+        {/if}
+
         {#if formsError}
           <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
             {formsError}
@@ -1505,9 +1530,18 @@
                     {#if form.description}
                       <p class="text-xs text-text-muted mt-0.5 line-clamp-2">{form.description}</p>
                     {/if}
-                    <p class="text-xs text-text-muted mt-1">
+                    <p class="text-xs text-text-muted mt-1 flex items-center gap-1.5 flex-wrap">
                       {form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : 'Gratuit'}
                       {form.allowCashPayment ? ' · Espèces acceptées' : ''}
+                      {#if form.basePrice > 0 && !asso.stripeOnboardingComplete}
+                        <span
+                          class="inline-flex items-center gap-1 text-amber-700 font-medium"
+                          title="Stripe Connect non configuré — les paiements en ligne sont inactifs"
+                        >
+                          <AlertTriangle size={11} />
+                          Stripe non configuré
+                        </span>
+                      {/if}
                     </p>
                   </div>
                   <a
