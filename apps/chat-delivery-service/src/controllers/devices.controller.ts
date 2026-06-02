@@ -160,22 +160,23 @@ export class DevicesController {
     // Create pending DeviceGroupMembership entries for all groups this user
     // already belongs to.  Without this, getPendingInvitations on other
     // devices won't see the new device and will never send it a Welcome.
-    const userGroups = await this.groupMemberRepo.find({
-      where: { userId },
-    });
-    for (const gm of userGroups) {
-      const existing = await this.deviceGroupRepo.findOne({
-        where: { deviceId, groupId: gm.groupId },
-      });
-      if (!existing) {
-        const membership = this.deviceGroupRepo.create({
-          userId,
-          deviceId,
-          groupId: gm.groupId,
-          status: 'pending' as const,
-        });
-        await this.deviceGroupRepo.save(membership);
-      }
+    // Uses INSERT ... ON CONFLICT DO NOTHING to tolerate concurrent registerDevice calls.
+    const userGroups = await this.groupMemberRepo.find({ where: { userId } });
+    if (userGroups.length > 0) {
+      await this.deviceGroupRepo
+        .createQueryBuilder()
+        .insert()
+        .into(DeviceGroupMembership)
+        .values(
+          userGroups.map((gm) => ({
+            userId,
+            deviceId,
+            groupId: gm.groupId,
+            status: 'pending' as const,
+          })),
+        )
+        .orIgnore()
+        .execute();
     }
 
     this.logger.log(

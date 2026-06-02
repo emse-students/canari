@@ -110,6 +110,11 @@ export function sanitizeSyncManifest(payload: unknown): SyncManifestPayload {
   if (!Array.isArray(record.conversations)) {
     throw new BadRequestException('manifest.conversations must be an array');
   }
+  if (record.conversations.length > 2_000) {
+    throw new BadRequestException(
+      'manifest.conversations must not exceed 2 000 entries',
+    );
+  }
 
   const conversations: SyncConversationManifest[] = record.conversations.map(
     (raw) => {

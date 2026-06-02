@@ -1209,8 +1209,15 @@ export class MessagingService implements OnModuleInit {
     try {
       // `after` = exclusive Redis stream ID (e.g. "1712345678901-0").
       // Using `(${after}` makes XRANGE exclusive (skips the entry itself).
+      // COUNT 1000 matches the stream MAXLEN and guards against future MAXLEN bumps.
       const startId = after ? `(${after}` : '-';
-      const entries = await this.redis.xrange(streamKey, startId, '+');
+      const entries = await this.redis.xrange(
+        streamKey,
+        startId,
+        '+',
+        'COUNT',
+        1000,
+      );
       this.logger.log(
         `[HISTORY] group=${groupId} after=${after ?? 'start'} entries=${entries.length}`,
       );
@@ -1334,9 +1341,14 @@ export class MessagingService implements OnModuleInit {
       ),
     ];
 
-    for (const userId of uniqueUserIds) {
-      const tokens = await this.pushTokenRepo.find({ where: { userId } });
-      for (const pt of tokens) {
+    // Batch-load all tokens in a single query instead of one per user.
+    if (uniqueUserIds.length === 0) return;
+    const allTokens = await this.pushTokenRepo.find({
+      where: { userId: In(uniqueUserIds) },
+    });
+
+    await Promise.all(
+      allTokens.map(async (pt) => {
         try {
           await admin.messaging().send({
             token: pt.token,
@@ -1353,21 +1365,21 @@ export class MessagingService implements OnModuleInit {
             },
           });
           this.logger.log(
-            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${userId} device=${pt.deviceId}`,
+            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`,
           );
         } catch (e) {
           if (this.isTerminalPushTokenError(e)) {
             await this.pushTokenRepo.delete({ id: pt.id });
             this.logger.warn(
-              `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${userId} device=${pt.deviceId}`,
+              `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`,
             );
           }
           this.logger.warn(
-            `[WELCOME_REQ][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${e}`,
+            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${e}`,
           );
         }
-      }
-    }
+      }),
+    );
   }
 
   /**

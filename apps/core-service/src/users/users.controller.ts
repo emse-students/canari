@@ -63,7 +63,8 @@ export class UsersController {
     res.send(avatarBuffer);
   }
 
-  /** Creates a new user from the provided DTO. */
+  /** Creates a new user from the provided DTO. Restricted to global admins (OIDC flow uses findOrCreateFromOidc internally). */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);

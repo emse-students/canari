@@ -140,10 +140,15 @@ export class PaymentService {
       }
     }
 
-    const customer = await this.stripe.customers.create({
-      metadata: { userId: meta.userId },
-      name: meta.displayName ?? undefined,
-    });
+    // Idempotency key scoped to the userId prevents duplicate Stripe customers when
+    // two concurrent requests both see stripeCustomerId as null.
+    const customer = await this.stripe.customers.create(
+      {
+        metadata: { userId: meta.userId },
+        name: meta.displayName ?? undefined,
+      },
+      { idempotencyKey: `customer-create-${meta.userId}` },
+    );
     return customer.id;
   }
 

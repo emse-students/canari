@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -140,6 +141,8 @@ export class UsersService implements OnModuleInit {
     excludeUserId?: string,
   ): Promise<Pick<User, 'id' | 'displayName'>[]> {
     if (!query || query.length < 1) return [];
+    if (query.length > 200)
+      throw new BadRequestException('Search query too long (max 200 chars)');
 
     const terms = query.trim().split(/\s+/).filter(Boolean);
     console.log(`[UsersService] search terms: ${JSON.stringify(terms)}`);
