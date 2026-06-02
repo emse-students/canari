@@ -57,6 +57,11 @@ export class PaymentController {
     if (typeof nginxAuth === 'string') fwd['X-Nginx-Auth'] = nginxAuth;
     const authz = req.headers['authorization'];
     if (typeof authz === 'string') fwd['Authorization'] = authz;
+    // Forward the Nginx-generated HMAC token so social-service's NginxAuthGuard
+    // can validate the inter-service call when INTERNAL_SHARED_SECRET is configured.
+    const internalToken = req.headers['x-internal-token'];
+    if (typeof internalToken === 'string')
+      fwd['X-Internal-Token'] = internalToken;
 
     try {
       const res = await axios.get<{ ok: boolean }>(
