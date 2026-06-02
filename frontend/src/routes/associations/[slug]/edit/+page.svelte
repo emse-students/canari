@@ -217,7 +217,7 @@
       const clean = window.location.pathname;
       window.history.replaceState(null, '', clean);
       if (!asso.stripeOnboardingComplete) {
-        void pollStripeCompletion(asso.id);
+        void pollStripeCompletion();
       } else {
         console.log('[Stripe] Retour Stripe — onboarding déjà marqué complet en DB.');
       }
@@ -372,7 +372,7 @@
   }
 
   /** Polls the association until stripeOnboardingComplete=true or timeout (max 30 s). */
-  async function pollStripeCompletion(assoId: string) {
+  async function pollStripeCompletion() {
     const MAX_ATTEMPTS = 10;
     const DELAY_MS = 3000;
     console.log('[Stripe] Retour depuis Stripe — attente confirmation webhook (max 30 s)…');
