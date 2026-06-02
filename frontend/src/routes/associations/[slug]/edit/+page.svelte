@@ -209,7 +209,20 @@
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
-  onMount(loadData);
+  onMount(async () => {
+    await loadData();
+    // Detect return from Stripe Connect onboarding and poll for webhook confirmation.
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('stripe_return') === '1' && asso) {
+      // Clean up the URL param without triggering a navigation.
+      const clean = window.location.pathname;
+      window.history.replaceState(null, '', clean);
+      if (!asso.stripeOnboardingComplete) {
+        void pollStripeCompletion(asso.id);
+      } else {
+        console.log('[Stripe] Retour Stripe — onboarding déjà marqué complet en DB.');
+      }
+    }
+  });
 
   async function loadData() {
     loading = true;
@@ -340,19 +353,45 @@
     stripeLoading = true;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const base = `${origin}/associations/${encodeURIComponent(asso.slug)}/edit`;
+    console.log(`[Stripe] Lancement onboarding — asso=${asso.id} accountId=${asso.stripeAccountId ?? 'nouveau'}`);
     try {
       const result = await startStripeOnboarding(asso.id, asso.stripeAccountId ?? undefined, {
-        returnUrl: base,
-        refreshUrl: base,
+        returnUrl: `${base}?stripe_return=1`,
+        refreshUrl: `${base}?stripe_return=1`,
       });
+      console.log(`[Stripe] URL onboarding reçue — accountId=${result.accountId} url=${result.url}`);
       if (result.accountId) {
         asso = { ...asso, stripeAccountId: result.accountId };
       }
       window.location.href = result.url;
     } catch (err) {
+      console.error('[Stripe] Échec démarrage onboarding:', err);
       error = err instanceof Error ? err.message : 'Erreur Stripe';
       stripeLoading = false;
     }
+  }
+
+  /** Polls the association until stripeOnboardingComplete=true or timeout (max 30 s). */
+  async function pollStripeCompletion(assoId: string) {
+    const MAX_ATTEMPTS = 10;
+    const DELAY_MS = 3000;
+    console.log('[Stripe] Retour depuis Stripe — attente confirmation webhook (max 30 s)…');
+    for (let i = 1; i <= MAX_ATTEMPTS; i++) {
+      await new Promise((r) => setTimeout(r, DELAY_MS));
+      try {
+        const refreshed = await getAssociationBySlug(slug);
+        console.log(`[Stripe] Poll ${i}/${MAX_ATTEMPTS} — stripeOnboardingComplete=${refreshed.stripeOnboardingComplete} chargesEnabled=${refreshed.stripeOnboardingComplete}`);
+        if (refreshed.stripeOnboardingComplete) {
+          asso = refreshed;
+          console.log('[Stripe] ✓ Connexion Stripe confirmée — onboarding complet.');
+          return;
+        }
+        asso = refreshed;
+      } catch (e) {
+        console.warn(`[Stripe] Poll ${i} échoué:`, e);
+      }
+    }
+    console.warn('[Stripe] Webhook non reçu après 30 s — vérifier le dashboard Stripe et la config STRIPE_WEBHOOK_SECRET.');
   }
 
   async function onLogoExported(blob: Blob) {
