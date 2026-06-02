@@ -16,7 +16,24 @@ export enum AssociationPermissionFlag {
   CREATE_ASSO = 1 << 6,
   MODERATE = 1 << 7,
   MANAGE_PRODUCTS = 1 << 8,
+  MANAGE_STRIPE_CONNECT = 1 << 9,
 }
+
+/**
+ * Non-BDE flags granted to association admins (excludes Stripe Connect).
+ * Mirrors backend `ALL_CORE_FLAGS`.
+ */
+export const ALL_CORE_FLAGS =
+  AssociationPermissionFlag.POST_AS_ASSO |
+  AssociationPermissionFlag.PROPOSE_EVENT |
+  AssociationPermissionFlag.MANAGE_MEMBERS |
+  AssociationPermissionFlag.MANAGE_DOCUMENTS |
+  AssociationPermissionFlag.MANAGE_FORMS |
+  AssociationPermissionFlag.MANAGE_PRODUCTS;
+
+/** Default admin preset when adding a member (core flags + Stripe Connect). */
+export const ASSOCIATION_ADMIN_PRESET =
+  ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
 
 /** Returns true if `permissions` includes `flag`. */
 export function hasPermissionFlag(permissions: number, flag: AssociationPermissionFlag): boolean {

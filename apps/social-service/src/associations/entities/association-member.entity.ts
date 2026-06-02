@@ -23,6 +23,8 @@ export enum AssociationPermissionFlag {
   MODERATE = 1 << 7,
   /** Create, edit and delete boutique products. */
   MANAGE_PRODUCTS = 1 << 8,
+  /** Start or resume Stripe Connect onboarding for the association. */
+  MANAGE_STRIPE_CONNECT = 1 << 9,
 }
 
 /**

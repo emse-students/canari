@@ -60,7 +60,11 @@
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
-  import { hasPermissionFlag, AssociationPermissionFlag } from '$lib/associations/api';
+  import {
+    ASSOCIATION_ADMIN_PRESET,
+    hasPermissionFlag,
+    AssociationPermissionFlag,
+  } from '$lib/associations/api';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -107,7 +111,7 @@
 
   let newMemberUserId = $state('');
   let newMemberRole = $state('Membre');
-  /** 0 = simple member; 287 = ALL_CORE_FLAGS (admin). */
+  /** 0 = simple member; ASSOCIATION_ADMIN_PRESET = full association admin. */
   let newMemberPermissions = $state(0);
   let addingMember = $state(false);
   let memberError = $state('');
@@ -121,7 +125,6 @@
     | 'members'
     | 'documents'
     | 'cotisants'
-    | 'boutique'
     | 'payments'
     | 'formulaires'
     | 'danger'
@@ -154,12 +157,17 @@
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_FORMS))
   );
 
-  /** Stripe onboarding - backend checks POST_AS_ASSO via manage-permission endpoint. */
-  let canManagePayments = $derived(
+  let canManageStripeConnect = $derived(
     isGlobalAdminUser ||
       (!!myMembership &&
-        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.POST_AS_ASSO))
+        hasPermissionFlag(
+          myMembership.permissions ?? 0,
+          AssociationPermissionFlag.MANAGE_STRIPE_CONNECT
+        ))
   );
+
+  /** Paiements tab: boutique and/or Stripe Connect. */
+  let canManagePaymentsSection = $derived(canManageStripeConnect || canManageProducts);
 
   // ── Boutique state ───────────────────────────────────────────────────────
   let products = $state<AssociationProduct[]>([]);
@@ -662,10 +670,13 @@
             Membres
           </button>
         {/if}
-        {#if canManagePayments}
+        {#if canManagePaymentsSection}
           <button
             type="button"
-            onclick={() => (editSection = 'payments')}
+            onclick={() => {
+              editSection = 'payments';
+              if (canManageProducts) void loadProducts();
+            }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
               ? 'bg-cn-yellow text-cn-dark shadow-sm'
@@ -702,22 +713,6 @@
           >
             <Tags size={17} />
             Cotisants
-          </button>
-        {/if}
-        {#if canManageProducts}
-          <button
-            type="button"
-            onclick={() => {
-              editSection = 'boutique';
-              void loadProducts();
-            }}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'boutique'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
-          >
-            <ShoppingBag size={17} />
-            Boutique
           </button>
         {/if}
         {#if canManageForms}
@@ -884,33 +879,37 @@
       </div>
     {/if}
 
-    {#if editSection === 'payments' && canManagePayments}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
-      >
-        <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
-          <CreditCard size={20} />
-          Paiements Stripe
-        </h2>
-        {#if asso.stripeOnboardingComplete}
-          <p class="text-sm text-green-600 font-semibold">Stripe Connect activé</p>
-        {:else}
-          <p class="text-sm text-text-muted leading-relaxed">
-            Connectez un compte Stripe pour les paiements des formulaires et billetteries associés à
-            cette association.
-          </p>
-          <button
-            type="button"
-            onclick={handleStripeOnboarding}
-            disabled={stripeLoading}
-            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+    {#if editSection === 'payments' && canManagePaymentsSection && asso}
+      <div class="space-y-6">
+        {#if canManageStripeConnect}
+          <div
+            class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
           >
-            {stripeLoading
-              ? 'Redirection…'
-              : asso.stripeAccountId
-                ? 'Continuer la configuration'
-                : 'Configurer Stripe'}
-          </button>
+            <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
+              <CreditCard size={20} />
+              Stripe Connect
+            </h2>
+            {#if asso.stripeOnboardingComplete}
+              <p class="text-sm text-green-600 font-semibold">Stripe Connect activé</p>
+            {:else}
+              <p class="text-sm text-text-muted leading-relaxed">
+                Connectez un compte Stripe pour les paiements des formulaires, de la boutique et des
+                billetteries de cette association.
+              </p>
+              <button
+                type="button"
+                onclick={handleStripeOnboarding}
+                disabled={stripeLoading}
+                class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+              >
+                {stripeLoading
+                  ? 'Redirection…'
+                  : asso.stripeAccountId
+                    ? 'Continuer la configuration'
+                    : 'Configurer Stripe'}
+              </button>
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}
@@ -1004,7 +1003,7 @@
               class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-full lg:w-auto"
             >
               <option value={0}>Membre</option>
-              <option value={287}>Admin</option>
+              <option value={ASSOCIATION_ADMIN_PRESET}>Admin</option>
             </select>
             <button
               type="submit"
@@ -1133,7 +1132,7 @@
       </div>
     {/if}
 
-    {#if editSection === 'boutique' && canManageProducts && asso}
+    {#if editSection === 'payments' && canManagePaymentsSection && asso && canManageProducts}
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm"
       >
@@ -1169,13 +1168,13 @@
           >
             Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion
             de l'onboarding.
-            <button
-              type="button"
-              onclick={() => {
-                editSection = 'payments';
-              }}
-              class="ml-2 font-semibold underline hover:no-underline">Configurer</button
-            >
+            {#if canManageStripeConnect}
+              <span class="ml-1">Utilisez la section Stripe Connect ci-dessus.</span>
+            {:else}
+              <span class="ml-1"
+                >Demandez à un responsable disposant de l'accès Stripe Connect.</span
+              >
+            {/if}
           </div>
         {/if}
 

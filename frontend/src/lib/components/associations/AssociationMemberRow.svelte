@@ -1,7 +1,11 @@
 <script lang="ts">
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { AssociationMember } from '$lib/associations/api';
-  import { AssociationPermissionFlag, hasPermissionFlag } from '$lib/associations/api';
+  import {
+    ALL_CORE_FLAGS,
+    AssociationPermissionFlag,
+    hasPermissionFlag,
+  } from '$lib/associations/api';
   import { Trash2, ChevronDown } from '@lucide/svelte';
 
   /** Human-readable labels for each permission flag (French). */
@@ -11,7 +15,11 @@
     { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: 'Gérer les membres' },
     { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: 'Gérer les documents' },
     { flag: AssociationPermissionFlag.MANAGE_FORMS, label: 'Gérer les formulaires' },
-    { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: 'Gérer la boutique' },
+    { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: 'Gérer les paiements (boutique)' },
+    {
+      flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT,
+      label: 'Gérer Stripe Connect',
+    },
     { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: 'Valider les événements' },
     { flag: AssociationPermissionFlag.CREATE_ASSO, label: 'Créer des associations' },
     { flag: AssociationPermissionFlag.MODERATE, label: 'Modérer' },
@@ -30,7 +38,7 @@
 
   /** Resolved bitmask: prefer explicit permissions, fall back to isAdmin heuristic. */
   const effectivePermissions = $derived(
-    member.permissions !== undefined ? member.permissions : member.isAdmin ? 287 : 0
+    member.permissions !== undefined ? member.permissions : member.isAdmin ? ALL_CORE_FLAGS : 0
   );
 
   const permissionsCount = $derived(

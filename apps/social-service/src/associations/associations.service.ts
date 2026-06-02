@@ -1524,4 +1524,22 @@ export class AssociationsService {
     if (!membership) return false;
     return this.hasPermission(membership.permissions, AssociationPermissionFlag.POST_AS_ASSO);
   }
+
+  /** Returns true if the user may manage Stripe Connect for the association (or is a global admin). */
+  async canManageStripeConnect(
+    userId: string,
+    associationId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) {
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      return !!asso;
+    }
+    const membership = await this.memberRepo.findOne({ where: { associationId, userId } });
+    if (!membership) return false;
+    return this.hasPermission(
+      membership.permissions,
+      AssociationPermissionFlag.MANAGE_STRIPE_CONNECT
+    );
+  }
 }

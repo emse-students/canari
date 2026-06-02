@@ -198,7 +198,10 @@ export class AssociationsController {
     return this.followsService.isFollowing(userId, id).then((following) => ({ following }));
   }
 
-  /** Returns whether the calling user has permission to post on behalf of the association. */
+  /**
+   * Returns whether the calling user may manage Stripe Connect for the association.
+   * Used by core-service before starting Connect onboarding.
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':id/manage-permission')
   async managePermission(
@@ -206,7 +209,9 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string
   ) {
-    const ok = await this.service.canPostAs(userId, id, { isGlobalAdmin: ga === 'true' });
+    const ok = await this.service.canManageStripeConnect(userId, id, {
+      isGlobalAdmin: ga === 'true',
+    });
     return { ok };
   }
 
