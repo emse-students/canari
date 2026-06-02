@@ -28,9 +28,16 @@ export enum AssociationPermissionFlag {
 }
 
 /**
- * All non-BDE flags granted to existing admins during the
- * `permission → permissions` migration.
+ * Base admin flags granted to association admins.
  * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS | MANAGE_PRODUCTS
+ * = 287
+ *
+ * Intentionally excludes:
+ * - MANAGE_STRIPE_CONNECT (1 << 9): sensitive financial flag, granted separately via
+ *   ASSOCIATION_ADMIN_PRESET in the frontend or via migration 004. Admins who should
+ *   manage Stripe onboarding must be explicitly granted this flag.
+ * - VALIDATE_EVENTS / CREATE_ASSO / MODERATE: BDE-only flags with no effect in
+ *   non-BDE associations (guarded by `a.isBDE = true` in service queries).
  */
 export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.POST_AS_ASSO |

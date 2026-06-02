@@ -444,13 +444,15 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    // Guard: demoting the only admin to a non-admin (permissions=0) is blocked, unless caller is global admin or BDE.
-    if (
-      permissions !== undefined &&
-      membership.permissions > 0 &&
-      permissions === 0 &&
-      !opts?.bypassLastAdmin
-    ) {
+    // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
+    // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
+    // demotion (e.g. keeping MANAGE_STRIPE_CONNECT) would bypass the old permissions===0 check
+    // while still leaving the association without any member manager.
+    const hadManageMembers =
+      (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
+    const willLoseManageMembers =
+      permissions !== undefined && (permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0;
+    if (hadManageMembers && willLoseManageMembers && !opts?.bypassLastAdmin) {
       await this.assertNotLastAdminDemotion(associationId);
     }
     if (role !== undefined) membership.role = role;
@@ -470,7 +472,10 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    if (membership.permissions > 0 && !opts?.bypassLastAdmin) {
+    // Only protect removal when the member holds MANAGE_MEMBERS — the critical flag.
+    const holdsManageMembers =
+      (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
+    if (holdsManageMembers && !opts?.bypassLastAdmin) {
       await this.assertNotLastAdminRemoval(associationId);
     }
 
@@ -478,18 +483,25 @@ export class AssociationsService {
     return { ok: true };
   }
 
-  /** Counts members with at least one permission flag set (i.e. any admin). */
-  private async adminMemberCount(associationId: string): Promise<number> {
+  /**
+   * Counts members holding MANAGE_MEMBERS — the flag required to manage the association.
+   * Used to prevent locking an association out of member management.
+   * Using `permissions > 0` was insufficient: a member with only MANAGE_STRIPE_CONNECT
+   * counts as non-zero but cannot unblock the association.
+   */
+  private async manageMembersCount(associationId: string): Promise<number> {
     return this.memberRepo
       .createQueryBuilder('m')
       .where('m.associationId = :associationId', { associationId })
-      .andWhere('m.permissions > 0')
+      .andWhere('(m.permissions & :flag) <> 0', {
+        flag: AssociationPermissionFlag.MANAGE_MEMBERS,
+      })
       .getCount();
   }
 
-  /** Block removing the only admin-capable member. */
+  /** Block removing the only member with MANAGE_MEMBERS. */
   private async assertNotLastAdminRemoval(associationId: string): Promise<void> {
-    const n = await this.adminMemberCount(associationId);
+    const n = await this.manageMembersCount(associationId);
     if (n <= 1) {
       throw new BadRequestException(
         'Impossible de retirer le dernier administrateur de cette association'
@@ -497,9 +509,9 @@ export class AssociationsService {
     }
   }
 
-  /** Block demoting the only admin to member. */
+  /** Block demoting the only MANAGE_MEMBERS admin to a bitmask that loses that flag. */
   private async assertNotLastAdminDemotion(associationId: string): Promise<void> {
-    const n = await this.adminMemberCount(associationId);
+    const n = await this.manageMembersCount(associationId);
     if (n <= 1) {
       throw new BadRequestException(
         'Impossible de rétrograder le dernier administrateur de cette association'

@@ -108,6 +108,8 @@ export class AddMemberDto {
   @IsInt()
   @Min(0)
   @Max(1023) // 2^10 - 1 covers all 10 current flags
+  // Note: BDE-only flags (VALIDATE_EVENTS=32, CREATE_ASSO=64, MODERATE=128) are silently
+  // inert when the association is not marked isBDE=true in the DB.
   permissions: number;
 }
 
