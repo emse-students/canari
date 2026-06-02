@@ -155,7 +155,10 @@ GitHub → Settings → Secrets and variables → Actions → New repository sec
 
 ```
 JWT_SECRET = <même valeur que dans infrastructure/.env>
+STRIPE_WEBHOOK_SECRET = <signing secret whsec_… du webhook Stripe>
 ```
+
+Le workflow CD synchronise aussi `STRIPE_SECRET_KEY` et `STRIPE_WEBHOOK_SECRET` dans `infrastructure/.env` à chaque déploiement.
 
 Ce secret est injecté dans le bundle JS à chaque build CI (variable `PUBLIC_JWT_SECRET`).
 

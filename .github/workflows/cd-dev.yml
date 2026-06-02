@@ -413,6 +413,7 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
@@ -473,6 +474,12 @@ jobs:
             upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
           else
             echo "⚠️ STRIPE_SECRET_KEY is not set in GitHub secrets"
+          fi
+
+          if [ -n "$STRIPE_WEBHOOK_SECRET" ]; then
+            upsert_env_var "STRIPE_WEBHOOK_SECRET" "$STRIPE_WEBHOOK_SECRET"
+          else
+            echo "⚠️ STRIPE_WEBHOOK_SECRET is not set in GitHub secrets"
           fi
 
           if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then

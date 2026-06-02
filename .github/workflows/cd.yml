@@ -446,6 +446,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           INTERNAL_SECRET: ${{ secrets.INTERNAL_SECRET }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
@@ -529,6 +530,12 @@ jobs:
             upsert_env_var "STRIPE_SECRET_KEY" "$STRIPE_SECRET_KEY"
           else
             echo "⚠️ STRIPE_SECRET_KEY is not set in GitHub secrets (payments features may be disabled)"
+          fi
+
+          if [ -n "$STRIPE_WEBHOOK_SECRET" ]; then
+            upsert_env_var "STRIPE_WEBHOOK_SECRET" "$STRIPE_WEBHOOK_SECRET"
+          else
+            echo "⚠️ STRIPE_WEBHOOK_SECRET is not set in GitHub secrets (Stripe webhooks will be rejected in production)"
           fi
 
           if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then
@@ -749,6 +756,7 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -780,6 +788,16 @@ jobs:
             fi
             if [ -z "$social_stripe_sha" ] || [ "$social_stripe_sha" != "$expected_stripe_sha" ]; then
               echo "::error::STRIPE_SECRET_KEY is not correctly applied in social-service"
+              exit 1
+            fi
+          fi
+
+          if [ -n "$STRIPE_WEBHOOK_SECRET" ]; then
+            expected_webhook_sha=$(printf '%s' "$STRIPE_WEBHOOK_SECRET" | sha256sum | awk '{print $1}')
+            core_webhook_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$STRIPE_WEBHOOK_SECRET\" | sha256sum | awk \"{print \\\$1}\"'" || true)
+
+            if [ -z "$core_webhook_sha" ] || [ "$core_webhook_sha" != "$expected_webhook_sha" ]; then
+              echo "::error::STRIPE_WEBHOOK_SECRET is not correctly applied in core-service"
               exit 1
             fi
           fi
