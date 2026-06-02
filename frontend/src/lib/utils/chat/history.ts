@@ -507,7 +507,7 @@ export async function replayConversationHistory(params: {
 
     if (mlsUpdated) {
       const stateBytes = await mlsService.saveState(pin);
-      saveMlsState(userId, stateBytes);
+      await saveMlsState(userId, stateBytes);
       log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
     }
   } catch (err) {

@@ -376,7 +376,7 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
       try {
         mlsService.forgetGroup(g.groupId);
         const stBytes = await mlsService.saveState(pin);
-        saveMlsState(userId, stBytes);
+        await saveMlsState(userId, stBytes);
       } catch {
         // Non-blocking
       }

@@ -46,12 +46,7 @@ export async function deleteGroupAndBroadcast(params: {
   }
 
   // 3. Sauvegarder l'état MLS (le groupe n'existe plus localement après forgetGroup)
-  try {
-    const stBytes = await mlsService.saveState(pin);
-    saveMlsState(userId, stBytes);
-  } catch {
-    // Non-blocking
-  }
+  await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 
 /** Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so their UIs update. */
@@ -74,8 +69,7 @@ export async function renameGroupAndBroadcast(params: {
   } catch {
     // Non-blocking: rename already applied server-side
   }
-  const stBytes = await mlsService.saveState(pin);
-  saveMlsState(userId, stBytes);
+  await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 
 /** Removes a member from the MLS group, broadcasts a "memberRemoved" system message, then persists the updated MLS state. */
@@ -111,8 +105,7 @@ export async function removeMemberAndBroadcast(params: {
     // Non-blocking: retry on next sync if needed
   }
 
-  const stBytes = await mlsService.saveState(pin);
-  saveMlsState(userId, stBytes);
+  await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 
 /**
@@ -137,12 +130,7 @@ export async function leaveGroupAndBroadcast(params: {
   }
 
   // Sauvegarder l'état MLS
-  try {
-    const stBytes = await mlsService.saveState(pin);
-    saveMlsState(userId, stBytes);
-  } catch {
-    // Non-blocking
-  }
+  await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 
 /**

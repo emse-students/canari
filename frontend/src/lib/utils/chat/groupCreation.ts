@@ -403,7 +403,7 @@ async function performDirectAdd(
 
     // Sauvegarder AVANT sendCommit (crash-safety : l'état local doit survivre à un crash ici)
     const stBytes = await mlsService.saveState(pin);
-    saveMlsState(userId, stBytes);
+    await saveMlsState(userId, stBytes);
 
     if (bulk.commit) {
       const excludeIds = bulk.addedDeviceIds.map((did) => {
