@@ -326,7 +326,10 @@ export class PostInteractionsService {
         for (const opt of poll.options) {
           if (selectedIds.includes(opt.id)) opt.votes.push(data.userId);
         }
-        if (!poll.votesByUser) poll.votesByUser = {};
+        // Null-prototype object prevents prototype pollution via crafted userId keys.
+        if (!poll.votesByUser || Object.getPrototypeOf(poll.votesByUser) !== null) {
+          poll.votesByUser = Object.assign(Object.create(null), poll.votesByUser);
+        }
         poll.votesByUser[data.userId] = selectedIds;
         updated = true;
       }
