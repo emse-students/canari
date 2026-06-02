@@ -16,5 +16,5 @@ webrtc = "0.10.0"
 anyhow = "1.0.81"
 uuid = { version = "1.8.0", features = ["serde", "v4"] }
 dashmap = "5.5.3"
-jsonwebtoken = { version = "9", features = ["use_pem"] }
+jsonwebtoken = "10.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
