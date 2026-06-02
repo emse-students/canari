@@ -24,7 +24,6 @@
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
-  import { apiFetch } from '$lib/utils/apiFetch';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
