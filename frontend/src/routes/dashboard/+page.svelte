@@ -20,7 +20,6 @@
     ShieldAlert,
     Activity,
     UserCog,
-    Bell,
     Shield,
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
@@ -103,38 +102,6 @@
   let fileInput: HTMLInputElement | undefined = $state();
   let isDarkMode = $state(false);
   let isAdmin = $derived(isGlobalAdmin());
-  let isPushTestRunning = $state(false);
-  let pushTestResult = $state('');
-
-  async function handleBroadcastPushTest() {
-    if (isPushTestRunning) return;
-    isPushTestRunning = true;
-    pushTestResult = '';
-    try {
-      const response = await apiFetch(`${session.historyBaseUrl}/api/mls/push/broadcast-test`, {
-        method: 'POST',
-        body: JSON.stringify({
-          title: 'Canari - test push global',
-          message: `Diagnostic ${new Date().toLocaleTimeString()}`,
-        }),
-      });
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status}${text ? `: ${text}` : ''}`);
-      }
-      const data = (await response.json()) as {
-        traceId: string;
-        targetedDevices: number;
-        sent: number;
-        failed: number;
-      };
-      pushTestResult = `Test envoyé - trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
-    } catch (e) {
-      pushTestResult = e instanceof Error ? e.message : 'Erreur';
-    } finally {
-      isPushTestRunning = false;
-    }
-  }
 
   function applyTheme(isDark: boolean) {
     document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
@@ -354,24 +321,8 @@
             <span class="text-sm font-medium text-text-main">Admins</span>
             <span class="text-xs text-text-muted text-center">Droits d'administration</span>
           </a>
-          <button
-            type="button"
-            onclick={() => void handleBroadcastPushTest()}
-            disabled={isPushTestRunning}
-            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors disabled:opacity-50"
-            title="Envoyer un test push global"
-          >
-            <Bell size={22} class="text-text-muted" />
-            <span class="text-sm font-medium text-text-main">
-              {isPushTestRunning ? 'Envoi...' : 'Test push'}
-            </span>
-            <span class="text-xs text-text-muted text-center">Tous les appareils avec token</span>
-          </button>
         {/if}
       </div>
-      {#if pushTestResult}
-        <p class="mt-3 text-sm text-text-muted">{pushTestResult}</p>
-      {/if}
     </section>
   {/if}
 
