@@ -107,7 +107,7 @@ export class AddMemberDto {
    */
   @IsInt()
   @Min(0)
-  @Max(511) // 2^9 - 1 covers all 9 current flags
+  @Max(1023) // 2^10 - 1 covers all 10 current flags
   permissions: number;
 }
 
@@ -119,7 +119,7 @@ export class UpdateMemberRoleDto {
   /** Bitmask of `AssociationPermissionFlag` values. */
   @IsInt()
   @Min(0)
-  @Max(511)
+  @Max(1023)
   @IsOptional()
   permissions?: number;
 }
