@@ -130,9 +130,11 @@
 {/if}
 
 <div class="flex flex-col gap-1 pb-4">
-  {#each visibleMessageGroups as group, index (group.type === 'message' ? group.message?.id : `${group.type}-${index}`)}
+  {#each visibleMessageGroups as group, index (group?.type === 'message' ? group.message?.id : `${group?.type ?? ''}-${index}`)}
+    <!-- Svelte 5 teardown race: group can be null when the {#key} parent destroys this component
+         while the {#each} key expression is still being evaluated. All accesses use ?. -->
     <!-- Séparateur de Date -->
-    {#if group.type === 'date_separator'}
+    {#if group?.type === 'date_separator'}
       <div class="flex justify-center my-5">
         <div
           data-chat-date-separator={group.date}
@@ -143,7 +145,7 @@
       </div>
 
       <!-- Séparateur de Temps (Heure) -->
-    {:else if group.type === 'time_separator'}
+    {:else if group?.type === 'time_separator'}
       <div class="flex justify-center my-3">
         <div class="px-2 py-0.5 text-[0.65rem] font-semibold text-text-muted/70 tracking-wider">
           {group.time}
@@ -151,7 +153,7 @@
       </div>
 
       <!-- Message -->
-    {:else if group.type === 'message' && group.message}
+    {:else if group?.type === 'message' && group.message}
       {@const msg = group.message}
       {@const reactions =
         messageReactions instanceof Map
