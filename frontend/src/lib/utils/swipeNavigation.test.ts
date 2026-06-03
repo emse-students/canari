@@ -49,6 +49,13 @@ describe('shouldIgnoreSwipeTarget', () => {
     document.body.innerHTML = '<div data-swipe-reply><span id="m">Hi</span></div>';
     expect(shouldIgnoreSwipeTarget(document.getElementById('m'))).toBe(true);
   });
+
+  it('ignores in-app links and buttons', () => {
+    document.body.innerHTML =
+      '<a id="link" href="/calendar">Agenda</a><button id="btn" type="button">Go</button>';
+    expect(shouldIgnoreSwipeTarget(document.getElementById('link'))).toBe(true);
+    expect(shouldIgnoreSwipeTarget(document.getElementById('btn'))).toBe(true);
+  });
 });
 
 describe('gesture classification', () => {

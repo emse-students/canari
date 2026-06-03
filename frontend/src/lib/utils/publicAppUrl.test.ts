@@ -31,7 +31,16 @@ describe('publicAppUrl', () => {
 
   it('maps relative paths to in-app routes', () => {
     expect(inAppPathFromHref('/forms/xyz')).toBe('/forms/xyz');
+    expect(inAppPathFromHref('/dashboard')).toBe('/dashboard');
+    expect(inAppPathFromHref('/admin/platform')).toBe('/admin/platform');
     expect(inAppPathFromHref('/unknown')).toBeNull();
+  });
+
+  it('maps public dashboard URLs without swallowing navigation', () => {
+    expect(inAppPathFromPublicUrl('https://canari-emse.fr/dashboard')).toBe('/dashboard');
+    expect(inAppPathFromPublicUrl('https://canari-emse.fr/admin/moderation')).toBe(
+      '/admin/moderation'
+    );
   });
 
   it('labels in-app links for the chat UI', () => {

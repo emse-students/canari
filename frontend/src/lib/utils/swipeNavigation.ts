@@ -60,6 +60,8 @@ export function shouldIgnoreSwipeTarget(target: EventTarget | null): boolean {
       if (node.dataset.swipeNavIgnore !== undefined) return true;
       if (node.dataset.swipeReply !== undefined) return true;
       const tag = node.tagName;
+      if (tag === 'A' && node.hasAttribute('href')) return true;
+      if (tag === 'BUTTON') return true;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable) {
         return true;
       }

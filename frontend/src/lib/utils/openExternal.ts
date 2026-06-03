@@ -1,4 +1,5 @@
-import { isInAppHref, isPublicAppUrl } from '$lib/utils/publicAppUrl';
+import { inAppPathFromHref, isPublicAppUrl } from '$lib/utils/publicAppUrl';
+import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
 
@@ -50,12 +51,16 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
   const href =
     rawHref.startsWith('/') && !rawHref.startsWith('//') ? rawHref : anchor.href || rawHref;
 
-  if (isInAppHref(href) || isPublicAppUrl(href)) {
+  const inAppPath = inAppPathFromHref(href);
+  if (inAppPath) {
     event.preventDefault();
     event.stopPropagation();
-    void import('$lib/utils/appLinkNavigation').then((m) => m.navigateInAppFromHref(href));
+    void navigateInAppFromHref(href);
     return true;
   }
+
+  // Public Canari URL without a mapped in-app route — do not swallow the click.
+  if (isPublicAppUrl(href)) return false;
 
   if (!isTauriRuntime() || !shouldOpenExternalHref(href)) return false;
 

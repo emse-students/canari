@@ -6,7 +6,7 @@ export const PUBLIC_APP_HOSTS = ['canari-emse.fr', 'www.canari-emse.fr'] as cons
 
 /** SPA path prefixes that open inside the app (not the system browser). */
 export const IN_APP_ROUTE_RE =
-  /^\/(posts|forms|associations|profile|chat|shop|calendar|communities|notifications)(\/|$)/;
+  /^\/(posts|forms|associations|profile|chat|shop|calendar|communities|notifications|dashboard|admin|events|account|dev)(\/|$)/;
 
 /** True when the WebView origin must not be used for outbound share links. */
 function isNonPublicWebViewOrigin(origin: string): boolean {
