@@ -62,6 +62,12 @@ export interface MessageHandlerDeps {
   }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
   /**
+   * Appelé quand un Welcome est traité avec succès et que le groupe est prêt.
+   * Permet de relancer processPendingInvitations pour les invitations qui
+   * avaient été skippées parce que la conversation n'était pas encore prête.
+   */
+  onGroupReady?: (groupId: string) => void;
+  /**
    * Appelé quand un groupe est définitivement empoisonné (Poison Pill).
    * Permet à l'UI d'afficher un avertissement visible à l'utilisateur.
    */

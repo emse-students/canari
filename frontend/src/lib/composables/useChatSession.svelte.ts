@@ -479,6 +479,17 @@ export function useChatSession() {
         onCallSignal: (senderId: string, groupId: string, callMsg) => {
           callService?.handleCallSignal(senderId, groupId, callMsg);
         },
+        onGroupReady: (() => {
+          // Coalesce: if multiple Welcomes arrive in a burst, run one pass 500ms after the last.
+          let t: ReturnType<typeof setTimeout> | null = null;
+          return (_groupId: string) => {
+            if (t !== null) clearTimeout(t);
+            t = setTimeout(() => {
+              t = null;
+              processDeviceInvitationsLocally(cb).catch(() => {});
+            }, 500);
+          };
+        })(),
         onGroupPoisoned: (groupId: string) => {
           const convoName =
             cb.conversations.get(groupId)?.name ?? cb.conversations.get(groupId)?.contactName;

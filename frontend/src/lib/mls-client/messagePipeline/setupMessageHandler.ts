@@ -32,6 +32,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     loadHistoryForConversation,
     onCallSignal,
     onGroupPoisoned,
+    onGroupReady,
     log,
   } = deps;
 
@@ -951,6 +952,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           });
           if (storage) await saveConversation(newConvoKey);
         }
+
+        // Notify that this group is ready so pending device invitations that were
+        // skipped ("conversation non prête") can be retried immediately.
+        onGroupReady?.(joinedGroupId);
 
         // Background: fetch history so the new conversation isn't empty
         try {
