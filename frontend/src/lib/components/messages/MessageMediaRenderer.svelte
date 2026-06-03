@@ -10,6 +10,7 @@
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import AppLink from '$lib/components/shared/AppLink.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
   interface Props {
@@ -294,15 +295,7 @@
     <p class="mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
-          <a
-            href={segment.value}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="underline underline-offset-2 decoration-current hover:opacity-80 font-medium transition-opacity"
-            onclick={(e) => e.stopPropagation()}
-          >
-            {segment.value}
-          </a>
+          <AppLink href={segment.value} />
         {:else}
           {segment.value}
         {/if}

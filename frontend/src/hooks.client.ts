@@ -8,7 +8,7 @@
  */
 
 import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
-import { installExternalLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
+import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 
 /** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
@@ -23,9 +23,7 @@ export function init(): void {}
 // EXTERNAL LINKS - Open in system browser / default app (not in WebView)
 // ════════════════════════════════════════════════════════════════════════════
 
-if (isTauriRuntime()) {
-  installExternalLinkClickHandler();
-}
+installAppLinkClickHandler();
 
 // ════════════════════════════════════════════════════════════════════════════
 // DEEP LINK HANDLER - OIDC on Mobile Tauri

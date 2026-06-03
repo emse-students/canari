@@ -1,4 +1,4 @@
-import { isPublicAppUrl } from '$lib/utils/publicAppUrl';
+import { isInAppHref, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
 
@@ -31,11 +31,12 @@ export function shouldOpenExternalHref(
 }
 
 /**
- * Intercept a click on an external link (Tauri only).
- * Returns true when the default navigation was cancelled and the URL was opened externally.
+ * Intercept link clicks: Canari app URLs navigate in-app (web + Tauri); other http(s) links
+ * open in the system browser on Tauri only.
+ * Returns true when default navigation was cancelled.
  */
-export function handleExternalLinkClick(event: MouseEvent): boolean {
-  if (!isTauriRuntime() || event.defaultPrevented) return false;
+export function handleAppLinkClick(event: MouseEvent): boolean {
+  if (event.defaultPrevented) return false;
   if (event.button !== 0) return false;
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return false;
 
@@ -45,14 +46,18 @@ export function handleExternalLinkClick(event: MouseEvent): boolean {
   const anchor = target.closest('a[href]');
   if (!(anchor instanceof HTMLAnchorElement)) return false;
 
-  const href = anchor.href || anchor.getAttribute('href') || '';
-  if (isPublicAppUrl(href)) {
+  const rawHref = anchor.getAttribute('href') ?? '';
+  const href =
+    rawHref.startsWith('/') && !rawHref.startsWith('//') ? rawHref : anchor.href || rawHref;
+
+  if (isInAppHref(href) || isPublicAppUrl(href)) {
     event.preventDefault();
     event.stopPropagation();
-    void import('$lib/utils/appLinkNavigation').then((m) => m.navigateInAppFromPublicUrl(href));
+    void import('$lib/utils/appLinkNavigation').then((m) => m.navigateInAppFromHref(href));
     return true;
   }
-  if (!shouldOpenExternalHref(href)) return false;
+
+  if (!isTauriRuntime() || !shouldOpenExternalHref(href)) return false;
 
   event.preventDefault();
   event.stopPropagation();
@@ -60,10 +65,19 @@ export function handleExternalLinkClick(event: MouseEvent): boolean {
   return true;
 }
 
-/** Capture-phase listener so links open externally before in-app handlers run. */
+/** Capture-phase listener for in-app Canari links (all platforms) and external links (Tauri). */
+export function installAppLinkClickHandler(): void {
+  document.addEventListener('click', handleAppLinkClick, true);
+}
+
+/** @deprecated Use {@link installAppLinkClickHandler}. */
 export function installExternalLinkClickHandler(): void {
-  if (!isTauriRuntime()) return;
-  document.addEventListener('click', handleExternalLinkClick, true);
+  installAppLinkClickHandler();
+}
+
+/** @deprecated Use {@link handleAppLinkClick}. */
+export function handleExternalLinkClick(event: MouseEvent): boolean {
+  return handleAppLinkClick(event);
 }
 
 /**

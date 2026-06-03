@@ -1,14 +1,14 @@
-import { inAppPathFromPublicUrl } from '$lib/utils/publicAppUrl';
+import { inAppPathFromHref } from '$lib/utils/publicAppUrl';
 
 /**
- * Navigates to an in-app route when `url` is a public Canari web link.
+ * Navigates to an in-app route when `href` is a public Canari URL or a supported relative path.
  * Returns true when navigation was handled.
  */
-export async function navigateInAppFromPublicUrl(url: string): Promise<boolean> {
-  const path = inAppPathFromPublicUrl(url);
+export async function navigateInAppFromHref(href: string): Promise<boolean> {
+  const path = inAppPathFromHref(href);
   if (!path) return false;
 
-  console.log('[appLink] In-app navigation from public URL →', path);
+  console.log('[appLink] In-app navigation →', path);
   try {
     const { goto } = await import('$app/navigation');
     await goto(path);
@@ -16,4 +16,12 @@ export async function navigateInAppFromPublicUrl(url: string): Promise<boolean> 
     if (typeof window !== 'undefined') window.location.href = path;
   }
   return true;
+}
+
+/**
+ * Navigates to an in-app route when `url` is a public Canari web link.
+ * Returns true when navigation was handled.
+ */
+export async function navigateInAppFromPublicUrl(url: string): Promise<boolean> {
+  return navigateInAppFromHref(url);
 }

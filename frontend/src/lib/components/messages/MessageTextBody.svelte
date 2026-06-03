@@ -1,6 +1,7 @@
 <script lang="ts">
   import { isGifUrl, getGifEmbedUrl, splitWithHighlight } from '$lib/utils/chat/messageDisplay';
   import { splitTextWithMentions } from '$lib/utils/mentions.parse';
+  import AppLink from '../shared/AppLink.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
   import MessageMentionChip from './MessageMentionChip.svelte';
 
@@ -54,15 +55,7 @@
           />
         </span>
       {:else}
-        <a
-          href={segment.value}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="underline underline-offset-2 decoration-current hover:opacity-80 font-medium transition-opacity"
-          onclick={(e) => e.stopPropagation()}
-        >
-          {segment.value}
-        </a>
+        <AppLink href={segment.value} />
       {/if}
     {:else}
       {#each splitWithHighlight(segment.value, normalizedSearchTerm) as part, pIndex (`${pIndex}-${part.text}`)}
