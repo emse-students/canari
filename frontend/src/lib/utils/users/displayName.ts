@@ -86,7 +86,8 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
     })
     .catch(() => {
       failedAt.set(normalized, Date.now());
-      return null;
+      displayNameCache.set(normalized, 'Utilisateur inconnu');
+      return 'Utilisateur inconnu';
     })
     .finally(() => {
       inFlight.delete(normalized);

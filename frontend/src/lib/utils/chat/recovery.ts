@@ -46,8 +46,21 @@ export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps):
 
   if (!successorId) {
     const deadConvo = conversations.get(deadGroupId);
-    const groupName = deadConvo?.name ?? meta?.name ?? '';
-    const isGroup = meta?.isGroup ?? true;
+
+    // getUserGroups has required (non-optional) name + isGroup — more reliable than getGroupMeta.
+    let serverRow: { name: string; isGroup: boolean } | undefined;
+    try {
+      const groups = await mlsService.getUserGroups(userId);
+      serverRow = groups.find((g) => g.groupId === deadGroupId);
+    } catch {
+      /* non-fatal — fall through to meta/deadConvo */
+    }
+
+    const groupName = serverRow?.name ?? deadConvo?.name ?? meta?.name ?? '';
+    const isGroup =
+      serverRow?.isGroup ??
+      meta?.isGroup ??
+      (deadConvo?.conversationType === 'direct' ? false : true);
 
     // Step 2 - Create a candidate successor on the server
     let ourCandidateId: string | null = null;

@@ -1187,7 +1187,7 @@ export class WebMlsService implements IMlsService {
   /** Signale au serveur que ce device quitte un groupe de manière irrécupérable (Poison Pill). */
   async forceLeaveGroup(groupId: string): Promise<void> {
     try {
-      await this.delivery.deliveryPost(`mls/groups/${groupId}/force_leave`, {
+      await this.delivery.deliveryPost(`groups/${groupId}/force_leave`, {
         deviceId: this.deviceId,
       });
     } catch (e) {
