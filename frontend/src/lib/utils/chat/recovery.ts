@@ -1,12 +1,12 @@
-import type { IMlsService } from '$lib/mlsService';
+import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 
 /**
- * Dependencies shared by all recovery functions.
- * Mirrors the shape used by MessageHandlerDeps to allow easy reuse from connection.ts.
+ * Dépendances minimales requises par les fonctions de recovery.
+ * Sous-ensemble de MessageHandlerDeps — les deux sont compatibles.
  */
 export interface RecoveryDeps {
   mlsService: IMlsService;
@@ -14,168 +14,170 @@ export interface RecoveryDeps {
   userId: string;
   pin: string;
   conversations: SvelteMap<string, Conversation>;
-  /** Returns the currently selected conversation key, or null. */
   getSelectedContact: () => string | null;
-  /** Sets the selected conversation key. */
   setSelectedContact: (id: string | null) => void;
-  /** Persist a conversation to the local DB. */
   saveConversation: (key: string) => Promise<void>;
-  /** Delete a conversation from the local DB (optional - skipped if not provided). */
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
 }
 
 /**
- * Orchestrates the full recovery flow for a dead MLS group.
+ * Demande à être ré-invité dans un groupe (Welcome manquant ou epoch décalée).
  *
- * Algorithm:
- * 1. Check server state - if a successor is already set, skip creation and go straight to migration.
- * 2. Create a candidate successor group on the server and locally.
- * 3. Atomically claim the successor (CAS: first writer wins).
- *    - If we won: invite all old group members to the new group.
- *    - If we lost: delete our orphan candidate and use the real winner's group.
- * 4. Migrate the local conversation from the dead group to the successor.
+ * Envoie un `welcome_request` puis arme un timer de 30s. Si le groupe
+ * n'est toujours pas dans le WASM local à l'expiration, déclenche `reboot`.
+ * Idempotent : si un timer est déjà actif pour ce groupe, l'appel est ignoré.
  */
-export async function recoverDeadGroup(deadGroupId: string, deps: RecoveryDeps): Promise<void> {
-  const { mlsService, userId, pin, conversations, log } = deps;
-  log(`[RECOVER] Lancement récupération groupe ${deadGroupId}`);
+export async function requestReAdd(
+  groupId: string,
+  deps: RecoveryDeps,
+  timers: Map<string, ReturnType<typeof setTimeout>>
+): Promise<void> {
+  if (timers.has(groupId)) return;
 
-  // Step 1 - Check if another device already claimed a successor
-  const meta = await mlsService.getGroupMeta(deadGroupId);
-  let successorId: string | null = meta?.successorId ?? null;
+  await deps.mlsService
+    .sendWelcomeRequest(groupId)
+    .catch((e) =>
+      deps.log(`[READD] welcome_request échoué pour ${groupId.slice(0, 8)}…: ${String(e)}`)
+    );
+  deps.log(`[READD] welcome_request envoyé pour ${groupId.slice(0, 8)}… (timeout 30s)`);
 
-  if (!successorId) {
-    const deadConvo = conversations.get(deadGroupId);
-
-    // getUserGroups has required (non-optional) name + isGroup — more reliable than getGroupMeta.
-    let serverRow: { name: string; isGroup: boolean } | undefined;
-    try {
-      const groups = await mlsService.getUserGroups(userId);
-      serverRow = groups.find((g) => g.groupId === deadGroupId);
-    } catch {
-      /* non-fatal — fall through to meta/deadConvo */
-    }
-
-    const groupName = serverRow?.name ?? deadConvo?.name ?? meta?.name ?? '';
-    const isGroup =
-      serverRow?.isGroup ??
-      meta?.isGroup ??
-      (deadConvo?.conversationType === 'direct' ? false : true);
-
-    // Step 2 - Create a candidate successor on the server
-    let ourCandidateId: string | null = null;
-    try {
-      ourCandidateId = await mlsService.createRemoteGroup(groupName, isGroup);
-      log(`[RECOVER] Candidat successeur créé : ${ourCandidateId}`);
-
-      await mlsService.createGroup(ourCandidateId);
-      await mlsService.registerMember(ourCandidateId, userId);
-      const st = await mlsService.saveState(pin);
-      await saveMlsState(userId, st);
-    } catch (e) {
-      log(`[RECOVER] Échec création candidat : ${String(e)}`);
-      // Clean up partial state before re-throwing so the caller can escalate (Poison Pill).
-      if (ourCandidateId) {
-        await mlsService.deleteGroupOnServer(ourCandidateId).catch(() => {});
-        mlsService.forgetGroup(ourCandidateId, 0);
-      }
-      throw e;
-    }
-
-    // Step 3 - Atomic CAS: first writer wins
-    const claim = await mlsService.claimGroupSuccessor(deadGroupId, ourCandidateId);
-
-    let weWon = false;
-    if (!claim.claimed) {
-      // Another device won - delete our orphan and use the real successor
-      log(
-        `[RECOVER] Course perdue - suppression orphelin ${ourCandidateId}, migration vers ${claim.successorId}`
-      );
-      await mlsService.deleteGroupOnServer(ourCandidateId).catch(() => {});
-      mlsService.forgetGroup(ourCandidateId, 0);
-      successorId = claim.successorId;
-    } else {
-      // We won - invite all members of the dead group to the successor
-      weWon = true;
-      successorId = ourCandidateId;
-      log(`[RECOVER] Course gagnée - invitation membres dans ${successorId}`);
-      await inviteOldMembers(deadGroupId, successorId, deps).catch((e) =>
-        log(`[RECOVER] Erreur invitation membres : ${String(e)}`)
+  const t = setTimeout(async () => {
+    timers.delete(groupId);
+    if (!deps.mlsService.getLocalGroups().includes(groupId)) {
+      deps.log(`[READD] 30s écoulées sans Welcome pour ${groupId.slice(0, 8)}… — reboot`);
+      await reboot(groupId, deps).catch((e) =>
+        deps.log(`[READD] reboot échoué pour ${groupId.slice(0, 8)}…: ${String(e)}`)
       );
     }
+  }, 30_000);
+  timers.set(groupId, t);
+}
 
-    // Step 4 - Migrate local conversation to successor
-    if (successorId) {
-      await migrateConversation(deadGroupId, successorId, deps);
-      // The winner already has local MLS state (createGroup ran above) - mark ready immediately.
-      if (weWon) {
-        const newConvo = deps.conversations.get(successorId);
-        if (newConvo) {
-          deps.conversations.set(successorId, { ...newConvo, isReady: true });
-          await deps.saveConversation(successorId).catch(() => {});
-          log(`[RECOVER] Successeur "${newConvo.name}" marqué prêt.`);
-        }
-      }
-    }
-  } else {
-    // Step 4 - successorId was already set server-side: join + migrate locally
-    await ensureSuccessorAccessible(deadGroupId, successorId, deps);
-    await migrateConversation(deadGroupId, successorId, deps);
+/**
+ * Annule le timer de re-add pour un groupe (appelé quand le Welcome arrive).
+ */
+export function cancelReAdd(
+  groupId: string,
+  timers: Map<string, ReturnType<typeof setTimeout>>
+): void {
+  const t = timers.get(groupId);
+  if (t !== undefined) {
+    clearTimeout(t);
+    timers.delete(groupId);
   }
 }
 
 /**
- * Ensures this device is registered on the successor group and requests a Welcome when needed.
+ * Reboot fork resolution (OpenMLS book §fork-resolution).
+ *
+ * Crée un groupe successeur, le revendique via CAS (premier arrivé premier servi),
+ * invite tous les membres de l'ancien groupe, puis migre la conversation locale.
+ * Si le CAS est perdu, rejoint le groupe du gagnant.
  */
-async function ensureSuccessorAccessible(
+export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void> {
+  const { mlsService, userId, pin, log } = deps;
+  log(`[REBOOT] Lancement pour groupe ${groupId.slice(0, 8)}…`);
+
+  // Étape 1 : successeur déjà revendiqué par un autre device ?
+  const meta = await mlsService.getGroupMeta(groupId);
+  if (meta?.successorId) {
+    return joinSuccessor(groupId, meta.successorId, deps);
+  }
+
+  // Étape 2 : lire les infos du groupe depuis le serveur (name, isGroup)
+  let groups: UserGroupRow[];
+  try {
+    groups = await mlsService.getUserGroups(userId);
+  } catch {
+    groups = [];
+  }
+  const row = groups.find((g) => g.groupId === groupId);
+  const name = row?.name ?? meta?.name ?? '';
+  const isGroup = row?.isGroup ?? meta?.isGroup ?? false;
+
+  // Étape 3 : créer un candidat successeur
+  let candidateId: string | null = null;
+  try {
+    candidateId = await mlsService.createRemoteGroup(name, isGroup);
+    log(`[REBOOT] Candidat créé : ${candidateId.slice(0, 8)}…`);
+    await mlsService.createGroup(candidateId);
+    await mlsService.registerMember(candidateId, userId);
+    await saveMlsState(userId, await mlsService.saveState(pin));
+  } catch (e) {
+    log(`[REBOOT] Échec création candidat : ${String(e)}`);
+    if (candidateId) {
+      await mlsService.deleteGroupOnServer(candidateId).catch(() => {});
+      mlsService.forgetGroup(candidateId);
+    }
+    throw e;
+  }
+
+  // Étape 4 : CAS — premier arrivé premier servi
+  const claim = await mlsService.claimGroupSuccessor(groupId, candidateId);
+
+  if (!claim.claimed) {
+    // CAS perdu — nettoyer le candidat orphelin et rejoindre le gagnant
+    log(
+      `[REBOOT] CAS perdu — suppression ${candidateId.slice(0, 8)}…, migration vers ${claim.successorId?.slice(0, 8)}…`
+    );
+    await mlsService.deleteGroupOnServer(candidateId).catch(() => {});
+    mlsService.forgetGroup(candidateId);
+    if (claim.successorId) return joinSuccessor(groupId, claim.successorId, deps);
+    return;
+  }
+
+  // Étape 5 : CAS gagné — inviter tous les membres de l'ancien groupe
+  log(`[REBOOT] CAS gagné — invitation membres dans ${candidateId.slice(0, 8)}…`);
+  await inviteMembers(groupId, candidateId, deps).catch((e) =>
+    log(`[REBOOT] Erreur invitation membres : ${String(e)}`)
+  );
+
+  // Étape 6 : migrer la conversation locale
+  await migrateConversation(groupId, candidateId, deps);
+
+  // Marquer le successeur comme prêt (ce device est le créateur)
+  const newConvo = deps.conversations.get(candidateId);
+  if (newConvo && !newConvo.isReady) {
+    deps.conversations.set(candidateId, { ...newConvo, isReady: true });
+    await deps.saveConversation(candidateId).catch(() => {});
+  }
+
+  log(`[REBOOT] Terminé : ${groupId.slice(0, 8)}… → ${candidateId.slice(0, 8)}…`);
+}
+
+/**
+ * Rejoint un groupe successeur déjà revendiqué par un autre device.
+ * Enregistre ce device comme membre et envoie un welcome_request.
+ */
+async function joinSuccessor(
   deadGroupId: string,
   successorId: string,
   deps: RecoveryDeps
 ): Promise<void> {
-  const { mlsService, userId, conversations, log } = deps;
+  const { mlsService, userId, log } = deps;
+  log(`[REBOOT] Rejoindre successeur ${successorId.slice(0, 8)}…`);
 
-  try {
-    await mlsService.registerMember(successorId, userId);
-    log(`[RECOVER] Membre enregistré sur successeur ${successorId.slice(0, 8)}…`);
-  } catch (e) {
-    log(
-      `[RECOVER] registerMember successeur (${successorId.slice(0, 8)}…): ${
-        e instanceof Error ? e.message : String(e)
-      }`
-    );
-  }
+  await mlsService.registerMember(successorId, userId).catch(() => {});
 
   const hasLocal = mlsService.getLocalGroups().includes(successorId);
   if (!hasLocal) {
-    try {
-      mlsService.sendWelcomeRequest(successorId);
-      log(`[RECOVER] welcome_request envoyé pour successeur ${successorId.slice(0, 8)}…`);
-    } catch (e) {
-      log(
-        `[RECOVER] welcome_request successeur échoué: ${e instanceof Error ? e.message : String(e)}`
-      );
-    }
-    return;
+    await mlsService.sendWelcomeRequest(successorId).catch(() => {});
+    log(`[REBOOT] welcome_request envoyé pour successeur ${successorId.slice(0, 8)}…`);
   }
 
-  if (mlsService.getEpoch(successorId) === 0) {
-    log(`[RECOVER] Successeur ${successorId.slice(0, 8)}… epoch=0 - ré-invitation membres`);
-    await inviteOldMembers(deadGroupId, successorId, deps).catch((e) =>
-      log(`[RECOVER] Erreur ré-invitation : ${String(e)}`)
-    );
-    const convo = conversations.get(successorId);
-    if (convo && !convo.isReady) {
-      conversations.set(successorId, { ...convo, isReady: true });
-      await deps.saveConversation(successorId).catch(() => {});
-    }
-  }
+  await migrateConversation(deadGroupId, successorId, deps);
 }
 
 /**
- * Fetches all member devices from the dead group and adds them to the successor group
- * in a single bulk MLS commit, then delivers a Welcome message to each device.
+ * Invite tous les membres de l'ancien groupe dans le nouveau groupe successeur.
+ *
+ * Corrections appliquées :
+ * - R4 : le commit est envoyé via sendCommit (validation epoch)
+ * - R5 : retry du add-lock après 2s si l'acquisition échoue
+ * - Les Welcomes sont envoyés APRÈS le commit (ordre correct)
  */
-async function inviteOldMembers(
+async function inviteMembers(
   deadGroupId: string,
   successorId: string,
   deps: RecoveryDeps
@@ -183,78 +185,72 @@ async function inviteOldMembers(
   const { mlsService, userId, pin, log } = deps;
 
   const members = await mlsService.getGroupMembers(deadGroupId);
-  const otherUserIds = [...new Set(members.map((m) => m.userId).filter((id) => id !== userId))];
-
-  if (otherUserIds.length === 0) {
-    log('[RECOVER] Aucun autre membre à inviter.');
+  const otherIds = [...new Set(members.map((m) => m.userId).filter((id) => id !== userId))];
+  if (otherIds.length === 0) {
+    log('[REBOOT] Aucun autre membre à inviter.');
     return;
   }
 
-  // Récupérer les appareils de tous les membres en parallèle puis construire
-  // le mapping deviceId → userId en une passe.
-  const devicesByUser = await Promise.all(
-    otherUserIds.map((id) => mlsService.fetchUserDevices(id))
-  );
+  // Récupérer les devices de tous les membres en parallèle
+  const devicesByUser = await Promise.all(otherIds.map((id) => mlsService.fetchUserDevices(id)));
   const allDevices: Array<{ keyPackage: Uint8Array; deviceId: string }> = [];
   const deviceToUser = new Map<string, string>();
   for (const [i, devices] of devicesByUser.entries()) {
     for (const d of devices) {
       allDevices.push(d);
-      deviceToUser.set(d.deviceId, otherUserIds[i]);
+      deviceToUser.set(d.deviceId, otherIds[i]);
+    }
+  }
+  if (allDevices.length === 0) {
+    log('[REBOOT] Aucun device disponible pour les membres.');
+    return;
+  }
+
+  // Acquérir le add-lock — retry une fois après 2s (fix R5)
+  let locked = await mlsService.acquireAddLock(successorId).catch(() => false);
+  if (!locked) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    locked = await mlsService.acquireAddLock(successorId).catch(() => false);
+    if (!locked) {
+      log('[REBOOT] Add-lock non disponible — abandon (un autre device le traite).');
+      return;
     }
   }
 
-  if (allDevices.length === 0) {
-    log(
-      '[RECOVER] Aucun appareil disponible pour les membres - ils recevront une invitation plus tard.'
-    );
-    return;
-  }
-
-  const lockAcquired = await mlsService.acquireAddLock(successorId).catch(() => false);
-  if (!lockAcquired) {
-    log(
-      "[RECOVER] Impossible d'acquérir le verrou add-lock - abandon invitation (un autre appareil s'en charge)"
-    );
-    return;
-  }
   try {
     const bulk = await mlsService.addMembersBulk(successorId, allDevices);
-    log(`[RECOVER] addMembersBulk : ${bulk.addedDeviceIds.length} appareils ajoutés`);
+    log(`[REBOOT] ${bulk.addedDeviceIds.length} device(s) ajouté(s)`);
 
-    if (bulk.welcome) {
-      for (const did of bulk.addedDeviceIds) {
-        const memberId = deviceToUser.get(did);
-        if (!memberId) continue;
-        try {
-          await mlsService.sendWelcome(bulk.welcome, memberId, successorId, did, bulk.ratchetTree);
-          log(`[RECOVER] Welcome envoyé à ${memberId}:${did}`);
-        } catch (e) {
-          log(`[RECOVER] Erreur Welcome ${did} : ${String(e)}`);
-        }
-      }
-    }
+    // Persister AVANT d'envoyer (si crash, les membres peuvent rejoindre via welcome_request)
+    await saveMlsState(userId, await mlsService.saveState(pin));
 
-    const st = await mlsService.saveState(pin);
-    await saveMlsState(userId, st);
-
+    // Envoyer le commit d'abord (fix R4 : via sendCommit qui valide l'epoch)
     if (bulk.commit) {
       await mlsService.sendCommit(bulk.commit, successorId);
     }
+
+    // Puis les Welcomes
+    if (bulk.welcome) {
+      for (const deviceId of bulk.addedDeviceIds) {
+        const memberId = deviceToUser.get(deviceId);
+        if (!memberId) continue;
+        await mlsService
+          .sendWelcome(bulk.welcome, memberId, successorId, deviceId, bulk.ratchetTree)
+          .catch((e) => log(`[REBOOT] Erreur Welcome ${deviceId}: ${String(e)}`));
+        log(`[REBOOT] Welcome envoyé à ${memberId}:${deviceId}`);
+      }
+    }
   } finally {
-    if (lockAcquired) await mlsService.releaseAddLock(successorId).catch(() => {});
+    await mlsService.releaseAddLock(successorId).catch(() => {});
   }
 }
 
 /**
- * Migrates a local conversation from a dead group to its successor:
- * - Copies all decrypted messages to the new groupId in local storage
- * - Remaps the conversation metadata to the successor
- * - Selects the successor if the dead group was the active conversation
- * - Deletes the dead group's local state
- *
- * NOTE: The message copy happens BEFORE deleting the old conversation
- * so the user retains history even if deletion fails.
+ * Migre une conversation de l'ancien groupe vers le successeur :
+ * - Copie les messages locaux (avec déduplication — fix C8)
+ * - Remet la conversation à jour dans le map réactif
+ * - Redirige l'UI si la conversation active était l'ancienne
+ * - Supprime l'ancienne entrée
  */
 export async function migrateConversation(
   fromGroupId: string,
@@ -262,10 +258,9 @@ export async function migrateConversation(
   deps: RecoveryDeps
 ): Promise<void> {
   const {
-    mlsService,
     storage,
-    pin,
     conversations,
+    pin,
     getSelectedContact,
     setSelectedContact,
     saveConversation,
@@ -275,37 +270,31 @@ export async function migrateConversation(
 
   const oldConvo = conversations.get(fromGroupId);
   if (!oldConvo) {
-    log(`[MIGRATE] Conversation source ${fromGroupId} introuvable - skip`);
+    log(`[MIGRATE] Conversation source ${fromGroupId.slice(0, 8)}… introuvable — skip`);
     return;
   }
+  log(`[MIGRATE] ${fromGroupId.slice(0, 8)}… → ${toGroupId.slice(0, 8)}… ("${oldConvo.name}")`);
 
-  log(`[MIGRATE] ${fromGroupId} → ${toGroupId} ("${oldConvo.name}")`);
+  const existingTarget = conversations.get(toGroupId);
+  const localGroups = deps.mlsService.getLocalGroups();
+  const targetAlreadyReady = existingTarget?.isReady === true || localGroups.includes(toGroupId);
 
-  // If the target conversation already has local MLS state loaded (e.g. a re-invite
-  // that assigned bc6bb12f as the successor of e304fcd8, while bc6bb12f was already
-  // a ready local conversation), preserve its readiness rather than overwriting it.
-  const existingToConvo = conversations.get(toGroupId);
-  const localGroups = mlsService.getLocalGroups();
-  const targetAlreadyReady = existingToConvo?.isReady === true || localGroups.includes(toGroupId);
-
-  if (targetAlreadyReady) {
-    log(`[MIGRATE] Cible ${toGroupId} déjà prête en local - isReady préservé`);
-  }
-
-  if (storage) {
-    // Copy decrypted messages to the new conversationId
+  // Copier les messages uniquement si la cible n'a pas encore de conversation (fix C8 : dédup)
+  if (storage && !existingTarget) {
     try {
       const msgs = await storage.getMessages(fromGroupId, pin);
       if (msgs.length > 0) {
         const rekeyed = msgs.map((m) => ({ ...m, conversationId: toGroupId }));
         await storage.saveMessages(rekeyed, pin);
-        log(`[MIGRATE] ${msgs.length} messages copiés vers ${toGroupId}`);
+        log(`[MIGRATE] ${msgs.length} message(s) copié(s)`);
       }
     } catch (e) {
       log(`[MIGRATE] Erreur copie messages : ${String(e)}`);
     }
+  }
 
-    // Persist the new conversation metadata before deleting the old one
+  // Persister la nouvelle conversation avant de supprimer l'ancienne
+  if (storage) {
     await storage
       .saveConversation({
         id: toGroupId,
@@ -313,101 +302,78 @@ export async function migrateConversation(
         isReady: targetAlreadyReady,
         updatedAt: Date.now(),
       })
-      .catch((e) => log(`[MIGRATE] Erreur sauvegarde conversation : ${String(e)}`));
+      .catch((e) => log(`[MIGRATE] Erreur sauvegarde : ${String(e)}`));
   }
 
-  // Update reactive map - merge with existing target state when it was already ready,
-  // otherwise mark as not-ready until a Welcome arrives.
-  const mergedConvo: Conversation = existingToConvo
-    ? { ...existingToConvo, name: oldConvo.name, isReady: targetAlreadyReady }
+  const merged: Conversation = existingTarget
+    ? { ...existingTarget, name: oldConvo.name, isReady: targetAlreadyReady }
     : { ...oldConvo, id: toGroupId, isReady: targetAlreadyReady };
-  conversations.set(toGroupId, mergedConvo);
+  conversations.set(toGroupId, merged);
 
-  // Keep the UI on the same conversation
-  if (getSelectedContact() === fromGroupId) {
-    setSelectedContact(toGroupId);
-  }
+  if (getSelectedContact() === fromGroupId) setSelectedContact(toGroupId);
 
-  // Remove old entries AFTER the new ones are written
   conversations.delete(fromGroupId);
-  if (deleteConversation) {
-    await deleteConversation(fromGroupId).catch(() => {});
-  }
+  if (deleteConversation) await deleteConversation(fromGroupId).catch(() => {});
 
-  // Wipe the dead group's local MLS state
   try {
-    mlsService.forgetGroup(fromGroupId, 0);
+    deps.mlsService.forgetGroup(fromGroupId);
   } catch {
-    // non-blocking
+    /* non-bloquant */
   }
 
   await saveConversation(toGroupId);
-  log(`[MIGRATE] Terminé - "${oldConvo.name}" vit maintenant dans ${toGroupId}`);
+  log(`[MIGRATE] Terminé — "${oldConvo.name}" vit maintenant dans ${toGroupId.slice(0, 8)}…`);
 }
 
 /**
- * Periodic health check: queries the server for all groups the user belongs to and,
- * for any group that has a successor set, triggers a local migration.
+ * Health check périodique : pour tout groupe serveur ayant un successeur,
+ * déclenche la migration locale si elle n'a pas encore eu lieu.
  *
- * Also handles crash recovery: if this device owns local MLS state for a successor
- * at epoch 0, it won the CAS but crashed before inviteOldMembers completed.
- * The invite is retried so other members receive their Welcome.
+ * Également : si ce device a créé un successeur (epoch=0) mais a crashé avant
+ * d'avoir invité les membres, retente l'invitation.
  *
- * Called on WebSocket connect and every 5 minutes (leader tab only).
+ * Appelé à la connexion et toutes les 5 minutes (onglet leader uniquement).
  */
 export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
   const { mlsService, userId, pin, conversations, log } = deps;
 
-  let serverGroups: {
-    groupId: string;
-    name: string;
-    isGroup: boolean;
-    successorId?: string | null;
-  }[];
+  let serverGroups: UserGroupRow[];
   try {
     serverGroups = await mlsService.getUserGroups(userId);
   } catch {
-    return; // server unreachable - skip silently
+    return;
   }
 
   for (const g of serverGroups) {
     if (!g.successorId) continue;
     const successorId = g.successorId;
 
-    // ── Migration ────────────────────────────────────────────────────────────
+    // Migration si pas encore faite
     if (conversations.has(g.groupId) && !conversations.has(successorId)) {
-      // Not yet migrated on this device
-      log(`[HEALTH] Successeur détecté ${g.groupId} → ${successorId} - migration`);
+      log(
+        `[HEALTH] Successeur détecté ${g.groupId.slice(0, 8)}… → ${successorId.slice(0, 8)}… — migration`
+      );
       await migrateConversation(g.groupId, successorId, deps).catch((e) =>
         log(`[HEALTH] Erreur migration : ${String(e)}`)
       );
     } else if (conversations.has(g.groupId)) {
-      // Already migrated - remove the stale old entry and free WASM group state
-      log(`[HEALTH] ${g.groupId} déjà migré vers ${successorId} - nettoyage`);
       conversations.delete(g.groupId);
       if (deps.deleteConversation) await deps.deleteConversation(g.groupId).catch(() => {});
       try {
         mlsService.forgetGroup(g.groupId);
-        const stBytes = await mlsService.saveState(pin);
-        await saveMlsState(userId, stBytes);
+        await saveMlsState(userId, await mlsService.saveState(pin));
       } catch {
-        // Non-blocking
+        /* non-bloquant */
       }
     }
 
-    // ── Crash recovery ───────────────────────────────────────────────────────
-    // If this device owns local MLS state for the successor at epoch 0, it won the
-    // CAS but crashed before inviteOldMembers ran (createGroup advances to epoch 0,
-    // addMembersBulk advances to epoch ≥ 1). Retry the invite.
+    // Crash recovery : ce device a gagné le CAS mais n'a pas invité les membres
     const localGroups = mlsService.getLocalGroups();
     if (localGroups.includes(successorId) && mlsService.getEpoch(successorId) === 0) {
-      log(
-        `[HEALTH] Successeur ${successorId} epoch=0 - ré-invitation post-crash depuis ${g.groupId}`
-      );
-      await inviteOldMembers(g.groupId, successorId, deps).catch((e) =>
+      log(`[HEALTH] Successeur ${successorId.slice(0, 8)}… epoch=0 — ré-invitation post-crash`);
+      await inviteMembers(g.groupId, successorId, deps).catch((e) =>
         log(`[HEALTH] Erreur ré-invitation : ${String(e)}`)
       );
-      // Mark ready: this device is the creator and now has a valid group state
       const convo = conversations.get(successorId);
       if (convo && !convo.isReady) {
         conversations.set(successorId, { ...convo, isReady: true });

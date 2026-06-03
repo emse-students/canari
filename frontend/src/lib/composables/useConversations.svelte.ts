@@ -30,7 +30,7 @@ import {
   inviteMembersToGroup,
   startNewConversation as startConversation,
 } from '$lib/utils/chat/groupCreation';
-import { recoverDeadGroup } from '$lib/utils/chat/recovery';
+import { reboot } from '$lib/utils/chat/recovery';
 import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
@@ -599,17 +599,17 @@ export function useConversations() {
         }
 
         try {
-          await recoverDeadGroup(contactName, {
+          await reboot(contactName, {
             mlsService,
             storage: ctx.storage,
             userId: ctx.userId,
             pin: ctx.pin,
             conversations,
             getSelectedContact: () => selectedContact,
-            setSelectedContact: (id) => {
+            setSelectedContact: (id: string | null) => {
               if (id) selectConversationWithCtx(id, ctx);
             },
-            saveConversation: (name) => saveConversation(name, ctx),
+            saveConversation: (name: string) => saveConversation(name, ctx),
             log: ctx.log,
           });
           console.log(`[VERIFY] Direct conversation ${convo.id} recovered successfully`);

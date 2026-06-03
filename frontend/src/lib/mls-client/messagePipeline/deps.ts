@@ -68,11 +68,6 @@ export interface MessageHandlerDeps {
    */
   onGroupReady?: (groupId: string) => void;
   /**
-   * Appelé quand un groupe est définitivement empoisonné (Poison Pill).
-   * Permet à l'UI d'afficher un avertissement visible à l'utilisateur.
-   */
-  onGroupPoisoned?: (groupId: string) => void;
-  /**
    * Appelé sur une erreur MLS fatale non récupérable nécessitant une action utilisateur.
    * - `'oom'` : OOM WASM détecté → rechargement de l'app recommandé.
    * - `'private_mode'` : navigation privée détectée (stockage indisponible) → état perdu à la fermeture.

@@ -5,7 +5,7 @@ import { saveMlsState } from '$lib/utils/hex';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { recoverDeadGroup } from '$lib/utils/chat/recovery';
+import { reboot } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { isRawId } from '$lib/utils/chat/conversations';
 
@@ -536,14 +536,14 @@ export async function startNewConversation(
         await ensureDirectConvo(key, false);
       }
       try {
-        await recoverDeadGroup(deadKey ?? key, {
+        await reboot(deadKey ?? key, {
           mlsService,
           storage: deps.storage,
           userId,
           pin: deps.pin,
           conversations,
           getSelectedContact: () => key,
-          setSelectedContact: (id) => {
+          setSelectedContact: (id: string | null) => {
             if (id) selectConversation(id);
           },
           saveConversation,

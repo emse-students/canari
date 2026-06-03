@@ -25,7 +25,7 @@ import {
   processDevWelcome,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
-import { checkGroupSuccessors, recoverDeadGroup } from '$lib/utils/chat/recovery';
+import { checkGroupSuccessors, reboot } from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
@@ -490,17 +490,6 @@ export function useChatSession() {
             }, 500);
           };
         })(),
-        onGroupPoisoned: (groupId: string) => {
-          const convoName =
-            cb.conversations.get(groupId)?.name ?? cb.conversations.get(groupId)?.contactName;
-          const label = convoName ? `"${convoName}"` : `(${groupId.slice(0, 8)}…)`;
-          cb.log(
-            `[ALERTE] Conversation ${label} corrompue et irrécupérable. Demandez à un autre membre de vous réinviter.`
-          );
-          appendLog(
-            `⚠️ Conversation ${label} corrompue - demandez à un autre membre de vous réinviter.`
-          );
-        },
         onMlsFatalError: (kind) => {
           mlsFatalError = kind;
           if (kind === 'oom') {
@@ -692,8 +681,8 @@ export function useChatSession() {
           } else if (now - since > 30_000) {
             notReadySince.delete(id);
             cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s - migration`);
-            recoverDeadGroup(id, recoveryDeps).catch((e) =>
-              cb.log(`[SYNC_WATCHDOG] recoverDeadGroup échoué pour ${id}: ${String(e)}`)
+            reboot(id, recoveryDeps).catch((e: unknown) =>
+              cb.log(`[SYNC_WATCHDOG] reboot échoué pour ${id}: ${String(e)}`)
             );
           }
         }

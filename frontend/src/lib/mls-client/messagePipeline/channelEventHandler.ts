@@ -20,8 +20,8 @@ export interface ChannelEventContext extends Pick<
   | 'onWorkspaceUpdated'
   | 'log'
 > {
-  /** Triggers epoch recovery for the given MLS group (forget + reinvite_request). */
-  triggerEpochRecovery: (groupId: string, targetEpoch?: number) => Promise<void>;
+  /** Appelé quand un commit est rejeté (epoch désynchronisée) — déclenche une demande de re-add. */
+  onOutOfSync: (groupId: string) => Promise<void>;
 }
 
 /**
@@ -42,7 +42,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelDeleted,
     onWorkspaceUpdated,
     log,
-    triggerEpochRecovery,
+    onOutOfSync,
   } = ctx;
 
   log(`[Channel Event] ${event.type}`);
@@ -142,11 +142,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const groupId = String(data.groupId || '');
     const currentEpoch = Number(data.currentEpoch || 0);
     log(
-      `[EPOCH] Commit rejeté pour groupe ${groupId} (epoch serveur: ${currentEpoch}) - oubli MLS + reinvite_request`
+      `[EPOCH] Commit rejeté pour groupe ${groupId.slice(0, 8)}… (epoch serveur: ${currentEpoch}) — re-add`
     );
-    if (groupId) {
-      await triggerEpochRecovery(groupId, currentEpoch);
-    }
+    if (groupId) await onOutOfSync(groupId);
     return;
   }
 

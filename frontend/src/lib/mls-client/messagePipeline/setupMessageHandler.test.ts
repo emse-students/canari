@@ -45,6 +45,9 @@ vi.mock('$lib/utils/chat/messageUtils', async (importOriginal) => {
 
 vi.mock('$lib/utils/chat/recovery', () => ({
   recoverDeadGroup: vi.fn().mockResolvedValue(undefined),
+  requestReAdd: vi.fn().mockResolvedValue(undefined),
+  cancelReAdd: vi.fn(),
+  reboot: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
@@ -106,36 +109,21 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('epoch_rejected skips reinvite when group is soft-deleted on server', async () => {
+  it('epoch_rejected envoie un welcome_request (requestReAdd)', async () => {
     const deps = baseDeps();
     const mls = deps.mlsService as any;
-    mls.getUserGroups = vi
-      .fn()
-      .mockResolvedValue([
-        { groupId, name: 'Deleted', isGroup: true, deletedAt: '2026-01-01T00:00:00Z' },
-      ]);
     setupMessageHandler(deps as any);
-    await mls.onChannelEvent({
-      type: 'epoch_rejected',
-      data: { groupId, currentEpoch: 3 },
-    });
-    expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 3);
-    expect(mls.sendReinviteRequest).not.toHaveBeenCalled();
-  });
-
-  it('epoch_rejected triggers forgetGroup, saveState, sendReinviteRequest', async () => {
-    const deps = baseDeps();
-    setupMessageHandler(deps as any);
-    const mls = deps.mlsService as any;
     await mls.onChannelEvent({
       type: 'epoch_rejected',
       data: { groupId, currentEpoch: 7 },
     });
-    await vi.waitFor(() => expect(mls.saveState).toHaveBeenCalled());
-    expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 7);
-    expect(mls.saveState).toHaveBeenCalledWith('pin');
-    expect(vi.mocked(saveMlsState)).toHaveBeenCalled();
-    expect(mls.sendReinviteRequest).toHaveBeenCalledWith(groupId);
+    // Le nouveau comportement : requestReAdd est appelé (qui envoie sendWelcomeRequest)
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
+      groupId,
+      expect.anything(),
+      expect.anything()
+    );
   });
 
   it('processes Welcome for known placeholder conversation (not ready)', async () => {
@@ -243,6 +231,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    // Le groupe doit être dans getLocalGroups() pour être traité (WASM = source de vérité)
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (
       a: string,
