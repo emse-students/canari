@@ -1,0 +1,286 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('$lib/utils/hex', () => ({
+  saveMlsState: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { requestReAdd, cancelReAdd, reboot, migrateConversation } from './recovery';
+import { saveMlsState } from '$lib/utils/hex';
+
+beforeEach(() => {
+  vi.mocked(saveMlsState).mockClear();
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function makeMls(overrides: Record<string, unknown> = {}) {
+  return {
+    sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    getLocalGroups: vi.fn().mockReturnValue([]),
+    getGroupMeta: vi.fn().mockResolvedValue(null),
+    getUserGroups: vi.fn().mockResolvedValue([]),
+    createRemoteGroup: vi.fn().mockResolvedValue('new-id'),
+    createGroup: vi.fn().mockResolvedValue(undefined),
+    registerMember: vi.fn().mockResolvedValue(undefined),
+    saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+    claimGroupSuccessor: vi.fn().mockResolvedValue({ claimed: true, successorId: 'new-id' }),
+    deleteGroupOnServer: vi.fn().mockResolvedValue(true),
+    forgetGroup: vi.fn(),
+    getGroupMembers: vi.fn().mockResolvedValue([]),
+    fetchUserDevices: vi.fn().mockResolvedValue([]),
+    addMembersBulk: vi
+      .fn()
+      .mockResolvedValue({ commit: new Uint8Array([2]), addedDeviceIds: [], welcome: undefined }),
+    sendCommit: vi.fn().mockResolvedValue(undefined),
+    sendWelcome: vi.fn().mockResolvedValue(undefined),
+    acquireAddLock: vi.fn().mockResolvedValue(true),
+    releaseAddLock: vi.fn().mockResolvedValue(undefined),
+    getEpoch: vi.fn().mockReturnValue(0),
+    ...overrides,
+  };
+}
+
+function makeConversations(entries: Array<[string, object]> = []) {
+  return new Map(entries) as any;
+}
+
+function makeDeps(overrides: Record<string, unknown> = {}) {
+  return {
+    mlsService: makeMls(),
+    storage: null,
+    userId: 'user-a',
+    pin: 'pin123',
+    conversations: makeConversations(),
+    getSelectedContact: () => null,
+    setSelectedContact: vi.fn(),
+    saveConversation: vi.fn().mockResolvedValue(undefined),
+    deleteConversation: vi.fn().mockResolvedValue(undefined),
+    log: vi.fn(),
+    ...overrides,
+  } as any;
+}
+
+// ── requestReAdd ─────────────────────────────────────────────────────────────
+
+describe('requestReAdd', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('envoie sendWelcomeRequest et arme un timer', async () => {
+    const deps = makeDeps();
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('g1', deps, timers);
+
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(timers.has('g1')).toBe(true);
+  });
+
+  it('est idempotent : second appel ignoré si timer actif', async () => {
+    const deps = makeDeps();
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps, timers);
+
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('après 30s sans Welcome → appelle reboot', async () => {
+    const deps = makeDeps();
+    deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('g1', deps, timers);
+
+    // reboot appelle claimGroupSuccessor et createRemoteGroup
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(deps.mlsService.createRemoteGroup).toHaveBeenCalled();
+    expect(deps.mlsService.claimGroupSuccessor).toHaveBeenCalled();
+  });
+
+  it('Welcome reçu avant 30s → cancelReAdd annule le timer, pas de reboot', async () => {
+    const deps = makeDeps();
+    // Au moment du timeout, le groupe est dans le WASM (Welcome reçu entre-temps)
+    deps.mlsService.getLocalGroups = vi.fn().mockReturnValue(['g1']);
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('g1', deps, timers);
+    cancelReAdd('g1', timers);
+
+    vi.advanceTimersByTime(30_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // reboot ne doit pas être appelé
+    expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
+  });
+});
+
+// ── reboot ───────────────────────────────────────────────────────────────────
+
+describe('reboot', () => {
+  it('CAS gagné → sendCommit puis sendWelcome pour chaque membre', async () => {
+    const mls = makeMls({
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'other', deviceId: 'dev2' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ keyPackage: new Uint8Array([9]), deviceId: 'dev2' }]),
+      addMembersBulk: vi.fn().mockResolvedValue({
+        commit: new Uint8Array([2]),
+        welcome: new Uint8Array([3]),
+        addedDeviceIds: ['dev2'],
+        ratchetTree: undefined,
+      }),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await reboot('dead', deps);
+
+    expect(mls.sendCommit).toHaveBeenCalledWith(expect.any(Uint8Array), 'new-id');
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      'other',
+      'new-id',
+      'dev2',
+      undefined
+    );
+  });
+
+  it('CAS perdu → candidate supprimé, sendWelcomeRequest vers gagnant', async () => {
+    const mls = makeMls({
+      claimGroupSuccessor: vi.fn().mockResolvedValue({ claimed: false, successorId: 'winner-id' }),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await reboot('dead', deps);
+
+    // Candidat local nettoyé
+    expect(mls.deleteGroupOnServer).toHaveBeenCalledWith('new-id');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('new-id');
+    // Rejoindre le gagnant
+    expect(mls.registerMember).toHaveBeenCalledWith('winner-id', 'user-a');
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('winner-id');
+  });
+
+  it("aucun autre membre → pas de sendWelcome, pas d'erreur", async () => {
+    const mls = makeMls({
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'user-a', deviceId: 'self' }]),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await expect(reboot('dead', deps)).resolves.not.toThrow();
+    expect(mls.sendWelcome).not.toHaveBeenCalled();
+  });
+});
+
+// ── migrateConversation ───────────────────────────────────────────────────────
+
+describe('migrateConversation', () => {
+  it("déplace la conversation de l'ancien vers le nouveau groupId", async () => {
+    const conversations = makeConversations([
+      [
+        'from-id',
+        {
+          id: 'from-id',
+          name: 'Chat',
+          messages: [],
+          isReady: true,
+          contactName: 'x',
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    const deps = makeDeps({ conversations });
+
+    await migrateConversation('from-id', 'to-id', deps);
+
+    expect(conversations.has('from-id')).toBe(false);
+    expect(conversations.has('to-id')).toBe(true);
+    expect(conversations.get('to-id')?.name).toBe('Chat');
+  });
+
+  it('cible déjà existante → messages non re-copiés (fix C8)', async () => {
+    const storage = {
+      getMessages: vi.fn(),
+      saveMessages: vi.fn(),
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+    };
+    const conversations = makeConversations([
+      [
+        'from-id',
+        {
+          id: 'from-id',
+          name: 'Chat',
+          messages: [],
+          isReady: true,
+          contactName: 'x',
+          mlsStateHex: null,
+        },
+      ],
+      [
+        'to-id',
+        {
+          id: 'to-id',
+          name: 'To',
+          messages: [],
+          isReady: false,
+          contactName: 'y',
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    const deps = makeDeps({ conversations, storage });
+
+    await migrateConversation('from-id', 'to-id', deps);
+
+    // Cible existante → pas de copie de messages
+    expect(storage.getMessages).not.toHaveBeenCalled();
+    expect(storage.saveMessages).not.toHaveBeenCalled();
+    // Conversation déplacée correctement
+    expect(conversations.has('from-id')).toBe(false);
+    expect(conversations.has('to-id')).toBe(true);
+  });
+
+  it('appel double → messages copiés une seule fois', async () => {
+    const storage = {
+      getMessages: vi.fn().mockResolvedValue([
+        {
+          id: 'm1',
+          conversationId: 'from-id',
+          senderId: 'x',
+          content: 'hi',
+          timestamp: 0,
+          readBy: [],
+          reactions: [],
+        },
+      ]),
+      saveMessages: vi.fn().mockResolvedValue(undefined),
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+    };
+    const conversations = makeConversations([
+      [
+        'from-id',
+        {
+          id: 'from-id',
+          name: 'Chat',
+          messages: [],
+          isReady: true,
+          contactName: 'x',
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    const deps = makeDeps({ conversations, storage });
+
+    await migrateConversation('from-id', 'to-id', deps);
+    // Deuxième appel : 'from-id' n'existe plus → noop
+    await migrateConversation('from-id', 'to-id', deps);
+
+    expect(storage.saveMessages).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveMlsState)).not.toHaveBeenCalled();
+  });
+});

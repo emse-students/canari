@@ -153,6 +153,86 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM retiré'));
   });
 
+  it("groupe avec successeur → sendWelcomeRequest sur le successeur, pas l'original", async () => {
+    const mls = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      getLocalGroups: vi.fn().mockReturnValue([]),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([
+          { groupId: 'g-dead', name: 'Dead', isGroup: true, successorId: 'g-succ' },
+        ]),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+    };
+    const log = vi.fn();
+
+    const done = initializeConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      pin: 'pin1',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+    await done;
+
+    // Successeur absent du WASM → welcome_request vers successeur
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-succ');
+    // Pas de welcome_request vers le groupe mort
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalledWith('g-dead');
+  });
+
+  it('même groupe cible vu deux fois (successeur + direct) → 1 seul sendWelcomeRequest (dedup seen)', async () => {
+    // Le serveur retourne deux entrées avec le même successorId
+    const mls = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      getLocalGroups: vi.fn().mockReturnValue([]),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi.fn().mockResolvedValue([
+        { groupId: 'g-a', name: 'A', isGroup: true, successorId: 'g-common' },
+        { groupId: 'g-b', name: 'B', isGroup: true, successorId: 'g-common' },
+      ]),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+    };
+
+    const done = initializeConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      pin: 'pin1',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    await vi.advanceTimersByTimeAsync(600);
+    await done;
+
+    // 'g-common' ne doit être demandé qu'une seule fois malgré deux groupes sources
+    const callCount = mls.sendWelcomeRequest.mock.calls.filter(
+      (args: unknown[]) => args[0] === 'g-common'
+    ).length;
+    expect(callCount).toBe(1);
+  });
+
   it('skips membership sync when connect throws', async () => {
     const mls = {
       connect: vi.fn().mockRejectedValue(new Error('gateway down')),

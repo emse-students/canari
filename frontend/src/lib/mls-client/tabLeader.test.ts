@@ -80,11 +80,11 @@ describe('tabLeader (preventive: single MLS ratchet per browser)', () => {
     expect(logs.some((l) => l.includes('lecture seule'))).toBe(true);
   });
 
-  it('re-claims when heartbeat is stale (>5s)', async () => {
+  it('re-claims when heartbeat is stale (>10s)', async () => {
     vi.useFakeTimers();
     const oldLeader = crypto.randomUUID();
     localStorage.setItem('canari_tab_leader', oldLeader);
-    localStorage.setItem('canari_tab_leader_heartbeat', String(Date.now() - 6000));
+    localStorage.setItem('canari_tab_leader_heartbeat', String(Date.now() - 11000));
     const p = initTabLeadershipAsync(log);
     await vi.advanceTimersByTimeAsync(30);
     const ok = await p;

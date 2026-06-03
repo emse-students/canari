@@ -898,6 +898,16 @@ export class TauriMlsService implements IMlsService {
     return bytes;
   }
 
+  /**
+   * Re-encrypts the MLS state with the new PIN via the native Tauri command and updates
+   * the cached PIN used for background saves. Must be called after a successful PIN change.
+   */
+  async changePIN(newPin: string): Promise<void> {
+    this._pin = newPin;
+    await this.saveState(newPin);
+    console.log('[MLS][Tauri] PIN changé — état re-chiffré et persisté.');
+  }
+
   /** Tauri-native `invoke` wrapper - calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
   async generateKeyPackage(pin: string) {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to

@@ -31,6 +31,12 @@ export interface IMlsService {
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
   saveState(pin: string): Promise<Uint8Array>;
+  /**
+   * Re-encrypts the in-memory MLS state with a new PIN and persists it.
+   * Must be called after the user successfully changes their PIN on the server,
+   * so the stored state remains decryptable on the next login.
+   */
+  changePIN(newPin: string): Promise<void>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the PIN-encrypted identity key. */
   generateKeyPackage(pin: string): Promise<Uint8Array>;
   /** Adds one device to a group via an MLS Add commit, returning the Commit and optional Welcome. */

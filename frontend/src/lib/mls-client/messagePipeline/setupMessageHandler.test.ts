@@ -223,6 +223,120 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
+  it('Welcome (NoMatchingKeyPackage) → sendWelcomeRequest', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi
+      .fn()
+      .mockRejectedValue(new Error('NoMatchingKeyPackage — key consumed'));
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    expect(ok).toBe(true);
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(groupId);
+  });
+
+  it('Welcome (GroupAlreadyExists) → noop, ACK', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockRejectedValue(new Error('GroupAlreadyExists for this id'));
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    expect(ok).toBe(true);
+    // Pas de sendWelcomeRequest ni d'erreur levée
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it('commit groupe inconnu → bufferisé + welcome_request envoyé', async () => {
+    const unknownGroupId = 'aaaaaaaa-0000-4000-8000-000000000001';
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    // Groupe absent du WASM local
+    mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+    const result = await onMsg('peer', new Uint8Array([1]), unknownGroupId, false, undefined, true);
+    // false → message gardé en queue côté serveur (pending buffer)
+    expect(result).toBe(false);
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(unknownGroupId);
+  });
+
+  it('buffer timeout 10s → requestReAdd déclenché', async () => {
+    vi.useFakeTimers();
+    const unknownGroupId = 'bbbbbbbb-0000-4000-8000-000000000001';
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+    await onMsg('peer', new Uint8Array([1]), unknownGroupId, false, undefined, true);
+
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.advanceTimersByTime(10_000);
+    await Promise.resolve(); // flush microtasks
+    await Promise.resolve();
+
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
+      unknownGroupId,
+      expect.anything(),
+      expect.anything()
+    );
+    vi.useRealTimers();
+  });
+
+  it('groupe connu, déchiffrement échoue → requestReAdd + ACK', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.processIncomingMessage = vi.fn().mockRejectedValue(new Error('WrongEpoch'));
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
+    expect(ok).toBe(true);
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
+      groupId,
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   it('delivers decrypted app text for known group (non-welcome)', async () => {
     vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
       text: { body: 'hello-dm' },

@@ -133,7 +133,7 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
 
 const LEADER_KEY = 'canari_tab_leader';
 const HEARTBEAT_KEY = 'canari_tab_leader_heartbeat';
-const HEARTBEAT_STALE_MS = 5_000;
+const HEARTBEAT_STALE_MS = 10_000;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let followerPollInterval: ReturnType<typeof setInterval> | null = null;
 

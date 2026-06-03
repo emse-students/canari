@@ -969,14 +969,22 @@ export class WebMlsService implements IMlsService {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
 
-  // Updated to accept PIN
   /** WASM client wrapper - calls `this.client.save_state(pin)` to encrypt and return the current MLS state as bytes. */
   async saveState(pin: string) {
-    // Pass PIN to save encrypted
-    // Wasm binding updated to accept optional PIN
     const stateBytes = this.client.save_state(pin) as Uint8Array;
     this.lastKnownState = stateBytes.slice();
     return stateBytes;
+  }
+
+  /**
+   * Re-encrypts the in-memory MLS state with the new PIN and writes it to storage.
+   * The in-memory client state is unchanged; only the persisted blob is re-encrypted.
+   */
+  async changePIN(newPin: string): Promise<void> {
+    const newState = this.client.save_state(newPin) as Uint8Array;
+    this.lastKnownState = newState.slice();
+    await saveMlsState(this.userId, newState);
+    console.log('[MLS] PIN changé — état re-chiffré et persisté.');
   }
 
   /** WASM client wrapper - calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
