@@ -25,7 +25,7 @@ import {
   processDevWelcome,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
-import { checkGroupSuccessors } from '$lib/utils/chat/recovery';
+import { checkGroupSuccessors, recoverDeadGroup } from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
@@ -131,6 +131,8 @@ export function useChatSession() {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Leader-tab periodic successor migration check (cleared on logout). */
   let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+  /** Universal sync watchdog: escalates any group stuck non-ready for >30s (cleared on logout). */
+  let syncWatchdogInterval: ReturnType<typeof setInterval> | null = null;
   /** Detects a dead WebSocket while the UI still shows online (cleared on logout). */
   let connectionWatchdogInterval: ReturnType<typeof setInterval> | null = null;
   const CONNECTION_WATCHDOG_MS = 30_000;
@@ -660,6 +662,32 @@ export function useChatSession() {
         5 * 60 * 1_000
       );
 
+      // Watchdog universel : tout groupe non-prêt (pas de WASM local) depuis >30s → recoverDeadGroup.
+      // Couvre tous les chemins de désync, qu'ils aient armé un timer individuel ou non.
+      const notReadySince = new SvelteMap<string, number>();
+      if (syncWatchdogInterval !== null) clearInterval(syncWatchdogInterval);
+      syncWatchdogInterval = setInterval(() => {
+        if (!getIsTabLeader()) return;
+        const now = Date.now();
+        const localGroups = new SvelteSet(recoveryDeps.mlsService.getLocalGroups());
+        for (const [id, convo] of cb.conversations) {
+          if (convo.isReady || localGroups.has(id)) {
+            notReadySince.delete(id);
+            continue;
+          }
+          const since = notReadySince.get(id);
+          if (since === undefined) {
+            notReadySince.set(id, now);
+          } else if (now - since > 30_000) {
+            notReadySince.delete(id);
+            cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s - migration`);
+            recoverDeadGroup(id, recoveryDeps).catch((e) =>
+              cb.log(`[SYNC_WATCHDOG] recoverDeadGroup échoué pour ${id}: ${String(e)}`)
+            );
+          }
+        }
+      }, 5_000);
+
       startConnectionWatchdog(cb);
 
       if (
@@ -794,6 +822,10 @@ export function useChatSession() {
       clearInterval(healthCheckInterval);
       healthCheckInterval = null;
     }
+    if (syncWatchdogInterval !== null) {
+      clearInterval(syncWatchdogInterval);
+      syncWatchdogInterval = null;
+    }
     stopConnectionWatchdog();
     reconnectAttempts = 0;
     reconnectCircuitOpen = false;
@@ -866,6 +898,10 @@ export function useChatSession() {
     if (healthCheckInterval !== null) {
       clearInterval(healthCheckInterval);
       healthCheckInterval = null;
+    }
+    if (syncWatchdogInterval !== null) {
+      clearInterval(syncWatchdogInterval);
+      syncWatchdogInterval = null;
     }
     stopConnectionWatchdog();
     mls?.sendDisconnect();

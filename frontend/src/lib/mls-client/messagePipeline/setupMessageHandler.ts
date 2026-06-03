@@ -69,7 +69,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Taille maximale du buffer par groupe avant d'écrêter les plus anciens.
   // Ne déclenche plus de Poison Pill directement - voir welcomeTimeouts pour la limite temporelle.
   const BUFFER_MAX_PER_GROUP = 20;
-  // Minuteries de sécurité : si Welcome n'arrive pas dans 90s après le premier commit bufférisé,
+  // Minuteries de sécurité : si Welcome n'arrive pas dans 30s après le premier commit bufférisé,
   // le groupe est empoisonné. Annulées dès que le Welcome est traité.
   const welcomeTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -761,17 +761,17 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
             welcomeRequestedForUnknownGroups.add(groupId);
             mlsService.sendWelcomeRequest(groupId).catch(() => {});
             log(`[BUFFER] welcome_request envoyé (premier commit pour groupe inconnu ${groupId})`);
-            // Démarre le minuteur de sécurité : si Welcome n'arrive pas dans 90s, Poison Pill.
+            // Démarre le minuteur de sécurité : si Welcome n'arrive pas dans 30s, Poison Pill.
             // Annulé dans le handler Welcome dès que processWelcome réussit.
             if (!welcomeTimeouts.has(groupId)) {
               const t = setTimeout(() => {
                 welcomeTimeouts.delete(groupId);
                 log(
-                  `[POISON_PILL] Welcome non reçu après 90s pour ${groupId} - Poison Pill (timeout)`
+                  `[POISON_PILL] Welcome non reçu après 30s pour ${groupId} - Poison Pill (timeout)`
                 );
                 console.warn(`[POISON_PILL] Welcome timeout for group ${groupId}`);
                 poisonPill(groupId);
-              }, 90_000);
+              }, 30_000);
               welcomeTimeouts.set(groupId, t);
             }
           }
