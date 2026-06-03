@@ -1,4 +1,3 @@
-import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { isPublicAppUrl } from '$lib/utils/publicAppUrl';
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
@@ -50,7 +49,7 @@ export function handleExternalLinkClick(event: MouseEvent): boolean {
   if (isPublicAppUrl(href)) {
     event.preventDefault();
     event.stopPropagation();
-    void navigateInAppFromPublicUrl(href);
+    void import('$lib/utils/appLinkNavigation').then((m) => m.navigateInAppFromPublicUrl(href));
     return true;
   }
   if (!shouldOpenExternalHref(href)) return false;

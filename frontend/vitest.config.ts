@@ -11,8 +11,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '$app/navigation': resolve(__dirname, './src/test/mocks/app-navigation.ts'),
       $lib: resolve(__dirname, './src/lib'),
-      $app: resolve(__dirname, '../../node_modules/@sveltejs/kit/src/runtime/app'),
+      $app: resolve(__dirname, './node_modules/@sveltejs/kit/src/runtime/app'),
     },
   },
 });
