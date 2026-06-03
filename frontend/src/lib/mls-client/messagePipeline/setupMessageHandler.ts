@@ -863,16 +863,33 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         let directPeerId = '';
 
         // Determine if this is a direct conversation:
-        // 1. Backend explicit isGroup=false → DM; peer from name or fallback to sender.
+        // 1. Backend explicit isGroup=false → DM; peer from name or fallback to sender
+        //    (but never the current user — happens when metadata fetch fails and the
+        //    sender is our own other device during multi-device recovery).
         // 2. isGroup=null + name matches "userA::userB" → legacy DM detection.
         // 3. isGroup=true → group; isDirect stays false.
         const peerFromName = parseDirectPeerFromName(groupName, userId);
         if (isGroupFromApi === false) {
           isDirect = true;
-          directPeerId = peerFromName ?? senderNorm;
+          const candidatePeer = peerFromName ?? (senderNorm !== userId ? senderNorm : '');
+          directPeerId = candidatePeer;
         } else if (isGroupFromApi === null && peerFromName) {
           isDirect = true;
           directPeerId = peerFromName;
+        }
+
+        // If peer still not resolved, try the already-migrated conversation for this groupId.
+        // Covers the case where checkGroupSuccessors migrated before the Welcome arrived.
+        if (isDirect && !directPeerId) {
+          const migrated = conversations.get(joinedGroupId);
+          const migratedPeer = migrated?.directPeerId ?? migrated?.contactName ?? '';
+          if (migratedPeer && migratedPeer !== userId) {
+            directPeerId = migratedPeer;
+          } else {
+            // Cannot identify peer safely — treat as group rather than DM with self.
+            isDirect = false;
+            log(`[WELCOME] Pair introuvable pour groupe DM ${joinedGroupId} - traité comme groupe`);
+          }
         }
 
         // Since the map is keyed by groupId, find directly.
