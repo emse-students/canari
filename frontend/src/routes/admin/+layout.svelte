@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
-  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog } from '@lucide/svelte';
+  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench } from '@lucide/svelte';
 
   let { children } = $props();
 
@@ -37,12 +37,13 @@
     const items: {
       href: string;
       label: string;
-      icon: 'agenda' | 'status' | 'moderation' | 'users';
+      icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform';
     }[] = [{ href: '/admin/agenda', label: 'Agenda en attente', icon: 'agenda' }];
     if (isGlobalAdminUser) {
       items.push(
         { href: '/admin/moderation', label: 'Posts signalés', icon: 'moderation' },
         { href: '/admin/status', label: 'Présence & connexions', icon: 'status' },
+        { href: '/admin/platform', label: 'Plateforme', icon: 'platform' },
         { href: '/admin/users', label: 'Admins', icon: 'users' }
       );
     }
@@ -103,6 +104,8 @@
             <ShieldAlert size={15} />
           {:else if item.icon === 'users'}
             <UserCog size={15} />
+          {:else if item.icon === 'platform'}
+            <Wrench size={15} />
           {:else}
             <Activity size={15} />
           {/if}

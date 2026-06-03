@@ -7,17 +7,51 @@ export const CANARI_RELEASES_REPO = 'emse-students/canari';
 /** Universal APK asset name on GitHub Releases (Android). */
 export const CANARI_RELEASE_APK_FILENAME = 'app-universal-release.apk';
 
+export type PlatformMaintenanceInfo = {
+  enabled: boolean;
+  message: string | null;
+};
+
 export type ServerVersionInfo = {
   version: string;
+  minClientVersion: string;
+  maintenance: PlatformMaintenanceInfo;
 };
 
 export type AppVersionCheckResult = {
   clientVersion: string;
   serverVersion: string | null;
+  minClientVersion: string | null;
   upToDate: boolean;
+  /** True when the client is older than the server-enforced minimum. */
+  belowMinVersion: boolean;
+  maintenance: PlatformMaintenanceInfo;
 };
 
-/** Semver from frontend/package.json, injected at build time via vite.config.js. */
+const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
+
+function normalizeMaintenance(raw: unknown): PlatformMaintenanceInfo {
+  if (!raw || typeof raw !== 'object') return DEFAULT_MAINTENANCE;
+  const obj = raw as { enabled?: unknown; message?: unknown };
+  return {
+    enabled: obj.enabled === true,
+    message: typeof obj.message === 'string' && obj.message.trim() ? obj.message.trim() : null,
+  };
+}
+
+/** Parses `/api/version` JSON into a normalized {@link ServerVersionInfo}. */
+export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null {
+  if (!data || typeof data !== 'object') return null;
+  const obj = data as { version?: unknown; minClientVersion?: unknown; maintenance?: unknown };
+  const version = typeof obj.version === 'string' ? obj.version.trim() : '';
+  if (!version) return null;
+  const minRaw = typeof obj.minClientVersion === 'string' ? obj.minClientVersion.trim() : '';
+  return {
+    version,
+    minClientVersion: minRaw || '0.0.0',
+    maintenance: normalizeMaintenance(obj.maintenance),
+  };
+}
 export function getClientAppVersion(): string {
   const v = import.meta.env.VITE_APP_VERSION?.trim();
   return v || '0.0.0';
@@ -54,9 +88,8 @@ export async function fetchServerAppVersion(
       signal,
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as ServerVersionInfo;
-    if (!data?.version?.trim()) return null;
-    return { version: data.version.trim() };
+    const data = (await res.json()) as unknown;
+    return parseServerVersionInfo(data);
   } catch {
     return null;
   }
@@ -84,11 +117,25 @@ export async function fetchServerAppVersionReliable(
   return null;
 }
 
-/** Builds a version check result from a known server semver (or null when unknown). */
-export function buildAppVersionCheckResult(serverVersion: string | null): AppVersionCheckResult {
+/** Builds a version check result from server metadata (or null fields when unknown). */
+export function buildAppVersionCheckResult(
+  serverInfo: ServerVersionInfo | null
+): AppVersionCheckResult {
   const clientVersion = getClientAppVersion();
+  const serverVersion = serverInfo?.version ?? null;
+  const minClientVersion = serverInfo?.minClientVersion ?? null;
+  const maintenance = serverInfo?.maintenance ?? DEFAULT_MAINTENANCE;
   const upToDate = serverVersion === null || compareSemver(clientVersion, serverVersion) >= 0;
-  return { clientVersion, serverVersion, upToDate };
+  const belowMinVersion =
+    minClientVersion !== null && compareSemver(clientVersion, minClientVersion) < 0;
+  return {
+    clientVersion,
+    serverVersion,
+    minClientVersion,
+    upToDate,
+    belowMinVersion,
+    maintenance,
+  };
 }
 
 /**
@@ -99,7 +146,15 @@ export async function checkAppVersion(
   fetchFn: typeof fetch = fetch
 ): Promise<AppVersionCheckResult> {
   const server = await fetchServerAppVersionReliable(fetchFn);
-  return buildAppVersionCheckResult(server?.version ?? null);
+  return buildAppVersionCheckResult(server);
+}
+
+/** True when maintenance is active and the caller is not a global admin. */
+export function isMaintenanceBlockingUser(
+  maintenance: PlatformMaintenanceInfo,
+  isGlobalAdmin: boolean
+): boolean {
+  return maintenance.enabled && !isGlobalAdmin;
 }
 
 /** Normalizes a semver string to a GitHub release tag (`vX.Y.Z`). */

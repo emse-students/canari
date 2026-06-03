@@ -1,40 +1,43 @@
 import {
   buildAppVersionCheckResult,
   fetchServerAppVersionReliable,
+  isMaintenanceBlockingUser,
+  parseServerVersionInfo,
   type AppVersionCheckResult,
 } from '$lib/utils/appVersion';
 
-const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version';
+const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
 
 let lastCheck = $state<AppVersionCheckResult | null>(null);
 let updatePromptDismissed = $state(false);
 let inflight: Promise<AppVersionCheckResult> | null = null;
 
-function loadCachedServerVersion(): string | null {
+function loadCachedServerInfo(): ReturnType<typeof parseServerVersionInfo> {
   if (typeof sessionStorage === 'undefined') return null;
   try {
-    const v = sessionStorage.getItem(CACHED_SERVER_VERSION_KEY)?.trim();
-    return v || null;
+    const raw = sessionStorage.getItem(CACHED_SERVER_VERSION_KEY)?.trim();
+    if (!raw) return null;
+    return parseServerVersionInfo(JSON.parse(raw));
   } catch {
     return null;
   }
 }
 
-function saveCachedServerVersion(version: string): void {
+function saveCachedServerInfo(info: NonNullable<ReturnType<typeof parseServerVersionInfo>>): void {
   if (typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.setItem(CACHED_SERVER_VERSION_KEY, version);
+    sessionStorage.setItem(CACHED_SERVER_VERSION_KEY, JSON.stringify(info));
   } catch {
     /* quota / private mode */
   }
 }
 
-/** Applies cached server semver so the update prompt can show before the network round-trip. */
-function hydrateFromCachedServerVersion(): void {
-  const cached = loadCachedServerVersion();
+/** Applies cached server metadata so gates can show before the network round-trip. */
+function hydrateFromCachedServerInfo(): void {
+  const cached = loadCachedServerInfo();
   if (!cached) return;
   const result = buildAppVersionCheckResult(cached);
-  if (!result.upToDate) {
+  if (!result.upToDate || result.belowMinVersion || result.maintenance.enabled) {
     lastCheck = result;
   }
 }
@@ -44,19 +47,41 @@ export function getAppVersionCheck(): AppVersionCheckResult | null {
   return lastCheck;
 }
 
-/** True when the server reports a newer build than this client. */
+/** True when the server reports a newer optional build than this client. */
 export function isAppUpdateAvailable(): boolean {
-  return lastCheck !== null && !lastCheck.upToDate && !updatePromptDismissed;
+  return (
+    lastCheck !== null &&
+    !lastCheck.upToDate &&
+    !lastCheck.belowMinVersion &&
+    !updatePromptDismissed
+  );
 }
 
-/** Hides the update modal until the next version check (e.g. on window focus). */
+/** True when the client is below the server-enforced minimum version. */
+export function isBelowMinClientVersion(): boolean {
+  return lastCheck?.belowMinVersion === true;
+}
+
+/** True when maintenance mode blocks the current user (non-global-admin). */
+export function isMaintenanceBlockingCurrentUser(isGlobalAdmin: boolean): boolean {
+  if (!lastCheck) return false;
+  return isMaintenanceBlockingUser(lastCheck.maintenance, isGlobalAdmin);
+}
+
+/** Blocks MLS unlock (PIN/biometric) when min version or maintenance applies. */
+export function shouldBlockSessionUnlock(isGlobalAdmin: boolean): boolean {
+  if (isBelowMinClientVersion()) return true;
+  return isMaintenanceBlockingCurrentUser(isGlobalAdmin);
+}
+
+/** Hides the optional update modal until the next version check (e.g. on window focus). */
 export function dismissAppUpdatePrompt(): void {
   updatePromptDismissed = true;
 }
 
 /**
  * Calls `GET /api/version` and updates {@link getAppVersionCheck}.
- * Dedupes concurrent calls; retries on failure; uses cached semver for instant UI.
+ * Dedupes concurrent calls; retries on failure; uses cached metadata for instant UI.
  */
 export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
   if (inflight) return inflight;
@@ -66,24 +91,23 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
   inflight = (async () => {
     try {
       const live = await fetchServerAppVersionReliable();
-      const serverVersion = live?.version ?? previousServer ?? loadCachedServerVersion() ?? null;
+      const cached = loadCachedServerInfo();
+      const serverInfo = live ?? (cached && previousServer ? cached : cached);
 
-      if (live?.version) {
-        saveCachedServerVersion(live.version);
+      if (live) {
+        saveCachedServerInfo(live);
       }
 
-      lastCheck = buildAppVersionCheckResult(serverVersion);
+      lastCheck = buildAppVersionCheckResult(serverInfo);
 
-      if (lastCheck.upToDate || serverVersion !== previousServer) {
+      if (lastCheck.upToDate || serverInfo?.version !== previousServer) {
         updatePromptDismissed = false;
       }
 
       return lastCheck;
     } catch {
-      const fallback = buildAppVersionCheckResult(
-        previousServer ?? loadCachedServerVersion() ?? null
-      );
-      if (!fallback.upToDate) {
+      const fallback = buildAppVersionCheckResult(loadCachedServerInfo());
+      if (!fallback.upToDate || fallback.belowMinVersion || fallback.maintenance.enabled) {
         lastCheck = fallback;
       }
       return lastCheck ?? fallback;
@@ -96,6 +120,6 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
 }
 
 if (typeof window !== 'undefined') {
-  hydrateFromCachedServerVersion();
+  hydrateFromCachedServerInfo();
   void refreshAppVersionCheck();
 }

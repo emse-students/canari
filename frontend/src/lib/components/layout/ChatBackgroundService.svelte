@@ -33,6 +33,8 @@
   import { Fingerprint } from '@lucide/svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+  import { refreshAppVersionCheck, shouldBlockSessionUnlock } from '$lib/stores/appVersionCheck.svelte';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
   import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
@@ -94,8 +96,19 @@
   let pinLoading = $state(false);
   let biometricConfigured = $state(false);
 
+  /** Returns false when min-version or maintenance gates block MLS unlock. */
+  async function ensurePlatformAllowsUnlock(): Promise<boolean> {
+    await refreshAppVersionCheck();
+    if (shouldBlockSessionUnlock(isGlobalAdmin())) {
+      appendLog('[platform] Déverrouillage MLS bloqué (maintenance ou version minimale)');
+      return false;
+    }
+    return true;
+  }
+
   /** Opens the PIN modal for the given user, computing isFirstSetup from the server. */
   async function openPinModal(uid: string) {
+    if (!(await ensurePlatformAllowsUnlock())) return;
     globalSession.userId = uid;
     isFirstPinSetup = await detectFirstPinSetup(uid);
     showPinModal = true;
@@ -358,6 +371,8 @@
       if (_loginInProgress || globalSession.isLoggedIn) return;
       _loginInProgress = true;
       try {
+        if (!(await ensurePlatformAllowsUnlock())) return;
+
         const configured = await BiometricService.isConfigured().catch(() => false);
         biometricConfigured = configured;
         if (configured && isTauriRuntime()) {
@@ -521,6 +536,8 @@
 
     const uid = currentUserId();
     if (!uid) return;
+
+    if (!(await ensurePlatformAllowsUnlock())) return;
 
     // Arriving on a non-auth route with a user but not yet logged in:
     // trigger the login flow that onMount missed.

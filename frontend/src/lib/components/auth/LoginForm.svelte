@@ -8,6 +8,10 @@
     loginError: string;
     /** Whether biometric authentication is available on the current device. */
     biometricAvailable: boolean;
+    /** Optional maintenance notice shown above the login button. */
+    maintenanceNotice?: string | null;
+    /** When true, the login button is disabled (e.g. client below min version). */
+    loginDisabled?: boolean;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
     /** Called when the user clicks the device-reset link. */
@@ -18,6 +22,8 @@
     isLoggingIn,
     loginError,
     biometricAvailable: _biometricAvailable,
+    maintenanceNotice = null,
+    loginDisabled = false,
     onLogin,
     onReset,
   }: Props = $props();
@@ -56,9 +62,18 @@
 
     <!-- OIDC Login Button -->
     <div class="space-y-5">
+      {#if maintenanceNotice}
+        <div
+          role="status"
+          class="bg-amber-500/15 text-amber-700 dark:text-amber-300 px-4 py-3 rounded-xl text-sm font-medium border border-amber-500/25 backdrop-blur-md"
+        >
+          {maintenanceNotice}
+        </div>
+      {/if}
+
       <button
         onclick={onLogin}
-        disabled={isLoggingIn}
+        disabled={isLoggingIn || loginDisabled}
         class="w-full py-4 bg-cn-yellow text-[#151B2C] rounded-2xl font-extrabold text-lg transition-all hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-cn-yellow/20 disabled:opacity-70 disabled:cursor-wait"
       >
         {#if isLoggingIn}

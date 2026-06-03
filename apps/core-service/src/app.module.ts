@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { User } from './users/entities/user.entity';
+import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
 
@@ -22,7 +23,7 @@ import { VersionModule } from './version/version.module';
         username: configService.get<string>('DB_USERNAME', 'admin'),
         password: configService.getOrThrow<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE', 'auth_db'), // Changed from users_db to auth_db globally
-        entities: [User],
+        entities: [User, PlatformConfig],
         synchronize: process.env.NODE_ENV !== 'production',
       }),
       inject: [ConfigService],

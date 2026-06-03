@@ -15,8 +15,15 @@
     initHistoryOverlayStack,
     drainHistoryOverlayStack,
   } from '$lib/utils/historyOverlayStack';
-  import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
+  import {
+    refreshAppVersionCheck,
+    getAppVersionCheck,
+    isBelowMinClientVersion,
+  } from '$lib/stores/appVersionCheck.svelte';
   import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
+  import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
+  import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import MutedUserBanner from '$lib/components/shared/MutedUserBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -43,6 +50,15 @@
 
   const pathname = $derived(page.url.pathname);
   const isLoginPage = $derived(pathname === '/login' || pathname.startsWith('/legal'));
+
+  const showMaintenanceAdminBanner = $derived.by(() => {
+    const info = getAppVersionCheck();
+    return (
+      !isBelowMinClientVersion() &&
+      info?.maintenance.enabled === true &&
+      isGlobalAdmin()
+    );
+  });
 
   const pageTitle = $derived(
     (() => {
@@ -265,6 +281,10 @@
 <a href="#main-content" class="skip-link">Aller au contenu principal</a>
 
 <AppUpdateModal />
+<PlatformGateOverlay />
+{#if showMaintenanceAdminBanner}
+  <MaintenanceAdminBanner />
+{/if}
 <MlsFatalErrorBanner />
 {#if !isLoginPage}
   <MutedUserBanner />

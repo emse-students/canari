@@ -8,12 +8,14 @@ import {
   Post,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { UsersService } from '../users/users.service';
+import { PlatformService } from '../platform/platform.service';
 
 interface OidcCallbackDto {
   code: string;
@@ -34,7 +36,10 @@ export class AuthController {
   /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
   private readonly internalSecret: string;
 
-  constructor(private readonly usersService: UsersService) {
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly platformService: PlatformService,
+  ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
       throw new Error(
@@ -195,6 +200,21 @@ export class AuthController {
       userinfo.formation || null,
     );
 
+    const platformConfig = await this.platformService.getConfig();
+    if (
+      this.platformService.isAccessBlockedByMaintenance(
+        platformConfig,
+        !!user.admin,
+      )
+    ) {
+      throw new ServiceUnavailableException({
+        code: 'MAINTENANCE',
+        message:
+          platformConfig.maintenanceMessage ||
+          'Canari est en maintenance. Réessayez plus tard.',
+      });
+    }
+
     // 4. Issue internal JWT pair
     const access_token = jwt.sign(
       { sub: user.id, admin: !!user.admin },
@@ -261,6 +281,19 @@ export class AuthController {
     const user = await this.usersService.findOne(payload.sub).catch(() => null);
     const isAdmin = !!user?.admin;
 
+    const platformConfig = await this.platformService.getConfig();
+    if (
+      this.platformService.isAccessBlockedByMaintenance(platformConfig, isAdmin)
+    ) {
+      this.clearRefreshCookie(req, res);
+      throw new ServiceUnavailableException({
+        code: 'MAINTENANCE',
+        message:
+          platformConfig.maintenanceMessage ||
+          'Canari est en maintenance. Réessayez plus tard.',
+      });
+    }
+
     const access_token = jwt.sign(
       { sub: payload.sub, admin: isAdmin },
       this.jwtSecret,
@@ -296,16 +329,16 @@ export class AuthController {
   /** Verifies the Bearer token and injects X-User-Id / X-Logged-In headers for nginx auth_request (GET). */
   @Get('verify')
   verifyStart(@Req() req: Request, @Res() res: Response) {
-    this.check(req, res);
+    void this.check(req, res);
   }
 
   /** Verifies the Bearer token and injects X-User-Id / X-Logged-In headers for nginx auth_request (HEAD). */
   @Head('verify')
   verify(@Req() req: Request, @Res() res: Response) {
-    this.check(req, res);
+    void this.check(req, res);
   }
 
-  private check(req: Request, res: Response) {
+  private async check(req: Request, res: Response) {
     const rawHeaders = req.headers['authorization'];
 
     // Default: not authenticated - headers are always set so downstream services
@@ -331,6 +364,22 @@ export class AuthController {
         sub: string;
         admin?: boolean;
       };
+
+      const platformConfig = await this.platformService.getConfig();
+      if (
+        this.platformService.isAccessBlockedByMaintenance(
+          platformConfig,
+          !!payload.admin,
+        )
+      ) {
+        res.set('X-Maintenance-Mode', 'true');
+        return res.status(503).json({
+          code: 'MAINTENANCE',
+          message:
+            platformConfig.maintenanceMessage ||
+            'Canari est en maintenance. Réessayez plus tard.',
+        });
+      }
 
       res.set('X-User-Id', payload.sub);
       res.set('X-Logged-In', 'true');

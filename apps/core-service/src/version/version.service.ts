@@ -1,17 +1,33 @@
 import { Injectable } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PlatformService } from '../platform/platform.service';
 
 export type AppVersionResponse = {
   version: string;
+  minClientVersion: string;
+  maintenance: {
+    enabled: boolean;
+    message: string | null;
+  };
 };
 
-/** Resolves the deployed app version from this service's package.json (copied into the image at /app). */
+/** Resolves deployed app version and platform gates from core-service. */
 @Injectable()
 export class VersionService {
-  /** Returns server version metadata (no authentication required). */
-  getVersion(): AppVersionResponse {
-    return { version: readPackageVersion() };
+  constructor(private readonly platformService: PlatformService) {}
+
+  /** Returns server version metadata and platform gates (no authentication required). */
+  async getVersion(): Promise<AppVersionResponse> {
+    const platform = await this.platformService.getConfig();
+    return {
+      version: readPackageVersion(),
+      minClientVersion: platform.minClientVersion,
+      maintenance: {
+        enabled: platform.maintenanceEnabled,
+        message: platform.maintenanceMessage,
+      },
+    };
   }
 }
 

@@ -5,12 +5,27 @@
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import {
+    getAppVersionCheck,
+    isBelowMinClientVersion,
+    refreshAppVersionCheck,
+  } from '$lib/stores/appVersionCheck.svelte';
 
   // ─── État de l'authentification ─────────────────────────────────────────────
   let isLoggingIn = $state(false);
   let loginError = $state('');
   let biometricAvailable = $state(false);
   let requestedReturnTo = '';
+
+  const platformInfo = $derived(getAppVersionCheck());
+  const loginDisabled = $derived(isBelowMinClientVersion());
+  const maintenanceNotice = $derived.by(() => {
+    if (!platformInfo?.maintenance.enabled) return null;
+    return (
+      platformInfo.maintenance.message ||
+      "Canari est en maintenance. Seuls les administrateurs peuvent se connecter."
+    );
+  });
 
   // ─── Utilitaires ────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
@@ -22,10 +37,15 @@
 
   // ─── Initialisation ─────────────────────────────────────────────────────────
   onMount(() => {
+    void refreshAppVersionCheck();
+
     // Reset isLoggingIn when the user returns to the page (e.g. after a failed
     // navigation to Authentik or after a biometric prompt).
     const onVisible = () => {
-      if (document.visibilityState === 'visible') isLoggingIn = false;
+      if (document.visibilityState === 'visible') {
+        isLoggingIn = false;
+        void refreshAppVersionCheck();
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
@@ -40,6 +60,9 @@
 
     // 2. Vérification unifiée de la session et de la biométrie
     const initAuth = async () => {
+      await refreshAppVersionCheck();
+      if (isBelowMinClientVersion()) return;
+
       const isTauri = isTauriRuntime();
 
       // Vérification biométrique spécifique à Tauri
@@ -78,8 +101,13 @@
   });
 
   // ─── Gestionnaires d'événements ───────────────────────────────────────────
-  function handleLogin() {
+  async function handleLogin() {
     loginError = '';
+    await refreshAppVersionCheck();
+    if (isBelowMinClientVersion()) {
+      loginError = `Mettez à jour Canari (minimum ${platformInfo?.minClientVersion ?? '?'}) avant de vous connecter.`;
+      return;
+    }
     isLoggingIn = true;
     try {
       startOidcLogin(getSafeReturnTarget());
@@ -136,6 +164,8 @@
   {isLoggingIn}
   {loginError}
   {biometricAvailable}
+  {maintenanceNotice}
+  loginDisabled={loginDisabled}
   onLogin={handleLogin}
   onReset={resetAll}
 />

@@ -6,9 +6,9 @@ import { VersionService, type AppVersionResponse } from './version.service';
 export class VersionController {
   constructor(private readonly versionService: VersionService) {}
 
-  /** Latest deployed app version from core-service package.json. */
+  /** Latest deployed app version and platform gates (maintenance, min client version). */
   @Get()
-  getVersion(): AppVersionResponse {
+  getVersion(): Promise<AppVersionResponse> {
     return this.versionService.getVersion();
   }
 }

@@ -14,6 +14,7 @@
     ChevronRight,
     ShieldAlert,
     UserCog,
+    Wrench,
   } from '@lucide/svelte';
 
   let isGlobalAdminUser = $state(false);
@@ -90,6 +91,12 @@
           globalOnly: true,
         },
         {
+          href: '/admin/platform',
+          label: 'Plateforme',
+          description: 'Mode maintenance et version client minimale.',
+          globalOnly: true,
+        },
+        {
           href: '/admin/status',
           label: 'Présence & connexions',
           description: 'Surveillance WebSocket / Redis des appareils connectés.',
@@ -142,6 +149,8 @@
               <ShieldAlert size={20} />
             {:else if card.label.includes('Présence')}
               <Activity size={20} />
+            {:else if card.label.includes('Plateforme')}
+              <Wrench size={20} />
             {:else if card.label.includes('admins')}
               <UserCog size={20} />
             {:else if card.label.includes('Associations')}

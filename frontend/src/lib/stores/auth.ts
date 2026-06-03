@@ -177,8 +177,26 @@ export async function handleOidcCallback(
   console.debug('[auth] core-service response status:', res.status);
 
   if (!res.ok) {
-    const msg = await res.text().catch(() => '');
-    throw new Error(msg || `Authentication failed (${res.status})`);
+    const text = await res.text().catch(() => '');
+    let message = text || `Authentication failed (${res.status})`;
+    try {
+      const parsed = JSON.parse(text) as {
+        message?: string | { message?: string; code?: string };
+        code?: string;
+      };
+      const msgField = parsed.message;
+      const nested = typeof msgField === 'string' ? msgField : msgField?.message;
+      const code = parsed.code ?? (typeof msgField === 'object' ? msgField?.code : undefined);
+      if (code === 'MAINTENANCE') {
+        message =
+          nested || 'Canari est en maintenance. Seuls les administrateurs peuvent se connecter.';
+      } else if (nested) {
+        message = nested;
+      }
+    } catch {
+      /* keep raw text */
+    }
+    throw new Error(message);
   }
 
   const data = (await res.json()) as {
