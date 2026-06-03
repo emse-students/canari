@@ -137,9 +137,15 @@ export function useConversations() {
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const currentConvo = $derived(
-    selectedContact ? (conversations.get(selectedContact) ?? null) : null
-  );
+  /** Resolves the open conversation synchronously; iterates the map so Svelte 5 tracks mutations reliably (`.get()` alone can miss updates). */
+  const currentConvo = $derived.by(() => {
+    const key = selectedContact;
+    if (!key) return null;
+    for (const [k, v] of conversations) {
+      if (k === key) return v;
+    }
+    return null;
+  });
 
   /**
    * Clears selection when the map no longer has the key (reload, migration, channel kick).

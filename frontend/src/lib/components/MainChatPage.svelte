@@ -29,29 +29,6 @@
 
   let { routeMode = 'chat' }: Props = $props();
 
-  /**
-   * Use $effect + $state instead of $derived with SvelteMap.get() to guarantee
-   * reactivity when existing entries are mutated (Svelte 5 may miss per-key
-   * invalidation on a module-level SvelteMap). Iterating the map in $effect
-   * mirrors the sidebar's approach (entries()) and reliably tracks all changes.
-   */
-  let currentConvo = $state<import('$lib/types').Conversation | null>(null);
-  $effect(() => {
-    const key = convs.selectedContact;
-    if (!key) {
-      currentConvo = null;
-      return;
-    }
-    let found: import('$lib/types').Conversation | null = null;
-    for (const [k, v] of convs.conversations) {
-      if (k === key) {
-        found = v;
-        break;
-      }
-    }
-    currentConvo = found;
-  });
-
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
 
@@ -285,7 +262,7 @@
             convs.selectedContact = null;
         }
       },
-      onSelectConversation: convs.selectConversation,
+      onSelectConversation: handleSelectConversation,
       onSelectChannelConversation: (channelId: string) => {
         channels.selectedChannelConversationId = channelId;
         convs.selectConversation(channelId);
@@ -431,9 +408,16 @@
   });
 
   // ─── Reset selection when switching between /chat and /communities ─────────
-  // $effect.pre runs before DOM updates so ChatArea never reads a torn-down conversation.
+  // Only on routeMode change (not on mount/remount) so returning to /chat keeps the open thread.
+  let lastRouteModeForReset = $state<string | null>(null);
   $effect.pre(() => {
-    const _ = routeMode;
+    const mode = routeMode;
+    if (lastRouteModeForReset === null) {
+      lastRouteModeForReset = mode;
+      return;
+    }
+    if (lastRouteModeForReset === mode) return;
+    lastRouteModeForReset = mode;
     untrack(() => {
       if (readReceiptTimer) {
         clearTimeout(readReceiptTimer);
@@ -447,6 +431,15 @@
       messageText = '';
     });
   });
+
+  /** Opens a discussion and loads/decrypts its history (same as channel selection). */
+  function handleSelectConversation(name: string) {
+    convs.selectConversation(name);
+    const convo = convs.conversations.get(name);
+    if (convo?.id) {
+      void convs.loadHistoryForConversation(name, convo.id, convCtx());
+    }
+  }
 
   // ─── Thin forwarding helpers (keep template free of logic) ────────────────
 
@@ -500,13 +493,26 @@
       <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
 
       <svelte:boundary onerror={(e) => appendLog(`[UI] Erreur ChatArea récupérée: ${e}`)}>
-      {#key `${routeMode}-${convs.selectedContact ?? ''}`}
+        {#snippet failed(_error, reset)}
+          <div
+            class="flex flex-1 min-h-0 flex-col items-center justify-center gap-4 p-8 text-center"
+          >
+            <p class="text-sm text-text-muted">Impossible d'afficher cette discussion.</p>
+            <button
+              type="button"
+              onclick={reset}
+              class="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold"
+            >
+              Réessayer
+            </button>
+          </div>
+        {/snippet}
         <ChatArea
           currentUserId={session.userId}
-          conversation={currentConvo}
+          conversation={convs.currentConvo}
           {messageText}
           isChannel={isSelectedChannel ?? false}
-          imageMediaId={currentConvo?.imageMediaId ?? null}
+          imageMediaId={convs.currentConvo?.imageMediaId ?? null}
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
@@ -559,7 +565,6 @@
             convs.chatContainer = el ?? undefined;
           }}
         />
-      {/key}
       </svelte:boundary>
 
       {#if routeMode === 'communities'}
@@ -605,7 +610,7 @@
         onClose={() => (convs.isChannelSettingsModalOpen = false)}
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
-        imageMediaId={currentConvo?.imageMediaId ?? null}
+        imageMediaId={convs.currentConvo?.imageMediaId ?? null}
         onInviteMember={(channelId, memberId, roleName) =>
           channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
         onUpdateMemberRole={(channelId, memberId, roleName) =>
