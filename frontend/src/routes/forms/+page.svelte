@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     exportSubmissions,
     getForms,
@@ -52,13 +54,13 @@
   });
 
   async function handleDelete(id: string, title: string) {
-    if (!confirm(`Supprimer le formulaire "${title}" ? Cette action est irréversible.`)) return;
+    if (!await showConfirm(`Supprimer le formulaire « ${title} » ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
     deletingId = id;
     try {
       await deleteForm(id);
       forms = forms.filter((f) => f.id !== id);
     } catch {
-      alert('Erreur lors de la suppression');
+      showToast('Erreur lors de la suppression');
     } finally {
       deletingId = null;
     }
@@ -75,7 +77,7 @@
       a.click();
       window.URL.revokeObjectURL(url);
     } catch {
-      alert('Export failed');
+      showToast("Échec de l'export");
     }
   }
 

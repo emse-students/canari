@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ContentReport } from './entities/content-report.entity';
@@ -21,6 +21,8 @@ export interface CreateReportData {
 /** Handles content reports and user mute/unmute moderation actions. */
 @Injectable()
 export class ModerationService {
+  private readonly logger = new Logger(ModerationService.name);
+
   constructor(
     @InjectRepository(ContentReport)
     private readonly reportRepo: Repository<ContentReport>,
@@ -67,8 +69,8 @@ export class ModerationService {
           `UPDATE posts SET "hiddenByModeration" = true WHERE id = $1`,
           [data.contentId]
         );
-        console.log(
-          `[moderation] Post ${sanitizeLog(data.contentId)} auto-hidden after ${pendingCount} pending reports`
+        this.logger.log(
+          `Post ${sanitizeLog(data.contentId)} auto-hidden after ${pendingCount} pending reports`
         );
       }
     }

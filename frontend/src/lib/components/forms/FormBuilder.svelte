@@ -307,6 +307,7 @@
             type="file"
             accept="image/jpeg,image/png,image/webp"
             class="sr-only"
+            disabled={uploadingImage}
             onchange={handleImageUpload}
           />
         </label>

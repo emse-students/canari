@@ -8,10 +8,6 @@
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 
-  function handleToggleLogs() {
-    window.dispatchEvent(new CustomEvent('canari:toggle-logs'));
-  }
-
   async function handleLogout() {
     await clearAuth();
     void goto('/login', { replaceState: true });
@@ -33,7 +29,7 @@
       {#if globalSession.isLoggedIn}
         <PostNotificationBell />
       {/if}
-      <SessionActionButtons onToggleLogs={handleToggleLogs} onLogout={handleLogout} />
+      <SessionActionButtons onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"

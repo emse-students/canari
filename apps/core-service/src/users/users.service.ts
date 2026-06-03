@@ -31,7 +31,7 @@ export class UsersService implements OnModuleInit {
   /** Enables the unaccent PostgreSQL extension used by the search query. */
   async onModuleInit(): Promise<void> {
     await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS unaccent');
-    console.log('[UsersService] unaccent extension ready');
+    this.logger.log('unaccent extension ready');
   }
 
   /** Persists a new user entity and returns it. */
@@ -145,7 +145,7 @@ export class UsersService implements OnModuleInit {
       throw new BadRequestException('Search query too long (max 200 chars)');
 
     const terms = query.trim().split(/\s+/).filter(Boolean);
-    console.log(`[UsersService] search terms: ${JSON.stringify(terms)}`);
+    this.logger.debug(`search terms: ${JSON.stringify(terms)}`);
 
     const qb = this.userRepository
       .createQueryBuilder('user')

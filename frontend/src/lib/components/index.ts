@@ -15,5 +15,4 @@ export { default as ChatComposer } from './chat/ChatComposer.svelte';
 export { default as SyncSessionModal } from './chat/SyncSessionModal.svelte';
 export { default as CallOverlay } from './chat/CallOverlay.svelte';
 export { default as MessageBubble } from './messages/MessageBubble.svelte';
-export { default as LogsPanel } from './dev/LogsPanel.svelte';
 export { default as MainChatPage } from './MainChatPage.svelte';

@@ -34,6 +34,7 @@
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
@@ -207,7 +208,7 @@
 
   async function handleDeletePost(report: ContentReport) {
     if (report.contentType !== 'post') return;
-    if (!confirm('Supprimer définitivement cette publication ?')) return;
+    if (!await showConfirm('Supprimer définitivement cette publication ?', { danger: true, confirmLabel: 'Supprimer' })) return;
     processingId = report.id;
     error = '';
     try {
@@ -222,7 +223,7 @@
 
   async function handleDeleteComment(report: ContentReport) {
     if (report.contentType !== 'comment') return;
-    if (!confirm('Supprimer ce commentaire et ses réponses ?')) return;
+    if (!await showConfirm('Supprimer ce commentaire et ses réponses ?', { danger: true, confirmLabel: 'Supprimer' })) return;
     processingId = report.id;
     error = '';
     try {

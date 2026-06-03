@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
+  import { showToast } from '$lib/stores/toast.svelte';
   import {
     listAllProducts,
     listAssociations,
@@ -83,7 +84,7 @@
       );
       window.location.href = checkoutUrl;
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur lors de la création du paiement');
+      showToast(err instanceof Error ? err.message : 'Erreur lors de la création du paiement');
     } finally {
       checkingOut = null;
     }

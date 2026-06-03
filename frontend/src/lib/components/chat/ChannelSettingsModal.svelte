@@ -14,6 +14,7 @@
     Globe,
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import { MediaService } from '$lib/media';
@@ -250,18 +251,16 @@
     }
   }
 
-  function handleDeleteChannel() {
-    if (confirm(`Supprimer définitivement le canal #${selectedChannel?.name} ?`)) {
-      onDeleteChannel?.(selectedChannelId);
-      onClose();
-    }
+  async function handleDeleteChannel() {
+    if (!await showConfirm(`Supprimer définitivement le canal #${selectedChannel?.name} ?`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    onDeleteChannel?.(selectedChannelId);
+    onClose();
   }
 
-  function handleLeaveChannel() {
-    if (confirm(`Quitter le canal #${selectedChannel?.name} ?`)) {
-      onLeaveChannel?.(selectedChannelId);
-      onClose();
-    }
+  async function handleLeaveChannel() {
+    if (!await showConfirm(`Quitter le canal #${selectedChannel?.name} ?`, { danger: true, confirmLabel: 'Quitter' })) return;
+    onLeaveChannel?.(selectedChannelId);
+    onClose();
   }
 </script>
 

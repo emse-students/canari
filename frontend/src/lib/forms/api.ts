@@ -64,12 +64,8 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
 
-async function request(url: string, init: RequestInit = {}) {
-  return apiFetch(url, init as any);
-}
-
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
-  const res = await request(`${socialUrl()}/api/forms`, {
+  const res = await apiFetch(`${socialUrl()}/api/forms`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -79,20 +75,20 @@ export async function createForm(payload: CreateFormPayload): Promise<Form> {
 
 export async function getForms(): Promise<Form[]> {
   const url = `${socialUrl()}/api/forms`;
-  const res = await request(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error('Failed to fetch forms');
   return res.json();
 }
 
 export async function getForm(id: string): Promise<Form> {
-  const res = await request(`${socialUrl()}/api/forms/${id}`);
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}`);
   if (!res.ok) throw new Error('Failed to fetch form');
   return res.json();
 }
 
 /** Updates a form's metadata and questions. Requires owner, co-owner, or MANAGE_FORMS flag. */
 export async function updateForm(id: string, payload: CreateFormPayload): Promise<Form> {
-  const res = await request(`${socialUrl()}/api/forms/${id}`, {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
@@ -143,21 +139,21 @@ export async function uploadFormItemImage(
 
 /** Deletes a form entirely. */
 export async function deleteForm(id: string): Promise<{ ok: boolean }> {
-  const res = await request(`${socialUrl()}/api/forms/${id}`, { method: 'DELETE' });
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete form');
   return res.json();
 }
 
 /** Removes the banner image from a form. */
 export async function deleteFormImage(id: string): Promise<Form> {
-  const res = await request(`${socialUrl()}/api/forms/${id}/image`, { method: 'DELETE' });
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/image`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete form image');
   return res.json();
 }
 
 /** Adds a co-owner to a form (owner/global-admin only). */
 export async function addFormCoOwner(formId: string, userId: string): Promise<{ ok: boolean }> {
-  const res = await request(`${socialUrl()}/api/forms/${formId}/co-owners`, {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/co-owners`, {
     method: 'POST',
     body: JSON.stringify({ userId }),
   });
@@ -167,7 +163,7 @@ export async function addFormCoOwner(formId: string, userId: string): Promise<{ 
 
 /** Removes a co-owner from a form (owner/global-admin only). */
 export async function removeFormCoOwner(formId: string, userId: string): Promise<{ ok: boolean }> {
-  const res = await request(`${socialUrl()}/api/forms/${formId}/co-owners/${userId}`, {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/co-owners/${userId}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error('Failed to remove co-owner');
@@ -175,13 +171,13 @@ export async function removeFormCoOwner(formId: string, userId: string): Promise
 }
 
 export async function getSubmission(formId: string): Promise<any> {
-  const res = await request(`${socialUrl()}/api/forms/${formId}/submission`);
+  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/submission`);
   if (!res.ok) throw new Error('Failed to fetch submission');
   return res.json();
 }
 
 export async function checkSubmission(formId: string): Promise<{ hasSubmitted: boolean }> {
-  const res = await request(`${socialUrl()}/api/forms/${formId}/check`);
+  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();
 }
@@ -202,13 +198,13 @@ export interface Submission {
 
 /** Returns all submissions for a form with submitter names (form manager only). */
 export async function getSubmissions(formId: string): Promise<Submission[]> {
-  const res = await request(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions`);
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions`);
   if (!res.ok) throw new Error('Failed to fetch submissions');
   return res.json();
 }
 
 export async function exportSubmissions(id: string): Promise<Blob> {
-  const res = await request(`${socialUrl()}/api/forms/${id}/export`);
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export`);
   if (!res.ok) throw new Error('Failed to export submissions');
   return res.blob();
 }
@@ -226,7 +222,7 @@ export interface PendingCashSubmission {
 
 /** Lists submissions awaiting cash validation for a form (requires form owner or MANAGE_FORMS). */
 export async function listPendingCashSubmissions(formId: string): Promise<PendingCashSubmission[]> {
-  const res = await request(
+  const res = await apiFetch(
     `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/pending-cash`
   );
   if (!res.ok) throw new Error('Failed to fetch pending cash submissions');
@@ -238,7 +234,7 @@ export async function validateCashSubmission(
   formId: string,
   submissionId: string
 ): Promise<{ ok: boolean }> {
-  const res = await request(
+  const res = await apiFetch(
     `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/validate-cash`,
     { method: 'POST' }
   );
@@ -251,7 +247,7 @@ export async function cancelCashSubmission(
   formId: string,
   submissionId: string
 ): Promise<{ ok: boolean }> {
-  const res = await request(
+  const res = await apiFetch(
     `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/cancel-cash`,
     { method: 'POST' }
   );
@@ -269,7 +265,7 @@ export async function submitForm(
     paymentMethod?: 'stripe' | 'cash';
   }
 ): Promise<any> {
-  const res = await request(`${socialUrl()}/api/forms/${id}/submit`, {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

@@ -2,6 +2,7 @@
   import { loadStripe } from '@stripe/stripe-js';
   import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from '@lucide/svelte';
   import type { PaymentMethod } from '$lib/stores/user';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
 
   interface Props {
     /** List of saved payment methods to display. */
@@ -103,11 +104,13 @@
 <div
   data-keyboard-aware-overlay
   class="z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
-  role="dialog"
-  aria-modal="true"
-  aria-label="Paiement"
+  role="presentation"
 >
   <div
+    use:focusTrap
+    role="dialog"
+    aria-modal="true"
+    aria-label="Paiement"
     class="keyboard-aware-modal-panel w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-white shadow-2xl max-h-[min(92dvh,var(--app-viewport-height,100dvh))] overflow-y-auto"
   >
     <!-- Header -->

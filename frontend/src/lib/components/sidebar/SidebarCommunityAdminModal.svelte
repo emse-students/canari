@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
   import { Settings, Users, Trash2, ShieldCheck, Upload, Loader } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -303,11 +304,10 @@
       <div class="hidden md:block mt-auto pt-4 space-y-2">
         <button
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
-          onclick={() => {
-            if (confirm(`Quitter la communauté "${selectedWorkspace?.name}" ?`)) {
-              onLeaveWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
-              onClose();
-            }
+          onclick={async () => {
+            if (!await showConfirm(`Quitter la communauté « ${selectedWorkspace?.name} » ?`, { danger: true, confirmLabel: 'Quitter' })) return;
+            onLeaveWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
+            onClose();
           }}
         >
           <Trash2 size={18} />

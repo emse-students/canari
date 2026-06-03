@@ -8,14 +8,8 @@
     loginError: string;
     /** Whether biometric authentication is available on the current device. */
     biometricAvailable: boolean;
-    /** When true, renders the dev-login panel (only in non-production builds). */
-    isDev?: boolean;
-    /** Bindable dev user ID typed in the dev-login input. */
-    devId?: string;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
-    /** Called when the user submits the dev-login form; only provided in dev mode. */
-    onDevLogin?: () => void;
     /** Called when the user clicks the device-reset link. */
     onReset: () => void;
   }
@@ -24,10 +18,7 @@
     isLoggingIn,
     loginError,
     biometricAvailable: _biometricAvailable,
-    isDev = false,
-    devId = $bindable(''),
     onLogin,
-    onDevLogin,
     onReset,
   }: Props = $props();
 </script>
@@ -83,25 +74,6 @@
       </button>
 
       <p class="text-xs text-text-muted">Connexion sécurisée via votre compte Mines</p>
-
-      {#if isDev && onDevLogin}
-        <div class="space-y-2 mt-4 pt-4 border-t border-white/20 dark:border-white/10">
-          <!-- Inputs Dev adaptés au glassmorphism -->
-          <input
-            type="text"
-            bind:value={devId}
-            placeholder="ID (default: dev)"
-            class="w-full rounded-xl border border-white/30 dark:border-white/10 bg-white/30 dark:bg-black/30 px-4 py-2.5 text-sm text-text-main placeholder:text-text-muted focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none backdrop-blur-md transition-all"
-          />
-          <button
-            onclick={onDevLogin}
-            disabled={isLoggingIn}
-            class="w-full py-3 bg-white/20 dark:bg-black/30 border border-white/30 dark:border-white/10 text-text-main rounded-2xl font-bold text-sm transition-all hover:bg-white/40 dark:hover:bg-black/50 backdrop-blur-md disabled:opacity-70 disabled:cursor-wait"
-          >
-            Dev Login (no Authentik)
-          </button>
-        </div>
-      {/if}
 
       {#if loginError}
         <div

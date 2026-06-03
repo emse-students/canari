@@ -12,9 +12,11 @@ export const notifNav = {
   get pending(): string | null {
     return pendingConvoId;
   },
+  /** Sets the pending conversation ID to open when the chat page mounts or reacts. */
   navigate(id: string) {
     pendingConvoId = id;
   },
+  /** Clears the pending navigation after the chat page has consumed it. */
   clear() {
     pendingConvoId = null;
   },

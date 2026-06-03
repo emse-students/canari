@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Mic, Square, Trash2 } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
 
   interface Props {
     /** Callback fired with the recorded audio blob when the user stops recording. */
@@ -73,7 +74,7 @@
       }, 1000);
     } catch (error) {
       console.error('Erreur accès micro:', error);
-      alert("Impossible d'accéder au microphone. Vérifiez les permissions.");
+      showToast("Impossible d'accéder au microphone. Vérifiez les permissions.");
       cleanup();
     }
   }

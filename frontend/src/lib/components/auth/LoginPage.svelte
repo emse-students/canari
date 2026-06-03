@@ -1,13 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import {
-    startOidcLogin,
-    hasStoredSession,
-    getToken,
-    devLogin,
-    devRoutesEnabled,
-  } from '$lib/stores/auth';
+  import { startOidcLogin, hasStoredSession, getToken } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -17,9 +11,6 @@
   let loginError = $state('');
   let biometricAvailable = $state(false);
   let requestedReturnTo = '';
-  let devId = $state('');
-
-  const isDev = devRoutesEnabled();
 
   // ─── Utilitaires ────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
@@ -99,19 +90,6 @@
     }
   }
 
-  async function handleDevLogin() {
-    loginError = '';
-    isLoggingIn = true;
-    try {
-      await devLogin(devId || undefined);
-      await goto(getSafeReturnTarget(), { replaceState: true });
-    } catch (e: unknown) {
-      loginError = e instanceof Error ? e.message : String(e);
-    } finally {
-      isLoggingIn = false;
-    }
-  }
-
   async function resetAll() {
     // Nettoyage IndexedDB uniquement pour les utilisateurs Web
     if (!isTauriRuntime()) {
@@ -158,9 +136,6 @@
   {isLoggingIn}
   {loginError}
   {biometricAvailable}
-  {isDev}
-  bind:devId
   onLogin={handleLogin}
-  onDevLogin={handleDevLogin}
   onReset={resetAll}
 />

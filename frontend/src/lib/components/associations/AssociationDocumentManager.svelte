@@ -19,6 +19,7 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import { FileUp, Trash2, Download, FileText } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
 
   interface Props {
     associationId: string;
@@ -70,8 +71,9 @@
         (d) => d.name.toLowerCase() === file.name.toLowerCase()
       );
       if (duplicate) {
-        const replace = confirm(
-          `Un document nommé "${duplicate.name}" existe déjà.\nVoulez-vous le remplacer ?`
+        const replace = await showConfirm(
+          `Un document nommé « ${duplicate.name} » existe déjà. Voulez-vous le remplacer ?`,
+          { confirmLabel: 'Remplacer' }
         );
         if (replace) {
           await deleteDocument(associationId, duplicate.id);
@@ -178,7 +180,7 @@
   }
 
   async function handleDelete(doc: AssociationDocument) {
-    if (!confirm(`Supprimer "${doc.name}" ? Cette action est irréversible.`)) return;
+    if (!await showConfirm(`Supprimer « ${doc.name} » ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
     try {
       await deleteDocument(associationId, doc.id);
       console.log(`[Vault] Document supprimé: ${doc.id}`);

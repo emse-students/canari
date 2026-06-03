@@ -24,6 +24,7 @@
     type AgendaExportEvent,
   } from '$lib/calendar/agendaExport';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { portal } from '$lib/actions/portal';
   import {
     ChevronLeft,
@@ -489,7 +490,7 @@
   }
 
   async function removeEvent(id: string) {
-    if (!confirm('Supprimer cet événement ?')) return;
+    if (!await showConfirm('Supprimer cet événement ?', { danger: true, confirmLabel: 'Supprimer' })) return;
     try {
       await deleteAssociationCalendarEvent(associationId, id);
       await loadMonth();
