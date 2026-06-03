@@ -222,6 +222,11 @@ async function handleWelcome({
 
     // Enregistrement côté serveur (idempotent)
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
+    // Marquer le device comme ayant reçu son Welcome (pour que les autres devices
+    // sachent ne pas le réinviter lors de processPendingInvitations).
+    await mlsService
+      .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'welcome_received')
+      .catch(() => {});
 
     // Récupérer les métadonnées du groupe pour créer/mettre à jour la conversation
     const gData = await fetchGroupMeta(historyBaseUrl, joinedGroupId);

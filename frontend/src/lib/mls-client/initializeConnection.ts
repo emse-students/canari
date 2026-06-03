@@ -1,14 +1,6 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
-import {
-  buildUserGroupSyncIndex,
-  isGroupEligibleForMlsRecovery,
-  resolveActiveGroupTarget,
-} from '$lib/utils/chat/groupSyncEligibility';
-import {
-  forgetMlsGroupIfPresent,
-  persistMlsStateAfterMutation,
-} from '$lib/utils/chat/groupActions';
+import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 export interface ConnectionDeps {
@@ -48,8 +40,8 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     setReconnectAttempts(0);
     log('Connecté au réseau !');
     console.log('[WS] Connected to Chat Gateway');
-    // Register disconnect handler BEFORE fetching pending messages so that a WebSocket
-    // close that occurs during the (potentially long) fetch/drain is not missed.
+    // Enregistrer le handler de déconnexion AVANT le fetch des messages en attente
+    // pour ne pas rater une fermeture WebSocket pendant la récupération.
     mlsService.onDisconnect(scheduleReconnect);
     try {
       await mlsService.fetchPendingMessages();
@@ -74,129 +66,118 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
 }
 
 /**
- * After WS is open: publish KeyPackage, reconcile memberships (welcome/reinvite),
- * process device invitations.
+ * Après ouverture WS : publier les KeyPackages et réconcilier les groupes.
+ *
+ * Passe unique sur getUserGroups (plus de Bloc1/Bloc2 distincts).
+ * Pour chaque groupe actif sur le serveur sans état WASM local :
+ * envoi d'un welcome_request. Le watchdog universel (useChatSession, 30s)
+ * déclenche un reboot si aucun Welcome n'arrive.
+ *
+ * Successeurs : si un groupe a un successeur, l'état WASM de l'ancien est purgé.
+ * Groupes supprimés sans successeur : état WASM purgé.
  */
 export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Promise<void> {
   const { mlsService, userId, pin, processDeviceInvitationsLocally, log } = deps;
 
   if (!getIsTabLeader()) return;
 
+  // 1. Publier les KeyPackages
   try {
     await mlsService.generateKeyPackage(pin);
     log('KeyPackage publié.');
   } catch {
-    /* silent */
+    /* non-bloquant — réessayé à la prochaine connexion */
   }
 
-  let userGroups: UserGroupRow[] = [];
+  // 2. Groupes du serveur
+  let groups: UserGroupRow[] = [];
   try {
-    userGroups = await mlsService.getUserGroups(userId);
+    groups = await mlsService.getUserGroups(userId);
   } catch (e) {
     log(`[SYNC] Échec récupération user groups: ${e}`);
     console.error('[SYNC] Failed to fetch user groups:', e);
+    // Continuer quand même pour traiter les invitations
   }
-  const syncIndex = userGroups.length > 0 ? buildUserGroupSyncIndex(userGroups) : null;
 
-  /** True when forgetGroup removed stale WASM state — triggers one IndexedDB save at end. */
-  let mlsStateMutated = false;
+  const localGroups = new Set(mlsService.getLocalGroups());
+  let stateMutated = false;
 
-  const dropIneligibleGroup = (groupId: string, reason: string): void => {
-    if (!forgetMlsGroupIfPresent(mlsService, groupId)) return;
-    mlsStateMutated = true;
-    log(`[MLS] État local retiré (${reason}): ${groupId.slice(0, 8)}…`);
-  };
+  // Set de déduplication : un groupe et son successeur ne doivent déclencher
+  // qu'un seul welcome_request (fix R3 : plus de Bloc1+Bloc2 en double).
+  const seen = new Set<string>();
+  // Tous les IDs de groupes connus du serveur (pour nettoyer les orphelins WASM)
+  const serverIds = new Set<string>();
 
-  // Bloc 1 : réconciliation des memberships connus (pending/stale/welcome_received).
-  // Si getDeviceMemberships échoue, membershipGroupIds reste vide et le bloc 2 prend le relais.
-  let membershipGroupIds = new Set<string>();
-  try {
-    const memberships = await mlsService.getDeviceMemberships(userId, mlsService.getDeviceId());
-    const localGroups = new Set(mlsService.getLocalGroups());
-    membershipGroupIds = new Set(memberships.map((m) => m.groupId));
-    const myDeviceId = mlsService.getDeviceId();
-    for (const m of memberships) {
-      if (!isGroupEligibleForMlsRecovery(m.groupId, syncIndex)) {
-        dropIneligibleGroup(m.groupId, 'groupe supprimé ou absent du serveur');
-        continue;
+  for (const g of groups) {
+    // Enregistrer tous les IDs connus (groupe + successeur)
+    serverIds.add(g.groupId);
+    if (g.successorId) serverIds.add(g.successorId);
+
+    // Le groupe cible est le successeur si existant, sinon le groupe lui-même
+    const targetId = g.successorId ?? g.groupId;
+    if (seen.has(targetId)) continue;
+    seen.add(targetId);
+
+    // Groupe supprimé sans successeur → purger l'état WASM
+    if (g.deletedAt && !g.successorId) {
+      if (localGroups.has(g.groupId)) {
+        mlsService.forgetGroup(g.groupId);
+        stateMutated = true;
+        log(`[SYNC] WASM retiré (groupe supprimé) : ${g.groupId.slice(0, 8)}…`);
       }
-
-      const targetGroupId =
-        syncIndex && m.groupId
-          ? (resolveActiveGroupTarget(m.groupId, syncIndex) ?? m.groupId)
-          : m.groupId;
-
-      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex)) {
-        dropIneligibleGroup(m.groupId, 'successeur introuvable');
-        continue;
-      }
-
-      if (m.status === 'pending') {
-        mlsService.sendWelcomeRequest(targetGroupId);
-        log(`[SYNC] welcome_request envoyé pour groupe ${targetGroupId}`);
-      } else if (m.status === 'stale') {
-        if (forgetMlsGroupIfPresent(mlsService, m.groupId)) {
-          mlsStateMutated = true;
-        }
-        await mlsService.sendReinviteRequest(targetGroupId);
-        log(
-          `[SYNC] reinvite_request envoyé (stale sur groupe ${targetGroupId}, état local effacé)`
-        );
-      } else if (m.status === 'welcome_received' && !localGroups.has(targetGroupId)) {
-        await mlsService
-          .updateInvitationStatus(mlsService.getDeviceId(), userId, targetGroupId, 'stale')
-          .catch(() => {});
-        await mlsService.sendReinviteRequest(targetGroupId);
-        log(`[SYNC] reinvite_request envoyé (état local manquant pour ${targetGroupId})`);
-      }
+      continue;
     }
-  } catch (e) {
-    log(`[SYNC] Échec récupération memberships: ${e}`);
-    console.error('[SYNC] Failed to fetch device memberships:', e);
-  }
 
-  // Bloc 2 : groupes actifs côté serveur mais absents du WASM local.
-  try {
-    const localGroups = new Set(mlsService.getLocalGroups());
-    for (const group of userGroups) {
-      if (group.deletedAt) continue;
-
-      const targetGroupId = group.successorId ?? group.groupId;
-      if (!isGroupEligibleForMlsRecovery(targetGroupId, syncIndex)) continue;
-
-      if (!membershipGroupIds.has(targetGroupId) && !localGroups.has(targetGroupId)) {
-        mlsService.sendWelcomeRequest(targetGroupId).catch(() => {});
-        log(
-          group.successorId
-            ? `[SYNC] welcome_request envoyé pour successeur ${targetGroupId} (remplace ${group.groupId})`
-            : `[SYNC] welcome_request envoyé (device inconnu du groupe ${targetGroupId})`
-        );
-      }
+    // Si le groupe a un successeur, l'état WASM de l'ancien est périmé
+    if (g.successorId && localGroups.has(g.groupId) && !localGroups.has(targetId)) {
+      mlsService.forgetGroup(g.groupId);
+      stateMutated = true;
+      log(`[SYNC] WASM retiré (successeur existe) : ${g.groupId.slice(0, 8)}…`);
     }
-  } catch (e) {
-    log(`[SYNC] Échec réconciliation groupes actifs: ${e}`);
-    console.error('[SYNC] Failed active group reconciliation:', e);
+
+    // Groupe cible absent du WASM → welcome_request
+    // Le watchdog de useChatSession escalade vers reboot après 30s si pas de réponse.
+    if (!localGroups.has(targetId)) {
+      await mlsService.sendWelcomeRequest(targetId).catch(() => {});
+      log(
+        g.successorId
+          ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`
+          : `[SYNC] welcome_request → ${targetId.slice(0, 8)}…`
+      );
+    }
   }
 
-  if (mlsStateMutated) {
+  // 3. Purger les états WASM pour des groupes plus connus du serveur
+  for (const localId of mlsService.getLocalGroups()) {
+    if (!serverIds.has(localId)) {
+      mlsService.forgetGroup(localId);
+      stateMutated = true;
+      log(`[SYNC] WASM retiré (absent du serveur) : ${localId.slice(0, 8)}…`);
+    }
+  }
+
+  if (stateMutated) {
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
   }
 
+  // Petit délai pour laisser le premier lot de messages arriver
   await new Promise((r) => setTimeout(r, 500));
 
+  // 4. Invitations de nos autres devices (multi-device sync)
   processDeviceInvitationsLocally().catch(() => {});
 }
 
 /**
- * Open the WebSocket connection, publish a fresh MLS KeyPackage, and reconcile membership state.
+ * Ouvre la connexion WebSocket, publie un KeyPackage frais et réconcilie
+ * l'état des groupes avec le serveur.
  *
- * Steps performed on every (re-)connect:
- *  1. Guard: only runs on the tab-leader (multi-tab coordination).
- *  2. Connect to the chat gateway and start listening for pending messages.
- *  3. Generate and publish a new KeyPackage so other devices can invite this one.
- *  4. Iterate server-side memberships: send welcome_request for pending groups,
- *     reinvite_request for stale leaves, and detect groups missing from local MLS state.
- *  5. Process pending device invitations (add new devices to existing groups).
+ * Étapes à chaque (re-)connexion :
+ *  1. Guard : uniquement l'onglet leader.
+ *  2. Connexion au chat gateway.
+ *  3. Publication des KeyPackages.
+ *  4. Passe unique sur getUserGroups : welcome_request pour tout groupe
+ *     absent du WASM, purge des états périmés.
+ *  5. Traitement des invitations de nos propres autres devices.
  */
 export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
   if (!getIsTabLeader()) {

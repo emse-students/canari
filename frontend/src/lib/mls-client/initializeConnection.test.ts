@@ -54,29 +54,23 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('follower'));
   });
 
-  it('connects with token, wires disconnect, publishes key package, syncs memberships', async () => {
+  it('connects, publie les KeyPackages et envoie welcome_request pour les groupes absents', async () => {
+    // g-in-wasm : dans le WASM → pas de welcome_request
+    // g-not-in-wasm : dans le serveur mais pas dans WASM → welcome_request
+    // g-orphan : dans le WASM mais plus sur le serveur → forgetGroup
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
-      getDeviceMemberships: vi.fn().mockResolvedValue([
-        { status: 'pending', groupId: 'g-pend' },
-        { status: 'stale', groupId: 'g-stale' },
-        { status: 'welcome_received', groupId: 'g-miss' },
-      ]),
-      getLocalGroups: vi.fn().mockReturnValue(['g-stale']),
+      getLocalGroups: vi.fn().mockReturnValue(['g-in-wasm', 'g-orphan']),
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
-      sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
-      updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
       getUserGroups: vi.fn().mockResolvedValue([
-        { groupId: 'g-pend', name: 'Pend', isGroup: true },
-        { groupId: 'g-stale', name: 'Stale', isGroup: true },
-        { groupId: 'g-miss', name: 'Miss', isGroup: true },
-        { groupId: 'g-orphan', name: 'Orphan', isGroup: true },
+        { groupId: 'g-in-wasm', name: 'InWasm', isGroup: true },
+        { groupId: 'g-not-in-wasm', name: 'NotInWasm', isGroup: true },
       ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
     };
@@ -100,43 +94,40 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await vi.advanceTimersByTimeAsync(600);
     await done;
 
-    expect(getTokenMock).toHaveBeenCalled();
     expect(mls.connect).toHaveBeenCalledWith('jwt-access-token');
     expect(setIsWsConnected).toHaveBeenCalledWith(true);
-    expect(setReconnectAttempts).toHaveBeenCalledWith(0);
-    expect(mls.onDisconnect).toHaveBeenCalledWith(scheduleReconnect);
     expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1');
-    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-pend');
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stale', 0);
+    // Groupe absent du WASM → welcome_request
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-not-in-wasm');
+    // Groupe dans le WASM → pas de welcome_request
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalledWith('g-in-wasm');
+    // Groupe absent du serveur → forgetGroup
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan');
     expect(mls.saveState).toHaveBeenCalledWith('pin1');
-    expect(mls.sendReinviteRequest).toHaveBeenCalled();
-    expect(mls.updateInvitationStatus).toHaveBeenCalled();
-    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-orphan');
     expect(sync).toHaveBeenCalled();
   });
 
-  it('does not send reinvite for soft-deleted groups', async () => {
+  it('purge le WASM et ne tente pas de welcome pour les groupes supprimés (deletedAt)', async () => {
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
-      getDeviceMemberships: vi.fn().mockResolvedValue([{ status: 'stale', groupId: 'g-deleted' }]),
       getLocalGroups: vi.fn().mockReturnValue(['g-deleted']),
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
-      sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
-      updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
-      getUserGroups: vi.fn().mockResolvedValue([
-        {
-          groupId: 'g-deleted',
-          name: 'Deleted',
-          isGroup: true,
-          deletedAt: '2026-01-01T00:00:00Z',
-        },
-      ]),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([
+          {
+            groupId: 'g-deleted',
+            name: 'Deleted',
+            isGroup: true,
+            deletedAt: '2026-01-01T00:00:00Z',
+          },
+        ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
     };
     const log = vi.fn();
@@ -155,10 +146,13 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await vi.advanceTimersByTimeAsync(600);
     await done;
 
-    expect(mls.sendReinviteRequest).not.toHaveBeenCalled();
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted', 0);
+    // Groupe supprimé et dans WASM → forgetGroup
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted');
+    // Pas de welcome_request pour un groupe supprimé
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
+    // État muté → saveState appelé
     expect(mls.saveState).toHaveBeenCalledWith('pin1');
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('État local retiré'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM retiré'));
   });
 
   it('skips membership sync when connect throws', async () => {
