@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowUpRight } from '@lucide/svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
+  import { fetchCanariLinkPreview, getCachedCanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { inAppPathFromHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
   import type { Snippet } from 'svelte';
 
@@ -19,7 +20,31 @@
   const inAppPath = $derived(inAppPathFromHref(href));
   const isInApp = $derived(inAppPath !== null);
   const autoLabel = $derived(publicAppLinkLabel(href));
-  const linkTitle = $derived(title ?? (isInApp ? href : undefined));
+  let richLabel = $state<string | null>(null);
+  const displayText = $derived(
+    text ?? (richLabel && isInApp ? richLabel : null) ?? autoLabel ?? href
+  );
+  const linkTitle = $derived(title ?? href);
+
+  $effect(() => {
+    if (!isInApp) {
+      richLabel = null;
+      return;
+    }
+    const h = href;
+    const cached = getCachedCanariLinkPreview(h);
+    if (cached?.title) {
+      richLabel = cached.title;
+      return;
+    }
+    let cancelled = false;
+    void fetchCanariLinkPreview(h).then((p) => {
+      if (!cancelled && p?.title) richLabel = p.title;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
 
   async function handleInAppClick(e: MouseEvent) {
     e.preventDefault();
@@ -38,7 +63,7 @@
     {#if children}
       {@render children()}
     {:else}
-      {text ?? autoLabel ?? href}
+      {displayText}
     {/if}
     <ArrowUpRight size={12} class="shrink-0 opacity-70" aria-hidden="true" />
   </a>
