@@ -59,6 +59,10 @@ export function getUserDisplayNameSync(userId: string, fallback?: string): strin
     }
   }
 
+  // During the failure backoff window, surface the "unknown" label synchronously
+  // so the UI doesn't flicker between the raw ID and the async-resolved label.
+  if (shouldSkipRetry(normalized)) return 'Utilisateur inconnu';
+
   return fallback?.trim() || userId;
 }
 
@@ -86,7 +90,6 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
     })
     .catch(() => {
       failedAt.set(normalized, Date.now());
-      displayNameCache.set(normalized, 'Utilisateur inconnu');
       return 'Utilisateur inconnu';
     })
     .finally(() => {
