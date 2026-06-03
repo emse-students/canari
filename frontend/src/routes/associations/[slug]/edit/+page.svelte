@@ -11,6 +11,9 @@
     removeMember,
     updateMemberRole,
     startStripeOnboarding,
+    fetchStripeConnectStatus,
+    isStripeConnectReady,
+    type StripeConnectStatusResult,
     uploadAssociationLogo,
     deleteAssociationLogo,
     listAssociationTags,
@@ -53,6 +56,7 @@
     ShoppingBag,
     Plus,
     RefreshCw,
+    Clock,
     Check,
     Download,
     ClipboardList,
@@ -117,6 +121,12 @@
   let memberError = $state('');
 
   let stripeLoading = $state(false);
+  let stripeConnectStatus = $state<StripeConnectStatusResult | null>(null);
+  let stripeStatusLoading = $state(false);
+
+  let stripePaymentsReady = $derived(
+    isStripeConnectReady(stripeConnectStatus) || !!asso?.stripeOnboardingComplete
+  );
   let logoBusy = $state(false);
   let showCropper = $state(false);
 
@@ -222,6 +232,13 @@
         console.log('[Stripe] Retour Stripe — onboarding déjà marqué complet en DB.');
       }
     }
+  });
+
+  $effect(() => {
+    if (editSection !== 'payments' || !canManageStripeConnect) return;
+    const assoId = asso?.id;
+    if (!assoId) return;
+    void refreshStripeConnectStatus();
   });
 
   async function loadData() {
@@ -348,6 +365,28 @@
     }
   }
 
+  /** Loads live Stripe Connect status from core-service (MANAGE_STRIPE_CONNECT). */
+  async function refreshStripeConnectStatus() {
+    if (!asso || !canManageStripeConnect) return;
+    stripeStatusLoading = true;
+    try {
+      const live = await fetchStripeConnectStatus(asso.id);
+      stripeConnectStatus = live;
+      console.log(
+        `[Stripe] Statut Connect — status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`,
+      );
+      if (isStripeConnectReady(live)) {
+        const refreshed = await getAssociationBySlug(slug);
+        asso = refreshed;
+        stripeConnectStatus = { ...live, dbOnboardingComplete: refreshed.stripeOnboardingComplete };
+      }
+    } catch (err) {
+      console.warn('[Stripe] Impossible de charger le statut Connect:', err);
+    } finally {
+      stripeStatusLoading = false;
+    }
+  }
+
   async function handleStripeOnboarding() {
     if (!asso) return;
     stripeLoading = true;
@@ -384,9 +423,15 @@
         if (refreshed.stripeOnboardingComplete) {
           asso = refreshed;
           console.log('[Stripe] ✓ Connexion Stripe confirmée — onboarding complet.');
+          await refreshStripeConnectStatus();
           return;
         }
         asso = refreshed;
+        await refreshStripeConnectStatus();
+        if (stripeConnectStatus?.status === 'active') {
+          asso = await getAssociationBySlug(slug);
+          return;
+        }
       } catch (e) {
         console.warn(`[Stripe] Poll ${i} échoué:`, e);
       }
@@ -926,29 +971,90 @@
           <div
             class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
           >
-            <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
-              <CreditCard size={20} />
-              Stripe Connect
-            </h2>
-            {#if asso.stripeOnboardingComplete}
-              <p class="text-sm text-green-600 font-semibold">Stripe Connect activé</p>
-            {:else}
-              <p class="text-sm text-text-muted leading-relaxed">
-                Connectez un compte Stripe pour les paiements des formulaires, de la boutique et des
-                billetteries de cette association.
-              </p>
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
+                <CreditCard size={20} />
+                Stripe Connect
+              </h2>
               <button
                 type="button"
-                onclick={handleStripeOnboarding}
-                disabled={stripeLoading}
-                class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+                onclick={() => void refreshStripeConnectStatus()}
+                disabled={stripeStatusLoading}
+                class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
               >
-                {stripeLoading
-                  ? 'Redirection…'
-                  : asso.stripeAccountId
-                    ? 'Continuer la configuration'
-                    : 'Configurer Stripe'}
+                <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
+                Actualiser
               </button>
+            </div>
+
+            {#if stripeStatusLoading && !stripeConnectStatus}
+              <p class="text-sm text-text-muted">Vérification du statut Stripe…</p>
+            {:else if stripeConnectStatus?.status === 'active' || stripePaymentsReady}
+              <p class="text-sm text-green-600 font-semibold">Stripe Connect activé</p>
+              <p class="text-xs text-text-muted">
+                Les paiements en ligne (formulaires, boutique) sont disponibles.
+              </p>
+            {:else if stripeConnectStatus?.status === 'pending'}
+              <div
+                class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 px-4 py-3 space-y-2"
+              >
+                <p class="text-sm font-semibold flex items-center gap-2">
+                  <Clock size={18} class="shrink-0" />
+                  Vérification en cours chez Stripe
+                </p>
+                <p class="text-sm leading-relaxed">
+                  Votre dossier a bien été transmis. Stripe valide généralement le compte sous
+                  quelques heures à quelques jours ouvrés — aucune action n’est requise de votre
+                  part pour l’instant.
+                </p>
+                {#if stripeConnectStatus.pendingVerification && stripeConnectStatus.pendingVerification.length > 0}
+                  <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
+                    Éléments en cours de vérification : {stripeConnectStatus.pendingVerification.length}
+                  </p>
+                {/if}
+              </div>
+            {:else if stripeConnectStatus?.status === 'restricted'}
+              <div
+                class="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm space-y-1"
+              >
+                <p class="font-semibold">Compte Stripe restreint</p>
+                <p>
+                  Stripe a limité ce compte Connect. Consultez le
+                  <a
+                    href="https://dashboard.stripe.com/connect/accounts/{asso.stripeAccountId}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="font-semibold underline">tableau de bord Stripe</a
+                  >
+                  ou contactez le support Stripe.
+                </p>
+              </div>
+            {:else if stripeConnectStatus?.status === 'unavailable'}
+              <p class="text-sm text-amber-700">Stripe n’est pas configuré sur le serveur.</p>
+            {:else}
+              <p class="text-sm text-text-muted leading-relaxed">
+                {#if asso.stripeAccountId}
+                  Terminez la configuration sur Stripe ou attendez la validation si vous venez de
+                  soumettre votre dossier.
+                {:else}
+                  Connectez un compte Stripe pour les paiements des formulaires, de la boutique et
+                  des billetteries de cette association.
+                {/if}
+              </p>
+              {#if stripeConnectStatus?.status === 'onboarding_required' || !asso.stripeAccountId}
+                <button
+                  type="button"
+                  onclick={handleStripeOnboarding}
+                  disabled={stripeLoading}
+                  class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+                >
+                  {stripeLoading
+                    ? 'Redirection…'
+                    : asso.stripeAccountId
+                      ? 'Continuer la configuration'
+                      : 'Configurer Stripe'}
+                </button>
+              {/if}
             {/if}
           </div>
         {/if}
@@ -1202,18 +1308,23 @@
           </div>
         {/if}
 
-        {#if !asso.stripeOnboardingComplete}
+        {#if !stripePaymentsReady}
           <div
             class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm"
           >
-            Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion
-            de l'onboarding.
-            {#if canManageStripeConnect}
-              <span class="ml-1">Utilisez la section Stripe Connect ci-dessus.</span>
+            {#if stripeConnectStatus?.status === 'pending'}
+              Stripe Connect en cours de validation. Les produits seront créés inactifs jusqu’à
+              l’activation du compte (généralement sous quelques jours).
             {:else}
-              <span class="ml-1"
-                >Demandez à un responsable disposant de l'accès Stripe Connect.</span
-              >
+              Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion
+              de l'onboarding.
+              {#if canManageStripeConnect}
+                <span class="ml-1">Voir la section Stripe Connect ci-dessus.</span>
+              {:else}
+                <span class="ml-1"
+                  >Demandez à un responsable disposant de l'accès Stripe Connect.</span
+                >
+              {/if}
             {/if}
           </div>
         {/if}
@@ -1519,7 +1630,7 @@
           </p>
         </div>
 
-        {#if hasPaidForms && !asso.stripeOnboardingComplete}
+        {#if hasPaidForms && !stripePaymentsReady}
           <div
             class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 flex items-start gap-2.5"
           >
@@ -1572,7 +1683,7 @@
                     <p class="text-xs text-text-muted mt-1 flex items-center gap-1.5 flex-wrap">
                       {form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : 'Gratuit'}
                       {form.allowCashPayment ? ' · Espèces acceptées' : ''}
-                      {#if form.basePrice > 0 && !asso.stripeOnboardingComplete}
+                      {#if form.basePrice > 0 && !stripePaymentsReady}
                         <span
                           class="inline-flex items-center gap-1 text-amber-700 font-medium"
                           title="Stripe Connect non configuré — les paiements en ligne sont inactifs"

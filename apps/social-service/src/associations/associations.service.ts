@@ -1520,6 +1520,31 @@ export class AssociationsService {
     return asso?.stripeAccountId ?? null;
   }
 
+  /** True when Stripe Connect onboarding is complete and the association can receive online payments. */
+  async isStripePaymentsReady(associationId: string): Promise<boolean> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    return !!asso?.stripeOnboardingComplete && !!asso?.stripeAccountId;
+  }
+
+  /**
+   * Ensures the association finished Stripe Connect onboarding before accepting paid forms.
+   * @throws BadRequestException when onboarding is incomplete
+   */
+  async assertStripePaymentsReady(associationId: string): Promise<void> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) {
+      throw new NotFoundException('Association not found');
+    }
+    if (!asso.stripeOnboardingComplete) {
+      throw new BadRequestException(
+        "Cette association n'a pas encore activé Stripe Connect pour recevoir des paiements"
+      );
+    }
+    if (!asso.stripeAccountId) {
+      throw new BadRequestException('Aucun compte Stripe Connect lié à cette association');
+    }
+  }
+
   // ── Post authorship check ─────────────────────────────────────────────────
 
   /** Returns true if the user holds `POST_AS_ASSO` in the association (or is a global admin). */

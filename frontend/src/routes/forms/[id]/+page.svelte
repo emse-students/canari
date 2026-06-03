@@ -37,6 +37,7 @@
     CreditCard,
     Link,
   } from '@lucide/svelte';
+  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -63,8 +64,7 @@
   let copiedLink = $state(false);
 
   function copyFormLink() {
-    if (typeof window === 'undefined') return;
-    void navigator.clipboard.writeText(window.location.href);
+    void copyPublicShareLink(`/forms/${formId}`);
     copiedLink = true;
     setTimeout(() => (copiedLink = false), 2000);
   }

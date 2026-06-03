@@ -20,6 +20,16 @@ function makeId(prefix: string): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** True when the form is configured to collect money for an association recipient. */
+function formRequiresStripeReadyAssociation(input: {
+  associationId?: string;
+  basePrice?: number;
+  requiresPayment?: boolean;
+}): boolean {
+  if (!input.associationId?.trim()) return false;
+  return (input.basePrice ?? 0) > 0 || !!input.requiresPayment;
+}
+
 /** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
 @Injectable()
 export class FormsService {
@@ -35,6 +45,19 @@ export class FormsService {
     private readonly purchaseRecordService: PurchaseRecordService
   ) {}
 
+  /**
+   * Paid forms linked to an association require Stripe Connect onboarding complete.
+   * @throws BadRequestException when the association cannot receive payments yet
+   */
+  private async assertPaidFormAssociationReady(input: {
+    associationId?: string;
+    basePrice?: number;
+    requiresPayment?: boolean;
+  }): Promise<void> {
+    if (!formRequiresStripeReadyAssociation(input)) return;
+    await this.associationsService.assertStripePaymentsReady(input.associationId!.trim());
+  }
+
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
     if (input.associationId && !isGlobalAdmin) {
@@ -43,6 +66,7 @@ export class FormsService {
         throw new ForbiddenException('Vous n\'êtes pas membre de cette association');
       }
     }
+    await this.assertPaidFormAssociationReady(input);
     const { opensAt: opensAtRaw, closedAt: closedAtRaw, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,
@@ -120,6 +144,7 @@ export class FormsService {
   /** Updates a form's metadata and items. Only owner, co-owner, global admin, or MANAGE_FORMS flag may update. */
   async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    await this.assertPaidFormAssociationReady(input);
     const { opensAt: opensAtRaw, closedAt: closedAtRaw, ownerId: _ownerId, ...rest } = input;
     Object.assign(form, {
       ...rest,
@@ -350,6 +375,7 @@ export class FormsService {
         // If the form belongs to an association, route payment via Stripe Connect
         let stripeConnectAccountId: string | undefined;
         if (form.associationId) {
+          await this.associationsService.assertStripePaymentsReady(form.associationId);
           const acctId = await this.associationsService.getStripeAccountId(form.associationId);
           if (acctId) stripeConnectAccountId = acctId;
         }

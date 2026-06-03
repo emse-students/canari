@@ -134,6 +134,7 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
+          echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
@@ -146,6 +147,7 @@ jobs:
       - name: Verify frontend env for Android build
         working-directory: frontend
         run: |
+          grep -q '^VITE_FRONTEND_URL=.' .env
           grep -q '^VITE_GATEWAY_URL=.' .env
           grep -q '^VITE_DELIVERY_URL=.' .env
           grep -q '^VITE_MEDIA_URL=.' .env

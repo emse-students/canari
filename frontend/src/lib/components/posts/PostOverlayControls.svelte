@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Pin, PinOff, Pencil, Trash2, Flag } from '@lucide/svelte';
+  import { Pin, PinOff, Pencil, Trash2, Flag, Link, Check } from '@lucide/svelte';
+  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { slide } from 'svelte/transition';
 
   /**
@@ -39,6 +40,8 @@
     onReportReasonChange: (reason: string) => void;
     /** Called when the user submits the report. */
     onSubmitReport: () => void;
+    /** Post id used for the public share link. */
+    postId: string;
   }
 
   let {
@@ -56,11 +59,33 @@
     onToggleReport,
     onReportReasonChange,
     onSubmitReport,
+    postId,
   }: Props = $props();
+
+  let copiedLink = $state(false);
+
+  function sharePost() {
+    void copyPublicShareLink(`/posts/${postId}`);
+    copiedLink = true;
+    setTimeout(() => (copiedLink = false), 2000);
+  }
 </script>
 
 {#if isLoggedIn}
   <div class="absolute top-3 right-3 flex items-center gap-1">
+    <button
+      type="button"
+      onclick={sharePost}
+      class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 hover:bg-amber-500/10 transition-colors outline-none"
+      aria-label={copiedLink ? 'Lien copié' : 'Partager le post'}
+      title={copiedLink ? 'Lien copié' : 'Partager'}
+    >
+      {#if copiedLink}
+        <Check size={14} strokeWidth={2.5} />
+      {:else}
+        <Link size={14} strokeWidth={2.5} />
+      {/if}
+    </button>
     {#if isGlobalAdmin}
       <button
         type="button"

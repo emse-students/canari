@@ -5,12 +5,22 @@
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { ArrowLeft, FileX } from '@lucide/svelte';
+  import { ArrowLeft, FileX, Link, Check } from '@lucide/svelte';
+  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 
   let { data }: { data: { post: PostEntity | null } } = $props();
 
   const userId = $derived(currentUserId() ?? '');
   let authToken = $state('');
+  let copiedLink = $state(false);
+
+  function copyPostLink() {
+    const id = data.post?.id;
+    if (!id) return;
+    void copyPublicShareLink(`/posts/${id}`);
+    copiedLink = true;
+    setTimeout(() => (copiedLink = false), 2000);
+  }
 
   onMount(() => {
     getToken()
@@ -23,14 +33,31 @@
 
 <main class="px-4 py-6 md:px-8 md:py-8">
   <div class="mx-auto max-w-xl animate-rise-in">
-    <button
-      type="button"
-      onclick={() => goto('/posts')}
-      class="mb-6 flex items-center gap-2 text-sm font-medium text-text-muted transition-colors hover:text-text-main"
-    >
-      <ArrowLeft size={18} />
-      Retour aux publications
-    </button>
+    <div class="mb-6 flex items-center justify-between gap-3">
+      <button
+        type="button"
+        onclick={() => goto('/posts')}
+        class="flex items-center gap-2 text-sm font-medium text-text-muted transition-colors hover:text-text-main"
+      >
+        <ArrowLeft size={18} />
+        Retour aux publications
+      </button>
+      {#if data.post}
+        <button
+          type="button"
+          onclick={copyPostLink}
+          class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors {copiedLink
+            ? 'text-green-600 bg-green-50 dark:bg-green-950/20'
+            : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
+        >
+          {#if copiedLink}
+            <Check size={13} />Lien copié !
+          {:else}
+            <Link size={13} />Partager
+          {/if}
+        </button>
+      {/if}
+    </div>
 
     {#if data.post}
       <PostCard

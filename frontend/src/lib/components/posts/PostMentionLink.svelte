@@ -1,6 +1,8 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
   import { isMentionUserId, MENTION_HREF_PREFIX, normalizeMentionUserId } from '$lib/utils/mentions';
+  import { isPublicAppUrl } from '$lib/utils/publicAppUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { Snippet } from 'svelte';
 
@@ -34,9 +36,16 @@
     });
   });
 
+  const isPublicAppLink = $derived(!isMention && !isHashtag && isPublicAppUrl(href));
+
   function handleMentionClick(e: MouseEvent) {
     e.preventDefault();
     if (mentionUserId) void goto(`/profile/${mentionUserId}`);
+  }
+
+  function handlePublicAppLinkClick(e: MouseEvent) {
+    e.preventDefault();
+    void navigateInAppFromPublicUrl(href);
   }
 </script>
 
@@ -50,6 +59,15 @@
   </button>
 {:else if isHashtag}
   <span class="font-semibold text-amber-600/80 dark:text-amber-400/70">#{hashtagName}</span>
+{:else if isPublicAppLink}
+  <a
+    {href}
+    {title}
+    onclick={handlePublicAppLinkClick}
+    class="text-amber-700 dark:text-amber-400 underline underline-offset-2 hover:text-amber-500 transition-colors"
+  >
+    {@render children?.()}
+  </a>
 {:else}
   <a
     {href}

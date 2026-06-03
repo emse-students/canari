@@ -54,6 +54,18 @@
             "fr.emse.canari"
           ],
           "host": "form"
+        },
+        {
+          "scheme": [
+            "https"
+          ],
+          "host": "canari-emse.fr"
+        },
+        {
+          "scheme": [
+            "https"
+          ],
+          "host": "www.canari-emse.fr"
         }
       ]
     }

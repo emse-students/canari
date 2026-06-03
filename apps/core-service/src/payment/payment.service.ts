@@ -1,5 +1,9 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
+import {
+  buildStripeConnectStatusResponse,
+  type StripeConnectStatusResponse,
+} from './stripeConnectStatus';
 
 export interface ChargeResult {
   ok: boolean;
@@ -119,6 +123,18 @@ export class PaymentService {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     const account = await this.stripe.accounts.retrieve(accountId);
     return { chargesEnabled: account.charges_enabled ?? false };
+  }
+
+  /** Returns treasurer-facing Connect lifecycle state from the live Stripe account. */
+  async getConnectAccountStatus(
+    accountId: string,
+  ): Promise<StripeConnectStatusResponse> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+    const account = await this.stripe.accounts.retrieve(accountId);
+    this.logger.debug(
+      `[Stripe] Connect status account=${accountId.slice(0, 8)} charges=${account.charges_enabled} details=${account.details_submitted}`,
+    );
+    return buildStripeConnectStatusResponse(account);
   }
 
   // ── Customer & Payment Methods ────────────────────────────────────────────

@@ -13,7 +13,11 @@
     type CreateFormPayload,
     type Form,
   } from '$lib/forms/api';
-  import { listAssociations, type Association } from '$lib/associations/api';
+  import {
+    canAssociationReceiveFormPayments,
+    listAssociations,
+    type Association,
+  } from '$lib/associations/api';
   import { fetchUserProfile } from '$lib/stores/user';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -61,7 +65,7 @@
   let addingCoOwner = $state(false);
   let coOwnerError = $state('');
 
-  // Associations with Stripe account
+  // Associations with Stripe Connect activé
   let associations = $state<Association[]>([]);
 
   let items = $state<any[]>([]);
@@ -93,7 +97,12 @@
     try {
       const [f, all] = await Promise.all([getForm(id), listAssociations()]);
       form = f;
-      associations = all.filter((a) => a.stripeAccountId);
+      const eligible = all.filter((a) => canAssociationReceiveFormPayments(a));
+      if (f.associationId && !eligible.some((a) => a.id === f.associationId)) {
+        const current = all.find((a) => a.id === f.associationId);
+        if (current) eligible.push(current);
+      }
+      associations = eligible;
 
       title = f.title;
       description = f.description ?? '';

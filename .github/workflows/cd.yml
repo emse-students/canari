@@ -275,6 +275,7 @@ jobs:
           # VITE_GATEWAY_URL et VITE_DELIVERY_URL intentionnellement vides :
           # le code utilise window.location.origin comme fallback, ce qui fonctionne
           # derrière nginx (même domaine, /ws, /api/mls/ et /media/ routés par le reverse proxy).
+          echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
           echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env

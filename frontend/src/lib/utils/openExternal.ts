@@ -1,3 +1,6 @@
+import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
+import { isPublicAppUrl } from '$lib/utils/publicAppUrl';
+
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
 
 export function isTauriRuntime(): boolean {
@@ -20,6 +23,7 @@ export function shouldOpenExternalHref(
   try {
     const url = new URL(trimmed, base);
     if (url.protocol === 'fr.emse.canari:') return false;
+    if (isPublicAppUrl(url.href, base)) return false;
     if (url.origin === new URL(base).origin) return false;
     return EXTERNAL_PROTOCOLS.has(url.protocol);
   } catch {
@@ -43,6 +47,12 @@ export function handleExternalLinkClick(event: MouseEvent): boolean {
   if (!(anchor instanceof HTMLAnchorElement)) return false;
 
   const href = anchor.href || anchor.getAttribute('href') || '';
+  if (isPublicAppUrl(href)) {
+    event.preventDefault();
+    event.stopPropagation();
+    void navigateInAppFromPublicUrl(href);
+    return true;
+  }
   if (!shouldOpenExternalHref(href)) return false;
 
   event.preventDefault();

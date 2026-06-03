@@ -849,6 +849,61 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
   return request<AssociationForm[]>(`/api/associations/${encodeURIComponent(associationId)}/forms`);
 }
 
+// ── Stripe Connect status ───────────────────────────────────────────────────
+
+/** Treasurer-facing Stripe Connect lifecycle (mirrors core-service). */
+export type StripeConnectStatus =
+  | 'not_started'
+  | 'onboarding_required'
+  | 'pending'
+  | 'active'
+  | 'restricted'
+  | 'unavailable';
+
+export interface StripeConnectStatusResult {
+  status: StripeConnectStatus;
+  chargesEnabled?: boolean;
+  payoutsEnabled?: boolean;
+  detailsSubmitted?: boolean;
+  currentlyDue?: string[];
+  pendingVerification?: string[];
+  disabledReason?: string | null;
+  stripeAccountId?: string | null;
+  dbOnboardingComplete?: boolean;
+  message?: string;
+}
+
+/** True when the association can accept online payments (live or DB flag). */
+export function isStripeConnectReady(
+  status: StripeConnectStatusResult | null | undefined
+): boolean {
+  if (!status) return false;
+  return status.status === 'active' || !!status.dbOnboardingComplete;
+}
+
+/**
+ * True when an association may be selected as recipient for paid forms.
+ * Requires Stripe Connect onboarding complete (not merely a linked account id).
+ */
+export function canAssociationReceiveFormPayments(asso: Association): boolean {
+  return asso.stripeOnboardingComplete === true;
+}
+
+/** Fetches live Stripe Connect status (requires MANAGE_STRIPE_CONNECT). */
+export async function fetchStripeConnectStatus(
+  associationId: string
+): Promise<StripeConnectStatusResult> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/connect-status/${encodeURIComponent(associationId)}`
+  );
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`connect-status ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as StripeConnectStatusResult;
+}
+
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
 export async function startStripeOnboarding(

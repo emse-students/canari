@@ -20,12 +20,12 @@
     ChevronUp,
     Users,
   } from '@lucide/svelte';
+  import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 
   let copiedId = $state<string | null>(null);
 
   function copyFormLink(id: string) {
-    if (typeof window === 'undefined') return;
-    void navigator.clipboard.writeText(`${window.location.origin}/forms/${id}`);
+    void copyPublicShareLink(`/forms/${id}`);
     copiedId = id;
     setTimeout(() => {
       copiedId = null;

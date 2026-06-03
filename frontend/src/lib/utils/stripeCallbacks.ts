@@ -1,4 +1,5 @@
 import { isTauri } from '@tauri-apps/api/core';
+import { publicAppUrl } from '$lib/utils/publicAppUrl';
 
 /** True on Tauri Android / iOS - Stripe Checkout must return via app deep link. */
 export function isMobileTauri(): boolean {
@@ -12,10 +13,7 @@ function stripeDeepLink(path: 'success' | 'cancel', query: string): string {
 }
 
 function webUrl(path: string): string {
-  const base =
-    (import.meta.env.VITE_FRONTEND_URL as string | undefined)?.trim() ||
-    (typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
-  return `${base.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+  return publicAppUrl(path.startsWith('/') ? path : `/${path}`);
 }
 
 /** Stripe Checkout callbacks for paid form submissions. */

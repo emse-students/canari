@@ -7,7 +7,9 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
+import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { installExternalLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
+import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 
 /** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
 export function handleError({ error }: { error: unknown }): void {
@@ -57,6 +59,17 @@ if (isTauriRuntime()) {
             // Parse the URL
             const u = new URL(url);
             console.log('[hooks] Parsed URL protocol:', u.protocol, 'host:', u.host);
+
+            // Public web link (App Link / universal link): https://canari-emse.fr/posts/…
+            if (u.protocol === 'https:' || u.protocol === 'http:') {
+              if (isPublicAppUrl(u.href)) {
+                const inApp = inAppPathFromPublicUrl(u.href);
+                if (inApp) {
+                  void navigateInAppFromPublicUrl(u.href);
+                  continue;
+                }
+              }
+            }
 
             // Chat conversation deep link: fr.emse.canari://chat/{groupId}
             if (u.protocol === 'fr.emse.canari:' && u.host === 'chat') {

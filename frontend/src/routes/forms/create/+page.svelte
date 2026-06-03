@@ -4,7 +4,11 @@
   import { page } from '$app/state';
   import { createForm, type CreateFormPayload } from '$lib/forms/api';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
-  import { listAssociations, type Association } from '$lib/associations/api';
+  import {
+    canAssociationReceiveFormPayments,
+    listAssociations,
+    type Association,
+  } from '$lib/associations/api';
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -29,7 +33,7 @@
   );
   const contentMaxWidth = $derived(fromPostComposer ? 'max-w-xl' : 'max-w-3xl');
 
-  // Associations with Stripe account (eligible as recipients)
+  // Associations with Stripe Connect activé (eligible as payment recipients)
   let associations = $state<Association[]>([]);
 
   onMount(async () => {
@@ -39,7 +43,7 @@
     }
     try {
       const all = await listAssociations();
-      associations = all.filter((a) => a.stripeAccountId);
+      associations = all.filter((a) => canAssociationReceiveFormPayments(a));
     } catch {
       // Ignore - user may not have access
     }
@@ -355,7 +359,8 @@
               Les formulaires payants nécessitent une association avec Stripe Connect activé.
             </p>
             <p class="text-xs text-amber-800/80 dark:text-amber-200/70">
-              Vous n'êtes administrateur d'aucune association ayant connecté un compte de paiement.
+              Vous n'êtes administrateur d'aucune association ayant finalisé l'activation Stripe Connect
+              (la validation Stripe peut prendre quelques jours après la configuration).
               Vous pouvez créer un formulaire gratuit sans association.
             </p>
             <button

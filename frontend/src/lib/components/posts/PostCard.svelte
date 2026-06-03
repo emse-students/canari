@@ -423,6 +423,7 @@
           reportReason = r;
         }}
         onSubmitReport={submitReport}
+        postId={localPost.id}
       />
     </div>
 

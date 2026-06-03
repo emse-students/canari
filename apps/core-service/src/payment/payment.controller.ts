@@ -141,6 +141,94 @@ export class PaymentController {
     return result;
   }
 
+  /**
+   * Live Stripe Connect status for an association (MANAGE_STRIPE_CONNECT).
+   * Syncs `stripeOnboardingComplete` in social-service when Stripe already enabled charges.
+   */
+  @Get('connect-status/:associationId')
+  async getConnectStatus(
+    @Param('associationId') associationId: string,
+    @Req() req: Request,
+  ) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    await this.assertCanManageAssociation(req, associationId);
+
+    if (!this.paymentService.isConfigured()) {
+      return {
+        status: 'unavailable' as const,
+        message: 'Stripe not configured',
+      };
+    }
+
+    const socialBase = (
+      process.env.FORM_URL || 'http://social-service:3014'
+    ).replace(/\/$/, '');
+
+    let stripeAccountId: string | null;
+    let dbOnboardingComplete: boolean;
+    try {
+      const assoRes = await axios.get<{
+        stripeAccountId?: string | null;
+        stripeOnboardingComplete?: boolean;
+      }>(
+        `${socialBase}/api/associations/${encodeURIComponent(associationId)}`,
+        {
+          validateStatus: () => true,
+        },
+      );
+      if (assoRes.status >= 400) {
+        throw new BadRequestException('Association not found');
+      }
+      stripeAccountId = assoRes.data.stripeAccountId?.trim() || null;
+      dbOnboardingComplete = !!assoRes.data.stripeOnboardingComplete;
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      this.logger.warn(
+        `connect-status: failed to load association: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      throw new BadRequestException('Could not load association');
+    }
+
+    if (!stripeAccountId) {
+      return {
+        status: 'not_started' as const,
+        dbOnboardingComplete,
+        stripeAccountId: null,
+      };
+    }
+
+    const live =
+      await this.paymentService.getConnectAccountStatus(stripeAccountId);
+
+    if (live.status === 'active' && !dbOnboardingComplete) {
+      try {
+        await axios.post(
+          `${socialBase}/api/associations/${encodeURIComponent(associationId)}/stripe-complete`,
+          undefined,
+          { maxRedirects: 0, timeout: 15_000 },
+        );
+        dbOnboardingComplete = true;
+        this.logger.log(
+          `connect-status: synced stripeOnboardingComplete for association ${associationId}`,
+        );
+      } catch (err: unknown) {
+        const error = err as Error & { response?: { data?: unknown } };
+        this.logger.warn(
+          'connect-status: failed to sync stripe-complete',
+          error?.response?.data || error?.message,
+        );
+      }
+    }
+
+    return {
+      ...live,
+      stripeAccountId,
+      dbOnboardingComplete,
+    };
+  }
+
   /** Creates a Stripe Checkout session for the given line items and returns the session URL. */
   @Post('create-checkout-session')
   @HttpCode(200)
