@@ -249,7 +249,10 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
           echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
@@ -258,6 +261,12 @@ jobs:
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
           echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
           echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          if [ -n "$ANDROID_APP_LINK_SHA256" ]; then
+            echo "VITE_ANDROID_APP_LINK_SHA256=${ANDROID_APP_LINK_SHA256}" >> .env
+          fi
+          if [ -n "$APPLE_TEAM_ID" ]; then
+            echo "VITE_APPLE_TEAM_ID=${APPLE_TEAM_ID}" >> .env
+          fi
 
       - name: Build frontend
         working-directory: frontend

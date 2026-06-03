@@ -13,7 +13,12 @@ const config = {
       fallback: 'index.html',
     }),
     prerender: {
-      entries: ['/robots.txt', '/sitemap.xml'],
+      entries: [
+        '/robots.txt',
+        '/sitemap.xml',
+        '/.well-known/assetlinks.json',
+        '/.well-known/apple-app-site-association',
+      ],
     },
   },
 };

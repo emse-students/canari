@@ -127,6 +127,12 @@ jobs:
           grep -q '^storePassword=' frontend/src-tauri/gen/android/keystore.properties
           echo "✅ Android signing material prepared"
 
+      - name: Print Android App Link SHA-256 fingerprint
+        run: |
+          chmod +x scripts/print-android-app-link-fingerprint.sh
+          ./scripts/print-android-app-link-fingerprint.sh
+          echo "::notice::Add this SHA-256 to GitHub secret ANDROID_APP_LINK_SHA256, then redeploy frontend (cd workflow)."
+
       - name: Create frontend .env
         working-directory: frontend
         env:

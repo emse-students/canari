@@ -59,13 +59,15 @@
           "scheme": [
             "https"
           ],
-          "host": "canari-emse.fr"
+          "host": "canari-emse.fr",
+          "appLink": true
         },
         {
           "scheme": [
             "https"
           ],
-          "host": "www.canari-emse.fr"
+          "host": "www.canari-emse.fr",
+          "appLink": true
         }
       ]
     }

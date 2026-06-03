@@ -40,6 +40,12 @@ RUN printf 'server {\n\
     proxy_set_header Cookie $http_cookie;\n\
     }\n\
     \n\
+    location /.well-known/ {\n\
+    try_files $uri =404;\n\
+    add_header Content-Type application/json;\n\
+    add_header Cache-Control "public, max-age=3600";\n\
+    }\n\
+    \n\
     location / {\n\
     try_files $uri $uri/ /index.html;\n\
     }\n\
