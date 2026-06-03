@@ -214,29 +214,44 @@ export class WebMlsService implements IMlsService {
     }
   }
 
+  /** Closes the socket without throwing on already-closing WebViews. */
+  private safeCloseWebSocket(ws: WebSocket, code = 1000, reason?: string): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.close(code, reason);
+    } catch {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   private startHeartbeat(): void {
     this.clearHeartbeat();
     this.missedHeartbeats = 0;
     this.heartbeatTimer = setInterval(() => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         this.clearHeartbeat();
         this.disconnectCallback?.();
         return;
       }
-      // Check if the server has sent anything since the last ping.
-      // If not, the connection may be a TCP zombie (NAT timeout, silent drop).
+      // Check if the server has sent anything since the last ping (JSON pong or data).
+      // WS protocol Pong frames do not fire `onmessage` in browsers.
       this.missedHeartbeats += 1;
       if (this.missedHeartbeats > WebMlsService.MAX_MISSED_HEARTBEATS) {
         console.warn(
           `[WS] ${this.missedHeartbeats} pings sans réponse serveur — fermeture connexion zombie`
         );
         this.clearHeartbeat();
-        this.ws.close(1001, 'heartbeat timeout');
+        this.safeCloseWebSocket(ws, 1001, 'heartbeat timeout');
         this.disconnectCallback?.();
         return;
       }
       try {
-        this.ws.send(JSON.stringify({ type: 'ping' }));
+        ws.send(JSON.stringify({ type: 'ping' }));
       } catch {
         this.clearHeartbeat();
         this.disconnectCallback?.();
@@ -366,10 +381,14 @@ export class WebMlsService implements IMlsService {
                 : new TextDecoder().decode(event.data as ArrayBuffer);
 
           const msg = JSON.parse(text);
+          const frameType = typeof msg.type === 'string' ? msg.type : '';
+          if (frameType === 'pong' || frameType === 'ping') {
+            return;
+          }
           console.log(
             `[WS RCV] JSON frame: senderId=${msg.senderId}, groupId=${msg.groupId}, isWelcome=${msg.isWelcome}, protoLen=${(msg.proto as string)?.length}`
           );
-          if (msg.type && (msg.type.startsWith('channel.') || msg.type === 'post_created')) {
+          if (frameType && (frameType.startsWith('channel.') || frameType === 'post_created')) {
             if (this.onChannelEvent) {
               console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
               this.onChannelEvent({ type: msg.type, data: msg.data });

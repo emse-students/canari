@@ -432,8 +432,16 @@ async fn handle_socket(
                             }
                         };
 
-                        // Client heartbeat - liveness already registered above.
+                        // Application-level heartbeat: reply so the browser can detect
+                        // liveness (WS protocol Pong frames do not fire `onmessage`).
                         if json.get("type").and_then(|v| v.as_str()) == Some("ping") {
+                            if tx_for_dispatch
+                                .send(r#"{"type":"pong"}"#.to_string())
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
                             continue;
                         }
 

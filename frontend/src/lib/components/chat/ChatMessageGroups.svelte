@@ -3,15 +3,13 @@
   import Avatar from '../shared/Avatar.svelte';
   import MessageBubble from '../messages/MessageBubble.svelte';
   import type { ChatMessage, MessageReaction } from '$lib/types';
+  import {
+    isMessageGroupRow,
+    type MessageGroup,
+    type MessageGroupMessageRow,
+  } from '$lib/utils/messageGrouping';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Loader2 } from '@lucide/svelte';
-
-  interface MessageGroup {
-    type: 'date_separator' | 'time_separator' | 'message';
-    date?: string;
-    time?: string;
-    message?: ChatMessage;
-  }
 
   interface Props {
     /** Slice of message groups currently rendered in the DOM. */
@@ -67,8 +65,10 @@
   const lastOwnMessageId = $derived(
     [...visibleMessageGroups]
       .reverse()
-      .find((g) => g.type === 'message' && g.message?.isOwn && !g.message?.isSystem)?.message?.id ??
-      null
+      .find(
+        (g): g is MessageGroupMessageRow =>
+          isMessageGroupRow(g) && g.message.isOwn && !g.message.isSystem
+      )?.message.id ?? null
   );
 
   // Dernier message envoyé lu par au moins un interlocuteur (indicateur « Lu »).
@@ -76,12 +76,12 @@
     [...visibleMessageGroups]
       .reverse()
       .find(
-        (g) =>
-          g.type === 'message' &&
-          g.message?.isOwn &&
-          !g.message?.isSystem &&
+        (g): g is MessageGroupMessageRow =>
+          isMessageGroupRow(g) &&
+          g.message.isOwn &&
+          !g.message.isSystem &&
           (g.message.readBy?.length ?? 0) > 0
-      )?.message?.id ?? null
+      )?.message.id ?? null
   );
 
   function firstNameOnly(value: string): string {
@@ -97,12 +97,7 @@
   $effect(() => {
     const senderIds = new SvelteSet<string>();
     for (const group of visibleMessageGroups) {
-      if (
-        group.type !== 'message' ||
-        !group.message ||
-        group.message.isOwn ||
-        group.message.isSystem
-      ) {
+      if (!isMessageGroupRow(group) || group.message.isOwn || group.message.isSystem) {
         continue;
       }
       senderIds.add(group.message.senderId);

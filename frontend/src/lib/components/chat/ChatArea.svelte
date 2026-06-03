@@ -7,7 +7,7 @@
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import EmptyState from '../shared/EmptyState.svelte';
-  import { groupMessages } from '$lib/utils/messageGrouping';
+  import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -286,7 +286,7 @@
 
   async function navigateToMessage(messageId: string) {
     const targetIndex = messageGroups.findIndex(
-      (group) => group.type === 'message' && group.message.id === messageId
+      (group) => isMessageGroupRow(group) && group.message.id === messageId
     );
     if (targetIndex === -1) {
       onNavigateToMessage?.(messageId);

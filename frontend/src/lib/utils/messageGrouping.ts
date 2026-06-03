@@ -19,6 +19,16 @@ export type MessageGroup =
   | { type: 'time_separator'; time: string }
   | { type: 'message'; message: ChatMessage };
 
+/** Message row variant of {@link MessageGroup}. */
+export type MessageGroupMessageRow = Extract<MessageGroup, { type: 'message' }>;
+
+/**
+ * Type guard for message rows. Accepts null/undefined for safe use during {#each} teardown.
+ */
+export function isMessageGroupRow(g: MessageGroup | null | undefined): g is MessageGroupMessageRow {
+  return g != null && g.type === 'message';
+}
+
 function formatDateSeparator(date: Date): string {
   if (isToday(date)) return "Aujourd'hui";
   if (isYesterday(date)) return 'Hier';
