@@ -1159,8 +1159,8 @@ export class AssociationsService {
     });
     const saved = await this.calendarRepo.save(row);
     const coOwners = await this.syncCoOwners(saved.id, targetId, dto.coOwnerIds ?? []);
-    console.log(
-      `[Calendar] Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, coOwners=${coOwners.length})`
+    this.logger.debug(
+      `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, coOwners=${coOwners.length})`
     );
     // Notify asso admins when BDE creates an event on their behalf
     if (canValidate && targetId !== associationId) {
@@ -1226,8 +1226,8 @@ export class AssociationsService {
       dto.coOwnerIds !== undefined
         ? await this.syncCoOwners(saved.id, saved.associationId, dto.coOwnerIds)
         : await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
-    console.log(
-      `[Calendar] Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
+    this.logger.debug(
+      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
     );
     // Notify asso admins when BDE modifies an event from another asso
     if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
@@ -1253,7 +1253,7 @@ export class AssociationsService {
     ev.validatedAt = new Date();
     ev.validatedBy = userId;
     const saved = await this.calendarRepo.save(ev);
-    console.log(`[Calendar] Event validated: ${saved.id} by ${userId}`);
+    this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(ev.associationId, userId, ev.title, 'validated');
     return this.serializeCalendarEvent(saved);
@@ -1277,7 +1277,7 @@ export class AssociationsService {
     ev.rejectedBy = userId;
     ev.rejectionReason = reason ?? null;
     const saved = await this.calendarRepo.save(ev);
-    console.log(`[Calendar] Event rejected: ${saved.id} by ${userId}`);
+    this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
     void this.notifyAssocAdminsOfEventAction(
       ev.associationId,
       userId,
@@ -1306,8 +1306,8 @@ export class AssociationsService {
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
-      console.log(
-        `[Calendar] Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
+      this.logger.debug(
+        `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
       if (targetAssocId !== associationId && callerOpts?.callerUserId) {
         void this.notifyAssocAdminsOfEventAction(
@@ -1321,8 +1321,8 @@ export class AssociationsService {
       const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
       if (!ev) throw new NotFoundException('Event not found');
       await this.calendarRepo.delete({ id: eventId });
-      console.log(
-        `[Calendar] Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
+      this.logger.debug(
+        `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
     }
     return { ok: true };
@@ -1345,7 +1345,7 @@ export class AssociationsService {
 
     const key = randomBytes(32).toString('hex');
     await this.assoRepo.update(associationId, { documentVaultKey: key });
-    console.log(`[Vault] Generated new vault key for association ${sanitizeLog(associationId)}`);
+    this.logger.debug(`Vault key generated for association ${sanitizeLog(associationId)}`);
     return key;
   }
 
@@ -1442,8 +1442,8 @@ export class AssociationsService {
       uploadedBy: userId,
     });
     const saved = await this.docRepo.save(doc);
-    console.log(
-      `[Vault] Document "${sanitizeLog(saved.name)}" (${sanitizeLog(saved.id)}) created for asso ${sanitizeLog(associationId)}`
+    this.logger.debug(
+      `Vault document "${sanitizeLog(saved.name)}" (${sanitizeLog(saved.id)}) created for asso ${sanitizeLog(associationId)}`
     );
     return { ...saved, size: Number(saved.size) };
   }
@@ -1467,8 +1467,8 @@ export class AssociationsService {
     if (!doc) throw new NotFoundException('Document not found');
 
     await this.docRepo.delete(docId);
-    console.log(
-      `[Vault] Document "${sanitizeLog(doc.name)}" (${sanitizeLog(docId)}) deleted from asso ${sanitizeLog(associationId)}`
+    this.logger.debug(
+      `Vault document "${sanitizeLog(doc.name)}" (${sanitizeLog(docId)}) deleted from asso ${sanitizeLog(associationId)}`
     );
 
     const bearer = authorization?.trim();

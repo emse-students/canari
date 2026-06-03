@@ -83,22 +83,6 @@ function clearWsSessionCookie(): void {
   alog('ws-');
 }
 
-/** Returns `true` for truthy string values (`"1"`, `"true"`, `"yes"`, `"on"`) or a `true` boolean. */
-function isEnvFlagEnabled(value: string | boolean | undefined): boolean {
-  if (typeof value === 'boolean') return value;
-  if (typeof value !== 'string') return false;
-
-  switch (value.trim().toLowerCase()) {
-    case '1':
-    case 'true':
-    case 'yes':
-    case 'on':
-      return true;
-    default:
-      return false;
-  }
-}
-
 function authentikUrl(): string {
   return ((import.meta.env.VITE_AUTHENTIK_URL as string) || '').replace(/\/+$/, '');
 }
@@ -116,11 +100,6 @@ function oidcRedirectUri(): string {
     return 'fr.emse.canari://callback';
   }
   return `${window.location.origin}/auth/callback`;
-}
-
-/** Returns `true` when the `VITE_ENABLE_DEV_ROUTES` environment variable is set to a truthy value. */
-export function devRoutesEnabled(): boolean {
-  return isEnvFlagEnabled(import.meta.env.VITE_ENABLE_DEV_ROUTES as string | undefined);
 }
 
 /**
@@ -221,50 +200,6 @@ export async function handleOidcCallback(
 
   saveUserLocally(data.user);
   console.debug('[auth] handleOidcCallback complete');
-
-  return data.user;
-}
-
-/**
- * DEV-ONLY: bypass Authentik and log in directly via core-service.
- * Only works when the backend is running in non-production mode.
- */
-export async function devLogin(
-  id?: string
-): Promise<{ id: string; email: string; displayName: string }> {
-  if (!devRoutesEnabled()) {
-    throw new Error('Dev login is disabled');
-  }
-
-  const res = await fetch(`${coreUrl()}/api/auth/dev-login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ id }),
-  });
-
-  if (!res.ok) {
-    const msg = await res.text().catch(() => '');
-    throw new Error(msg || `Dev login failed (${res.status})`);
-  }
-
-  const data = (await res.json()) as {
-    access_token: string;
-    user: {
-      id: string;
-      email: string;
-      displayName: string;
-      firstYearOfSchool: number | null;
-      avatarMediaId: string | null;
-      bio: string | null;
-      admin: boolean;
-    };
-  };
-
-  _accessToken = data.access_token;
-  setWsSessionCookie(data.access_token);
-
-  saveUserLocally(data.user);
 
   return data.user;
 }

@@ -16,6 +16,7 @@
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
   import { getToken } from '$lib/stores/auth';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { currentUserId } from '$lib/stores/user';
   import {
     globalSession,
@@ -502,12 +503,12 @@
     });
   }
 
-  // Safety net for the OIDC / dev-login race condition:
-  // `onMount` runs once on the initial page load.  When the user first arrives
-  // via the OIDC callback (`/auth/callback`) or via `devLogin()` on `/login`,
-  // `onMount` fires before `currentUserId()` is set, so `tryLogin()` does
-  // nothing useful.  After the callback/login sets the user and navigates to
-  // `/chat`, this `afterNavigate` hook re-tries the login flow.
+  // Safety net for the OIDC race condition:
+  // `onMount` runs once on the initial page load. When the user first arrives
+  // via the OIDC callback (`/auth/callback`), `onMount` fires before
+  // `currentUserId()` is set, so `tryLogin()` does nothing useful.
+  // After the callback sets the user and navigates to `/chat`,
+  // this `afterNavigate` hook re-tries the login flow.
   afterNavigate(async ({ to }) => {
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
@@ -617,8 +618,9 @@
           } catch (e) {
             // Si l'appareil n'a pas d'empreinte configurée, on attrape l'erreur
             if (String(e).includes('At least one biometric must be enrolled')) {
-              alert(
-                "Aucune empreinte n'est configurée sur votre téléphone. Veuillez en ajouter une dans les paramètres d'Android."
+              showToast(
+                "Aucune empreinte n'est configurée. Ajoutez-en une dans les paramètres Android.",
+                'info'
               );
               globalSession.showBiometricEnrollPrompt = false;
             }

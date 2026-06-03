@@ -5,7 +5,6 @@ import {
   Get,
   Head,
   HttpCode,
-  NotFoundException,
   Post,
   Req,
   Res,
@@ -15,7 +14,6 @@ import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { UsersService } from '../users/users.service';
-import { User } from '../users/entities/user.entity';
 
 interface OidcCallbackDto {
   code: string;
@@ -25,20 +23,6 @@ interface OidcCallbackDto {
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
 
-function isEnvFlagEnabled(value: string | undefined): boolean {
-  if (!value) return false;
-
-  switch (value.trim().toLowerCase()) {
-    case '1':
-    case 'true':
-    case 'yes':
-    case 'on':
-      return true;
-    default:
-      return false;
-  }
-}
-
 /** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
 @Controller('auth')
 export class AuthController {
@@ -46,7 +30,6 @@ export class AuthController {
   private readonly authentikBaseUrl: string;
   private readonly authentikClientId: string;
   private readonly authentikClientSecret: string;
-  private readonly devRoutesEnabled: boolean;
   private readonly isProduction: boolean;
   /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
   private readonly internalSecret: string;
@@ -67,7 +50,6 @@ export class AuthController {
     );
     this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
     this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
-    this.devRoutesEnabled = isEnvFlagEnabled(process.env.ENABLE_DEV_ROUTES);
     this.internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim() ?? '';
   }
 
@@ -115,88 +97,6 @@ export class AuthController {
   // The frontend redirects the user to Authentik, which redirects back with a
   // `code`.  The frontend then POSTs that code here so we can exchange it for
   // tokens server-side (keeping the client_secret safe).
-
-  // ─── TEMPORARY: bypass Authentik ────────────────────────────────────────────
-  // Creates a dev user and returns tokens without touching Authentik.
-  // TODO: remove this endpoint once Authentik is fully configured.
-  /** Issues a dev JWT pair for a local user without going through Authentik (disabled in production). */
-  @Post('dev-login')
-  @HttpCode(200)
-  async devLogin(
-    @Body() body: { id?: string },
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<{
-    access_token: string;
-    user: {
-      id: string;
-      displayName: string;
-      promo: number | null;
-      firstName: string | null;
-      lastName: string | null;
-      bio: string | null;
-      admin: boolean;
-    };
-  }> {
-    if (!this.devRoutesEnabled) {
-      throw new NotFoundException('Dev login is disabled');
-    }
-
-    const devId = (body?.id || 'dev').trim().toLowerCase();
-
-    let user: User;
-    try {
-      // First try to find existing user with legacy 'dev-' prefix
-      const legacyId = `dev-${devId}`;
-      const existingLegacy = await this.usersService
-        .findOne(legacyId)
-        .catch(() => null);
-      if (existingLegacy) {
-        user = existingLegacy;
-      } else {
-        // Try new ID format, or create new user
-        user = await this.usersService.findOrCreateFromOidc(
-          devId,
-          devId,
-          devId,
-          devId,
-        );
-      }
-    } catch (err) {
-      console.error('[dev-login] Failed to find/create user:', devId, err);
-      throw new BadRequestException(
-        `Failed to create user: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    const access_token = jwt.sign(
-      { sub: user.id, admin: !!user.admin },
-      this.jwtSecret,
-      {
-        expiresIn: '1h',
-      },
-    );
-    const refresh_token = jwt.sign(
-      { sub: user.id, type: 'refresh' },
-      this.jwtSecret,
-      { expiresIn: '7d' },
-    );
-
-    this.setRefreshCookie(req, res, refresh_token);
-
-    return {
-      access_token,
-      user: {
-        id: user.id,
-        displayName: user.displayName || '',
-        firstName: user.firstName || '',
-        lastName: user.lastName || '',
-        promo: user.promo ?? null,
-        bio: user.bio ?? null,
-        admin: !!user.admin,
-      },
-    };
-  }
   /** Exchanges an Authentik authorization code for internal JWT tokens and upserts the local user. */
   @Post('oidc/callback')
   @HttpCode(200)

@@ -8,7 +8,8 @@
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
-  import LogsPanel from '$lib/components/dev/LogsPanel.svelte';
+  import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
+  import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import { page } from '$app/state';
   import {
     initHistoryOverlayStack,
@@ -32,8 +33,7 @@
     type SwipeNavGestureState,
   } from '$lib/utils/swipeNavigation';
 
-  // NOUVEAUX IMPORTS POUR LE PUSH :
-  import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
+  import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
@@ -63,11 +63,8 @@
     return () => document.documentElement.classList.remove('mobile-convo-open');
   });
 
-  // ── Logs panel (global - fonctionne sur toutes les routes) ──────────────────
-  let showLogs = $state(false);
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
-  const statusLog = $derived(getStatusLog());
 
   beforeNavigate(({ from, to }) => {
     drainHistoryOverlayStack();
@@ -98,18 +95,11 @@
       if (document.visibilityState === 'visible') void refreshAppVersionCheck();
     });
 
-    const handler = () => {
-      showLogs = !showLogs;
-    };
-
-    window.addEventListener('canari:toggle-logs', handler);
-
     return () => {
       teardownHistory();
       teardownKeyboard();
       window.removeEventListener('focus', onVersionCheckTrigger);
       window.removeEventListener('online', onVersionCheckTrigger);
-      window.removeEventListener('canari:toggle-logs', handler);
     };
   });
 
@@ -331,11 +321,6 @@
     {/if}
   </div>
 
-  {#if showLogs}
-    <div class="fixed inset-0 z-50 flex justify-end pointer-events-none">
-      <div class="pointer-events-auto h-full w-full md:w-80">
-        <LogsPanel logs={statusLog} onClose={() => (showLogs = false)} />
-      </div>
-    </div>
-  {/if}
+  <ToastContainer />
+  <ConfirmDialog />
 </div>

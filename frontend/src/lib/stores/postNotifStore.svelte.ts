@@ -28,8 +28,9 @@ export const postNotifStore = {
     loading = true;
     try {
       notifications = await getPostNotifications(limit);
-    } catch {
-      // silent - stale data is better than an error screen
+    } catch (e) {
+      // stale data is better than an error screen; log for diagnostics
+      console.warn('[postNotifStore] load failed, keeping stale data:', e);
     } finally {
       loading = false;
     }
@@ -40,8 +41,8 @@ export const postNotifStore = {
     try {
       await markPostNotificationsRead();
       notifications = notifications.map((n) => ({ ...n, read: true }));
-    } catch {
-      // silent
+    } catch (e) {
+      console.warn('[postNotifStore] markAllRead failed:', e);
     }
   },
 };

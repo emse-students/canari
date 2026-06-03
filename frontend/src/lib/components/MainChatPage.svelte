@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -468,17 +469,15 @@
     const type = convo.conversationType ?? 'group';
     if (type === 'channel') return;
     if (!convo.isReady) {
-      alert('La session securisee n est pas encore prete. Reessayez dans un instant.');
+      showToast("La session sécurisée n'est pas encore prête. Réessayez dans un instant.", 'warning');
       return;
     }
     session.callService.startCall(convo.id, video).catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
-        alert(
-          'Ce groupe est desynchronise. Veuillez supprimer cette conversation et en recreer une nouvelle.'
-        );
+        showToast('Ce groupe est désynchronisé. Supprimez cette conversation et recréez-en une nouvelle.');
       } else {
-        alert(`Erreur appel: ${msg}`);
+        showToast(`Erreur appel : ${msg}`);
       }
     });
   }

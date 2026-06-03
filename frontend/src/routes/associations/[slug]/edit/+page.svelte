@@ -63,6 +63,7 @@
     GripVertical,
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import {
     ASSOCIATION_ADMIN_PRESET,
@@ -304,7 +305,7 @@
   }
 
   async function handleDelete() {
-    if (!asso || !confirm('Supprimer cette association ? Cette action est irréversible.')) return;
+    if (!asso || !await showConfirm('Supprimer cette association ? Cette action est irréversible.', { danger: true, confirmLabel: 'Supprimer' })) return;
     try {
       await deleteAssociation(asso.id);
       await goto('/associations');
@@ -455,7 +456,7 @@
   }
 
   async function handleRemoveLogo() {
-    if (!asso || !confirm('Retirer le logo affiché sur le fil et la page publique ?')) return;
+    if (!asso || !await showConfirm('Retirer le logo affiché sur le fil et la page publique ?', { danger: true, confirmLabel: 'Retirer' })) return;
     logoBusy = true;
     try {
       asso = await deleteAssociationLogo(asso.id);
@@ -512,7 +513,7 @@
   }
 
   async function handleRevokeTag(tag: UserTag) {
-    if (!asso || !confirm(`Révoquer le tag "${tag.tagName}" pour cet utilisateur ?`)) return;
+    if (!asso || !await showConfirm(`Révoquer le tag « ${tag.tagName} » pour cet utilisateur ?`, { danger: true, confirmLabel: 'Révoquer' })) return;
     try {
       await revokeAssociationTag(asso.id, tag.id);
       tags = tags.filter((t) => t.id !== tag.id);
@@ -624,7 +625,7 @@
   async function handleDeleteProduct(product: AssociationProduct) {
     if (
       !asso ||
-      !confirm(`Supprimer le produit "${product.name}" ? Cette action est irréversible.`)
+      !await showConfirm(`Supprimer le produit « ${product.name} » ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })
     )
       return;
     try {
@@ -1745,7 +1746,7 @@
                             <button
                               type="button"
                               onclick={async () => {
-                                if (!confirm('Annuler ce paiement ?')) return;
+                                if (!await showConfirm('Annuler ce paiement ?', { danger: true, confirmLabel: 'Annuler le paiement', cancelLabel: 'Non' })) return;
                                 try {
                                   await cancelCashSubmission(form.id, sub.id);
                                   pendingCash = {

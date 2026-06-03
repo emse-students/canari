@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
   import { Hand, Hash, Lock, Plus } from '@lucide/svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
   import SidebarHeaderControls from './SidebarHeaderControls.svelte';
@@ -253,7 +254,7 @@
     const value = channelName.trim();
     if (!value) return;
     if (!selectedCommunityWorkspaceId) {
-      alert("Veuillez sélectionner une communauté d'abord");
+      showToast("Veuillez sélectionner une communauté d'abord", 'warning');
       return;
     }
     onChannelInputChange?.(value);

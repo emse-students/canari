@@ -48,6 +48,7 @@
   const reminder = useFormReminder(page.params.id ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
+  let submitting = $state(false);
   let loading = $state(true);
   let error = $state('');
   let successMessage = $state('');
@@ -73,11 +74,10 @@
     const savedUser = currentUserId();
     if (savedUser) {
       userId = savedUser;
-      try {
-        await getToken();
-      } catch (e) {
-        console.error('Failed to get token', e);
-      }
+      await getToken().catch(() => {
+        // Silently ignore — the form loads fine without a pre-fetched token;
+        // apiFetch will retry on the first API call.
+      });
     }
 
     try {
@@ -198,7 +198,7 @@
   }
 
   async function handleSubmit() {
-    if (!form) return;
+    if (!form || submitting) return;
     if (isNotOpenYet && form.opensAt) {
       error = `Ce formulaire ouvre le ${formatFormOpensAt(form.opensAt)}.`;
       return;
@@ -242,6 +242,7 @@
     }
 
     error = '';
+    submitting = true;
     try {
       const { formCheckoutCallbacks } = await import('$lib/utils/stripeCallbacks');
       const total = calculateTotal();
@@ -273,6 +274,8 @@
       }
     } catch (e: any) {
       error = e.message || 'Échec de la soumission.';
+    } finally {
+      submitting = false;
     }
   }
 
@@ -808,7 +811,8 @@
         <Button
           variant="primary"
           class="shrink-0 px-6"
-          disabled={submitted || isNotOpenYet}
+          disabled={submitted || submitting || isNotOpenYet}
+          loading={submitting}
           onclick={handleSubmit}
         >
           {#if submitted}

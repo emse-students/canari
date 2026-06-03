@@ -9,6 +9,7 @@
   } from '$lib/associations/api';
   import { Check, X, Trash2, ExternalLink, Clock } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
@@ -88,7 +89,7 @@
   }
 
   async function remove(ev: AssociationCalendarFeedEvent) {
-    if (!confirm(`Supprimer « ${ev.title} » ?`)) return;
+    if (!await showConfirm(`Supprimer « ${ev.title} » ?`, { danger: true, confirmLabel: 'Supprimer' })) return;
     actingId = ev.id;
     try {
       await deleteAssociationCalendarEvent(ev.associationId, ev.id);

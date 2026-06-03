@@ -7,7 +7,7 @@
  * even when the user is not on the /chat page.
  *
  * Usage:
- *   import { globalSession, globalConvs, globalMessaging, globalChannels, globalNotifs, appendLog, getStatusLog } from '$lib/stores/globalChatSingleton.svelte';
+ *   import { globalSession, globalConvs, globalMessaging, globalChannels, globalNotifs, appendLog } from '$lib/stores/globalChatSingleton.svelte';
  */
 import { useChatSession } from '$lib/composables/useChatSession.svelte';
 import { useConversations } from '$lib/composables/useConversations.svelte';
@@ -24,19 +24,8 @@ export const globalMessaging = useMessaging();
 export const globalChannels = useChannelWorkspaces();
 export const globalNotifs = useNotifications();
 
-// ── Global log buffer (shared between background service and chat page) ───────
-let _statusLog = $state<string[]>([]);
-
-export function getStatusLog(): string[] {
-  return _statusLog;
-}
-
+/** Logs a timestamped entry to the browser/device console. On Tauri, `attachConsole` in the layout forwards these to adb logcat. */
 export function appendLog(msg: string): void {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const entry = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  _statusLog = [..._statusLog.slice(-299), entry];
-}
-
-export function clearStatusLog(): void {
-  _statusLog = [];
+  console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }

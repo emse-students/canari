@@ -30,6 +30,7 @@
     Settings,
   } from '@lucide/svelte';
   import { settings } from '$lib/stores/settingsStore.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -136,7 +137,7 @@
   }
 
   async function handleDeletePaymentMethod(id: string) {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cette carte bancaire ?')) return;
+    if (!await showConfirm('Supprimer cette carte bancaire ?', { danger: true, confirmLabel: 'Supprimer' })) return;
     try {
       await deletePaymentMethod(id);
       paymentMethods = paymentMethods.filter((m) => m.id !== id);

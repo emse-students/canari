@@ -1,9 +1,10 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
 @Injectable()
 export class AvatarService {
+  private readonly logger = new Logger(AvatarService.name);
   private readonly avatarApiUrl: string;
   private readonly avatarApiKey: string;
 
@@ -15,8 +16,8 @@ export class AvatarService {
     this.avatarApiKey = this.configService.get<string>('AVATAR_API_KEY', '');
 
     if (!this.avatarApiKey) {
-      console.warn(
-        'AVATAR_API_KEY is not set in environment variables. Avatar service will not work.',
+      this.logger.warn(
+        'AVATAR_API_KEY is not set — avatar proxy will not work.',
       );
     }
   }
@@ -69,7 +70,7 @@ export class AvatarService {
         }
       }
 
-      console.error('Error fetching avatar:', error);
+      this.logger.error('Error fetching avatar', error);
       throw new HttpException(
         'Failed to fetch avatar from external service',
         HttpStatus.BAD_GATEWAY,
