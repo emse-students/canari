@@ -67,19 +67,6 @@ export class MessagingController {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Post('mls/reinvite-request')
-  async notifyReinviteRequest(
-    @Body()
-    body: {
-      groupId: string;
-      requesterUserId: string;
-      requesterDeviceId: string;
-    },
-  ) {
-    return this.messagingService.notifyReinviteRequest(body);
-  }
-
-  @UseGuards(HeaderAuthGuard)
   @Get('mls/history/:groupId')
   async getHistory(
     @Param('groupId') groupId: string,

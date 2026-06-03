@@ -1162,7 +1162,7 @@ export class TauriMlsService implements IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale',
+    status: 'pending' | 'welcome_sent' | 'welcome_received',
     lastEpochSeen?: number
   ): Promise<void> {
     return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status, lastEpochSeen);

@@ -181,7 +181,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .getMany();
 
     for (const member of staleMembers) {
-      member.status = 'stale';
+      // Remettre en pending (pas en stale supprimé) — le device devra se ré-inviter.
+      member.status = 'pending';
       member.lastEpochSeen = 0;
       await this.deviceGroupRepo.save(member);
       await this.redis.srem(

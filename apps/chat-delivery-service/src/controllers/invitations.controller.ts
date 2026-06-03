@@ -82,12 +82,12 @@ export class InvitationsController {
       return [];
     }
 
-    // 2. Find all pending AND stale memberships in those groups
+    // 2. Find all pending memberships in those groups
     const pending = await this.deviceGroupRepo.find({
-      where: myGroupIds.flatMap((gid) => [
-        { groupId: gid, status: 'pending' as const },
-        { groupId: gid, status: 'stale' as const },
-      ]),
+      where: myGroupIds.map((gid) => ({
+        groupId: gid,
+        status: 'pending' as const,
+      })),
     });
 
     if (pending.length === 0) {
@@ -170,7 +170,7 @@ export class InvitationsController {
       deviceId: string;
       userId: string;
       groupId: string;
-      status: 'pending' | 'welcome_sent' | 'welcome_received' | 'stale';
+      status: 'pending' | 'welcome_sent' | 'welcome_received';
       lastEpochSeen?: number;
     },
   ) {
@@ -178,12 +178,7 @@ export class InvitationsController {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
 
-    const validStatuses = [
-      'pending',
-      'welcome_sent',
-      'welcome_received',
-      'stale',
-    ];
+    const validStatuses = ['pending', 'welcome_sent', 'welcome_received'];
     if (!validStatuses.includes(body.status)) {
       throw new BadRequestException(
         `status must be one of: ${validStatuses.join(', ')}`,
