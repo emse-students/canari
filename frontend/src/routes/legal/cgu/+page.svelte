@@ -2,10 +2,6 @@
   import { goto } from '$app/navigation';
 </script>
 
-<svelte:head>
-  <title>Conditions Générales d'Utilisation - Canari</title>
-</svelte:head>
-
 <div
   class="min-h-dvh overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
 >

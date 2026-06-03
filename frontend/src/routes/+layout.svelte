@@ -36,6 +36,7 @@
   import { getStatusLog, globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
 
   let { children } = $props();
@@ -269,9 +270,7 @@
   }
 </script>
 
-<svelte:head>
-  <title>{pageTitle}</title>
-</svelte:head>
+<SeoHead />
 
 <a href="#main-content" class="skip-link">Aller au contenu principal</a>
 

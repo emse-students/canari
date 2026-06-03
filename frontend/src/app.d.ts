@@ -6,7 +6,10 @@ declare global {
     interface Locals {
       token: string | null;
     }
-    // interface PageData {}
+    interface PageData {
+      /** Per-route SEO overrides for {@link import('$lib/components/seo/SeoHead.svelte').default}. */
+      seo?: import('$lib/seo/types').SeoMeta;
+    }
     // interface PageState {}
     // interface Platform {}
   }
