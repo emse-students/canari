@@ -176,7 +176,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     const staleMembers = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
-      .where('dgm.status = :status', { status: 'welcome_received' })
+      .where('dgm.status = :status', { status: 'active' })
       .andWhere('dgm.updatedAt < :staleDate', { staleDate })
       .getMany();
 
@@ -238,7 +238,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .createQueryBuilder('dgm')
       .select('DISTINCT dgm.deviceId', 'deviceId')
       .where('dgm.deviceId IN (:...deviceIds)', { deviceIds })
-      .andWhere('dgm.status = :status', { status: 'welcome_received' })
+      .andWhere('dgm.status = :status', { status: 'active' })
       .getRawMany<{ deviceId: string }>();
 
     const activeDeviceIds = new Set(activeDevices.map((d) => d.deviceId));

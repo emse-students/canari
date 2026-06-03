@@ -74,7 +74,7 @@ export class GroupsController {
         userId: body.createdBy,
         deviceId: body.creatorDeviceId,
         groupId,
-        status: 'welcome_received' as const,
+        status: 'active' as const,
         lastEpochSeen: 0,
       });
       await this.deviceGroupRepo.save(creatorMembership);

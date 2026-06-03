@@ -71,7 +71,7 @@ export class InvitationsController {
       where: {
         userId: safeUserId,
         deviceId: safeDeviceId,
-        status: 'welcome_received' as const,
+        status: 'active' as const,
       },
     });
     const myGroupIds = myMemberships.map((m) => m.groupId);
@@ -170,7 +170,7 @@ export class InvitationsController {
       deviceId: string;
       userId: string;
       groupId: string;
-      status: 'pending' | 'welcome_sent' | 'welcome_received';
+      status: 'pending' | 'active';
       lastEpochSeen?: number;
     },
   ) {
@@ -178,7 +178,7 @@ export class InvitationsController {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
 
-    const validStatuses = ['pending', 'welcome_sent', 'welcome_received'];
+    const validStatuses = ['pending', 'active', 'active'];
     if (!validStatuses.includes(body.status)) {
       throw new BadRequestException(
         `status must be one of: ${validStatuses.join(', ')}`,

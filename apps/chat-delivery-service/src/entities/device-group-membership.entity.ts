@@ -15,7 +15,7 @@ import {
  * - `welcome_sent`     - Un Welcome a été mis en queue pour ce device.
  * - `welcome_received` - Le device a traité son Welcome et est en sync.
  */
-export type DeviceGroupStatus = 'pending' | 'welcome_sent' | 'welcome_received';
+export type DeviceGroupStatus = 'pending' | 'active';
 
 /**
  * Tracks whether a specific device (identified by userId + deviceId) is a member
@@ -49,7 +49,7 @@ export class DeviceGroupMembership {
    */
   @Column({
     type: 'enum',
-    enum: ['pending', 'welcome_sent', 'welcome_received'],
+    enum: ['pending', 'active', 'active'],
     default: 'pending',
   })
   status: DeviceGroupStatus;

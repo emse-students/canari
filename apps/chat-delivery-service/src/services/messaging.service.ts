@@ -389,7 +389,7 @@ export class MessagingService implements OnModuleInit {
         const memberships = await this.deviceGroupRepo.find({
           where: {
             groupId: fallbackGroupId,
-            status: In(['welcome_sent', 'welcome_received']),
+            status: In(['active', 'active']),
           },
         });
         const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
@@ -813,7 +813,7 @@ export class MessagingService implements OnModuleInit {
     await this.deviceGroupRepo
       .createQueryBuilder()
       .update()
-      .set({ status: 'welcome_sent' as const })
+      .set({ status: 'active' as const })
       .where(
         'deviceId = :deviceId AND groupId = :groupId AND status = :status',
         { deviceId: targetDeviceId, groupId: safeGroupId, status: 'pending' },
@@ -872,7 +872,7 @@ export class MessagingService implements OnModuleInit {
         `[WELCOME_REQ][${traceId}] REDIS_EMPTY - falling back to DB for group=${groupId}`,
       );
       const dbMembers = await this.deviceGroupRepo.find({
-        where: { groupId, status: In(['welcome_received', 'welcome_sent']) },
+        where: { groupId, status: In(['active', 'active']) },
       });
       if (dbMembers.length > 0) {
         members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
