@@ -70,8 +70,6 @@ export async function processPendingInvitations(params: {
 
   let totalWelcomes = 0;
 
-  // Cooldown de 5 min par groupe pour éviter de spammer reinvite_request à chaque reconnexion.
-  const REINVITE_COOLDOWN_MS = 5 * 60_000;
   const MAX_SUCCESSOR_HOPS = 5;
 
   for (const [origGroupId, invitations] of byGroup) {
@@ -109,17 +107,12 @@ export async function processPendingInvitations(params: {
                 .catch(() => {});
             }
           } else {
-            const tsKey = `reinvite_requested:${resolved}`;
-            const lastTs = Number(localStorage.getItem(tsKey) ?? 0);
-            if (Date.now() - lastTs > REINVITE_COOLDOWN_MS) {
-              localStorage.setItem(tsKey, String(Date.now()));
-              mlsService.sendReinviteRequest(resolved).catch(() => {});
-              log(
-                `[PENDING] Groupe ${origGroupId} absent localement → reinvite_request envoyé pour ${resolved}`
-              );
-            } else {
-              log(`[PENDING] Groupe ${origGroupId}: reinvite_request déjà envoyé récemment - skip`);
-            }
+            // Groupe présent sur le serveur mais absent du WASM local → welcome_request.
+            // Le watchdog de useChatSession escalade vers reboot après 30s si pas de réponse.
+            mlsService.sendWelcomeRequest(resolved).catch(() => {});
+            log(
+              `[PENDING] Groupe ${origGroupId} absent localement → welcome_request envoyé pour ${resolved}`
+            );
           }
         } else {
           log(`[PENDING] Groupe ${groupId}: conversation locale non prête - skip`);

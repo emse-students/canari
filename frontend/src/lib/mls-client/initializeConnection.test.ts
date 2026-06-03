@@ -118,16 +118,14 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
-      getUserGroups: vi
-        .fn()
-        .mockResolvedValue([
-          {
-            groupId: 'g-deleted',
-            name: 'Deleted',
-            isGroup: true,
-            deletedAt: '2026-01-01T00:00:00Z',
-          },
-        ]),
+      getUserGroups: vi.fn().mockResolvedValue([
+        {
+          groupId: 'g-deleted',
+          name: 'Deleted',
+          isGroup: true,
+          deletedAt: '2026-01-01T00:00:00Z',
+        },
+      ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
     };
     const log = vi.fn();

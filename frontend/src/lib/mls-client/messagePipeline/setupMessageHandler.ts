@@ -1,8 +1,8 @@
-import { isRawId, parseDirectPeerFromName } from '$lib/utils/chat/conversations';
+import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
-import { requestReAdd, cancelReAdd, reboot } from '$lib/utils/chat/recovery';
+import { requestReAdd, cancelReAdd } from '$lib/utils/chat/recovery';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import {
@@ -31,26 +31,7 @@ type PendingMsg = { sender: string; content: Uint8Array };
  * 3. L'état recovery (timers) est en mémoire seulement — reset à chaque session.
  */
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
-  const {
-    mlsService,
-    storage,
-    userId,
-    pin,
-    historyBaseUrl,
-    conversations,
-    messageReactions,
-    setSelectedContact,
-    saveConversation,
-    deleteConversation,
-    addMessageToChat,
-    batchAddMessages,
-    loadHistoryForConversation,
-    onCallSignal,
-    onGroupReady,
-    log,
-  } = deps;
-
-  const { getSelectedContact } = deps;
+  const { mlsService, pin, userId, log } = deps;
 
   installWasmDuplicateDeliveryLogInterceptor();
 
@@ -92,8 +73,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Événements canal (channel membership, epoch_rejected, etc.)
   mlsService.onChannelEvent = (event) => {
     void handleChannelEvent(event, {
-      conversations,
-      addMessageToChat,
+      conversations: deps.conversations,
+      addMessageToChat: deps.addMessageToChat,
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,
       onChannelUpdated: deps.onChannelUpdated,
@@ -191,9 +172,7 @@ async function handleWelcome({
   const {
     mlsService,
     userId,
-    pin,
     conversations,
-    storage,
     saveConversation,
     loadHistoryForConversation,
     historyBaseUrl,
@@ -374,19 +353,13 @@ async function handleKnownGroup({
 }: KnownGroupArgs): Promise<boolean> {
   const {
     mlsService,
-    userId,
     conversations,
     messageReactions,
     storage,
     pin,
     addMessageToChat,
-    batchAddMessages,
     onCallSignal,
     log,
-    saveConversation,
-    getSelectedContact,
-    setSelectedContact,
-    deleteConversation,
   } = deps;
 
   const convoKey = groupId;

@@ -590,11 +590,11 @@ export function useMessaging() {
             if (active !== false) {
               ctx
                 .ensureMls()
-                .sendReinviteRequest(staleConvo.id)
+                .sendWelcomeRequest(staleConvo.id)
                 .catch(() => {});
               ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
               ctx.log(
-                `[SEND] GroupNotFound → isReady=false + reinvite_request (${ctx.selectedContact})`
+                `[SEND] GroupNotFound → isReady=false + welcome_request (${ctx.selectedContact})`
               );
             } else {
               ctx.setSendError('Ce groupe a été supprimé.');

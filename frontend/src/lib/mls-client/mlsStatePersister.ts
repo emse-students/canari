@@ -26,7 +26,9 @@ export interface MlsStatePersister {
   onBulkIngestEnd(): Promise<void>;
 }
 
-const DEFAULT_DEFERRED_MS = 8_000;
+// 2s pour les messages applicatifs (ratchet advance) — fenêtre de perte réduite vs 8s initial.
+// Les commits sont persistés immédiatement via persistNow() et n'atteignent pas ce timer.
+const DEFAULT_DEFERRED_MS = 2_000;
 
 /**
  * Creates a coalesced MLS persistence helper used by the inbound message pipeline.
