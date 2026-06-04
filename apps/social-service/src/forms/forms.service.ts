@@ -354,6 +354,14 @@ export class FormsService {
       return { submissionId: savedSubmission.id, cashPayment: true };
     }
 
+    // Stripe minimum is 50 cents for all supported currencies
+    const STRIPE_MIN_CENTS = 50;
+    if (totalCents > 0 && totalCents < STRIPE_MIN_CENTS) {
+      throw new BadRequestException(
+        `Le montant total (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) est inférieur au minimum Stripe de 0,50 ${currency.toUpperCase()}. Ajustez le prix du formulaire.`,
+      );
+    }
+
     if (totalCents > 0) {
       // Delegate checkout creation to the central payment service as a single consolidated item
       const singleLineItem: any[] = [
