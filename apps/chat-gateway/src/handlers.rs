@@ -17,9 +17,7 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
-use crate::ws_dispatch::{
-    WsConn, WsFrame, handle_disconnect, handle_reinvite_request, handle_welcome_request,
-};
+use crate::ws_dispatch::{WsConn, WsFrame, handle_disconnect, handle_welcome_request};
 
 // ── Cookie helper ─────────────────────────────────────────────────────────
 
@@ -197,7 +195,8 @@ pub async fn ws_handler(
 /// Responsibilities:
 /// - Registers the outbound sender in `AppState::connected_users`.
 /// - Sets (and periodically refreshes) the `user:online:{userId}:{deviceId}` Redis key.
-/// - Drains any legacy `pending_welcomes` queued in Redis and flushes them to the client.
+/// - Drains `pending_welcome_notify:{userId}` — welcome_request signals stored while
+///   all group members were offline — and forwards them so this device can handle them.
 /// - Spawns two concurrent tasks: a **send task** (outbound frames + ping heartbeat) and
 ///   a **recv task** (inbound frame dispatch).
 /// - Uses `ConnectionGuard` to ensure cleanup happens even on task cancellation.
@@ -271,62 +270,51 @@ async fn handle_socket(
                 tracing::info!("[presence] Online: {} (TTL=20s)", conn_key);
             }
 
-            // ── Drain legacy pending_welcomes ─────────────────────────
-            let welcome_key = format!("pending_welcomes:{}", user_id);
+            // ── Drain pending welcome_request signals ─────────────────
+            // Quand aucun peer n'était en ligne pour une welcome_request, le
+            // delivery service stocke le signal dans pending_welcome_notify:{userId}
+            // pour chaque membre du groupe. Le premier membre qui se reconnecte
+            // reçoit ces signaux et peut déclencher les Welcomes manquants.
+            let notify_key = format!("pending_welcome_notify:{}", user_id);
             match redis::cmd("LRANGE")
-                .arg(&welcome_key)
+                .arg(&notify_key)
                 .arg(0)
                 .arg(-1)
                 .query_async::<Vec<String>>(&mut con)
                 .await
             {
                 Ok(msgs) if !msgs.is_empty() => {
-                    for msg in msgs {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
-                            let b64_payload = parsed["content"]
-                                .as_str()
-                                .or_else(|| parsed["payload"].as_str())
-                                .unwrap_or_default();
-                            let sender_id = parsed["senderId"]
-                                .as_str()
-                                .or_else(|| parsed["sender_id"].as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let group_id = parsed["groupId"]
-                                .as_str()
-                                .or_else(|| parsed["group_id"].as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let json_msg = serde_json::json!({
-                                "senderId": sender_id,
-                                "senderDeviceId": "",
-                                "groupId": group_id,
-                                "isWelcome": true,
-                                "proto": b64_payload
-                            })
-                            .to_string();
-                            if ws_sender
-                                .send(Message::Text(json_msg.into()))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
+                    tracing::info!(
+                        "[pending_welcome] Draining {} welcome_request(s) for {}",
+                        msgs.len(),
+                        user_id
+                    );
+                    let mut send_ok = true;
+                    for msg in &msgs {
+                        if ws_sender
+                            .send(Message::Text(msg.clone().into()))
+                            .await
+                            .is_err()
+                        {
+                            send_ok = false;
+                            break;
                         }
                     }
-                    if let Err(e) = redis::cmd("DEL")
-                        .arg(&welcome_key)
-                        .query_async::<()>(&mut con)
-                        .await
-                    {
-                        tracing::warn!(
-                            "[presence] DEL pending_welcomes failed for {}: {}",
-                            user_id,
-                            e
-                        );
+                    // Supprimer la clé même en cas d'échec partiel : le delivery
+                    // service réémettra via FCM si la welcome_request reste en attente.
+                    if send_ok {
+                        if let Err(e) = redis::cmd("DEL")
+                            .arg(&notify_key)
+                            .query_async::<()>(&mut con)
+                            .await
+                        {
+                            tracing::warn!("[pending_welcome] DEL {} failed: {}", notify_key, e);
+                        }
                     }
                 }
-                Err(e) => tracing::warn!("[presence] LRANGE pending_welcomes failed: {}", e),
+                Err(e) => {
+                    tracing::warn!("[pending_welcome] LRANGE {} failed: {}", notify_key, e)
+                }
                 _ => {}
             }
 
@@ -489,15 +477,6 @@ async fn handle_socket(
                                     tx: &tx_for_dispatch,
                                 };
                                 handle_welcome_request(&conn, &frame).await;
-                            }
-                            "reinvite_request" => {
-                                let conn = WsConn {
-                                    state: &state,
-                                    user_id: &user_id,
-                                    device_id: &device_id,
-                                    tx: &tx_for_dispatch,
-                                };
-                                handle_reinvite_request(&conn, &frame).await;
                             }
                             _ => {}
                         }

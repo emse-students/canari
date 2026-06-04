@@ -15,7 +15,7 @@ export function buildUserGroupSyncIndex(groups: UserGroupRow[]): UserGroupSyncIn
 }
 
 /**
- * Whether recovery signals (welcome_request / reinvite_request) may be sent for `groupId`.
+ * Whether a `welcome_request` recovery signal may be sent for `groupId`.
  * When `index` is null (server list unavailable), returns true to preserve prior behaviour.
  */
 export function isGroupEligibleForMlsRecovery(

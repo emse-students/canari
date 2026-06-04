@@ -1000,6 +1000,34 @@ export class MessagingService implements OnModuleInit {
     pipeline.expire(pendingSetKey, 86400); // 24 h TTL
     await pipeline.exec();
 
+    // Stocker également par membre dans pending_welcome_notify:{userId} pour que le
+    // Gateway puisse drainer les signaux dès qu'un membre se reconnecte, sans attendre
+    // une prochaine welcome_request. Le format est le JSON que le Gateway enverra
+    // directement au client WebSocket.
+    const notificationFrame = JSON.stringify({
+      type: 'welcome_request',
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+    });
+    const uniqueMemberUserIds = [
+      ...new Set(
+        members
+          .filter((m) => m !== senderKey)
+          .map((m) => m.split(':')[0])
+          .filter(Boolean),
+      ),
+    ];
+    if (uniqueMemberUserIds.length > 0) {
+      const notifyPipeline = this.redis.pipeline();
+      for (const memberUserId of uniqueMemberUserIds) {
+        const notifyKey = `pending_welcome_notify:${memberUserId}`;
+        notifyPipeline.rpush(notifyKey, notificationFrame);
+        notifyPipeline.expire(notifyKey, 86400); // même TTL 24 h
+      }
+      await notifyPipeline.exec();
+    }
+
     // Wake up offline peers via FCM so they reconnect and drain the pending request
     // without waiting for an organic reconnection.
     await this.sendFcmWelcomeRequestPending(

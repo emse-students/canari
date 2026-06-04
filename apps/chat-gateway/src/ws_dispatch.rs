@@ -7,7 +7,6 @@
 //
 // Remaining inbound frame types:
 //   • welcome_request   - forwarded to one online peer
-//   • reinvite_request  - forwarded to one online peer
 //   • read              - no-op
 
 use std::sync::Arc;
@@ -118,33 +117,6 @@ pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
         "groupId": frame.group_id,
         "requesterUserId": conn.user_id,
         "requesterDeviceId": conn.device_id,
-    })
-    .to_string();
-
-    let sender_key = format!("{}:{}", conn.user_id, conn.device_id);
-    forward_to_one_peer(conn, &frame.group_id, &sender_key, notification).await;
-}
-
-// ── Handler: "reinvite_request" ───────────────────────────────────────────
-
-/// Handle a `reinvite_request` frame from a client that needs to be re-added to a group.
-///
-/// Builds a notification JSON object and forwards it to exactly one online
-/// group peer that is not the sender.  If no peer is reachable, sends
-/// `no_peer_online` back to the requester.
-pub async fn handle_reinvite_request(conn: &WsConn<'_>, frame: &WsFrame) {
-    tracing::info!(
-        "Processing reinvite_request from {}:{} for group {}",
-        conn.user_id,
-        conn.device_id,
-        frame.group_id
-    );
-
-    let notification = serde_json::json!({
-        "type": "reinvite_request",
-        "senderId": conn.user_id,
-        "senderDeviceId": conn.device_id,
-        "groupId": frame.group_id,
     })
     .to_string();
 

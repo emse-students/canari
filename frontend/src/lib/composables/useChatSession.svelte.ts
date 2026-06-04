@@ -25,7 +25,13 @@ import {
   processDevWelcome,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
-import { cancelReAdd, checkGroupSuccessors, reboot, requestReAdd } from '$lib/utils/chat/recovery';
+import {
+  cancelReAdd,
+  checkGroupSuccessors,
+  reboot,
+  requestReAdd,
+  RECOVERY_TIMEOUT_MS,
+} from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
@@ -144,7 +150,7 @@ export function useChatSession() {
    * Vidés au logout.
    */
   const connectionRecoveryTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
-  const CONNECTION_WATCHDOG_MS = 30_000;
+  const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
   let isReconnecting = false;
   let isSyncing = false;
   /** Latest session callbacks for tab-leader promotion → WebSocket reconnect. */
@@ -698,7 +704,7 @@ export function useChatSession() {
           const since = notReadySince.get(id);
           if (since === undefined) {
             notReadySince.set(id, now);
-          } else if (now - since > 30_000 && !rebootingGroups.has(id)) {
+          } else if (now - since > RECOVERY_TIMEOUT_MS && !rebootingGroups.has(id)) {
             notReadySince.delete(id);
             rebootingGroups.add(id);
             cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s — reboot`);

@@ -4,7 +4,13 @@ vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { requestReAdd, cancelReAdd, reboot, migrateConversation } from './recovery';
+import {
+  requestReAdd,
+  cancelReAdd,
+  reboot,
+  migrateConversation,
+  RECOVERY_TIMEOUT_MS,
+} from './recovery';
 import { saveMlsState } from '$lib/utils/hex';
 
 beforeEach(() => {
@@ -88,7 +94,7 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('après 30s sans Welcome → appelle reboot', async () => {
+  it(`après ${RECOVERY_TIMEOUT_MS / 1000}s sans Welcome → appelle reboot`, async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -96,7 +102,7 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps, timers);
 
     // reboot appelle claimGroupSuccessor et createRemoteGroup
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(RECOVERY_TIMEOUT_MS);
 
     expect(deps.mlsService.createRemoteGroup).toHaveBeenCalled();
     expect(deps.mlsService.claimGroupSuccessor).toHaveBeenCalled();

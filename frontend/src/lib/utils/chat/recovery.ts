@@ -6,6 +6,13 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { sendFullHistoryBundle } from './groupActions';
 
 /**
+ * Délai avant d'escalader de welcome_request vers reboot.
+ * 60s laisse le temps au FCM iOS (background) de réveiller le pair
+ * et de recevoir le Welcome avant de recréer un groupe successeur.
+ */
+export const RECOVERY_TIMEOUT_MS = 60_000;
+
+/**
  * Dépendances minimales requises par les fonctions de recovery.
  * Sous-ensemble de MessageHandlerDeps — les deux sont compatibles.
  */
@@ -46,12 +53,14 @@ export async function requestReAdd(
   const t = setTimeout(async () => {
     timers.delete(groupId);
     if (!deps.mlsService.getLocalGroups().includes(groupId)) {
-      deps.log(`[READD] 30s écoulées sans Welcome pour ${groupId.slice(0, 8)}… — reboot`);
+      deps.log(
+        `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${groupId.slice(0, 8)}… — reboot`
+      );
       await reboot(groupId, deps).catch((e) =>
         deps.log(`[READD] reboot échoué pour ${groupId.slice(0, 8)}…: ${String(e)}`)
       );
     }
-  }, 30_000);
+  }, RECOVERY_TIMEOUT_MS);
   timers.set(groupId, t);
 }
 

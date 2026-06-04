@@ -194,17 +194,12 @@ async fn main() {
                                     }
                                 };
 
-                                // welcome_request / reinvite_request control frames: proto is
-                                // base64(JSON notification). Decode and relay as plain WS text;
-                                // do NOT wrap in the MLS envelope.
+                                // welcome_request control frames: proto is base64(JSON notification).
+                                // Decode and relay as plain WS text; do NOT wrap in the MLS envelope.
                                 let is_control = json
                                     .get("isWelcomeRequest")
                                     .and_then(|v| v.as_bool())
-                                    .unwrap_or(false)
-                                    || json
-                                        .get("isReinviteRequest")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
+                                    .unwrap_or(false);
                                 let json_frame = if is_control {
                                     // Control frames carry a base64-encoded JSON notification
                                     // in `proto`; decode it so the client receives plain JSON.
