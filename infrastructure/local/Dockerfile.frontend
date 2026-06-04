@@ -46,8 +46,14 @@ RUN printf 'server {\n\
     add_header Cache-Control "public, max-age=3600";\n\
     }\n\
     \n\
+    location /_app/immutable/ {\n\
+    try_files $uri =404;\n\
+    add_header Cache-Control "public, max-age=31536000, immutable" always;\n\
+    }\n\
+    \n\
     location / {\n\
     try_files $uri $uri/ /index.html;\n\
+    add_header Cache-Control "no-store" always;\n\
     }\n\
     \n\
     location /api/ws {\n\
