@@ -590,7 +590,7 @@ export class MlsDeliveryApi {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'welcome_sent' | 'welcome_received',
+    status: 'pending' | 'active',
     lastEpochSeen?: number
   ): Promise<void> {
     try {

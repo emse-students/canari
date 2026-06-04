@@ -168,7 +168,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * they can no longer catch up by processing missed commits - the only
    * recovery path is a full re-invite (reset to "pending").
    *
-   * Only devices in "welcome_received" state are candidates: they were once
+   * Only devices in `active` state are candidates: they were once
    * active but have gone silent for longer than the retention TTL.
    */
   private async detectStaleDevices() {
@@ -181,7 +181,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .getMany();
 
     for (const member of staleMembers) {
-      // Remettre en pending (pas en stale supprimé) — le device devra se ré-inviter.
+      // Remettre en pending — le device devra recevoir un nouveau Welcome.
       member.status = 'pending';
       member.lastEpochSeen = 0;
       await this.deviceGroupRepo.save(member);

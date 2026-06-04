@@ -66,7 +66,7 @@ export class InvitationsController {
       `[PENDING][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
     );
 
-    // 1. Get groups where this device is already a full member (welcome_received)
+    // 1. Get groups where this device is already active (has processed its Welcome)
     const myMemberships = await this.deviceGroupRepo.find({
       where: {
         userId: safeUserId,
@@ -77,7 +77,7 @@ export class InvitationsController {
     const myGroupIds = myMemberships.map((m) => m.groupId);
     if (myGroupIds.length === 0) {
       this.logger.log(
-        `[PENDING][${traceId}] No welcome_received membership for ${safeUserId}:${safeDeviceId}`,
+        `[PENDING][${traceId}] No active membership for ${safeUserId}:${safeDeviceId}`,
       );
       return [];
     }
@@ -129,7 +129,7 @@ export class InvitationsController {
 
   /**
    * Returns all device-group memberships for a specific device (so the device
-   * knows which groups it's pending / welcome_sent / welcome_received / stale for).
+   * knows which groups it's `pending` or `active` in).
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/device-memberships/:userId/:deviceId')
@@ -158,9 +158,7 @@ export class InvitationsController {
 
   /**
    * Update the status of a device-group membership.
-   * Valid membership states are: pending, welcome_sent, welcome_received, stale.
-   * The add-member endpoint separately returns { status: 'added' }, but that is
-   * not a persisted DeviceGroupMembership state.
+   * Valid states: `pending` (Welcome not yet processed) or `active` (Welcome received and in sync).
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/invitations/status')
@@ -178,7 +176,7 @@ export class InvitationsController {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
 
-    const validStatuses = ['pending', 'active', 'active'];
+    const validStatuses = ['pending', 'active'];
     if (!validStatuses.includes(body.status)) {
       throw new BadRequestException(
         `status must be one of: ${validStatuses.join(', ')}`,
@@ -215,9 +213,9 @@ export class InvitationsController {
   }
 
   /**
-   * Reset all device-group memberships of a user in a group to "pending".
-   * Called by a client after it has performed the MLS remove commit for a
-   * stale user.  All devices of that user are kicked and will be re-invited.
+   * Reset all device-group memberships of a user in a group to `pending`.
+   * Called by a client after it has performed the MLS remove commit for a user.
+   * All devices of that user will be re-invited on the next sync cycle.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/kick-stale-user')
@@ -253,7 +251,7 @@ export class InvitationsController {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/kick-stale-device')
-  /** Resets a single stale device membership in a group back to pending so the device can be re-invited. */
+  /** Resets a single device membership in a group back to `pending` so it can be re-invited. */
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },
   ) {
@@ -323,10 +321,9 @@ export class InvitationsController {
   }
 
   /**
-   * Force la sortie de l'appareil appelant d'un groupe dont il ne peut plus traiter
-   * les messages (état MLS irrécupérable). Supprime le DeviceGroupMembership et retire
-   * l'appareil du set Redis de routage afin que le serveur arrête de lui envoyer des
-   * messages pour ce groupe. Utilisé par la politique "Poison Pill" côté client.
+   * Force la sortie d'un device d'un groupe (état MLS irrécupérable ou reboot demandé).
+   * Supprime le DeviceGroupMembership et retire le device du set Redis de routage
+   * afin que le serveur cesse de lui envoyer des messages pour ce groupe.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups/:groupId/force_leave')

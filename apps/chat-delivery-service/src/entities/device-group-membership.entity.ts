@@ -11,9 +11,8 @@ import {
 /**
  * Lifecycle state of a single device's membership in an MLS group.
  *
- * - `pending`          - Device n'a pas encore traité de Welcome pour ce groupe.
- * - `welcome_sent`     - Un Welcome a été mis en queue pour ce device.
- * - `welcome_received` - Le device a traité son Welcome et est en sync.
+ * - `pending` : le device n'a pas encore traité de Welcome pour ce groupe.
+ * - `active`  : le device a traité son Welcome et est en sync.
  */
 export type DeviceGroupStatus = 'pending' | 'active';
 
@@ -43,13 +42,10 @@ export class DeviceGroupMembership {
   @Column({ type: 'uuid' })
   groupId: string;
 
-  /**
-   * Current onboarding state of this device within the group.
-   * Allowed values: `pending` | `welcome_sent` | `welcome_received` | `stale`.
-   */
+  /** Current membership state: `pending` until the device processes its Welcome, then `active`. */
   @Column({
     type: 'enum',
-    enum: ['pending', 'active', 'active'],
+    enum: ['pending', 'active'],
     default: 'pending',
   })
   status: DeviceGroupStatus;

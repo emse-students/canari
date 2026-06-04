@@ -68,7 +68,7 @@ export class GroupsController {
     });
     await this.groupRepo.save(newGroup);
 
-    // Mark the creator's device as welcome_received (they created the group locally)
+    // Mark the creator's device as active (they created the group locally, no Welcome needed)
     if (body.createdBy && body.creatorDeviceId) {
       const creatorMembership = this.deviceGroupRepo.create({
         userId: body.createdBy,
@@ -79,7 +79,7 @@ export class GroupsController {
       });
       await this.deviceGroupRepo.save(creatorMembership);
       this.logger.log(
-        `[CREATE_GROUP][${traceId}] creator membership set to welcome_received`,
+        `[CREATE_GROUP][${traceId}] creator membership set to active`,
       );
     }
 

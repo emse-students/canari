@@ -71,8 +71,6 @@ export function createMlsServiceStub(
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
     onWelcomeProcessed: vi.fn(),
-    sendReinviteRequest: vi.fn().mockResolvedValue(undefined),
-    onReinviteRequest: vi.fn(),
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
     onWelcomeRequest: vi.fn(),
     sendDisconnect: vi.fn(),

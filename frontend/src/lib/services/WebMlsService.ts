@@ -42,8 +42,6 @@ export class WebMlsService implements IMlsService {
       ) => Promise<boolean>)
     | null = null;
   private disconnectCallback: (() => void) | null = null;
-  private reinviteRequestCallback: ((senderDeviceId: string, groupId: string) => void) | null =
-    null;
   private welcomeRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
@@ -399,13 +397,6 @@ export class WebMlsService implements IMlsService {
             }
             return;
           }
-          if (msg.type === 'reinvite_request') {
-            const senderDev = (msg.senderDeviceId as string) || '';
-            const groupId = (msg.groupId as string) || '';
-            console.log(`[WS RCV] reinvite_request from ${senderDev} for group ${groupId}`);
-            this.reinviteRequestCallback?.(senderDev, groupId);
-            return;
-          }
           if (msg.type === 'welcome_request') {
             const requesterUserId = (msg.requesterUserId as string) || '';
             const requesterDeviceId = (msg.requesterDeviceId as string) || '';
@@ -612,19 +603,6 @@ export class WebMlsService implements IMlsService {
 
   onDisconnect(callback: () => void) {
     this.disconnectCallback = callback;
-  }
-
-  /** WASM client wrapper - broadcasts a reinvite_request signal to online group members via the delivery service. */
-  async sendReinviteRequest(groupId: string): Promise<void> {
-    await this.delivery.deliveryPost('reinvite-request', {
-      groupId,
-      requesterUserId: this.userId,
-      requesterDeviceId: this.deviceId,
-    });
-  }
-
-  onReinviteRequest(callback: (senderDeviceId: string, groupId: string) => void): void {
-    this.reinviteRequestCallback = callback;
   }
 
   /** WASM client wrapper - signals the delivery service that this device needs a Welcome for the given group. */
@@ -1289,12 +1267,12 @@ export class WebMlsService implements IMlsService {
     return this.delivery.getDeviceMemberships(userId, deviceId);
   }
 
-  /** WASM client wrapper - POSTs an invitation status update (e.g. welcome_received) to the delivery service. */
+  /** Updates the membership status of a device in a group on the delivery service. */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'welcome_sent' | 'welcome_received',
+    status: 'pending' | 'active',
     lastEpochSeen?: number
   ): Promise<void> {
     return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status, lastEpochSeen);

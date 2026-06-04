@@ -209,7 +209,7 @@ export interface IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'welcome_sent' | 'welcome_received',
+    status: 'pending' | 'active',
     lastEpochSeen?: number
   ): Promise<void>;
 
@@ -280,12 +280,6 @@ export interface IMlsService {
     onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
     onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void;
-
-  // Device sync notification
-  /** Broadcasts a reinvite_request control frame so group members know this device needs re-inviting. */
-  sendReinviteRequest(groupId: string): Promise<void>;
-  /** Registers a callback invoked when another device sends a reinvite_request for a group this device manages. */
-  onReinviteRequest(callback: (senderDeviceId: string, groupId: string) => void): void;
 
   /**
    * Announce to all online members of `groupId` that this device needs a Welcome.

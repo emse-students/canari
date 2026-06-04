@@ -9,11 +9,10 @@
 /**
  * État de membership d'un device dans un groupe, côté serveur.
  *
- * - `pending`  : le device fait partie du groupe mais n'a pas encore traité de Welcome.
- * - `active`   : le device a traité son Welcome et est en sync.
- * - `removed`  : le device a été retiré du groupe par un commit MLS.
+ * - `pending` : le device n'a pas encore traité de Welcome pour ce groupe.
+ * - `active`  : le device a traité son Welcome et est en sync.
  */
-export type MembershipStatus = 'pending' | 'active' | 'removed';
+export type MembershipStatus = 'pending' | 'active';
 
 /**
  * Résultat typé du traitement d'un message MLS entrant.

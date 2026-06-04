@@ -555,18 +555,6 @@ export function useChatSession() {
         });
       }
 
-      // When a device in MLS recovery sends a reinvite_request, re-run
-      // processPendingInvitations so we re-invite it and send a fresh Welcome.
-      // The add-lock inside processPendingInvitations handles concurrent calls.
-      mlsService.onReinviteRequest((senderDeviceId: string, groupId: string) => {
-        cb.log(`[SYNC] reinvite_request reçu de ${senderDeviceId} pour groupe ${groupId}`);
-        processDeviceInvitationsLocally(cb).catch((e) =>
-          cb.log(
-            `[WARN] Echec sync appareils (reinvite_request): ${e instanceof Error ? e.message : String(e)}`
-          )
-        );
-      });
-
       // When a device (from any user) sends a welcome_request for a group we belong to,
       // race to acquire the add-lock and, if we win, invite the device and send a commit.
       mlsService.onWelcomeRequest(

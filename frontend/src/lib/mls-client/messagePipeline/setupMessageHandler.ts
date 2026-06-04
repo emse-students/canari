@@ -96,13 +96,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           content,
           groupId,
           ratchetTreeBytes,
-          isCommit,
-          deliveryMeta,
           deps,
           statePersister,
           pendingBuffer,
           recoveryTimers,
-          onOutOfSync,
         });
       }
 
@@ -143,13 +140,10 @@ interface WelcomeArgs {
   content: Uint8Array;
   groupId: string | undefined;
   ratchetTreeBytes: Uint8Array | undefined;
-  isCommit: boolean | undefined;
-  deliveryMeta: any;
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
   pendingBuffer: Map<string, { msgs: PendingMsg[]; timer: ReturnType<typeof setTimeout> }>;
   recoveryTimers: Map<string, ReturnType<typeof setTimeout>>;
-  onOutOfSync: (groupId: string) => Promise<void>;
 }
 
 /**
@@ -167,12 +161,10 @@ async function handleWelcome({
   statePersister,
   pendingBuffer,
   recoveryTimers,
-  onOutOfSync,
 }: WelcomeArgs): Promise<boolean> {
   const {
     mlsService,
     userId,
-    conversations,
     saveConversation,
     loadHistoryForConversation,
     historyBaseUrl,
@@ -201,10 +193,9 @@ async function handleWelcome({
 
     // Enregistrement côté serveur (idempotent)
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
-    // Marquer le device comme ayant reçu son Welcome (pour que les autres devices
-    // sachent ne pas le réinviter lors de processPendingInvitations).
+    // Marquer le device comme actif (pour que les autres devices ne le réinvitent plus).
     await mlsService
-      .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'welcome_received')
+      .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
       .catch(() => {});
 
     // Récupérer les métadonnées du groupe pour créer/mettre à jour la conversation
