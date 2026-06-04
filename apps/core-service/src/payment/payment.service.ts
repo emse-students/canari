@@ -76,7 +76,9 @@ export class PaymentService {
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
-      payment_method_types: ['card'],
+      payment_method_configuration:
+        process.env.STRIPE_PAYMENT_METHOD_CONFIG ??
+        'pmc_1TdxcNLoXhDAjno0wKO8Ex7D',
       line_items: params.lineItems,
       metadata: params.metadata,
       success_url: params.successUrl,
