@@ -288,8 +288,6 @@ export class TauriMlsService implements IMlsService {
             const msgId = (msg.id || msg._id) as string | undefined;
             const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
             const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
-            const content: string | undefined =
-              typeof msg.content === 'string' ? msg.content : undefined;
 
             // ── Messages de contrôle (group_reset persisté pour devices offline) ──
             // Ces messages n'ont pas de payload MLS (proto vide). Ils sont injectés

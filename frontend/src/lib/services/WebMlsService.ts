@@ -699,8 +699,6 @@ export class WebMlsService implements IMlsService {
             const msgId = (msg.id || msg._id) as string | undefined;
             const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
             const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
-            const content: string | undefined =
-              typeof msg.content === 'string' ? msg.content : undefined;
 
             if (proto) {
               try {
