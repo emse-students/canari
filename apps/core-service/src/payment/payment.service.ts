@@ -76,7 +76,7 @@ export class PaymentService {
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
-      // payment_method_types non spécifié → Stripe utilise la configuration du dashboard
+      payment_method_types: ['card'],
       line_items: params.lineItems,
       metadata: params.metadata,
       success_url: params.successUrl,
