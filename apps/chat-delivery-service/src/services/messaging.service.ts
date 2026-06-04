@@ -389,7 +389,7 @@ export class MessagingService implements OnModuleInit {
         const memberships = await this.deviceGroupRepo.find({
           where: {
             groupId: fallbackGroupId,
-            status: In(['active', 'active']),
+            status: 'active' as const,
           },
         });
         const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
@@ -809,7 +809,7 @@ export class MessagingService implements OnModuleInit {
       );
     }
 
-    // Update DeviceGroupMembership status to welcome_sent
+    // Update DeviceGroupMembership status to active (device can now decrypt)
     await this.deviceGroupRepo
       .createQueryBuilder()
       .update()
@@ -865,14 +865,14 @@ export class MessagingService implements OnModuleInit {
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
 
     // Redis routing set is a cache: it can be empty after a service restart or
-    // Redis flush even though devices with welcome_received status exist in the
-    // DB. Fall back to the DB and repopulate the cache so routing is restored.
+    // Redis flush even though active devices exist in the DB.
+    // Fall back to the DB and repopulate the cache so routing is restored.
     if (members.length === 0) {
       this.logger.log(
         `[WELCOME_REQ][${traceId}] REDIS_EMPTY - falling back to DB for group=${groupId}`,
       );
       const dbMembers = await this.deviceGroupRepo.find({
-        where: { groupId, status: In(['active', 'active']) },
+        where: { groupId, status: 'active' as const },
       });
       if (dbMembers.length > 0) {
         members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
@@ -969,7 +969,6 @@ export class MessagingService implements OnModuleInit {
     }
 
     // No peer online - persist so the request is replayed when a peer connects.
-    // Mirrors the pending_reinvite pattern in notifyReinviteRequest.
     const pendingSetKey = `pending_welcome:${groupId}`;
     const pipeline = this.redis.pipeline();
     pipeline.sadd(pendingSetKey, senderKey);
@@ -989,15 +988,6 @@ export class MessagingService implements OnModuleInit {
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`,
     );
     return { status: 'no_peer_online' };
-  }
-
-  /**
-   * @deprecated Supprimé — le client utilise welcome_request à la place.
-   * Stub synchrone conservé pour la compatibilité ascendante.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  notifyReinviteRequest(_body?: unknown): { status: string } {
-    return { status: 'no_op' };
   }
 
   /**
@@ -1141,8 +1131,8 @@ export class MessagingService implements OnModuleInit {
    * (except the requester) to wake them up when a welcome_request is pending and
    * no peer was online to handle it.
    *
-   * On reception, the Kotlin service should reconnect the WebSocket; the normal
-   * reinvite-drain flow will then forward the pending welcome_request automatically.
+   * On reception, the Kotlin service reconnects the WebSocket; the normal
+   * welcome-drain flow then forwards the pending welcome_request automatically.
    */
   private async sendFcmWelcomeRequestPending(
     groupId: string,

@@ -659,7 +659,15 @@ export function useChatSession() {
         const now = Date.now();
         const localGroups = new SvelteSet(recoveryDeps.mlsService.getLocalGroups());
         for (const [id, convo] of cb.conversations) {
-          if (convo.isReady || localGroups.has(id)) {
+          // WASM a l'état → groupe opérationnel (ou Welcome en transit) → pas de recovery.
+          // On ne teste PAS convo.isReady ici : si isReady=true mais WASM a perdu l'état
+          // pendant la session, le watchdog doit quand même déclencher la recovery.
+          if (localGroups.has(id)) {
+            notReadySince.delete(id);
+            continue;
+          }
+          // Channels utilisent AES-GCM, pas MLS — jamais en recovery MLS.
+          if (isChannelConversationId(id)) {
             notReadySince.delete(id);
             continue;
           }

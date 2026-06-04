@@ -129,7 +129,15 @@ export async function leaveGroupAndBroadcast(params: {
     // Non-blocking
   }
 
-  // Sauvegarder l'état MLS
+  // Purger l'état WASM local pour éviter que le groupe fantôme reste dans
+  // getLocalGroups() et déclenche le watchdog de recovery à tort.
+  try {
+    mlsService.forgetGroup(groupId);
+  } catch {
+    // Non-blocking
+  }
+
+  // Sauvegarder l'état MLS (forgetGroup a modifié l'arbre WASM)
   await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 

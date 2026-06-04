@@ -219,8 +219,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Delete KeyPackages older than 30 days whose device has no active
-   * group membership (status = welcome_received). These are leftover
-   * packages published by devices that went offline permanently.
+   * group membership. These are leftover packages published by devices
+   * that went offline permanently.
    */
   private async cleanupExpiredKeyPackages() {
     const KEY_PACKAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
