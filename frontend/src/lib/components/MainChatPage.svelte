@@ -19,7 +19,6 @@
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
-  import SyncGuideModal from './chat/SyncGuideModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
   import TabFollowerBanner from './chat/TabFollowerBanner.svelte';
 
@@ -176,9 +175,6 @@
       selectConversation: convs.selectConversation,
       onSendError: (msg: string) => {
         convs.sendError = msg;
-      },
-      onShowSyncGuidePrompt: () => {
-        convs.showSyncGuidePrompt = true;
       },
       onReadReceiptReceived: () => {
         notifs.playReadTone();
@@ -476,11 +472,6 @@
     });
   }
 
-  /** Closes the sync guide prompt and opens the QR join modal. */
-  function openQrGuideSync() {
-    convs.showSyncGuidePrompt = false;
-    sync.openJoinSyncModal();
-  }
 </script>
 
 {#if !session.isLoggedIn}
@@ -645,12 +636,6 @@
         onConfirmJoin={() => sync.handleConfirmJoinSync(syncCtx())}
         onCopyPayload={sync.copySyncPayload}
         onClose={sync.closeModal}
-      />
-
-      <SyncGuideModal
-        open={convs.showSyncGuidePrompt}
-        onClose={() => (convs.showSyncGuidePrompt = false)}
-        onOpenQrSync={openQrGuideSync}
       />
     </main>
   </div>

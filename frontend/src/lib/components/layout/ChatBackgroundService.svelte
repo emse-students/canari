@@ -310,9 +310,6 @@
       onSendError: (msg: string) => {
         globalConvs.sendError = msg;
       },
-      onShowSyncGuidePrompt: () => {
-        globalConvs.showSyncGuidePrompt = true;
-      },
       log: appendLog,
       messageReactions: globalMessaging.messageReactions,
       getSelectedContact: () => globalConvs.selectedContact,

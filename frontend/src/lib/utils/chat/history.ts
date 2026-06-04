@@ -164,8 +164,18 @@ export async function replayConversationHistory(params: {
     const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }> = [];
 
     // Batch-collect decoded messages to flush in one UI update at the end.
-    const pendingMessages: Array<{ senderId: string; content: string } & AddMessageToChatOptions> =
-      [];
+    // Les champs reactions/readBy/isDeleted/isEdited sont optionnels et proviennent
+    // uniquement du chemin history_bundle (migration) — AddMessageToChatOptions ne
+    // les inclut pas car addMessageToChat n'en a pas besoin (les mutations arrivent
+    // via des events MLS séparés pendant une session normale).
+    const pendingMessages: Array<
+      { senderId: string; content: string } & AddMessageToChatOptions & {
+          reactions?: import('$lib/types').MessageReaction[];
+          readBy?: string[];
+          isDeleted?: boolean;
+          isEdited?: boolean;
+        }
+    > = [];
     let historyIngestSeq = 0;
 
     for (const msg of history) {
@@ -342,6 +352,16 @@ export async function replayConversationHistory(params: {
                         typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
                       serverTimestamp: serverMs,
                       ingestSequence: historyIngestSeq++,
+                      // Métadonnées transférées du device source : réactions, accusés,
+                      // suppressions et éditions — état complet au moment de la migration.
+                      ...(Array.isArray(m.reactions) && m.reactions.length > 0
+                        ? { reactions: m.reactions }
+                        : {}),
+                      ...(Array.isArray(m.readBy) && m.readBy.length > 0
+                        ? { readBy: m.readBy }
+                        : {}),
+                      ...(m.isDeleted === true ? { isDeleted: true } : {}),
+                      ...(m.isEdited === true ? { isEdited: true } : {}),
                     });
                     addedMsg++;
                   }
@@ -427,15 +447,25 @@ export async function replayConversationHistory(params: {
           senderId: pm.senderId.toLowerCase(),
           // Preserve deleted/edited content from DB if the mutation event was already
           // processed in a prior run and is now in seenCipherHashes.
-          content: prev?.isDeleted
-            ? 'Ce message a été supprimé.'
-            : prev?.isEdited
-              ? prev.content
-              : pm.content,
+          // prev.isDeleted/isEdited : état d'une run précédente (seenCipherHashes).
+          // pm.isDeleted/isEdited   : état transmis par le history_bundle.
+          // Les deux sources sont combinées pour que les nouvelles installations
+          // reflètent les suppressions/éditions sans avoir rejoué les events MLS.
+          content:
+            prev?.isDeleted || pm.isDeleted
+              ? 'Ce message a été supprimé.'
+              : prev?.isEdited
+                ? prev.content
+                : pm.content,
           timestamp: resolveMessageTimestamp(pm, [], isOwnMessage(pm.senderId, userId)).getTime(),
-          ...(pm.isSystem ? { readBy: [] } : {}),
-          ...(prev?.isDeleted ? { isDeleted: true } : {}),
-          ...(prev?.isEdited ? { isEdited: true } : {}),
+          ...(pm.isSystem
+            ? { readBy: [] }
+            : (pm.readBy ?? []).length > 0
+              ? { readBy: pm.readBy }
+              : {}),
+          ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
+          ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
+          ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
         };
       });
       await storage.saveMessages(toStore, pin);

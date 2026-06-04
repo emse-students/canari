@@ -348,6 +348,24 @@ export async function kickStaleLeaf(
  * l'historique après avoir traité son Welcome (garantie d'ordre MLS).
  * Fail-silently : si l'envoi échoue, le destinataire démarre avec une conversation vide.
  */
+/**
+ * Sérialise un StoredMessage pour le transport dans un history_bundle.
+ * Inclut toutes les métadonnées (réactions, accusés de lecture, isDeleted, isEdited)
+ * pour que le destinataire obtienne l'état complet, pas seulement le texte brut.
+ */
+function serializeForBundle(m: StoredMessage) {
+  return {
+    id: m.id,
+    senderId: m.senderId,
+    content: m.content,
+    timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
+    ...(m.reactions?.length ? { reactions: m.reactions } : {}),
+    ...(m.readBy?.length ? { readBy: m.readBy } : {}),
+    ...(m.isDeleted ? { isDeleted: true } : {}),
+    ...(m.isEdited ? { isEdited: true } : {}),
+  };
+}
+
 export async function sendHistoryBundle(
   groupId: string,
   deps: {
@@ -369,12 +387,7 @@ export async function sendHistoryBundle(
   }
   if (messages.length === 0) return;
 
-  const payload = messages.map((m) => ({
-    id: m.id,
-    senderId: m.senderId,
-    content: m.content,
-    timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
-  }));
+  const payload = messages.map(serializeForBundle);
 
   const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: payload })));
   try {
@@ -418,12 +431,7 @@ export async function sendFullHistoryBundle(
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {
     const chunk = messages.slice(i, i + chunkSize);
-    const payload = chunk.map((m) => ({
-      id: m.id,
-      senderId: m.senderId,
-      content: m.content,
-      timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
-    }));
+    const payload = chunk.map(serializeForBundle);
     const bytes = encodeAppMessage(
       mkSystem('history_bundle', JSON.stringify({ messages: payload }))
     );

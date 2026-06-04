@@ -77,7 +77,6 @@ export function useConversations() {
   let isConversationDrawerOpen = $state(false);
   let isChannelMembersDrawerOpen = $state(false);
   let isChannelSettingsModalOpen = $state(false);
-  let showSyncGuidePrompt = $state(false);
   let groupMembers = $state<string[]>([]);
   let isLoadingHistory = $state(false);
   let sendError = $state('');
@@ -850,13 +849,6 @@ export function useConversations() {
     },
     set isChannelSettingsModalOpen(v: boolean) {
       isChannelSettingsModalOpen = v;
-    },
-    /** Whether to show the multi-device sync guide prompt. */
-    get showSyncGuidePrompt() {
-      return showSyncGuidePrompt;
-    },
-    set showSyncGuidePrompt(v: boolean) {
-      showSyncGuidePrompt = v;
     },
     /** Deduplicated list of userIds currently in the selected group. */
     get groupMembers() {

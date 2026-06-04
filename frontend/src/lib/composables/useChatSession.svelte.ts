@@ -92,7 +92,6 @@ export interface ChatSessionCallbacks {
     messageIds: string[];
   }) => void;
   onSendError: (msg: string) => void;
-  onShowSyncGuidePrompt: () => void;
   /** Appelé dès que le PIN est validé et MLS initialisé (isLoggedIn vient de passer à true),
    * avant loadAndRestoreConversations(). Permet de fermer le modal PIN immédiatement
    * sans attendre la fin complète du login (conversations, WebSocket, etc.). */
@@ -321,7 +320,6 @@ export function useChatSession() {
 
       // Collect the MLS state that was loading in the background.
       const mlsStateResult = await mlsStatePromise;
-      const hadLocalState = Boolean(mlsStateResult);
       if (mlsStateResult) {
         cb.log(
           mlsStateResult.source === 'native'
@@ -473,20 +471,6 @@ export function useChatSession() {
       processDeviceInvitationsLocally(cb).catch((e) =>
         cb.log(`[WARN] Echec sync appareils (login): ${e instanceof Error ? e.message : String(e)}`)
       );
-
-      const syncGuideKey = `canari_sync_guide_seen_${userId}`;
-      let hasOtherDevices = false;
-      try {
-        const otherDevices = await mlsService.fetchUserDevices(userId);
-        hasOtherDevices = otherDevices.filter((d) => d.deviceId !== myDeviceId).length > 0;
-      } catch {
-        /* non-blocking */
-      }
-
-      if (!hadLocalState && hasOtherDevices && localStorage.getItem(syncGuideKey) !== '1') {
-        cb.onShowSyncGuidePrompt();
-        localStorage.setItem(syncGuideKey, '1');
-      }
 
       setupMessageHandler({
         mlsService,
