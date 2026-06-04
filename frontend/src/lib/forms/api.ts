@@ -180,7 +180,7 @@ export async function getSubmission(formId: string): Promise<any> {
 
 export async function checkSubmission(
   formId: string
-): Promise<{ hasSubmitted: boolean; paymentStatus?: string }> {
+): Promise<{ hasSubmitted: boolean; paymentStatus?: string; formFull: boolean }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();

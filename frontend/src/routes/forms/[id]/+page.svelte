@@ -51,6 +51,7 @@
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
   let paymentPending = $state(false);
+  let formFull = $state(false);
   let submitting = $state(false);
   let savingCard = $state(false);
   let loading = $state(true);
@@ -129,8 +130,9 @@
         linkedAgendaEvent = null;
       }
 
-      const { hasSubmitted, paymentStatus } = await checkSubmission(f.id);
+      const { hasSubmitted, paymentStatus, formFull: full } = await checkSubmission(f.id);
       submitted = hasSubmitted;
+      formFull = full;
       paymentPending = hasSubmitted && paymentStatus === 'pending';
 
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
@@ -833,7 +835,7 @@
         <Button
           variant="primary"
           class="shrink-0 px-6"
-          disabled={submitted || submitting || isNotOpenYet}
+          disabled={submitted || formFull || submitting || isNotOpenYet}
           loading={submitting}
           onclick={handleSubmit}
         >
@@ -841,6 +843,8 @@
             <Check size={16} class="mr-1.5" />En attente
           {:else if submitted}
             <Check size={16} class="mr-1.5" />Envoyé
+          {:else if formFull}
+            Complet
           {:else if calculateTotal() > 0}
             <CreditCard size={16} class="mr-1.5" />Payer {formatCurrency(
               calculateTotal(),
@@ -855,6 +859,10 @@
       {#if paymentPending}
         <p class="pointer-events-auto text-sm text-amber-600 font-medium text-center mt-2">
           Votre soumission est enregistrée — le paiement est en cours de confirmation.
+        </p>
+      {:else if formFull && !submitted}
+        <p class="pointer-events-auto text-sm text-text-muted font-medium text-center mt-2">
+          Ce formulaire n'accepte plus de nouvelles réponses.
         </p>
       {/if}
 

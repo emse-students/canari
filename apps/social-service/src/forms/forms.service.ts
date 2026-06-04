@@ -232,14 +232,29 @@ export class FormsService {
     });
   }
 
-  /** Returns whether the user already has a submission (any status) and its payment status.
-   *  Always returns hasSubmitted=false when the form allows multiple submissions. */
+  /** Returns per-user submission state and whether the form has reached its global capacity. */
   async hasSubmission(
     formId: string,
     userId: string,
-  ): Promise<{ hasSubmitted: boolean; paymentStatus?: string }> {
+  ): Promise<{ hasSubmitted: boolean; paymentStatus?: string; formFull: boolean }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
-    if (!form || form.allowMultipleSubmissions) return { hasSubmitted: false };
+    if (!form) return { hasSubmitted: false, formFull: false };
+
+    // Check global capacity independently of per-user state
+    let formFull = false;
+    if (form.maxSubmissions) {
+      const count = await this.submissionRepo.count({
+        where: [
+          { formId, paymentStatus: 'paid' },
+          { formId, paymentStatus: 'free' },
+          { formId, paymentStatus: 'pending' },
+          { formId, paymentStatus: 'pending_cash' },
+        ],
+      });
+      formFull = count >= form.maxSubmissions;
+    }
+
+    if (form.allowMultipleSubmissions) return { hasSubmitted: false, formFull };
 
     const submission = await this.submissionRepo.findOne({
       where: [
@@ -250,7 +265,7 @@ export class FormsService {
       ],
       order: { createdAt: 'DESC' },
     });
-    return { hasSubmitted: !!submission, paymentStatus: submission?.paymentStatus };
+    return { hasSubmitted: !!submission, paymentStatus: submission?.paymentStatus, formFull };
   }
 
   /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a Stripe Checkout URL. */
