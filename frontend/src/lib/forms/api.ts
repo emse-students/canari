@@ -207,6 +207,17 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
   return res.json();
 }
 
+/** Deletes a submission. Requires form manager access. */
+export async function deleteSubmission(submissionId: string): Promise<void> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+  if (!res.ok) throw new Error('Failed to delete submission');
+}
+
 export async function exportSubmissions(id: string): Promise<Blob> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export`);
   if (!res.ok) throw new Error('Failed to export submissions');

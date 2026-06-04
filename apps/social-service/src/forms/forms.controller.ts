@@ -223,6 +223,18 @@ export class FormsController {
     return this.service.cancelSubmission(submissionId, xUserId, ga === 'true');
   }
 
+  /** Deletes a submission. Requires form manager access. */
+  @UseGuards(NginxAuthGuard)
+  @Delete('submissions/:submissionId')
+  async deleteSubmission(
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.deleteSubmission(submissionId, xUserId, ga === 'true');
+    return { ok: true };
+  }
+
   // ── Cash payment admin endpoints ─────────────────────────────────────────
 
   /** Lists submissions awaiting cash validation. Requires form owner or MANAGE_FORMS flag. */

@@ -464,6 +464,15 @@ export class FormsService {
     return { message: 'Form submitted successfully', submissionId: savedSubmission.id };
   }
 
+  /** Deletes a submission. Requires form manager access. */
+  async deleteSubmission(submissionId: string, callerId: string, isGlobalAdmin: boolean): Promise<void> {
+    const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!sub) throw new NotFoundException('Submission not found');
+    await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
+    await this.submissionRepo.delete(submissionId);
+    this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
+  }
+
   /** Loads a submission by ID with its payment status and the associated Stripe account ID (if any). */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });

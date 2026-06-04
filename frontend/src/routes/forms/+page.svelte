@@ -7,6 +7,7 @@
     getForms,
     getSubmissions,
     deleteForm,
+    deleteSubmission,
     type Form,
     type Submission,
   } from '$lib/forms/api';
@@ -21,6 +22,7 @@
     ChevronDown,
     ChevronUp,
     Users,
+    X,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
 
@@ -37,6 +39,7 @@
   let forms = $state<Form[]>([]);
   let loading = $state(true);
   let deletingId = $state<string | null>(null);
+  let deletingSubmissionId = $state<string | null>(null);
 
   /** Tracks which form accordions are open. */
   let expandedForms = $state<Record<string, boolean>>({});
@@ -92,6 +95,23 @@
       submissionsData = { ...submissionsData, [formId]: data };
     } catch {
       submissionsData = { ...submissionsData, [formId]: 'error' };
+    }
+  }
+
+  async function handleDeleteSubmission(formId: string, sub: Submission) {
+    const name = [sub.firstName, sub.lastName].filter(Boolean).join(' ') || sub.userId.slice(0, 8);
+    if (!await showConfirm(`Supprimer la réponse de ${name} ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    deletingSubmissionId = sub.id;
+    try {
+      await deleteSubmission(sub.id);
+      const current = submissionsData[formId];
+      if (Array.isArray(current)) {
+        submissionsData = { ...submissionsData, [formId]: current.filter((s) => s.id !== sub.id) };
+      }
+    } catch {
+      showToast('Erreur lors de la suppression');
+    } finally {
+      deletingSubmissionId = null;
     }
   }
 
@@ -266,7 +286,8 @@
                         <th class="pb-2 pr-4 whitespace-nowrap">Date & heure</th>
                         <th class="pb-2 pr-4 whitespace-nowrap">Nom</th>
                         <th class="pb-2 pr-4 whitespace-nowrap">Statut</th>
-                        <th class="pb-2 whitespace-nowrap">Montant</th>
+                        <th class="pb-2 pr-4 whitespace-nowrap">Montant</th>
+                        <th class="pb-2 whitespace-nowrap"></th>
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-cn-border/50">
@@ -299,7 +320,17 @@
                               {statusLabel(sub.paymentStatus)}
                             </span>
                           </td>
-                          <td class="py-2 text-xs font-medium">{formatAmount(sub.totalPaid)}</td>
+                          <td class="py-2 pr-4 text-xs font-medium">{formatAmount(sub.totalPaid)}</td>
+                          <td class="py-2">
+                            <button
+                              onclick={() => void handleDeleteSubmission(form.id, sub)}
+                              disabled={deletingSubmissionId === sub.id}
+                              class="inline-flex items-center justify-center rounded-lg p-1.5 text-text-muted hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                              title="Supprimer cette réponse"
+                            >
+                              <X size={13} />
+                            </button>
+                          </td>
                         </tr>
                       {/each}
                     </tbody>
