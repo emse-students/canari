@@ -74,8 +74,8 @@ export interface IMlsService {
   ): Promise<Uint8Array>;
 
   // Networking
-  /** Opens a WebSocket connection to the chat gateway using the given JWT access token. */
-  connect(token: string): Promise<void>;
+  /** Opens a WebSocket connection to the chat gateway. Token is used when the cookie is not forwarded (Tauri, proxy, ITP). Falls back to internal getToken() if omitted. */
+  connect(token?: string): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
   /** Fetches all registered devices (with KeyPackages) for the given user from the delivery service. */
@@ -136,8 +136,8 @@ export interface IMlsService {
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;
-  /** Resolves when the internal MLS message queue is drained (Web/Tauri implementations). */
-  waitForMessageQueueIdle?(): Promise<void>;
+  /** Resolves when the internal MLS message queue is drained. */
+  waitForMessageQueueIdle(): Promise<void>;
 
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
@@ -276,7 +276,7 @@ export interface IMlsService {
    * Optional hooks for batching UI updates while draining a large MLS message queue
    * (e.g. after reconnect). Implemented by WebMlsService / TauriMlsService.
    */
-  setBulkIngestHooks?(
+  setBulkIngestHooks(
     onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
     onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void;
@@ -309,5 +309,5 @@ export interface IMlsService {
    * on logout + device wipe) to prevent orphaned handlers keeping a stale
    * reference to this object and blocking GC.
    */
-  destroy?(): void;
+  destroy(): void;
 }

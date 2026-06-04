@@ -75,6 +75,8 @@ export function createMlsServiceStub(
     onWelcomeRequest: vi.fn(),
     sendDisconnect: vi.fn(),
     onChannelEvent: undefined,
+    setBulkIngestHooks: vi.fn(),
+    destroy: vi.fn(),
     ...overrides,
   };
   return stub as unknown as IMlsService;

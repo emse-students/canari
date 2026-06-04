@@ -267,7 +267,7 @@ export class WebMlsService implements IMlsService {
   }
 
   /** WASM client wrapper - opens a native browser WebSocket to the chat gateway, wiring message/close handlers and registering reconnect listeners once. */
-  async connect(): Promise<void> {
+  async connect(token?: string): Promise<void> {
     this.clearHeartbeat();
     // Close existing socket before creating a new one
     if (this.ws) {
@@ -307,13 +307,15 @@ export class WebMlsService implements IMlsService {
     const wsUrl = this.baseUrl.replace(/^https?:/, (match) =>
       match === 'https:' ? 'wss:' : 'ws:'
     );
-    let tokenParam = '';
-    try {
-      const t = await getToken();
-      if (t) tokenParam = `&token=${encodeURIComponent(t)}`;
-    } catch {
-      /* rely on canari_ws_token cookie only */
+    let resolvedToken = token;
+    if (!resolvedToken) {
+      try {
+        resolvedToken = await getToken();
+      } catch {
+        /* rely on canari_ws_token cookie only */
+      }
     }
+    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
     const fullWsUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
     const logUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam ? '&token=***' : ''}`;
 
@@ -676,9 +678,6 @@ export class WebMlsService implements IMlsService {
     }
   }
 
-  // simulateMessageReceive removed - pending messages now go through enqueueMessage
-  // so they are serialized with live WebSocket messages via processQueue.
-
   /** WASM client wrapper - fetches offline-queued messages from the delivery service and routes each one through the message queue. */
   async fetchPendingMessages() {
     if (this.userId === 'unknown') return;
@@ -723,28 +722,6 @@ export class WebMlsService implements IMlsService {
                 }
               } catch (e) {
                 console.error('[PENDING] Failed to enqueue proto message:', e);
-              }
-            } else if (content) {
-              // Legacy format (mlsWelcome offline inbox)
-              try {
-                const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
-                if (bytes.length > 0) {
-                  this.enqueueMessage({
-                    senderId: (msg.senderId || 'unknown') as string,
-                    ciphertext: bytes,
-                    groupId: (msg.groupId || msg.session_id) as string | undefined,
-                    isWelcome: msg.type === 'mlsWelcome',
-                    isCommit: msg.isCommit === true,
-                    ratchetTreeBytes:
-                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
-                        : undefined,
-                    queuedMessageId: msgId,
-                    queuedCreatedAt,
-                  });
-                }
-              } catch (e) {
-                console.error('[PENDING] Failed to enqueue content message:', e);
               }
             }
           }

@@ -10,7 +10,7 @@ type ConnectedUser = mpsc::Sender<String>;
 
 /// Shared application state injected into every Axum handler via `State<Arc<AppState>>`.
 pub struct AppState {
-    /// Handle to the Redis instance used for pub/sub, presence keys, and pending-welcome lists.
+    /// Handle to the Redis instance used for pub/sub, presence keys, and `pending_welcome_notify` lists.
     pub redis_client: RedisClient,
     /// Maps `"userId:deviceId"` to a set of live outbound senders keyed by `conn_id`.
     /// The inner `HashMap<u64, ConnectedUser>` supports multiple simultaneous tabs or

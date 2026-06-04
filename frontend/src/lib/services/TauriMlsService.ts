@@ -329,28 +329,6 @@ export class TauriMlsService implements IMlsService {
               } catch (e) {
                 console.error('[PENDING] Failed to enqueue proto message:', e);
               }
-            } else if (content) {
-              // Legacy format (mlsWelcome offline inbox)
-              try {
-                const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
-                if (bytes.length > 0) {
-                  this.enqueueMessage({
-                    senderId: (msg.senderId || 'unknown') as string,
-                    ciphertext: bytes,
-                    groupId: (msg.groupId || msg.session_id) as string | undefined,
-                    isWelcome: msg.type === 'mlsWelcome',
-                    isCommit: msg.isCommit === true,
-                    ratchetTreeBytes:
-                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
-                        : undefined,
-                    queuedMessageId: msgId,
-                    queuedCreatedAt,
-                  });
-                }
-              } catch (e) {
-                console.error('[PENDING] Failed to enqueue content message:', e);
-              }
             }
           }
         } else {
@@ -366,9 +344,6 @@ export class TauriMlsService implements IMlsService {
     }
     await this.waitForMessageQueueIdle();
   }
-
-  // simulateMessageReceive removed - pending messages now go through enqueueMessage
-  // so they are serialized with live WebSocket messages via processQueue.
 
   onMessage(
     callback: (
