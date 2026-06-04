@@ -176,7 +176,9 @@ export async function getSubmission(formId: string): Promise<any> {
   return res.json();
 }
 
-export async function checkSubmission(formId: string): Promise<{ hasSubmitted: boolean }> {
+export async function checkSubmission(
+  formId: string
+): Promise<{ hasSubmitted: boolean; paymentStatus?: string }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();

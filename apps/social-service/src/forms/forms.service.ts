@@ -232,15 +232,21 @@ export class FormsService {
     });
   }
 
-  /** Returns true if the user already has a completed (paid or free) submission for this form. */
-  async hasSubmission(formId: string, userId: string): Promise<boolean> {
-    const count = await this.submissionRepo.count({
+  /** Returns whether the user already has a submission (any status) and its payment status. */
+  async hasSubmission(
+    formId: string,
+    userId: string,
+  ): Promise<{ hasSubmitted: boolean; paymentStatus?: string }> {
+    const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
         { formId, userId, paymentStatus: 'free' },
+        { formId, userId, paymentStatus: 'pending' },
+        { formId, userId, paymentStatus: 'pending_cash' },
       ],
+      order: { createdAt: 'DESC' },
     });
-    return count > 0;
+    return { hasSubmitted: !!submission, paymentStatus: submission?.paymentStatus };
   }
 
   /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a Stripe Checkout URL. */

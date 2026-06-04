@@ -995,6 +995,16 @@
               <p class="text-xs text-text-muted">
                 Les paiements en ligne (formulaires, boutique) sont disponibles.
               </p>
+              {#if asso.stripeAccountId}
+                <a
+                  href="https://dashboard.stripe.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+                >
+                  Accéder au tableau de bord Stripe →
+                </a>
+              {/if}
             {:else if stripeConnectStatus?.status === 'pending'}
               <div
                 class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 px-4 py-3 space-y-2"

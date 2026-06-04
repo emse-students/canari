@@ -7,6 +7,7 @@
     currentUserId,
     listPaymentMethods,
     chargeWithSavedMethod,
+    setupPaymentMethod,
     type PaymentMethod,
   } from '$lib/stores/user';
   import {
@@ -48,7 +49,9 @@
   const reminder = useFormReminder(page.params.id ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
+  let paymentPending = $state(false);
   let submitting = $state(false);
+  let savingCard = $state(false);
   let loading = $state(true);
   let error = $state('');
   let successMessage = $state('');
@@ -63,6 +66,23 @@
   let agendaAssociationSlug = $state('');
   let paymentMethodChoice = $state<'stripe' | 'cash'>('stripe');
   let copiedLink = $state(false);
+
+  async function handleSaveCard() {
+    savingCard = true;
+    try {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const current = `${origin}/forms/${formId}`;
+      const result = await setupPaymentMethod({ successUrl: current, cancelUrl: current });
+      if (result.url) {
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(result.url);
+      }
+    } catch {
+      // ignore
+    } finally {
+      savingCard = false;
+    }
+  }
 
   function copyFormLink() {
     void copyPublicShareLink(`/forms/${formId}`);
@@ -108,8 +128,9 @@
         linkedAgendaEvent = null;
       }
 
-      const { hasSubmitted } = await checkSubmission(f.id);
+      const { hasSubmitted, paymentStatus } = await checkSubmission(f.id);
       submitted = hasSubmitted;
+      paymentPending = hasSubmitted && paymentStatus === 'pending';
 
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
         void reminder.load();
@@ -815,7 +836,9 @@
           loading={submitting}
           onclick={handleSubmit}
         >
-          {#if submitted}
+          {#if paymentPending}
+            <Check size={16} class="mr-1.5" />En attente
+          {:else if submitted}
             <Check size={16} class="mr-1.5" />Envoyé
           {:else if calculateTotal() > 0}
             <CreditCard size={16} class="mr-1.5" />Payer {formatCurrency(
@@ -827,6 +850,26 @@
           {/if}
         </Button>
       </div>
+
+      {#if paymentPending}
+        <p class="text-sm text-amber-600 font-medium text-center mt-2">
+          Votre soumission est enregistrée — le paiement est en cours de confirmation.
+        </p>
+      {/if}
+
+      {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId}
+        <div class="flex justify-center mt-2">
+          <button
+            type="button"
+            onclick={() => void handleSaveCard()}
+            disabled={savingCard}
+            class="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-main underline underline-offset-2 disabled:opacity-50"
+          >
+            <CreditCard size={13} />
+            {savingCard ? 'Redirection…' : 'Enregistrer une carte pour payer plus vite'}
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}

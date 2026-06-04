@@ -158,12 +158,11 @@ export class FormsController {
     return this.service.getSubmission(id, xUserId);
   }
 
-  /** Returns whether the calling user has already submitted the specified form. */
+  /** Returns whether the calling user has already submitted the specified form, with payment status. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/check')
   async checkSubmission(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
-    const hasSubmitted = await this.service.hasSubmission(id, xUserId);
-    return { hasSubmitted };
+    return this.service.hasSubmission(id, xUserId);
   }
 
   /** Submits a filled form on behalf of the calling user. */
