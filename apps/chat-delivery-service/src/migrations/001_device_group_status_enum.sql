@@ -27,11 +27,15 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Étape 1 : convertir en TEXT pour libérer le type enum
+  -- Étape 1 : supprimer le DEFAULT (il dépend du type enum et bloque le DROP TYPE)
+  ALTER TABLE dm_device_group_memberships
+    ALTER COLUMN status DROP DEFAULT;
+
+  -- Étape 2 : convertir en TEXT pour libérer le type enum
   ALTER TABLE dm_device_group_memberships
     ALTER COLUMN status TYPE TEXT;
 
-  -- Étape 2 : migrer les données
+  -- Étape 3 : migrer les données
   UPDATE dm_device_group_memberships
     SET status = 'active'
     WHERE status IN ('welcome_received', 'welcome_sent');
@@ -40,16 +44,19 @@ BEGIN
     SET status = 'pending'
     WHERE status NOT IN ('active', 'pending');
 
-  -- Étape 3 : supprimer l'ancien type enum (nom généré par TypeORM)
+  -- Étape 4 : supprimer l'ancien type enum (plus aucune dépendance)
   DROP TYPE IF EXISTS dm_device_group_memberships_status_enum;
 
-  -- Étape 4 : recréer le type avec les valeurs correctes
+  -- Étape 5 : recréer le type avec les valeurs correctes
   CREATE TYPE dm_device_group_memberships_status_enum AS ENUM ('pending', 'active');
 
-  -- Étape 5 : restaurer la colonne avec le nouveau type
+  -- Étape 6 : restaurer la colonne avec le nouveau type et son DEFAULT
   ALTER TABLE dm_device_group_memberships
     ALTER COLUMN status TYPE dm_device_group_memberships_status_enum
     USING status::dm_device_group_memberships_status_enum;
+
+  ALTER TABLE dm_device_group_memberships
+    ALTER COLUMN status SET DEFAULT 'pending';
 
   RAISE NOTICE 'Migration 001 appliquée : dm_device_group_memberships.status → pending | active';
 END $$;
