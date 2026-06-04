@@ -658,9 +658,9 @@ export function useChatSession() {
         if (!getIsTabLeader()) return;
         const now = Date.now();
         const localGroups = new SvelteSet(recoveryDeps.mlsService.getLocalGroups());
-        for (const [id, convo] of cb.conversations) {
+        for (const [id] of cb.conversations) {
           // WASM a l'état → groupe opérationnel (ou Welcome en transit) → pas de recovery.
-          // On ne teste PAS convo.isReady ici : si isReady=true mais WASM a perdu l'état
+          // On ne teste PAS convo.isReady : si isReady=true mais WASM a perdu l'état
           // pendant la session, le watchdog doit quand même déclencher la recovery.
           if (localGroups.has(id)) {
             notReadySince.delete(id);
