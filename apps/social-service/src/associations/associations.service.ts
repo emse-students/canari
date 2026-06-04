@@ -44,7 +44,7 @@ const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
   private readonly mediaBaseUrl = (
-    process.env.MEDIA_SERVICE_URL ?? 'http://localhost:3011'
+    process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011'
   ).replace(/\/+$/, '');
 
   constructor(

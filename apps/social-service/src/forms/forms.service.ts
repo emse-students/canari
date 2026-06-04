@@ -386,7 +386,7 @@ export class FormsService {
       ];
 
       const paymentServiceBase =
-        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://localhost:3012';
+        this.configService.get<string>('PAYMENT_SERVICE_URL') || 'http://core-service:3012';
       const checkoutUrl = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
 
       try {

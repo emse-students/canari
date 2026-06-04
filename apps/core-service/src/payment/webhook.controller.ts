@@ -110,7 +110,7 @@ export class PaymentWebhookController {
         try {
           const formServiceBase =
             this.config.get<string>('FORM_SERVICE_URL') ||
-            'http://localhost:3014';
+            'http://social-service:3014';
           const parsedBase = parseSafeServiceOrigin(
             formServiceBase,
             'FORM_SERVICE_URL',
@@ -154,7 +154,7 @@ export class PaymentWebhookController {
         try {
           const socialBase =
             this.config.get<string>('SOCIAL_SERVICE_URL') ||
-            'http://localhost:3014';
+            'http://social-service:3014';
           const parsedBase = parseSafeServiceOrigin(
             socialBase,
             'SOCIAL_SERVICE_URL',
@@ -211,7 +211,7 @@ export class PaymentWebhookController {
           try {
             const socialServiceBase =
               this.config.get<string>('SOCIAL_SERVICE_URL') ||
-              'http://localhost:3014';
+              'http://social-service:3014';
             const parsedBase = parseSafeServiceOrigin(
               socialServiceBase,
               'SOCIAL_SERVICE_URL',

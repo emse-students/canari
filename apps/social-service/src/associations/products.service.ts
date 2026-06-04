@@ -162,7 +162,7 @@ export class ProductsService {
     }
 
     const paymentBase = (
-      this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://localhost:3012'
+      this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://core-service:3012'
     ).replace(/\/$/, '');
     const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost';
 
