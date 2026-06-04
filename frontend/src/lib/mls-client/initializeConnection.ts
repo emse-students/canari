@@ -12,11 +12,17 @@ export interface ConnectionDeps {
   setReconnectAttempts: (value: number) => void;
   processDeviceInvitationsLocally: () => Promise<void>;
   log: (msg: string) => void;
+  /**
+   * Appelé pour chaque groupe absent du WASM au moment de la connexion.
+   * Doit envoyer un `welcome_request` ET armer un timer de reboot (30s).
+   * Si absent, fallback sur `sendWelcomeRequest` seul (pas de timer — moins fiable).
+   */
+  onGroupMissing?: (groupId: string) => Promise<void>;
 }
 
 export type SyncAfterConnectDeps = Pick<
   ConnectionDeps,
-  'mlsService' | 'userId' | 'pin' | 'processDeviceInvitationsLocally' | 'log'
+  'mlsService' | 'userId' | 'pin' | 'processDeviceInvitationsLocally' | 'log' | 'onGroupMissing'
 >;
 
 /**
@@ -70,8 +76,8 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
  *
  * Passe unique sur getUserGroups (plus de Bloc1/Bloc2 distincts).
  * Pour chaque groupe actif sur le serveur sans état WASM local :
- * envoi d'un welcome_request. Le watchdog universel (useChatSession, 30s)
- * déclenche un reboot si aucun Welcome n'arrive.
+ *   - si `onGroupMissing` est fourni : l'appelle (envoie welcome_request + arme timer reboot 30s).
+ *   - sinon : sendWelcomeRequest seul (le watchdog useChatSession prend le relai si disponible).
  *
  * Successeurs : si un groupe a un successeur, l'état WASM de l'ancien est purgé.
  * Groupes supprimés sans successeur : état WASM purgé.
@@ -135,10 +141,13 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       log(`[SYNC] WASM retiré (successeur existe) : ${g.groupId.slice(0, 8)}…`);
     }
 
-    // Groupe cible absent du WASM → welcome_request
-    // Le watchdog de useChatSession escalade vers reboot après 30s si pas de réponse.
+    // Groupe cible absent du WASM → welcome_request + timer reboot (via onGroupMissing)
     if (!localGroups.has(targetId)) {
-      await mlsService.sendWelcomeRequest(targetId).catch(() => {});
+      if (deps.onGroupMissing) {
+        await deps.onGroupMissing(targetId).catch(() => {});
+      } else {
+        await mlsService.sendWelcomeRequest(targetId).catch(() => {});
+      }
       log(
         g.successorId
           ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`

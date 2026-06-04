@@ -25,7 +25,7 @@ import {
   processDevWelcome,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
-import { checkGroupSuccessors, reboot } from '$lib/utils/chat/recovery';
+import { checkGroupSuccessors, reboot, requestReAdd } from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
@@ -135,6 +135,12 @@ export function useChatSession() {
   let syncWatchdogInterval: ReturnType<typeof setInterval> | null = null;
   /** Detects a dead WebSocket while the UI still shows online (cleared on logout). */
   let connectionWatchdogInterval: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Timers de reboot armés par `onGroupMissing` au moment de la connexion.
+   * Indépendants du syncWatchdog : garantit le reboot même si discoverMissingGroups échoue.
+   * Vidés au logout.
+   */
+  const connectionRecoveryTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
   const CONNECTION_WATCHDOG_MS = 30_000;
   let isReconnecting = false;
   let isSyncing = false;
@@ -170,6 +176,23 @@ export function useChatSession() {
   })();
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /** Builds the RecoveryDeps object required by requestReAdd / reboot (factored to avoid duplication). */
+  function makeRecoveryDeps(cb: ChatSessionCallbacks) {
+    const st = storage;
+    return {
+      mlsService: ensureMls(),
+      storage: st,
+      userId,
+      pin,
+      conversations: cb.conversations,
+      getSelectedContact: cb.getSelectedContact,
+      setSelectedContact: cb.setSelectedContact,
+      saveConversation: cb.saveConversation,
+      deleteConversation: st ? (id: string) => st.deleteConversation(id) : undefined,
+      log: cb.log,
+    };
+  }
 
   /** Returns the current MLS service instance, creating it lazily if needed. Throws outside the browser context. */
   function ensureMls(): IMlsService {
@@ -597,6 +620,8 @@ export function useChatSession() {
         setReconnectAttempts: (v) => (reconnectAttempts = v),
         processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(cb),
         log: cb.log,
+        onGroupMissing: (groupId) =>
+          requestReAdd(groupId, makeRecoveryDeps(cb), connectionRecoveryTimers),
       });
 
       // Only the leader tab syncs history and devices
@@ -621,19 +646,7 @@ export function useChatSession() {
 
       // Health check: migrate any group whose successor was claimed by another device.
       // Run once on connect, then every 5 minutes (leader tab only).
-      const st2 = storage;
-      const recoveryDeps = {
-        mlsService,
-        storage: st2,
-        userId,
-        pin,
-        conversations: cb.conversations,
-        getSelectedContact: cb.getSelectedContact,
-        setSelectedContact: cb.setSelectedContact,
-        saveConversation: cb.saveConversation,
-        deleteConversation: st2 ? (id: string) => st2.deleteConversation(id) : undefined,
-        log: cb.log,
-      };
+      const recoveryDeps = makeRecoveryDeps(cb);
       checkGroupSuccessors(recoveryDeps).catch((e) =>
         cb.log(
           `[HEALTH] Erreur health check initial: ${e instanceof Error ? e.message : String(e)}`
@@ -822,6 +835,8 @@ export function useChatSession() {
       clearInterval(syncWatchdogInterval);
       syncWatchdogInterval = null;
     }
+    for (const t of connectionRecoveryTimers.values()) clearTimeout(t);
+    connectionRecoveryTimers.clear();
     stopConnectionWatchdog();
     reconnectAttempts = 0;
     reconnectCircuitOpen = false;
@@ -951,6 +966,8 @@ export function useChatSession() {
         setReconnectAttempts: (v: number) => (reconnectAttempts = v),
         processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(cb),
         log: cb.log,
+        onGroupMissing: (groupId: string) =>
+          requestReAdd(groupId, makeRecoveryDeps(cb), connectionRecoveryTimers),
       };
       const connected = await openGatewayConnection(connectionDeps);
       if (!connected) {
