@@ -5,7 +5,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
 import * as jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
@@ -55,7 +55,7 @@ export class CallsService {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
 
     const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId, leftAt: IsNull() },
+      where: { groupId, userId },
     });
     if (!membership) {
       this.logger.warn(
@@ -101,7 +101,7 @@ export class CallsService {
     );
 
     const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId, leftAt: IsNull() },
+      where: { groupId, userId },
     });
     if (!membership) {
       this.logger.warn(
@@ -143,7 +143,7 @@ export class CallsService {
     );
 
     const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId, leftAt: IsNull() },
+      where: { groupId, userId },
     });
 
     if (!membership) {

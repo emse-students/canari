@@ -145,11 +145,23 @@ export class MembersController {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/members')
-  /** Lists all members of a group. */
+  /**
+   * Lists all active device memberships for a group.
+   * Returns one `{ userId, deviceId }` entry **per device** (not per user),
+   * sourced from `dm_device_group_memberships` where `status = 'active'`.
+   *
+   * Callers that need a deduplicated user list should extract `userId` with `new Set`.
+   * This endpoint is the source of truth for MLS tree occupancy checks (stale-leaf
+   * detection). `dm_group_members` (user-level) is not used here because it carries
+   * no device identity, making device-level membership checks impossible.
+   */
   async getGroupMembers(@Param('groupId') groupId: string) {
-    const g = await this.groupMemberRepo.find({ where: { groupId } });
-    this.logger.log(`[GET_MEMBERS] group=${groupId} count=${g.length}`);
-    return g;
+    const rows = await this.deviceGroupRepo.find({
+      where: { groupId, status: 'active' as const },
+      select: ['userId', 'deviceId'],
+    });
+    this.logger.log(`[GET_MEMBERS] group=${groupId} count=${rows.length}`);
+    return rows;
   }
 
   @UseGuards(HeaderAuthGuard)

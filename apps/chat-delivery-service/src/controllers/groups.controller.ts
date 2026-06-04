@@ -135,6 +135,9 @@ export class GroupsController {
     await this.deviceGroupRepo.delete({ groupId: safeGroupId });
     await this.queuedMessageRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
+    // Purge the Redis Stream used for late-joining replay — the group is gone so
+    // the history is inaccessible anyway (membership check rejects all GET /history).
+    await this.redis.del(`history:${safeGroupId}`);
     this.logger.log(`[DELETE_GROUP] group=${safeGroupId} (soft-deleted)`);
     return { status: 'deleted' };
   }

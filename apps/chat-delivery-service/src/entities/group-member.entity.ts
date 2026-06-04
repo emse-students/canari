@@ -10,8 +10,12 @@ import {
  * Records the user-level membership of a person in an MLS group, independently
  * of which specific devices that user has enrolled. A user may have multiple
  * DeviceGroupMembership rows for the same group (one per device), but only a
- * single GroupMember row. The `leftAt` timestamp is set rather than deleting
- * the row so that historical participant lists remain queryable.
+ * single GroupMember row.
+ *
+ * Lifecycle : hard-delete. When a user leaves or is removed, the row is deleted
+ * (not soft-deleted). This is consistent with `removeGroupMember` which calls
+ * `groupMemberRepo.delete()`. A migration dropping the former `leftAt` column
+ * should be run to keep the schema clean.
  */
 @Entity('dm_group_members')
 @Unique(['groupId', 'userId'])
@@ -23,7 +27,7 @@ export class GroupMember {
   @Column({ type: 'uuid' })
   groupId: string;
 
-  /** User who is (or was) a member of the group. */
+  /** User who is a member of the group. */
   @Column({ type: 'varchar', length: 255 })
   userId: string;
 
@@ -33,8 +37,4 @@ export class GroupMember {
 
   @CreateDateColumn()
   joinedAt: Date;
-
-  /** Set when the user leaves or is removed; null while still an active member. */
-  @Column({ type: 'timestamp', nullable: true, default: null })
-  leftAt?: Date | null;
 }

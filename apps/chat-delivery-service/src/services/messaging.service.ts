@@ -840,6 +840,7 @@ export class MessagingService implements OnModuleInit {
    */
   async notifyWelcomeRequest(
     body: NotifyWelcomeRequestBody,
+    _depth = 0,
   ): Promise<{ status: string; target?: string }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
@@ -851,6 +852,23 @@ export class MessagingService implements OnModuleInit {
       body.requesterDeviceId,
       'requesterDeviceId',
     );
+
+    // Si ce groupe a un successeur, rediriger vers le groupe terminal (évite les dead-ends
+    // où les membres actifs ont migré vers le successeur et ne répondent plus à l'ancien).
+    if (_depth < 10) {
+      const groupMeta = await this.groupRepo.findOne({
+        where: { id: groupId },
+      });
+      if (groupMeta?.successorId) {
+        this.logger.log(
+          `[WELCOME_REQ][${traceId}] group=${groupId} has successor=${groupMeta.successorId} — redirecting`,
+        );
+        return this.notifyWelcomeRequest(
+          { ...body, groupId: groupMeta.successorId },
+          _depth + 1,
+        );
+      }
+    }
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
