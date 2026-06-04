@@ -37,6 +37,14 @@ export class PaymentController {
     private readonly usersService: UsersService,
   ) {}
 
+  /** Base URL for inter-service calls to social-service. */
+  private get socialBase(): string {
+    return (process.env.FORM_URL || 'http://social-service:3014').replace(
+      /\/$/,
+      '',
+    );
+  }
+
   private async assertCanManageAssociation(
     req: Request,
     associationId: string,
@@ -45,9 +53,7 @@ export class PaymentController {
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
     }
-    const socialBase = (
-      process.env.FORM_URL || 'http://social-service:3014'
-    ).replace(/\/$/, '');
+    const socialBase = this.socialBase;
     const fwd: Record<string, string> = {
       'X-User-Id': userId,
       'X-Global-Admin':
@@ -123,7 +129,7 @@ export class PaymentController {
     // Persist the Stripe account ID on the association (social-service)
     if (result.accountId && assocId && UUID_RE.test(assocId)) {
       try {
-        const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+        const socialBase = this.socialBase;
         await axios.post(
           `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/stripe-account`,
           { stripeAccountId: result.accountId },
@@ -162,9 +168,7 @@ export class PaymentController {
       };
     }
 
-    const socialBase = (
-      process.env.FORM_URL || 'http://social-service:3014'
-    ).replace(/\/$/, '');
+    const socialBase = this.socialBase;
 
     let stripeAccountId: string | null;
     let dbOnboardingComplete: boolean;
@@ -301,9 +305,8 @@ export class PaymentController {
     }
 
     try {
-      const socialBase = process.env.FORM_URL || 'http://localhost:3014';
       await axios.post(
-        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`,
+        `${this.socialBase}/api/forms/submissions/${submissionId}/mark-paid`,
         { sessionId: body.sessionId },
         { maxRedirects: 0 },
       );
@@ -345,9 +348,8 @@ export class PaymentController {
     }
 
     try {
-      const socialBase = process.env.FORM_URL || 'http://localhost:3014';
       await axios.post(
-        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/cancel`,
+        `${this.socialBase}/api/forms/submissions/${submissionId}/cancel`,
         {},
         { maxRedirects: 0 },
       );
@@ -530,7 +532,7 @@ export class PaymentController {
     }
 
     // Fetch submission details from social-service
-    const socialBase = process.env.FORM_URL || 'http://localhost:3014';
+    const socialBase = this.socialBase;
 
     interface SubmissionData {
       paymentStatus: string;

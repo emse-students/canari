@@ -67,6 +67,10 @@ export class Form {
   @Column({ type: 'timestamptz', nullable: true })
   tagExpiresAt: Date | null;
 
+  /** When true, a user can submit the form multiple times (e.g. product orders). */
+  @Column({ default: false })
+  allowMultipleSubmissions: boolean;
+
   /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
   @Column({ default: false })
   allowCashPayment: boolean;

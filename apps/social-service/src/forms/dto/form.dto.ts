@@ -198,6 +198,11 @@ export class CreateFormDto {
   @IsOptional()
   tagExpiresAt?: string;
 
+  /** Allow the same user to submit multiple times (e.g. product orders). */
+  @IsBoolean()
+  @IsOptional()
+  allowMultipleSubmissions?: boolean;
+
   /** Whether cash (physical) payment is accepted alongside Stripe. */
   @IsBoolean()
   @IsOptional()

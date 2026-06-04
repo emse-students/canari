@@ -40,6 +40,8 @@ export interface CreateFormPayload {
   requiresPayment?: boolean;
   associationId?: string;
   paymentMethods?: string[];
+  /** Allow the same user to submit multiple times (e.g. product orders). */
+  allowMultipleSubmissions?: boolean;
   /** Whether cash (physical) payment is accepted as an alternative to Stripe. */
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */

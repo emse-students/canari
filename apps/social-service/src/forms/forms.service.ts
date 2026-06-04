@@ -232,11 +232,15 @@ export class FormsService {
     });
   }
 
-  /** Returns whether the user already has a submission (any status) and its payment status. */
+  /** Returns whether the user already has a submission (any status) and its payment status.
+   *  Always returns hasSubmitted=false when the form allows multiple submissions. */
   async hasSubmission(
     formId: string,
     userId: string,
   ): Promise<{ hasSubmitted: boolean; paymentStatus?: string }> {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form || form.allowMultipleSubmissions) return { hasSubmitted: false };
+
     const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
@@ -315,10 +319,10 @@ export class FormsService {
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
 
-      // If a pending submission already exists for this user/form, reuse it to avoid duplicates.
-      // Lock the row so a concurrent request cannot create a second one simultaneously.
+      // Reuse an existing pending submission to avoid double-charge, unless multiple
+      // submissions are allowed (e.g. order forms where each submit is a new purchase).
       const existingPending =
-        totalCents > 0
+        totalCents > 0 && !form.allowMultipleSubmissions
           ? await manager.findOne(Submission, {
               where: { formId: id, userId: input.userId, paymentStatus: 'pending' },
               order: { createdAt: 'DESC' },
