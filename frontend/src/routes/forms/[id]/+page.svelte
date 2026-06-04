@@ -853,13 +853,13 @@
       </div>
 
       {#if paymentPending}
-        <p class="text-sm text-amber-600 font-medium text-center mt-2">
+        <p class="pointer-events-auto text-sm text-amber-600 font-medium text-center mt-2">
           Votre soumission est enregistrée — le paiement est en cours de confirmation.
         </p>
       {/if}
 
       {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId}
-        <div class="flex justify-center mt-2">
+        <div class="pointer-events-auto flex justify-center mt-2">
           <button
             type="button"
             onclick={() => void handleSaveCard()}
