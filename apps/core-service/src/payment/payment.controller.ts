@@ -252,17 +252,25 @@ export class PaymentController {
       return { ok: false, message: 'Stripe not configured' };
     }
 
-    const session = await this.paymentService.createCheckoutSession({
-      lineItems: body.lineItems,
-      successUrl: body.successUrl,
-      cancelUrl: body.cancelUrl,
-      metadata: body.metadata,
-      stripeConnectAccountId: body.stripeConnectAccountId,
-      customerId: body.customerId,
-      saveForFuture: body.saveForFuture,
-    });
-
-    return { ok: true, url: session.url, id: session.id };
+    try {
+      const session = await this.paymentService.createCheckoutSession({
+        lineItems: body.lineItems,
+        successUrl: body.successUrl,
+        cancelUrl: body.cancelUrl,
+        metadata: body.metadata,
+        stripeConnectAccountId: body.stripeConnectAccountId,
+        customerId: body.customerId,
+        // setup_future_usage is incompatible with destination charges (Connect)
+        saveForFuture: body.saveForFuture && !body.stripeConnectAccountId,
+      });
+      this.logger.debug(`[Stripe] Checkout session created: ${session.id}`);
+      return { ok: true, url: session.url, id: session.id };
+    } catch (err: unknown) {
+      const stripeErr = err as { raw?: { message?: string }; message?: string };
+      const msg = stripeErr?.raw?.message ?? stripeErr?.message ?? String(err);
+      this.logger.error(`[Stripe] create-checkout-session failed: ${msg}`);
+      throw new BadRequestException(`Stripe error: ${msg}`);
+    }
   }
 
   /** Verifies a completed Stripe Checkout session and marks the linked form submission as paid. */

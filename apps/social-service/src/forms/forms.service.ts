@@ -410,7 +410,8 @@ export class FormsService {
           ),
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
-          ...(customerId ? { customerId, saveForFuture: true } : {}),
+          // saveForFuture is incompatible with destination charges (Stripe Connect)
+          ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
         });
 
         const data = res.data || {};
