@@ -68,6 +68,17 @@ export interface MessageHandlerDeps {
    */
   onGroupReady?: (groupId: string) => void;
   /**
+   * Annule le timer de recovery armé par `onGroupMissing` lors de la connexion
+   * (géré dans `useChatSession.connectionRecoveryTimers`).
+   *
+   * `setupMessageHandler` n'a accès qu'à sa propre map `recoveryTimers`, pas à
+   * `connectionRecoveryTimers`. Sans ce callback, le timer de 30s continuerait de
+   * tourner après un Welcome réussi et déclencherait un reboot inutile (seul le
+   * guard `!includes(groupId)` dans `requestReAdd` empêche le dommage, mais c'est
+   * fragile). Ce callback ferme la boucle proprement.
+   */
+  cancelGroupRecovery?: (groupId: string) => void;
+  /**
    * Appelé sur une erreur MLS fatale non récupérable nécessitant une action utilisateur.
    * - `'oom'` : OOM WASM détecté → rechargement de l'app recommandé.
    * - `'private_mode'` : navigation privée détectée (stockage indisponible) → état perdu à la fermeture.

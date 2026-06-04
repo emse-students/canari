@@ -325,7 +325,10 @@ export class MlsDeliveryApi {
       const data = await res.json();
       return data.acquired === true;
     } catch {
-      return true;
+      // Fail-safe : on ne peut pas prouver que le lock a été acquis → supposer que non.
+      // Retourner true ici autoriserait des commits concurrents si Redis est temporairement
+      // indisponible, ce qui fragmenterait les epochs et désynchroniserait les WASM locaux.
+      return false;
     }
   }
 

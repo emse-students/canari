@@ -12,6 +12,7 @@ import {
   purgeLocalConversationRecord,
   kickStaleLeaf,
   isGroupActiveOnServer,
+  handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import { collectKnownSuccessorIds } from '$lib/utils/chat/groupSyncEligibility';
@@ -153,7 +154,8 @@ export async function processPendingInvitations(params: {
           }
 
           // Idempotency check: if device is already in the MLS tree, check server status.
-          // If active → already welcomed, skip. Otherwise the Welcome was lost → kick and retry.
+          // If active → already welcomed, skip. Otherwise leaf is stale → kick then retry
+          // immediately in this same pass (S2 : pas de continue, B2 : saveState après kick).
           try {
             const members = await mlsService.getGroupMembers(groupId);
             if (members.some((m) => m.deviceId === inv.deviceId)) {
@@ -165,9 +167,12 @@ export async function processPendingInvitations(params: {
                 log(`[PENDING] ${inv.deviceId} déjà membre (actif) - skip`);
                 continue;
               }
-              // Device is in MLS tree but Welcome was lost - kick to allow re-add
+              // Leaf stale : retirer du WASM, persister l'état (crash-safety) puis laisser
+              // le flux continuer vers addMember dans cette même passe sans attendre le prochain cycle.
               await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
-              continue;
+              const kickState = await mlsService.saveState(pin);
+              await saveMlsState(userId, kickState);
+              // Le kick ne change pas le KP du device — targetDevice.keyPackage reste valide.
             }
           } catch {
             /* proceed with add attempt */
@@ -207,21 +212,16 @@ export async function processPendingInvitations(params: {
         } catch (e) {
           const errStr = String(e);
           if (errStr.includes('DuplicateSignatur')) {
-            // addMember threw DuplicateSignature — device is already in the MLS tree.
-            // If status is active the Welcome was received; otherwise kick so next round re-adds.
             log(`[PENDING] ${inv.deviceId} déjà dans l'arbre MLS de ${groupId}`);
-            try {
-              const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
-              const memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
-              if (memberStatus !== 'active') {
-                await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
-              }
-            } catch {
-              // Fallback: mark active so we don't retry indefinitely
-              await mlsService
-                .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'active')
-                .catch(() => {});
-            }
+            await handleDuplicateLeafError({
+              mlsService,
+              groupId,
+              targetUserId: inv.userId,
+              targetDeviceId: inv.deviceId,
+              userId,
+              pin,
+              log,
+            });
           } else if (errStr.includes('WrongEpoch') || errStr.includes('epoch_mismatch')) {
             // Someone else committed - check if this invitation was already handled
             log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} - vérification...`);
@@ -699,10 +699,15 @@ export async function handleWelcomeRequest(params: {
   } catch (e) {
     const errStr = String(e);
     if (errStr.includes('DuplicateSignatur')) {
-      // Le device est déjà dans l'arbre MLS - marquer actif
-      await mlsService
-        .updateInvitationStatus(requesterDeviceId, requesterUserId, groupId, 'active')
-        .catch(() => {});
+      await handleDuplicateLeafError({
+        mlsService,
+        groupId,
+        targetUserId: requesterUserId,
+        targetDeviceId: requesterDeviceId,
+        userId,
+        pin,
+        log,
+      });
     } else {
       log(`[WELCOME_REQ] Erreur pour ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }

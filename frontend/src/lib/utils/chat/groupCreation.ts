@@ -128,8 +128,6 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
           `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
         );
 
-        await mlsService.registerMember(groupId, userId);
-
         if (bulk.welcome) {
           for (const did of bulk.addedDeviceIds) {
             try {
@@ -255,8 +253,13 @@ async function processBulkAddition(
       .acquireAddLock(conversation.id, 15_000)
       .catch(() => false);
     if (!lockAcquired) {
-      log(`[WARN] Verrou occupé pour ${conversation.id}, tentative quand même...`);
-      console.warn(`[SYNC] Add-lock busy for ${conversation.id}, proceeding anyway`);
+      log(
+        `[WARN] Verrou occupé pour ${conversation.id} — invitation annulée (un autre device est en cours).`
+      );
+      console.warn(
+        `[SYNC] Add-lock busy for ${conversation.id}, aborting to avoid concurrent commits`
+      );
+      return;
     }
 
     // Track delivery success per user. We only register server membership when a
@@ -375,9 +378,15 @@ async function performDirectAdd(
       `[ADD] ${bulk.addedDeviceIds.length} appareil(s), welcome=${!!bulk.welcome}, commit=${!!bulk.commit}`
     );
 
+    // registerMember est user-level (upsert GroupMember) : un seul appel par userId suffit.
+    // Appeler une fois par device génère N-1 transactions inutiles pour un user multi-device.
+    const registeredOwners = new Set<string>();
     for (const did of bulk.addedDeviceIds) {
       const owner = contactDeviceIds.has(did) ? contact : userId;
-      await mlsService.registerMember(groupId, owner);
+      if (!registeredOwners.has(owner)) {
+        registeredOwners.add(owner);
+        await mlsService.registerMember(groupId, owner);
+      }
     }
 
     if (bulk.welcome) {

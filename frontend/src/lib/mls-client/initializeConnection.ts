@@ -141,18 +141,33 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       log(`[SYNC] WASM retiré (successeur existe) : ${g.groupId.slice(0, 8)}…`);
     }
 
-    // Groupe cible absent du WASM → welcome_request + timer reboot (via onGroupMissing)
+    // Groupe cible absent du WASM.
     if (!localGroups.has(targetId)) {
-      if (deps.onGroupMissing) {
-        await deps.onGroupMissing(targetId).catch(() => {});
+      const targetEntry = groups.find((x) => x.groupId === targetId);
+      if (targetEntry?.deletedAt && !targetEntry?.successorId) {
+        // Successeur terminal soft-deleted sans successeur.
+        // deleteGroup a effacé dm_group_members → le serveur ne peut forwarder personne.
+        // On déclenche quand même onGroupMissing(targetId) : requestReAdd arme un timer 30s
+        // qui lance reboot(targetId) → findAncestorWithMembers remonte la chaîne jusqu'à
+        // g.groupId dont dm_group_members est intact (claimSuccessor ne le purge pas).
+        // Le simple watchdog était insuffisant : il aurait lancé reboot(g.groupId)
+        // → joinSuccessor(g.groupId, targetId) → welcome_request pour 0 membres → bloqué.
+        log(`[SYNC] Groupe terminal ${targetId.slice(0, 8)}… supprimé — recovery via ancêtre`);
+        if (deps.onGroupMissing) {
+          await deps.onGroupMissing(targetId).catch(() => {});
+        }
       } else {
-        await mlsService.sendWelcomeRequest(targetId).catch(() => {});
+        if (deps.onGroupMissing) {
+          await deps.onGroupMissing(targetId).catch(() => {});
+        } else {
+          await mlsService.sendWelcomeRequest(targetId).catch(() => {});
+        }
+        log(
+          g.successorId
+            ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`
+            : `[SYNC] welcome_request → ${targetId.slice(0, 8)}…`
+        );
       }
-      log(
-        g.successorId
-          ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`
-          : `[SYNC] welcome_request → ${targetId.slice(0, 8)}…`
-      );
     }
   }
 

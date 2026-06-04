@@ -25,7 +25,7 @@ import {
   processDevWelcome,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
-import { checkGroupSuccessors, reboot, requestReAdd } from '$lib/utils/chat/recovery';
+import { cancelReAdd, checkGroupSuccessors, reboot, requestReAdd } from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
@@ -536,6 +536,7 @@ export function useChatSession() {
             appendLog('⚠️ Notifications push dégradées — reconnectez-vous pour les réactiver.');
           }
         },
+        cancelGroupRecovery: (groupId) => cancelReAdd(groupId, connectionRecoveryTimers),
         log: cb.log,
       });
 
@@ -668,9 +669,13 @@ export function useChatSession() {
         5 * 60 * 1_000
       );
 
-      // Watchdog universel : tout groupe non-prêt (pas de WASM local) depuis >30s → recoverDeadGroup.
+      // Watchdog universel : tout groupe non-prêt (pas de WASM local) depuis >30s → reboot.
       // Couvre tous les chemins de désync, qu'ils aient armé un timer individuel ou non.
       const notReadySince = new SvelteMap<string, number>();
+      // Guard in-flight : évite de lancer plusieurs reboots concurrents pour le même groupe.
+      // Sans ce guard, un reboot lent (>30s réseau) serait relancé à chaque expiration du
+      // compteur notReadySince. Le CAS gère la race, mais crée des candidats orphelins.
+      const rebootingGroups = new SvelteSet<string>();
       if (syncWatchdogInterval !== null) clearInterval(syncWatchdogInterval);
       syncWatchdogInterval = setInterval(() => {
         if (!getIsTabLeader()) return;
@@ -682,6 +687,7 @@ export function useChatSession() {
           // pendant la session, le watchdog doit quand même déclencher la recovery.
           if (localGroups.has(id)) {
             notReadySince.delete(id);
+            rebootingGroups.delete(id); // Welcome arrivé pendant un reboot → nettoyer
             continue;
           }
           // Channels utilisent AES-GCM, pas MLS — jamais en recovery MLS.
@@ -692,12 +698,15 @@ export function useChatSession() {
           const since = notReadySince.get(id);
           if (since === undefined) {
             notReadySince.set(id, now);
-          } else if (now - since > 30_000) {
+          } else if (now - since > 30_000 && !rebootingGroups.has(id)) {
             notReadySince.delete(id);
-            cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s - migration`);
-            reboot(id, recoveryDeps).catch((e: unknown) =>
-              cb.log(`[SYNC_WATCHDOG] reboot échoué pour ${id}: ${String(e)}`)
-            );
+            rebootingGroups.add(id);
+            cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s — reboot`);
+            reboot(id, recoveryDeps)
+              .catch((e: unknown) =>
+                cb.log(`[SYNC_WATCHDOG] reboot échoué pour ${id}: ${String(e)}`)
+              )
+              .finally(() => rebootingGroups.delete(id));
           }
         }
       }, 5_000);

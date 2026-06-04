@@ -180,23 +180,23 @@ async function handleWelcome({
     const joinedGroupId =
       (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
 
-    // Annuler les timers en cours pour ce groupe
+    // Annuler les timers en cours pour ce groupe (dans les deux maps : locale + connexion)
     const buf = pendingBuffer.get(joinedGroupId);
     if (buf) {
       clearTimeout(buf.timer);
       pendingBuffer.delete(joinedGroupId);
     }
     cancelReAdd(joinedGroupId, recoveryTimers);
+    deps.cancelGroupRecovery?.(joinedGroupId); // annule aussi le timer armé par onGroupMissing
 
     // Persister immédiatement après Welcome (epoch initialisée)
     statePersister.persistNow();
 
-    // Enregistrement côté serveur (idempotent)
+    // Enregistrement côté serveur (idempotent — safety net si l'invitant n'a pas encore
+    // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
-    // Marquer le device comme actif (pour que les autres devices ne le réinvitent plus).
-    await mlsService
-      .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
-      .catch(() => {});
+    // Note : updateInvitationStatus(active) supprimé — le serveur le fait déjà dans
+    // sendWelcome (messaging.service.ts) avant même que le client reçoive le message.
 
     // Récupérer les métadonnées du groupe pour créer/mettre à jour la conversation
     const gData = await fetchGroupMeta(historyBaseUrl, joinedGroupId);

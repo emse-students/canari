@@ -233,6 +233,9 @@ export async function replayConversationHistory(params: {
             } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
               const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
               systemText = `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`;
+            } else if (parsed.system.event === 'memberLeft' && data.userId) {
+              const getName = await resolveDisplayNames([data.userId]);
+              systemText = `${getName(data.userId)} a quitté le groupe`;
             } else if (parsed.system.event === 'memberAdded') {
               const newUserIds: string[] =
                 data.newUsers && Array.isArray(data.newUsers)
