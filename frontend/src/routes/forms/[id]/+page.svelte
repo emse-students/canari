@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
+  import { showToast } from '$lib/stores/toast.svelte';
   import {
     currentUserId,
     listPaymentMethods,
@@ -77,8 +78,8 @@
         const { navigateExternal } = await import('$lib/utils/openExternal');
         await navigateExternal(result.url);
       }
-    } catch {
-      // ignore
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Impossible de démarrer l\'enregistrement de carte');
     } finally {
       savingCard = false;
     }

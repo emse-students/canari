@@ -314,6 +314,8 @@ export class FormsService {
           where: [
             { formId: id, paymentStatus: 'paid' },
             { formId: id, paymentStatus: 'free' },
+            { formId: id, paymentStatus: 'pending' },
+            { formId: id, paymentStatus: 'pending_cash' },
           ],
         });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
