@@ -174,6 +174,7 @@ export async function replayConversationHistory(params: {
           readBy?: string[];
           isDeleted?: boolean;
           isEdited?: boolean;
+          readAt?: number;
         }
     > = [];
     let historyIngestSeq = 0;
@@ -350,7 +351,10 @@ export async function replayConversationHistory(params: {
                       messageId: String(m.id),
                       timestamp:
                         typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
-                      serverTimestamp: serverMs,
+                      // Préserver le serverTimestamp original de chaque message (tri stable).
+                      // Fallback sur serverMs (timestamp du bundle) seulement si absent.
+                      serverTimestamp:
+                        typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
                       ingestSequence: historyIngestSeq++,
                       // Métadonnées transférées du device source : réactions, accusés,
                       // suppressions et éditions — état complet au moment de la migration.
@@ -362,8 +366,19 @@ export async function replayConversationHistory(params: {
                         : {}),
                       ...(m.isDeleted === true ? { isDeleted: true } : {}),
                       ...(m.isEdited === true ? { isEdited: true } : {}),
+                      ...(typeof m.readAt === 'number' ? { readAt: m.readAt } : {}),
                     });
                     addedMsg++;
+                  }
+                }
+                // Seed messageReactions depuis le bundle pour que les stream events de
+                // réaction ultérieurs s'appliquent par-dessus, et non depuis un tableau vide.
+                for (const m of bundleData) {
+                  if (m?.id && Array.isArray(m.reactions) && m.reactions.length > 0) {
+                    const msgId = String(m.id);
+                    if (!messageReactions.has(msgId)) {
+                      messageReactions.set(msgId, m.reactions);
+                    }
                   }
                 }
               }
@@ -466,6 +481,8 @@ export async function replayConversationHistory(params: {
           ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
           ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
           ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
+          ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
+          ...(pm.readAt != null ? { readAt: pm.readAt } : {}),
         };
       });
       await storage.saveMessages(toStore, pin);

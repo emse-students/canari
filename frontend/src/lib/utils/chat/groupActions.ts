@@ -363,6 +363,10 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.readBy?.length ? { readBy: m.readBy } : {}),
     ...(m.isDeleted ? { isDeleted: true } : {}),
     ...(m.isEdited ? { isEdited: true } : {}),
+    // Marqueurs temporels secondaires : nécessaires pour un tri stable post-migration
+    // et pour afficher correctement la date du premier accusé de lecture.
+    ...(m.readAt ? { readAt: m.readAt } : {}),
+    ...(m.serverTimestamp ? { serverTimestamp: m.serverTimestamp } : {}),
   };
 }
 
