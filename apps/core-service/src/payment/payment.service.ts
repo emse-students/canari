@@ -103,10 +103,10 @@ export class PaymentService {
       };
     }
 
-    const requestOptions: Stripe.RequestOptions = {};
-    if (params.idempotencyKey) {
-      requestOptions.idempotencyKey = `checkout_${params.idempotencyKey}`;
-    }
+    const requestOptions: Stripe.RequestOptions | undefined =
+      params.idempotencyKey
+        ? { idempotencyKey: `checkout_${params.idempotencyKey}` }
+        : undefined;
 
     const session = await this.stripe.checkout.sessions.create(
       sessionParams,
