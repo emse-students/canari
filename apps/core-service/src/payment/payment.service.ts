@@ -74,13 +74,9 @@ export class PaymentService {
   }) {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
-    // automatic_payment_methods absent des types pour cette version de l'API Stripe
-    type SessionParams = Stripe.Checkout.SessionCreateParams & {
-      automatic_payment_methods?: { enabled: boolean };
-    };
-    const sessionParams: SessionParams = {
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
-      automatic_payment_methods: { enabled: true },
+      // payment_method_types non spécifié → Stripe utilise la configuration du dashboard
       line_items: params.lineItems,
       metadata: params.metadata,
       success_url: params.successUrl,
