@@ -10,7 +10,14 @@ pub struct Claims {
 }
 
 /// Query parameters accepted by the WebSocket upgrade endpoint.
-/// Note: authentication uses the `canari_ws_token` cookie only.
-/// Device ID is always generated server-side and is not accepted from the client.
+/// Authentication uses the `canari_ws_token` cookie.
+///
+/// `device_id` : identifiant stable du device MLS, fourni par le client.
+/// Utiliser cet ID (plutôt qu'un UUID généré serveur) garantit que la clé de
+/// routage `group:members:{groupId}` reste valide d'une connexion à l'autre.
+/// La sécurité est assurée par le JWT : un client ne peut accéder qu'aux
+/// messages de l'userId extrait du token, quelle que soit la valeur de device_id.
 #[derive(Deserialize)]
-pub struct AuthParams {}
+pub struct AuthParams {
+    pub device_id: Option<String>,
+}

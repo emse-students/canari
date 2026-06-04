@@ -85,7 +85,9 @@ export async function getForms(): Promise<Form[]> {
 export async function getForm(id: string): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}`);
   if (!res.ok) throw new Error('Failed to fetch form');
-  return res.json();
+  const text = await res.text();
+  if (!text) throw new Error('Empty response from server');
+  return JSON.parse(text) as Form;
 }
 
 /** Updates a form's metadata and questions. Requires owner, co-owner, or MANAGE_FORMS flag. */

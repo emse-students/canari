@@ -178,8 +178,16 @@ pub async fn ws_handler(
                 return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
             }
 
-            // Device ID generated server-side so the client cannot spoof another device's presence.
-            let device_id = uuid::Uuid::new_v4().to_string();
+            // Utiliser le device_id fourni par le client pour conserver la même clé de
+            // routage entre les reconnexions (sinon group:members devient périmé).
+            // La sécurité repose sur le JWT : seul l'userId du token peut accéder aux messages.
+            let device_id = _params
+                .device_id
+                .as_deref()
+                .filter(|id| !id.is_empty() && id.len() <= 256)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
             ws.on_upgrade(move |socket| {
                 handle_socket(socket, state, token_data.claims.sub, device_id)
             })

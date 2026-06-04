@@ -634,13 +634,27 @@ export async function handleWelcomeRequest(params: {
     }
 
     // ── Vérifier si le leaf du device est déjà dans l'arbre MLS ────────
-    // Si oui, il faut d'abord le retirer (removeMemberDevice) avant de le
-    // ré-ajouter. Sinon addMember échouerait avec DuplicateSignature.
-    // C'est le cas typique d'un device stale qui a envoyé un welcome_request
-    // après avoir perdu son état local.
+    // Le device peut être dans l'arbre pour deux raisons :
+    //   A) Stale : il a perdu son état local → il faut le kicker puis le ré-ajouter.
+    //   B) Redondant : welcome_request périmée (ex. drain pending_welcome_notify)
+    //      alors que le device a déjà traité son Welcome (status='active') →
+    //      aucune action requise, on skip silencieusement.
     try {
       const currentMembers = await mlsService.getGroupMembers(groupId);
       if (currentMembers.some((m) => m.deviceId === requesterDeviceId)) {
+        // Distinguer A) de B) via le statut de membership serveur.
+        const memberships = await mlsService
+          .getDeviceMemberships(requesterUserId, requesterDeviceId)
+          .catch(() => [] as Awaited<ReturnType<typeof mlsService.getDeviceMemberships>>);
+        const membership = memberships.find((m) => m.groupId === groupId);
+        if (membership?.status === 'active') {
+          log(
+            `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… déjà actif dans ${groupId.slice(0, 8)}… — welcome_request redondante, skip`
+          );
+          return;
+        }
+
+        // Cas A : device stale — kick + ré-ajout.
         log(
           `[WELCOME_REQ] ${requesterDeviceId} déjà dans l'arbre MLS - kick du leaf stale avant ré-ajout`
         );
