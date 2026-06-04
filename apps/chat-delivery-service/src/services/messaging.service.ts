@@ -809,16 +809,23 @@ export class MessagingService implements OnModuleInit {
       );
     }
 
-    // Update DeviceGroupMembership status to active (device can now decrypt)
-    await this.deviceGroupRepo
-      .createQueryBuilder()
-      .update()
-      .set({ status: 'active' as const })
-      .where(
-        'deviceId = :deviceId AND groupId = :groupId AND status = :status',
-        { deviceId: targetDeviceId, groupId: safeGroupId, status: 'pending' },
-      )
-      .execute();
+    // Upsert DeviceGroupMembership to active.
+    // INSERT ... ON CONFLICT DO UPDATE garantit la création du record même si aucune
+    // invitation préalable n'existait (cas reboot : groupe tout neuf, aucun record pending).
+    // Un plain UPDATE WHERE status='pending' touchait 0 lignes dans ce cas, laissant
+    // le device sans record → processPendingInvitations le kickait par erreur.
+    await this.deviceGroupRepo.upsert(
+      {
+        deviceId: targetDeviceId,
+        groupId: safeGroupId,
+        userId: deviceInfo.userId,
+        status: 'active' as const,
+      },
+      {
+        conflictPaths: ['deviceId', 'groupId'],
+        skipUpdateIfNoValuesChanged: true,
+      },
+    );
 
     // Device can now decrypt - add it to the routing set.
     await this.redis.sadd(
