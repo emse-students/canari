@@ -13,6 +13,8 @@ const TAB_ID = crypto.randomUUID();
 let isTabLeader = false;
 let tabChannel: BroadcastChannel | null = null;
 let leaderPromotedHandler: (() => void) | null = null;
+/** Stored resolve from holdLeaderLockUntilUnload — permet de libérer explicitement le lock. */
+let releaseLeaderLock: (() => void) | null = null;
 
 /** Returns true if this tab is the active MLS leader (holds the WebSocket). */
 export function getIsTabLeader(): boolean {
@@ -33,6 +35,7 @@ function notifyTabLeaderPromoted(): void {
 
 function holdLeaderLockUntilUnload(): Promise<void> {
   return new Promise<void>((release) => {
+    releaseLeaderLock = release;
     if (typeof window === 'undefined') {
       release();
       return;
@@ -48,10 +51,51 @@ function holdLeaderLockUntilUnload(): Promise<void> {
   });
 }
 
+/**
+ * Libère explicitement le leadership de cet onglet.
+ * Appelé quand un autre onglet demande à prendre la main.
+ */
+export function releaseLeadership(): void {
+  if (!isTabLeader) return;
+  isTabLeader = false;
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  try {
+    if (localStorage.getItem(LEADER_KEY) === TAB_ID) {
+      localStorage.removeItem(LEADER_KEY);
+      localStorage.removeItem(HEARTBEAT_KEY);
+    }
+  } catch {
+    /* quota */
+  }
+  tabChannel?.postMessage({ type: 'leader_closing', tabId: TAB_ID });
+  // Libère le Web Lock si actif (le tab suivant dans la queue l'acquiert automatiquement)
+  releaseLeaderLock?.();
+  releaseLeaderLock = null;
+}
+
+/**
+ * Depuis un onglet follower : demande à l'onglet leader de libérer son leadership
+ * afin que cet onglet puisse prendre la main.
+ */
+export function requestLeadershipTakeover(): void {
+  if (typeof BroadcastChannel === 'undefined') return;
+  if (!tabChannel) tabChannel = new BroadcastChannel('canari-mls-tab');
+  tabChannel.postMessage({ type: 'request_takeover' });
+}
+
 function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
   if (tabChannel) return;
   tabChannel = new BroadcastChannel('canari-mls-tab');
   tabChannel.addEventListener('message', (ev: MessageEvent) => {
+    // Le leader libère son leadership sur demande d'un onglet follower
+    if (ev.data?.type === 'request_takeover' && isTabLeader) {
+      log('[TAB] Demande de takeover reçue — libération du leadership.');
+      releaseLeadership();
+      return;
+    }
     if (ev.data?.type === 'leader_closing' && !isTabLeader) {
       const delay = Math.random() * 300;
       setTimeout(() => {
@@ -89,6 +133,13 @@ function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
 async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
   if (!tabChannel) {
     tabChannel = new BroadcastChannel('canari-mls-tab');
+    // Écouter les demandes de takeover des onglets followers
+    tabChannel.addEventListener('message', (ev: MessageEvent) => {
+      if (ev.data?.type === 'request_takeover' && isTabLeader) {
+        log('[TAB] Demande de takeover reçue — libération du leadership (Web Locks).');
+        releaseLeadership();
+      }
+    });
   }
 
   const acquired = await new Promise<boolean>((resolveLeadership) => {

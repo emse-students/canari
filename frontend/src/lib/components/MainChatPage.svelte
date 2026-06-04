@@ -21,6 +21,7 @@
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
   import SyncGuideModal from './chat/SyncGuideModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
+  import TabFollowerBanner from './chat/TabFollowerBanner.svelte';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -488,6 +489,9 @@
   </div>
 {:else}
   <div class="app-layout" in:fade>
+    <!-- Bandeau onglet follower (multi-onglets) -->
+    <TabFollowerBanner />
+
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
       <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />

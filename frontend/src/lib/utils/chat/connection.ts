@@ -7,6 +7,8 @@ export {
   initTabLeadershipAsync,
   getIsTabLeader,
   setTabLeaderPromotedHandler,
+  requestLeadershipTakeover,
+  releaseLeadership,
   type MessageHandlerDeps,
   type ConnectionDeps,
   type SyncAfterConnectDeps,

@@ -35,6 +35,7 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
   setTabLeaderPromotedHandler,
+  requestLeadershipTakeover,
 } from '$lib/utils/chat/connection';
 import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
@@ -135,6 +136,8 @@ export function useChatSession() {
   let syncWatchdogInterval: ReturnType<typeof setInterval> | null = null;
   /** Detects a dead WebSocket while the UI still shows online (cleared on logout). */
   let connectionWatchdogInterval: ReturnType<typeof setInterval> | null = null;
+  /** True quand cet onglet est le leader MLS (tient le WebSocket). Réactif pour l'UI. */
+  let isTabLeaderState = $state(false);
   /**
    * Timers de reboot armés par `onGroupMissing` au moment de la connexion.
    * Indépendants du syncWatchdog : garantit le reboot même si discoverMissingGroups échoue.
@@ -150,6 +153,7 @@ export function useChatSession() {
   setTabLeaderPromotedHandler(() => {
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
+    isTabLeaderState = true;
     cb.log('[TAB] Promotion leader — connexion WebSocket...');
     void attemptReconnect(cb);
   });
@@ -607,6 +611,7 @@ export function useChatSession() {
 
       // Multi-tab leadership: only the leader tab opens the WebSocket.
       const tabLeaderNow = await initTabLeadershipAsync(cb.log);
+      isTabLeaderState = tabLeaderNow;
       if (!tabLeaderNow) {
         cb.log('[TAB] Onglet follower — WebSocket actif dans un autre onglet Canari.');
       }
@@ -1148,6 +1153,18 @@ export function useChatSession() {
     /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {
       return isWsConnected;
+    },
+    /** True when this tab is the MLS leader (holds the WebSocket). False for follower tabs. */
+    get isTabLeader() {
+      return isTabLeaderState;
+    },
+    /**
+     * Demande à l'onglet leader de libérer son leadership afin que cet onglet prenne la main.
+     * No-op si cet onglet est déjà le leader.
+     */
+    requestTabTakeover() {
+      if (isTabLeaderState) return;
+      requestLeadershipTakeover();
     },
     /** True when the biometric enrolment banner should be shown (Tauri only). */
     get showBiometricEnrollPrompt() {
