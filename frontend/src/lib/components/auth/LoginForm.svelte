@@ -41,7 +41,7 @@
     - Ombre diffuse (shadow-2xl)
   -->
   <div
-    class="w-full max-w-sm p-10 rounded-3xl text-center shadow-2xl border border-white/40 dark:border-white/10 bg-white/20 dark:bg-black/40 backdrop-blur-2xl"
+    class="w-full max-w-sm p-10 rounded-3xl text-center shadow-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900"
   >
     <!-- Logo -->
     <div class="mb-10">

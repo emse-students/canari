@@ -5,6 +5,7 @@ import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { requestReAdd, cancelReAdd } from '$lib/utils/chat/recovery';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
+import type { IMlsService } from '../IMlsService';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
   resetWasmDuplicateDeliveryFlag,
@@ -167,12 +168,33 @@ async function handleWelcome({
     userId,
     saveConversation,
     loadHistoryForConversation,
-    historyBaseUrl,
     onGroupReady,
     log,
     batchAddMessages,
     addMessageToChat,
   } = deps;
+
+  // Résoudre le groupe terminal dans la chaîne de successeurs.
+  // Cas commun (aucun successeur) : 1 appel API — remplace fetchGroupMeta.
+  // Chaîne de N reboots : N+1 appels, mais on atteint le terminal directement
+  // sans jamais rejoindre un groupe mort intermédiaire.
+  const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(mlsService, groupId ?? '');
+
+  if (hasChain) {
+    // Le groupe de l'enveloppe est mort — cibler le terminal à la place.
+    const from = (groupId ?? '').slice(0, 8);
+    const to = terminalId.slice(0, 8);
+    cancelReAdd(groupId ?? '', recoveryTimers);
+    deps.cancelGroupRecovery?.(groupId ?? '');
+    if (mlsService.getLocalGroups().includes(terminalId)) {
+      log(`[WELCOME] ${from}… → ${to}… déjà dans WASM — Welcome ignoré`);
+    } else {
+      log(`[WELCOME] ${from}… a successeur ${to}… — welcome_request vers groupe terminal`);
+      await mlsService.registerMember(terminalId, userId).catch(() => {});
+      await requestReAdd(terminalId, deps, recoveryTimers);
+    }
+    return true; // ACKé — Welcome pour groupe mort traité
+  }
 
   try {
     // processWelcome retourne le groupId MLS effectif (peut différer de l'enveloppe de livraison).
@@ -198,9 +220,8 @@ async function handleWelcome({
     // Note : updateInvitationStatus(active) supprimé — le serveur le fait déjà dans
     // sendWelcome (messaging.service.ts) avant même que le client reçoive le message.
 
-    // Récupérer les métadonnées du groupe pour créer/mettre à jour la conversation
-    const gData = await fetchGroupMeta(historyBaseUrl, joinedGroupId);
-    await upsertConversation(joinedGroupId, gData, sender, userId, deps);
+    // groupMeta déjà récupéré par resolveTerminalGroup — pas de second appel HTTP.
+    await upsertConversation(joinedGroupId, groupMeta, sender, userId, deps);
 
     // Replay des messages bufferisés (commits arrivés avant le Welcome)
     if (buf?.msgs.length) {
@@ -466,19 +487,44 @@ async function handleKnownGroup({
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Récupère les métadonnées d'un groupe depuis l'API REST. */
-async function fetchGroupMeta(
-  historyBaseUrl: string,
-  groupId: string
-): Promise<{ name?: string; isGroup?: boolean } | null> {
-  try {
-    const { getToken } = await import('$lib/stores/auth');
-    const token = await getToken().catch(() => null);
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-    const r = await fetch(`${historyBaseUrl}/api/mls/groups/${groupId}`, { headers });
-    return r.ok ? await r.json() : null;
-  } catch {
-    return null;
+/**
+ * Suit la chaîne de successeurs depuis `startId` jusqu'au groupe terminal
+ * (sans successeur), en faisant au plus `maxHops + 1` appels à `getGroupMeta`.
+ *
+ * Cas commun (aucun successeur) : 1 appel — remplace l'ancienne `fetchGroupMeta`.
+ * Chaîne de N reboots : N + 1 appels séquentiels, mais on atteint directement
+ * le groupe actif sans jamais rejoindre un intermédiaire mort.
+ *
+ * Retourne `hasChain = false` quand `startId` est déjà le groupe terminal.
+ */
+async function resolveTerminalGroup(
+  mlsService: IMlsService,
+  startId: string,
+  maxHops = 10
+): Promise<{
+  terminalId: string;
+  groupMeta: { name?: string; isGroup?: boolean } | null;
+  hasChain: boolean;
+}> {
+  const visited = new Set<string>();
+  let current = startId;
+  let meta: { name?: string; isGroup?: boolean } | null = null;
+
+  for (let hop = 0; hop <= maxHops; hop++) {
+    if (visited.has(current)) break; // cycle — s'arrêter au dernier connu
+    visited.add(current);
+
+    const m = await mlsService.getGroupMeta(current).catch(() => null);
+    meta = m ? { name: m.name, isGroup: m.isGroup } : null;
+
+    if (!m?.successorId) {
+      return { terminalId: current, groupMeta: meta, hasChain: current !== startId };
+    }
+    current = m.successorId;
   }
+
+  // Chaîne trop longue ou cycle — retourner le dernier observé
+  return { terminalId: current, groupMeta: meta, hasChain: true };
 }
 
 /**
