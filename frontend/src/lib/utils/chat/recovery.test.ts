@@ -33,9 +33,11 @@ function makeMls(overrides: Record<string, unknown> = {}) {
       .mockResolvedValue({ commit: new Uint8Array([2]), addedDeviceIds: [], welcome: undefined }),
     sendCommit: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
+    sendMessage: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(0),
+    getDeviceId: vi.fn().mockReturnValue('self-device'),
     ...overrides,
   };
 }
@@ -201,10 +203,24 @@ describe('migrateConversation', () => {
     expect(conversations.get('to-id')?.name).toBe('Chat');
   });
 
-  it('cible déjà existante → messages non re-copiés (fix C8)', async () => {
+  it('cible déjà existante → messages migrés quand même (saveMessages est idempotent)', async () => {
+    // Bug A population 2 : quand le Welcome crée la conv cible avant que
+    // checkGroupSuccessors ne tourne, les messages de la source doivent quand
+    // même être copiés (sinon ils sont détruits lors de deleteConversation source).
+    const messages = [
+      {
+        id: 'm1',
+        conversationId: 'from-id',
+        senderId: 'x',
+        content: 'hi',
+        timestamp: 0,
+        readBy: [],
+        reactions: [],
+      },
+    ];
     const storage = {
-      getMessages: vi.fn(),
-      saveMessages: vi.fn(),
+      getMessages: vi.fn().mockResolvedValue(messages),
+      saveMessages: vi.fn().mockResolvedValue(undefined),
       saveConversation: vi.fn().mockResolvedValue(undefined),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
     };
@@ -236,9 +252,9 @@ describe('migrateConversation', () => {
 
     await migrateConversation('from-id', 'to-id', deps);
 
-    // Cible existante → pas de copie de messages
-    expect(storage.getMessages).not.toHaveBeenCalled();
-    expect(storage.saveMessages).not.toHaveBeenCalled();
+    // Les messages sont copiés même si la cible existe (upsert idempotent)
+    expect(storage.getMessages).toHaveBeenCalledWith('from-id', 'pin123');
+    expect(storage.saveMessages).toHaveBeenCalledTimes(1);
     // Conversation déplacée correctement
     expect(conversations.has('from-id')).toBe(false);
     expect(conversations.has('to-id')).toBe(true);
