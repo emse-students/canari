@@ -52,6 +52,7 @@
   let requiresPayment = $state(false);
   let associationId = $state('');
   let allowCashPayment = $state(false);
+  let allowMultipleSubmissions = $state(false);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
 
   // Image
@@ -113,6 +114,7 @@
       opensAt = isoToDatetimeLocal(f.opensAt);
       associationId = f.associationId ?? '';
       allowCashPayment = f.allowCashPayment ?? false;
+      allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
       imageUrl = f.imageUrl ?? null;
       const coOwnerIds = f.coOwners ?? [];
@@ -177,6 +179,7 @@
           };
         }),
         maxSubmissions,
+        allowMultipleSubmissions,
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         associationId: requiresPayment && associationId ? associationId : undefined,
@@ -381,6 +384,19 @@
           placeholder="Illimité"
           min="1"
         />
+
+        <label class="flex items-center gap-3 cursor-pointer select-none group">
+          <div class="relative">
+            <input type="checkbox" bind:checked={allowMultipleSubmissions} class="peer sr-only" />
+            <div class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"></div>
+            <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+          </div>
+          <div>
+            <span class="text-sm font-semibold text-text-main">Autoriser plusieurs réponses par utilisateur</span>
+            <p class="text-xs text-text-muted">Utile pour les formulaires de commande</p>
+          </div>
+        </label>
+
         <div>
           <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1"
             >Date d'ouverture (shotgun)</label
