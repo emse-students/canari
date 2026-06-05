@@ -270,7 +270,15 @@ export async function mergeDirectConversationDuplicates(
   mlsService?: IMlsService
 ): Promise<ConversationMeta[]> {
   const canonicalByPeer = new Map<string, ConversationMeta>();
-  const duplicatesToMerge: Array<{ canonical: ConversationMeta; duplicate: ConversationMeta }> = [];
+  const duplicatesToMerge: Array<{
+    canonical: ConversationMeta;
+    duplicate: ConversationMeta;
+    /** true when duplicate is a proper ancestor of canonical (already soft-deleted
+     *  server-side via claimSuccessor). deleteGroupOnServer must be skipped in this
+     *  case: the backend follows the full successor chain and would cascade-delete
+     *  the active canonical group. */
+    duplicateIsAncestor: boolean;
+  }> = [];
 
   for (const meta of convMetas) {
     const identity = deriveConversationIdentity(meta.name, userId, meta.id);
@@ -288,6 +296,7 @@ export async function mergeDirectConversationDuplicates(
     // Ne pas inverser cette règle — un deleteGroupOnServer sur le successeur actif est fatal.
     let canonical: ConversationMeta;
     let duplicate: ConversationMeta;
+    let duplicateIsAncestor = false;
     if (mlsService) {
       const [metaExisting, metaMeta] = await Promise.all([
         mlsService.getGroupMeta(existing.id).catch(() => null),
@@ -296,9 +305,11 @@ export async function mergeDirectConversationDuplicates(
       if (metaExisting?.successorId === meta.id) {
         canonical = meta;
         duplicate = existing;
+        duplicateIsAncestor = true;
       } else if (metaMeta?.successorId === existing.id) {
         canonical = existing;
         duplicate = meta;
+        duplicateIsAncestor = true;
       } else {
         canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
         duplicate = canonical.id === existing.id ? meta : existing;
@@ -308,12 +319,12 @@ export async function mergeDirectConversationDuplicates(
       duplicate = canonical.id === existing.id ? meta : existing;
     }
     canonicalByPeer.set(peer, canonical);
-    duplicatesToMerge.push({ canonical, duplicate });
+    duplicatesToMerge.push({ canonical, duplicate, duplicateIsAncestor });
   }
 
   if (duplicatesToMerge.length === 0) return convMetas;
 
-  for (const { canonical, duplicate } of duplicatesToMerge) {
+  for (const { canonical, duplicate, duplicateIsAncestor } of duplicatesToMerge) {
     if (canonical.id === duplicate.id) continue;
     try {
       const canonicalMessages = await storage.getMessages(canonical.id, pin);
@@ -326,9 +337,12 @@ export async function mergeDirectConversationDuplicates(
       const merged = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
       if (merged.length > 0) await storage.saveMessages(merged, pin);
       await storage.deleteConversation(duplicate.id);
-      // Supprimer aussi le groupe orphelin côté serveur pour éviter qu'il
-      // réapparaisse au prochain login via discoverMissingGroups.
-      if (mlsService) {
+      // Supprimer le groupe orphelin côté serveur pour éviter qu'il réapparaisse
+      // au prochain login via discoverMissingGroups.
+      // Exception : si le duplicate est un ancêtre du canonical (successorId = canonical.id),
+      // le serveur l'a déjà soft-deleted via claimSuccessor. Appeler deleteGroupOnServer
+      // suivrait la chaîne successeur et supprimerait aussi le canonical actif.
+      if (mlsService && !duplicateIsAncestor) {
         try {
           await mlsService.deleteGroupOnServer(duplicate.id);
         } catch {
