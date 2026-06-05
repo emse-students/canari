@@ -16,6 +16,7 @@
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload } from '$lib/posts/api';
+  import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { getForms, type Form } from '$lib/forms/api';
   import {
     buildCreateFormHref,
@@ -257,6 +258,7 @@
     publishing = true;
     errorMessage = '';
     try {
+      await assertNotMuted();
       if (!markdown.trim() && selectedFiles.length === 0) {
         throw new Error('Le contenu du post ou une image est requis.');
       }

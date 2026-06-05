@@ -15,6 +15,7 @@
     type PostComment,
   } from '$lib/posts/api';
   import { createReport } from '$lib/moderation/api';
+  import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
@@ -214,6 +215,12 @@
   /** Toggles a reaction on the post with an optimistic update. Rolls back the local state if the API call fails. */
   async function handleReaction(reactionType: string) {
     if (!currentUserId.trim()) return;
+    try {
+      await assertNotMuted();
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : 'Action non autorisée';
+      return;
+    }
 
     // Optimistic update - apply immediately, roll back on error
     const prevReactions = { ...(localPost.reactions ?? {}) };
@@ -276,6 +283,7 @@
     if (!currentUserId.trim()) return;
     submittingComment = true;
     try {
+      await assertNotMuted();
       const result = await addComment(localPost.id, { text, parentId, media });
       localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
       commentText = '';

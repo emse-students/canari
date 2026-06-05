@@ -25,7 +25,6 @@
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
-  import MutedUserBanner from '$lib/components/shared/MutedUserBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
@@ -286,9 +285,6 @@
   <MaintenanceAdminBanner />
 {/if}
 <MlsFatalErrorBanner />
-{#if !isLoginPage}
-  <MutedUserBanner />
-{/if}
 
 <div
   role="presentation"
