@@ -60,12 +60,16 @@ export async function requestReAdd(
     return requestReAdd(meta.successorId, deps, timers);
   }
 
-  // Groupe supprimé intentionnellement (deletedAt posé par deleteGroup) et sans successeur.
-  // Ne pas envoyer de welcome_request ni armer un reboot : personne ne peut répondre
-  // (dm_group_members effacé) et le CAS de claimSuccessor refuse désormais les groupes
-  // déjà supprimés, donc le reboot créerait un candidat orphelin immédiatement nettoyé.
+  // Groupe supprimé sans successeur : personne ne peut répondre à un welcome_request
+  // et le CAS refusera tout reboot. Marquer la conversation deletedRemotely pour que
+  // l'UI affiche la bannière appropriée, et éviter de boucler indéfiniment.
   if (meta?.deletedAt) {
     deps.log(`[READD] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    const convo = deps.conversations.get(groupId);
+    if (convo && (!convo.deletedRemotely || convo.isReady)) {
+      deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
+      await deps.saveConversation(groupId).catch(() => {});
+    }
     return;
   }
 
@@ -128,6 +132,19 @@ export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void>
   const meta = await mlsService.getGroupMeta(groupId);
   if (meta?.successorId) {
     return joinSuccessor(groupId, meta.successorId, deps);
+  }
+
+  // Groupe supprimé sans successeur : le CAS claimSuccessor échouera systématiquement
+  // (condition "deletedAt IS NULL" non satisfaite), créant un candidat orphelin à chaque
+  // tentative. Même abandon que requestReAdd — marquer la conversation deletedRemotely.
+  if (meta?.deletedAt && !meta.successorId) {
+    log(`[REBOOT] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    const convo = deps.conversations.get(groupId);
+    if (convo && (!convo.deletedRemotely || convo.isReady)) {
+      deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
+      await deps.saveConversation(groupId).catch(() => {});
+    }
+    return;
   }
 
   // Étape 2 : lire les infos du groupe depuis le serveur (name, isGroup)

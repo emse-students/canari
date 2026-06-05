@@ -178,14 +178,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       } else {
         if (deps.onGroupMissing) {
           await deps.onGroupMissing(targetId).catch(() => {});
+          // onGroupMissing (requestReAdd) gère son propre log selon l'issue réelle
         } else {
           await mlsService.sendWelcomeRequest(targetId).catch(() => {});
+          log(
+            g.successorId
+              ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`
+              : `[SYNC] welcome_request → ${targetId.slice(0, 8)}…`
+          );
         }
-        log(
-          g.successorId
-            ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`
-            : `[SYNC] welcome_request → ${targetId.slice(0, 8)}…`
-        );
       }
     }
   }
