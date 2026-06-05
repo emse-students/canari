@@ -241,26 +241,14 @@ async function handleWelcome({
       log(`[WELCOME] Erreur purge prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
     }
 
-    // Purger le prédécesseur du Map de conversations et d'IndexedDB.
-    // Sans ça, les deux groupes coexistent en base locale et provoquent un doublon
-    // au prochain login (mergeDirectConversationDuplicates), où le mauvais canonique
-    // peut être choisi si updatedAt est trompeur.
-    try {
-      for (const [predId] of deps.conversations.entries()) {
-        if (predId === joinedGroupId) continue;
-        const m = await mlsService.getGroupMeta(predId).catch(() => null);
-        if (m?.successorId === joinedGroupId) {
-          deps.conversations.delete(predId);
-          if (deps.getSelectedContact() === predId) deps.setSelectedContact(joinedGroupId);
-          await deps.deleteConversation?.(predId).catch(() => {});
-          log(
-            `[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé des conv. locales (successeur rejoint)`
-          );
-        }
-      }
-    } catch (e) {
-      log(`[WELCOME] Erreur purge conv prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
-    }
+    // La purge de l'ancien groupe du Map et d'IndexedDB est déléguée :
+    // - Map : upsertConversation (ci-dessous) supprime l'entrée prédécesseur quand il
+    //   trouve le même pair DM sous un ancien groupId, et migre ses messages en mémoire.
+    // - IndexedDB : mergeDirectConversationDuplicates au prochain login (Fix 1).
+    //
+    // Supprimer l'IndexedDB du prédécesseur ici effacerait les messages accumulés
+    // avant que upsertConversation puisse les lire et les persister dans le successeur,
+    // provoquant une perte visible jusqu'à réception du bundle historique.
 
     // Enregistrement côté serveur (idempotent — safety net si l'invitant n'a pas encore
     // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
@@ -618,8 +606,38 @@ async function upsertConversation(
     const existing = conversations.get(newConvoKey)!;
     const updated = { ...existing, id: joinedGroupId, name: displayName, isReady: true };
     if (newConvoKey !== joinedGroupId) {
+      // Prédécesseur → successeur : on change de groupId (ex. reboot MLS).
       conversations.delete(newConvoKey);
       newConvoKey = joinedGroupId;
+
+      // Persister les messages en mémoire dans l'IndexedDB du successeur.
+      // Sans ça, loadHistoryForConversation (qui lit depuis l'IndexedDB du nouveau groupId)
+      // écrase la liste en mémoire avec un tableau vide, et les messages disparaissent jusqu'au
+      // prochain login où mergeDirectConversationDuplicates les migre proprement.
+      const msgs = existing.messages ?? [];
+      if (deps.storage && msgs.length > 0) {
+        const toSave = msgs
+          .filter((m) => m.id && m.status !== 'sending')
+          .map((m) => ({
+            id: m.id,
+            conversationId: joinedGroupId,
+            senderId: m.senderId,
+            content: m.content,
+            timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
+            readBy: m.readBy,
+            reactions: m.reactions,
+            isDeleted: m.isDeleted,
+            isEdited: m.isEdited,
+            readAt: m.readAt,
+            serverTimestamp: m.serverTimestamp,
+          }));
+        if (toSave.length > 0) {
+          await deps.storage.saveMessages(toSave, deps.pin).catch(() => {});
+          deps.log(
+            `[WELCOME] ${toSave.length} message(s) de ${existing.id.slice(0, 8)}… persistés dans ${joinedGroupId.slice(0, 8)}… (successeur)`
+          );
+        }
+      }
     }
     conversations.set(newConvoKey, updated);
   } else {
