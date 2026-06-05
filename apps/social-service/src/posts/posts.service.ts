@@ -582,14 +582,72 @@ export class PostsService {
     return shaped;
   }
 
-  /** Updates a post's markdown content. Author or global admin may edit. */
-  async updatePost(postId: string, userId: string, markdown: string, isGlobalAdmin = false) {
+  /** Updates a post's content. Author or global admin may edit. */
+  async updatePost(
+    postId: string,
+    userId: string,
+    data: {
+      markdown: string;
+      images?: any[];
+      polls?: any[];
+      attachedFormId?: string | null;
+      linkedCalendarEventId?: string | null;
+      paymentAssociationId?: string | null;
+      scheduledAt?: string | null;
+    },
+    isGlobalAdmin = false
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     if (!isGlobalAdmin && post.authorId !== userId)
       throw new UnauthorizedException('Not your post');
-    post.markdown = markdown;
+
+    post.markdown = data.markdown;
+
+    if (data.images !== undefined) post.images = data.images;
+
+    if (data.polls !== undefined) {
+      post.polls = data.polls.map((poll: any) => ({
+        ...poll,
+        id: poll.id || crypto.randomUUID(),
+        multipleChoice: poll.multipleChoice ?? false,
+        votesByUser: poll.votesByUser ?? {},
+        options: (poll.options || []).map((opt: any) => ({
+          ...opt,
+          id: opt.id || crypto.randomUUID(),
+          votes: Array.isArray(opt.votes) ? opt.votes : [],
+        })),
+      }));
+    }
+
+    if ('attachedFormId' in data) post.attachedFormId = data.attachedFormId ?? null;
+
+    if ('linkedCalendarEventId' in data) {
+      if (data.linkedCalendarEventId && post.associationId) {
+        post.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
+          post.associationId,
+          data.linkedCalendarEventId
+        );
+      } else {
+        post.linkedCalendarEventId = data.linkedCalendarEventId ?? null;
+      }
+    }
+
+    if ('paymentAssociationId' in data)
+      post.paymentAssociationId = data.paymentAssociationId ?? null;
+
+    if ('scheduledAt' in data)
+      post.scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;
+
+    const mentionedIds = post.markdown
+      ? this.notifications
+          .resolveMentionedUserIds(post.markdown)
+          .filter((id) => id !== post.authorId)
+      : [];
+    post.mentions = mentionedIds;
+
     const saved = await this.postRepo.save(post);
+    await this.invalidateListCache();
     return this.toPublicPostFromEntity(saved);
   }
 

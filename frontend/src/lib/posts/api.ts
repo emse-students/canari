@@ -126,6 +126,23 @@ export interface CreatePostPayload {
   paymentAssociationId?: string;
 }
 
+/** Payload for PATCH /api/posts/:id. All fields except markdown are optional. */
+export interface UpdatePostPayload {
+  markdown: string;
+  images?: PostImageRef[];
+  polls?: Array<{
+    /** Existing poll ID — pass it to preserve vote history when options are unchanged. */
+    id?: string;
+    question: string;
+    options: Array<{ label: string }>;
+    multipleChoice?: boolean;
+  }>;
+  attachedFormId?: string | null;
+  linkedCalendarEventId?: string | null;
+  paymentAssociationId?: string | null;
+  scheduledAt?: string | null;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await apiFetch(`${socialUrl()}${path}`, init as any);
 
@@ -161,10 +178,10 @@ export async function getPost(postId: string): Promise<PostEntity> {
   return request<PostEntity>(`/api/posts/${postId}`);
 }
 
-export async function updatePost(postId: string, markdown: string): Promise<PostEntity> {
+export async function updatePost(postId: string, payload: UpdatePostPayload): Promise<PostEntity> {
   return request<PostEntity>(`/api/posts/${postId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ markdown }),
+    body: JSON.stringify(payload),
   });
 }
 

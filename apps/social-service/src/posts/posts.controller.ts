@@ -195,7 +195,7 @@ export class PostsController {
     return this.service.getById(postId, { allowHidden: xGlobalAdmin === 'true' });
   }
 
-  /** Updates the markdown content of a post. Author or global admin may edit. */
+  /** Updates a post's content. Author or global admin may edit. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId')
   updatePost(
@@ -204,7 +204,7 @@ export class PostsController {
     @Param('postId') postId: string,
     @Body() body: UpdatePostDto
   ) {
-    return this.service.updatePost(postId, xUserId, body.markdown, ga === 'true');
+    return this.service.updatePost(postId, xUserId, body, ga === 'true');
   }
 
   /** Deletes a post; global admins may delete any post. */

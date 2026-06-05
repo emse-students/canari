@@ -7,7 +7,6 @@
     likeComment as likeCommentApi,
     editComment as editCommentApi,
     deleteComment as deleteCommentApi,
-    updatePost as updatePostApi,
     deletePost as deletePostApi,
     getPost,
     pinPost as pinPostApi,
@@ -27,6 +26,7 @@
   import PostComments from './PostComments.svelte';
   import PostOverlayControls from './PostOverlayControls.svelte';
   import PostFeedback from './PostFeedback.svelte';
+  import EditPostForm from './EditPostForm.svelte';
   import { Pin, CalendarCheck } from '@lucide/svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { untrack } from 'svelte';
@@ -66,7 +66,6 @@
   let actionMessage = $state('');
   let errorMessage = $state('');
   let editingPost = $state(false);
-  let editMarkdown = $state('');
   let selectedOptions = $state<string[]>([]);
   // Synchronise selectedOptions depuis les données serveur (postProp est réactif, localPost ne l'est pas).
   $effect(() => {
@@ -236,23 +235,15 @@
     }
   }
 
-  /** Enters inline edit mode, pre-populating the textarea with the current markdown. */
+  /** Enters edit mode (shows EditPostForm in place of PostContent). */
   function startEditPost() {
-    editMarkdown = localPost.markdown ?? '';
     editingPost = true;
   }
 
-  /** Sends the edited markdown to the API and merges the returned post into localPost on success. */
-  async function submitEditPost() {
-    const text = editMarkdown.trim();
-    if (!text) return;
-    try {
-      const updated = await updatePostApi(localPost.id, text);
-      localPost = { ...localPost, ...updated };
-      editingPost = false;
-    } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de modifier le post';
-    }
+  /** Called by EditPostForm on successful save; merges the updated post and closes edit mode. */
+  function onPostSaved(updated: PostEntity) {
+    localPost = { ...localPost, ...updated };
+    editingPost = false;
   }
 
   /** Deletes the post via the API and calls onDelete so the parent can remove the card from the list. */
@@ -451,26 +442,13 @@
     {/if}
 
     {#if editingPost}
-      <div class="px-5 pb-4 flex flex-col gap-2">
-        <textarea
-          bind:value={editMarkdown}
-          rows={4}
-          class="w-full max-w-full bg-black/5 dark:bg-white/5 rounded-xl px-3 py-2.5 text-[0.9rem] text-text-main border border-black/10 dark:border-white/10 focus:ring-2 focus:ring-amber-500/50 outline-none resize-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
-        ></textarea>
-        <div class="flex gap-2 justify-end">
-          <button
-            type="button"
-            onclick={() => (editingPost = false)}
-            class="px-3 py-1.5 text-xs font-bold text-text-muted hover:text-text-main rounded-lg transition-colors"
-            >Annuler</button
-          >
-          <button
-            type="button"
-            onclick={submitEditPost}
-            class="px-4 py-1.5 text-xs font-extrabold bg-amber-500 text-[#151B2C] rounded-lg hover:bg-amber-400 transition-colors"
-            >Enregistrer</button
-          >
-        </div>
+      <div class="px-4 pb-4 sm:px-5">
+        <EditPostForm
+          post={localPost}
+          {authToken}
+          onSaved={onPostSaved}
+          onCancel={() => (editingPost = false)}
+        />
       </div>
     {:else}
       <PostContent post={localPost} {authToken} />

@@ -310,6 +310,38 @@ export class UpdatePostDto {
   @IsNotEmpty()
   @MaxLength(50_000)
   markdown: string;
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PostImageDto)
+  images?: PostImageDto[];
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PollInputDto)
+  polls?: PollInputDto[];
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsUUID()
+  attachedFormId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  linkedCalendarEventId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsString()
+  paymentAssociationId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsDateString()
+  scheduledAt?: string | null;
 }
 
 export class ReportPostDto {
