@@ -64,27 +64,6 @@
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
 
-  // ─── Debug IDs (temporaire) ────────────────────────────────────────────────
-  let debugLastSuccessorId = $state<string | null>(null);
-
-  $effect(() => {
-    const groupId = convs.currentConvo?.id;
-    if (!groupId) {
-      debugLastSuccessorId = null;
-      return;
-    }
-    const mls = session.ensureMls();
-    let current = groupId;
-    (async () => {
-      for (let hop = 0; hop < 10; hop++) {
-        const meta = await mls.getGroupMeta(current).catch(() => null);
-        if (!meta?.successorId) break;
-        current = meta.successorId;
-      }
-      debugLastSuccessorId = current === groupId ? null : current;
-    })();
-  });
-
   /** Appends a debug message to the global log buffer and scrolls the log panel. */
   function log(msg: string) {
     appendLog(msg);
@@ -526,8 +505,6 @@
         <ChatArea
           currentUserId={session.userId}
           conversation={convs.currentConvo}
-          debugId={convs.currentConvo?.id}
-          debugSuccessorId={debugLastSuccessorId}
           {messageText}
           isChannel={isSelectedChannel ?? false}
           imageMediaId={convs.currentConvo?.imageMediaId ?? null}
