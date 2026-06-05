@@ -81,6 +81,9 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     setIsWsConnected(false);
     log(`Gateway inaccessible: ${msg}`);
     console.error('[WS] Gateway connection failed:', msg);
+    // Session expired is a permanent auth failure - re-throw so callers can
+    // stop retrying instead of scheduling backoff reconnects.
+    if (wsErr instanceof Error && wsErr.name === 'SessionExpiredError') throw wsErr;
     return false;
   }
 }

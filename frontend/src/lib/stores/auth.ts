@@ -61,6 +61,18 @@ let _accessToken: string | null = null;
 // each firing a separate /api/auth/refresh request.
 let _pendingRefresh: Promise<string> | null = null;
 
+/**
+ * Thrown when the HttpOnly refresh cookie has expired or been revoked (HTTP 401).
+ * Callers must distinguish this from transient network errors to avoid retrying
+ * a definitively dead session.
+ */
+export class SessionExpiredError extends Error {
+  constructor() {
+    super('Session expired - please log in again');
+    this.name = 'SessionExpiredError';
+  }
+}
+
 const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
 
@@ -257,7 +269,7 @@ async function _doRefresh(): Promise<string> {
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗${res.status} ${Date.now() - t0}ms`);
-    throw new Error('Session expired - please log in again');
+    throw new SessionExpiredError();
   }
 
   const data = (await res.json()) as { access_token: string };

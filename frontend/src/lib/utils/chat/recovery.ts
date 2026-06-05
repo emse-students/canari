@@ -104,7 +104,7 @@ export async function requestReAdd(
       deps.log(
         `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${groupId.slice(0, 8)}… — reboot`
       );
-      await reboot(groupId, deps).catch((e) =>
+      await reboot(groupId, deps, timers).catch((e) =>
         deps.log(`[READD] reboot échoué pour ${groupId.slice(0, 8)}…: ${String(e)}`)
       );
     }
@@ -151,7 +151,11 @@ export function cancelReAdd(
  *     `migrateConversation`.
  *  7. Migre la conversation locale (G → S) et envoie le bundle historique complet.
  */
-export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void> {
+export async function reboot(
+  groupId: string,
+  deps: RecoveryDeps,
+  timers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+): Promise<void> {
   const { mlsService, userId, pin, log } = deps;
 
   // Guard : si le groupe est déjà dans le WASM local, la recovery est inutile.
@@ -167,7 +171,7 @@ export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void>
   // Étape 1 : successeur déjà revendiqué par un autre device ?
   const meta = await mlsService.getGroupMeta(groupId);
   if (meta?.successorId) {
-    return joinSuccessor(groupId, meta.successorId, deps);
+    return joinSuccessor(groupId, meta.successorId, deps, timers);
   }
 
   // Groupe supprimé sans successeur : le CAS claimSuccessor échouera systématiquement
@@ -221,7 +225,7 @@ export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void>
     );
     await mlsService.deleteGroupOnServer(candidateId).catch(() => {});
     mlsService.forgetGroup(candidateId);
-    if (claim.successorId) return joinSuccessor(groupId, claim.successorId, deps);
+    if (claim.successorId) return joinSuccessor(groupId, claim.successorId, deps, timers);
     return;
   }
 
@@ -291,7 +295,8 @@ export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void>
 async function joinSuccessor(
   deadGroupId: string,
   successorId: string,
-  deps: RecoveryDeps
+  deps: RecoveryDeps,
+  timers: Map<string, ReturnType<typeof setTimeout>>
 ): Promise<void> {
   const { mlsService, userId, log } = deps;
   log(`[REBOOT] Rejoindre successeur ${successorId.slice(0, 8)}…`);
@@ -299,7 +304,7 @@ async function joinSuccessor(
   await mlsService.registerMember(successorId, userId).catch(() => {});
 
   if (!mlsService.getLocalGroups().includes(successorId)) {
-    await requestReAdd(successorId, deps, new Map());
+    await requestReAdd(successorId, deps, timers);
   }
 
   await migrateConversation(deadGroupId, successorId, deps);

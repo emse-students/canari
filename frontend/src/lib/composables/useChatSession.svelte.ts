@@ -1027,6 +1027,14 @@ export function useChatSession() {
       await syncConnectionAfterWsOpen(connectionDeps);
       runGroupDiscovery(cb, ensureMls(), 'reconnect');
     } catch (err) {
+      if (err instanceof Error && err.name === 'SessionExpiredError') {
+        // Refresh token definitively expired — stop all retries and redirect to login.
+        isLoggedIn = false;
+        cb.log('[AUTH] Session expirée - redirection vers /login');
+        console.warn('[WS] Session expired, stopping reconnect loop');
+        void goto('/login', { replaceState: true });
+        return;
+      }
       cb.log(`Reconnexion echouee: ${err instanceof Error ? err.message : String(err)}`);
       console.error('[WS] Reconnection failed:', err instanceof Error ? err.message : err);
       scheduleReconnect(cb);

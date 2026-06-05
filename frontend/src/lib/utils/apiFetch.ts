@@ -41,9 +41,13 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  console.log(`[API] → ${method} ${logUrl}`);
+  // Polling routes are demoted to debug to avoid drowning the console.
+  const POLL_ROUTES = ['/api/presence', '/api/moderation/me/mute-status'];
+  const log = POLL_ROUTES.some((r) => logUrl.startsWith(r)) ? console.debug : console.log;
+
+  log(`[API] → ${method} ${logUrl}`);
   let res = await fetch(url, { ...init, headers });
-  console.log(`[API] ← ${res.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
+  log(`[API] ← ${res.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
 
   if (res.status === 401) {
     console.warn(`[API] 401 on ${method} ${logUrl} - tentative de refresh token`);

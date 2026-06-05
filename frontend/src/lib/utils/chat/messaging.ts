@@ -112,7 +112,7 @@ export async function sendChatMessage(
       await addMessageToChat(userId, envelope, contactName, {
         messageId,
         status: 'sending',
-        skipDbSave: false,
+        skipDbSave: true,
       });
       deps.log(`[SEND] Message affiché (optimiste)...`);
 
