@@ -429,8 +429,28 @@ export async function migrateConversation(
       .catch((e) => log(`[MIGRATE] Erreur sauvegarde : ${String(e)}`));
   }
 
+  // Fusionner les messages en mémoire : anciens (fromGroup) en premier, puis les éventuels
+  // nouveaux arrivés dans toGroup depuis le Welcome, dédupliqués par id.
+  // Sans cette fusion, si upsertConversation a déjà créé toGroup vide avant que
+  // migrateConversation s'exécute (timing handleWelcome → checkGroupSuccessors),
+  // le spread de existingTarget garde messages=[] et les anciens ne sont pas visibles
+  // jusqu'au prochain rechargement (ils sont bien en IndexedDB, mais pas en mémoire).
+  const seen = new Set<string>();
+  const mergedMessages = [...(oldConvo.messages ?? []), ...(existingTarget?.messages ?? [])].filter(
+    (m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    }
+  );
+
   const merged: Conversation = existingTarget
-    ? { ...existingTarget, name: oldConvo.name, isReady: targetAlreadyReady }
+    ? {
+        ...existingTarget,
+        name: oldConvo.name,
+        isReady: targetAlreadyReady,
+        messages: mergedMessages,
+      }
     : { ...oldConvo, id: toGroupId, isReady: targetAlreadyReady };
   conversations.set(toGroupId, merged);
 
