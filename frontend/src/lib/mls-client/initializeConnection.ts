@@ -134,11 +134,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       continue;
     }
 
-    // Si le groupe a un successeur, l'état WASM de l'ancien est périmé
-    if (g.successorId && localGroups.has(g.groupId) && !localGroups.has(targetId)) {
+    // Oublier l'ancien groupe seulement si le successeur est DÉJÀ dans le WASM
+    // (on a déjà rejoint B lors d'une session précédente).
+    // Si B n'est pas encore rejoint, on garde A pour pouvoir déchiffrer ses messages
+    // en attente avant de le purger — la purge se fera dans handleWelcome() dès que
+    // B sera rejoint dans cette même session.
+    if (g.successorId && localGroups.has(g.groupId) && localGroups.has(targetId)) {
       mlsService.forgetGroup(g.groupId);
       stateMutated = true;
-      log(`[SYNC] WASM retiré (successeur existe) : ${g.groupId.slice(0, 8)}…`);
+      log(`[SYNC] WASM retiré (successeur déjà rejoint) : ${g.groupId.slice(0, 8)}…`);
     }
 
     // Groupe cible absent du WASM.

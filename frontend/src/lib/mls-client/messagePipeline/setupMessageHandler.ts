@@ -224,6 +224,19 @@ async function handleWelcome({
     // Persister immédiatement après Welcome (epoch initialisée)
     statePersister.persistNow();
 
+    // Purger du WASM les prédécesseurs dont le successeur est le groupe qu'on vient de rejoindre.
+    // Le sync conserve intentionnellement A tant que B n'est pas rejoint (pour laisser le
+    // handler déchiffrer les messages en attente pour A). Une fois B rejoint, A est obsolète.
+    const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
+    for (const predId of otherLocalIds) {
+      const m = await mlsService.getGroupMeta(predId).catch(() => null);
+      if (m?.successorId === joinedGroupId) {
+        mlsService.forgetGroup(predId);
+        statePersister.persistNow();
+        log(`[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé du WASM (successeur rejoint)`);
+      }
+    }
+
     // Enregistrement côté serveur (idempotent — safety net si l'invitant n'a pas encore
     // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
