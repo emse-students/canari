@@ -526,6 +526,7 @@
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
+          onGroupDeleteLocally={() => void convs.handleDeleteGroupLocally(convCtx())}
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
           messageReactions={messaging.messageReactions}

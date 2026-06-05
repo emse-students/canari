@@ -769,6 +769,23 @@ export function useConversations() {
     );
   }
 
+  /**
+   * Supprime la conversation uniquement localement (IndexedDB + map réactive),
+   * sans appel serveur ni broadcast MLS.
+   *
+   * Utilisé quand la conversation est marquée `deletedRemotely=true` : le groupe
+   * a déjà été supprimé côté serveur par un autre participant ; on retire juste
+   * l'entrée locale à la demande de l'utilisateur.
+   */
+  async function handleDeleteGroupLocally(ctx: ConversationContext) {
+    if (!selectedContact) return;
+    const contactKey = selectedContact;
+    if (ctx.storage) await ctx.storage.deleteConversation(contactKey).catch(() => {});
+    conversations.delete(contactKey);
+    selectedContact = null;
+    ctx.log(`[DELETE_LOCAL] Conversation locale supprimée : ${contactKey.slice(0, 8)}…`);
+  }
+
   /** Sends a "memberLeft" broadcast, de-registers from the server, forgets local MLS state, deletes the DB entry, and clears the selection. */
   async function handleLeaveGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
@@ -936,6 +953,8 @@ export function useConversations() {
     handleRenameGroup,
     /** Deletes the currently selected group and clears the UI. */
     handleDeleteGroup,
+    /** Removes only the local conversation entry (no server call). Used when the group was deleted remotely. */
+    handleDeleteGroupLocally,
     /** Leaves the currently selected group and clears the UI. */
     handleLeaveGroup,
     /** Removes a member from the currently selected group. */

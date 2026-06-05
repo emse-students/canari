@@ -186,6 +186,18 @@ export function useChatSession() {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
+  /**
+   * Marque une conversation comme supprimée à distance (deletedRemotely=true) sans la retirer
+   * de la map. L'UI affichera une bannière permettant à l'utilisateur de supprimer localement.
+   * Appelé quand le sync détecte un groupe supprimé côté serveur sur un device hors-ligne.
+   */
+  function markGroupDeletedRemotely(groupId: string, cb: ChatSessionCallbacks) {
+    const convo = cb.conversations.get(groupId);
+    if (!convo || convo.deletedRemotely) return;
+    cb.conversations.set(groupId, { ...convo, deletedRemotely: true });
+    cb.saveConversation(groupId).catch(() => {});
+  }
+
   /** Builds the RecoveryDeps object required by requestReAdd / reboot (factored to avoid duplication). */
   function makeRecoveryDeps(cb: ChatSessionCallbacks) {
     const st = storage;
@@ -618,6 +630,7 @@ export function useChatSession() {
         log: cb.log,
         onGroupMissing: (groupId) =>
           requestReAdd(groupId, makeRecoveryDeps(cb), connectionRecoveryTimers),
+        onGroupDeletedRemotely: (groupId) => markGroupDeletedRemotely(groupId, cb),
       });
 
       // Only the leader tab syncs history and devices
@@ -972,6 +985,7 @@ export function useChatSession() {
         log: cb.log,
         onGroupMissing: (groupId: string) =>
           requestReAdd(groupId, makeRecoveryDeps(cb), connectionRecoveryTimers),
+        onGroupDeletedRemotely: (groupId: string) => markGroupDeletedRemotely(groupId, cb),
       };
       const connected = await openGatewayConnection(connectionDeps);
       if (!connected) {

@@ -85,4 +85,11 @@ export interface Conversation {
    * can sort correctly even when `messages[]` is still empty (startup stubs).
    */
   lastMessageAt?: number;
+  /**
+   * Set to true when the group was deleted by another participant (or on another
+   * device) and the current user hasn't yet chosen to remove it locally.
+   * While true, the conversation is read-only: history is accessible but sending
+   * is disabled. The user sees a banner with a "Supprimer localement" button.
+   */
+  deletedRemotely?: boolean;
 }

@@ -185,10 +185,20 @@ export async function handleSystemEvent(
       /* non-blocking */
     }
     persistMlsStateNow();
-    if (deleteConversation) await deleteConversation(convoKey);
-    conversations.delete(convoKey);
-    if (getSelectedContact() === convoKey) setSelectedContact(null);
-    log(`[INFO] Groupe supprime par ${senderName}`);
+
+    // Ajouter un message système visible dans l'historique, puis marquer la
+    // conversation deletedRemotely=true au lieu de la supprimer immédiatement.
+    // L'utilisateur peut lire l'historique et choisit quand supprimer localement.
+    const label =
+      senderNorm === userId
+        ? 'Vous avez supprimé cette conversation sur un autre appareil.'
+        : `${senderName} a supprimé cette conversation.`;
+    await addMessageToChat('system', label, convoKey, { isSystem: true });
+    // Re-lire la conv après addMessageToChat (elle a pu mettre à jour messages[])
+    const updated = conversations.get(convoKey);
+    if (updated) conversations.set(convoKey, { ...updated, deletedRemotely: true });
+    await saveConversation(convoKey).catch(() => {});
+    log(`[INFO] Groupe supprimé par ${senderName} — conversation marquée deletedRemotely`);
     return true;
   }
 

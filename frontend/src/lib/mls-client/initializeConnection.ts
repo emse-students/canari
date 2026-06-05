@@ -18,12 +18,26 @@ export interface ConnectionDeps {
    * Si absent, fallback sur `sendWelcomeRequest` seul (pas de timer — moins fiable).
    */
   onGroupMissing?: (groupId: string) => Promise<void>;
+  /**
+   * Appelé quand le sync détecte qu'un groupe a été supprimé côté serveur
+   * (deletedAt posé, pas de successeur). Permet à l'UI de marquer la
+   * conversation `deletedRemotely` plutôt que de la retirer silencieusement.
+   */
+  onGroupDeletedRemotely?: (groupId: string) => void;
 }
 
 export type SyncAfterConnectDeps = Pick<
   ConnectionDeps,
   'mlsService' | 'userId' | 'pin' | 'processDeviceInvitationsLocally' | 'log' | 'onGroupMissing'
->;
+> & {
+  /**
+   * Appelé quand le sync détecte qu'un groupe a été supprimé côté serveur
+   * (deletedAt posé, pas de successeur) et que la conversation existe encore
+   * localement. Le callback doit marquer la conversation deletedRemotely=true
+   * pour que l'UI affiche la bannière de suppression distante.
+   */
+  onGroupDeletedRemotely?: (groupId: string) => void;
+};
 
 /**
  * Opens the WebSocket to the chat gateway (leader tab only).
@@ -124,13 +138,14 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     if (seen.has(targetId)) continue;
     seen.add(targetId);
 
-    // Groupe supprimé sans successeur → purger l'état WASM
+    // Groupe supprimé sans successeur → purger l'état WASM et notifier l'UI
     if (g.deletedAt && !g.successorId) {
       if (localGroups.has(g.groupId)) {
         mlsService.forgetGroup(g.groupId);
         stateMutated = true;
         log(`[SYNC] WASM retiré (groupe supprimé) : ${g.groupId.slice(0, 8)}…`);
       }
+      deps.onGroupDeletedRemotely?.(g.groupId);
       continue;
     }
 

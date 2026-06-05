@@ -45,6 +45,8 @@
     onGroupRename?: (name: string) => void;
     /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
+    /** Callback to remove the conversation locally when it was deleted by another participant. */
+    onGroupDeleteLocally?: () => void;
     /** Callback fired when the current user leaves the group. */
     onGroupLeave?: () => void;
     /** Callback to remove a specific member from the group. */
@@ -111,6 +113,7 @@
     sendError = '',
     onGroupRename,
     onGroupDelete,
+    onGroupDeleteLocally,
     onGroupLeave,
     onGroupRemoveMember,
     messageReactions,
@@ -601,21 +604,35 @@
       <div class="chat-sticky-date-indicator">{stickyDateLabel}</div>
     {/if}
 
-    <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
-      <ChatComposer
-        {messageText}
-        {onMessageChange}
-        onFocusChange={(focused) => (_composerFocused = focused)}
-        {onSend}
-        {replyingTo}
-        {onCancelReply}
-        {onFilesSelected}
-        {pendingFiles}
-        {onRemovePendingFile}
-        {isUploading}
-        interactionLocked={isCatchingUpMessages}
-      />
-    </div>
+    {#if conversation?.deletedRemotely}
+      <div class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10">
+        <p class="text-sm text-[var(--color-text-muted)] text-center">
+          Cette conversation a été supprimée.
+        </p>
+        <button
+          onclick={() => onGroupDeleteLocally?.()}
+          class="px-4 py-1.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 active:scale-95 transition-all"
+        >
+          Supprimer localement
+        </button>
+      </div>
+    {:else}
+      <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
+        <ChatComposer
+          {messageText}
+          {onMessageChange}
+          onFocusChange={(focused) => (_composerFocused = focused)}
+          {onSend}
+          {replyingTo}
+          {onCancelReply}
+          {onFilesSelected}
+          {pendingFiles}
+          {onRemovePendingFile}
+          {isUploading}
+          interactionLocked={isCatchingUpMessages}
+        />
+      </div>
+    {/if}
 
     {#if isCatchingUpMessages}
       <div
