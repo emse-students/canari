@@ -6,7 +6,7 @@ import type { Conversation } from '$lib/types';
 import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
-  sendHistoryBundle,
+  sendFullHistoryBundle,
   persistMlsStateAfterMutation,
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
@@ -77,25 +77,29 @@ export async function processPendingInvitations(params: {
   const MAX_SUCCESSOR_HOPS = 5;
 
   for (const [origGroupId, invitations] of byGroup) {
-    let groupId = origGroupId;
+    // Toujours résoudre la chaîne de successeurs en premier — même si le groupe local
+    // est isReady. Un reboot peut avoir créé un successeur pendant une déconnexion :
+    // sans cette vérification, les invitations atterrissent dans l'ancien groupe et
+    // échouent avec WrongEpoch (le serveur rejette tout commit sur un groupe migré).
+    let resolved = origGroupId;
+    for (let hop = 0; hop < MAX_SUCCESSOR_HOPS; hop++) {
+      const meta = await mlsService.getGroupMeta(resolved).catch(() => null);
+      if (!meta?.successorId) break;
+      resolved = meta.successorId;
+    }
+
+    const groupId = resolved;
 
     if (!conversations.get(groupId)?.isReady) {
-      // Résoudre la chaîne de successeurs (groupe migré N fois).
-      let resolved = origGroupId;
-      for (let hop = 0; hop < MAX_SUCCESSOR_HOPS; hop++) {
-        const meta = await mlsService.getGroupMeta(resolved).catch(() => null);
-        if (!meta?.successorId) break;
-        resolved = meta.successorId;
-      }
-
-      if (conversations.get(resolved)?.isReady) {
-        if (resolved !== origGroupId) {
-          log(`[PENDING] Groupe ${origGroupId} → résolu via chaîne successeurs : ${resolved}`);
-        }
-        groupId = resolved;
+      if (resolved !== origGroupId) {
+        // Le successeur terminal existe mais n'est pas encore prêt (Welcome en transit).
+        // onGroupReady() déclenchera un nouveau passage dans 500 ms.
+        log(
+          `[PENDING] ${origGroupId.slice(0, 8)}… → successeur ${resolved.slice(0, 8)}… pas encore prêt — skip`
+        );
       } else {
-        // Aucune conversation locale prête. Si le groupe est totalement absent (pas même
-        // un placeholder isReady:false), envoyer un welcome_request. Un placeholder indique
+        // Groupe original non prêt localement. Si totalement absent (pas même un
+        // placeholder isReady:false), envoyer un welcome_request. Un placeholder indique
         // que le Welcome est peut-être déjà en transit depuis la queue - on ne réenvoie pas.
         const isAbsent = !conversations.has(origGroupId) && !conversations.has(resolved);
         if (isAbsent) {
@@ -120,8 +124,12 @@ export async function processPendingInvitations(params: {
         } else {
           log(`[PENDING] Groupe ${groupId}: conversation locale non prête - skip`);
         }
-        continue;
       }
+      continue;
+    }
+
+    if (resolved !== origGroupId) {
+      log(`[PENDING] Groupe ${origGroupId} → résolu via chaîne successeurs : ${resolved}`);
     }
 
     // Acquire distributed lock to prevent concurrent Add commits
@@ -209,7 +217,7 @@ export async function processPendingInvitations(params: {
             await mlsService.sendCommit(result.commit, groupId, [`${inv.userId}:${inv.deviceId}`]);
           }
 
-          sendHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+          sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
             log(`[HISTORY_BUNDLE] Erreur envoi historique à ${inv.userId}: ${String(e)}`)
           );
         } catch (e) {
@@ -583,6 +591,8 @@ export async function handleWelcomeRequest(params: {
   requesterUserId: string;
   requesterDeviceId: string;
   groupId: string;
+  /** Appelé quand le groupe terminal existe mais n'est pas encore prêt (Welcome en transit). */
+  onNotReady?: (terminalGroupId: string) => void;
 }) {
   const {
     mlsService,
@@ -594,6 +604,7 @@ export async function handleWelcomeRequest(params: {
     requesterUserId,
     requesterDeviceId,
     groupId: requestedGroupId,
+    onNotReady,
   } = params;
 
   // Résoudre le groupe terminal dans la lignée de successeurs (max 10 hops).
@@ -623,10 +634,11 @@ export async function handleWelcomeRequest(params: {
   const groupId = terminalId;
 
   // Défense en profondeur : vérifier qu'on a une conversation prête pour ce groupe terminal.
-  // Si ce device n'est pas encore dans le groupe terminal (sync initial pas encore terminé,
-  // ou on n'est pas membre), refuser — le demandeur relancera une welcome_request à jour.
+  // Si ce device n'est pas encore dans le groupe terminal (Welcome en transit ou sync initial
+  // pas terminé), signaler via onNotReady pour que l'appelant diffère et réessaie.
   if (!conversations.get(groupId)?.isReady) {
-    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… — refus`);
+    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… — report`);
+    onNotReady?.(groupId);
     return;
   }
 
@@ -728,9 +740,11 @@ export async function handleWelcomeRequest(params: {
       ]);
     }
 
-    // Envoyer l'historique chiffré au nouveau membre (best-effort, fire-and-forget).
+    // Envoyer l'intégralité de l'historique au nouveau membre (best-effort, fire-and-forget).
+    // sendFullHistoryBundle lit tous les messages en IndexedDB (y compris ceux migrés
+    // depuis le prédécesseur via migrateConversation) et les envoie en chunks.
     // Le bundle arrive après le Welcome côté destinataire - ordre garanti par MLS.
-    sendHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+    sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
       log(`[HISTORY_BUNDLE] Erreur envoi historique à ${requesterUserId}: ${String(e)}`)
     );
   } catch (e) {

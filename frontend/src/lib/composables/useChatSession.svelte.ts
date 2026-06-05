@@ -150,6 +150,12 @@ export function useChatSession() {
    */
   const connectionRecoveryTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
   const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
+  /** welcome_requests reçues alors que le groupe terminal n'était pas encore prêt.
+   *  Retraitées immédiatement quand onGroupReady() fire pour ce groupId. */
+  const deferredWelcomeRequests = new SvelteMap<
+    string,
+    Array<{ requesterUserId: string; requesterDeviceId: string }>
+  >();
   let isReconnecting = false;
   let isSyncing = false;
   /** Latest session callbacks for tab-leader promotion → WebSocket reconnect. */
@@ -511,7 +517,27 @@ export function useChatSession() {
         onGroupReady: (() => {
           // Coalesce: if multiple Welcomes arrive in a burst, run one pass 500ms after the last.
           let t: ReturnType<typeof setTimeout> | null = null;
-          return (_groupId: string) => {
+          return (readyGroupId: string) => {
+            // Traiter immédiatement les welcome_requests différées pour ce groupe.
+            // Elles ont été mises en attente quand le Welcome était encore en transit
+            // (race entre onWelcomeRequest et handleWelcome dans la queue MLS).
+            const deferred = deferredWelcomeRequests.get(readyGroupId);
+            if (deferred?.length) {
+              deferredWelcomeRequests.delete(readyGroupId);
+              for (const req of deferred) {
+                handleWelcomeRequest({
+                  mlsService: ensureMls(),
+                  storage,
+                  userId,
+                  pin,
+                  conversations: cb.conversations,
+                  log: cb.log,
+                  requesterUserId: req.requesterUserId,
+                  requesterDeviceId: req.requesterDeviceId,
+                  groupId: readyGroupId,
+                }).catch(() => {});
+              }
+            }
             if (t !== null) clearTimeout(t);
             t = setTimeout(() => {
               t = null;
@@ -603,6 +629,12 @@ export function useChatSession() {
               requesterUserId,
               requesterDeviceId,
               groupId,
+              onNotReady: (terminalGroupId) => {
+                const list = deferredWelcomeRequests.get(terminalGroupId) ?? [];
+                list.push({ requesterUserId, requesterDeviceId });
+                deferredWelcomeRequests.set(terminalGroupId, list);
+                cb.log(`[WELCOME_REQ] ${terminalGroupId.slice(0, 8)}… pas encore prêt — report`);
+              },
             });
           } catch (e) {
             cb.log(
