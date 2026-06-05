@@ -2,6 +2,7 @@
   import '../app.css';
   import { beforeNavigate, goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { themeStore } from '$lib/stores/themeStore.svelte';
   import { attachConsole } from '@tauri-apps/plugin-log';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
@@ -94,6 +95,7 @@
   });
 
   onMount(() => {
+    themeStore.init();
     const teardownHistory = initHistoryOverlayStack();
     const teardownKeyboard = initKeyboardViewport();
 

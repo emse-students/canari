@@ -177,7 +177,7 @@
     <button
       onclick={() => addUser()}
       disabled={!inputValue.trim()}
-      class="p-2 sm:px-4 bg-cn-dark text-cn-yellow rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      class="p-2 sm:px-4 bg-cn-dark text-cn-yellow rounded-xl hover:bg-gray-800 dark:bg-white/10 dark:hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       aria-label="Ajouter"
     >
       <Plus size={20} />
@@ -193,7 +193,7 @@
           <UserName userId={user} class="text-sm font-medium" />
           <button
             onclick={() => removeUser(user)}
-            class="p-1 hover:bg-gray-200 rounded-full transition-colors"
+            class="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors"
             aria-label={`Retirer ${user}`}
           >
             <X size={14} />

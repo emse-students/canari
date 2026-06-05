@@ -6,10 +6,26 @@
       name="description"
       content="Canari : fil social, associations, agenda et messagerie chiffrée pour la communauté EMSE."
     />
+    <!-- Applique le thème avant le premier paint pour éviter le flash blanc/noir. -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('canari-theme');
+          var dark = saved
+            ? saved === 'dark'
+            : window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (dark) document.documentElement.dataset.theme = 'dark';
+        } catch (_) {}
+      })();
+    </script>
     <style>
       html,
       body {
         background: #f9fbff;
+      }
+      html[data-theme='dark'],
+      html[data-theme='dark'] body {
+        background: #070b12;
       }
     </style>
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />

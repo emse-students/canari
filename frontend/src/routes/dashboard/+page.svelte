@@ -35,6 +35,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
+  import { themeStore } from '$lib/stores/themeStore.svelte';
 
   interface Section {
     label: string;
@@ -99,18 +100,7 @@
   let showDevicePanel = $state(false);
   let pendingInvitationCount = $state(0);
   let fileInput: HTMLInputElement | undefined = $state();
-  let isDarkMode = $state(false);
   let isAdmin = $derived(isGlobalAdmin());
-
-  function applyTheme(isDark: boolean) {
-    document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
-    localStorage.setItem('canari-theme', isDark ? 'dark' : 'light');
-  }
-
-  function toggleTheme() {
-    isDarkMode = !isDarkMode;
-    applyTheme(isDarkMode);
-  }
 
   async function handleLogout() {
     await clearAuth();
@@ -147,13 +137,6 @@
       input.value = '';
     }
   }
-
-  $effect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('canari-theme');
-      isDarkMode = saved === 'dark';
-    }
-  });
 
   $effect(() => {
     if (!session.isLoggedIn || !session.myDeviceId) return;
@@ -238,11 +221,11 @@
 
       <button
         type="button"
-        onclick={toggleTheme}
+        onclick={() => themeStore.toggle()}
         class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
         title="Basculer le thème"
       >
-        {#if isDarkMode}
+        {#if themeStore.isDark}
           <Sun size={22} class="text-text-muted" />
         {:else}
           <Moon size={22} class="text-text-muted" />
