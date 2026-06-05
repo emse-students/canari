@@ -42,6 +42,7 @@ export class MlsDeliveryApi {
     return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
   }
 
+  /** Fire-and-forget POST to the delivery service; throws on non-2xx. */
   async deliveryPost(path: string, body: Record<string, unknown>): Promise<void> {
     await deliveryKeepalivePost(
       this.historyUrl,
@@ -109,6 +110,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Fetches KeyPackages for all active devices of `userId`. Returns `[]` on any error. */
   async fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -138,6 +140,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Adds `userId` to the server-side member list of `groupId` (idempotent). */
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
       await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
@@ -150,6 +153,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Registers this device on the delivery service with its initial KeyPackage and metadata. */
   async registerDeviceKeyPackage(params: {
     keyPackageBase64: string;
     deviceName?: string;
@@ -174,6 +178,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Uploads a batch of one-time prekeys (OTKP) to replenish the server-side prekey pool. */
   async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
     const keyPackages = packages.map((bytes) => this.uint8ToB64(bytes));
     const response = await this.f(`${this.historyUrl}/api/mls/register-device/prekeys`, {
@@ -190,6 +195,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Updates display metadata (name, OS, app version) for a device. */
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
@@ -214,6 +220,10 @@ export class MlsDeliveryApi {
     return await response.json();
   }
 
+  /**
+   * Delivers an MLS Welcome (and optional ratchet tree) to `targetUserId`.
+   * If `targetDeviceId` is omitted, fans out to all active devices for that user.
+   */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -314,6 +324,10 @@ export class MlsDeliveryApi {
     }
   }
 
+  /**
+   * Acquires a distributed Redis lock to serialise concurrent `addMember` commits on `groupId`.
+   * Returns `false` if another device already holds the lock (caller should abort or retry).
+   */
   async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
@@ -332,6 +346,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Releases the add-lock previously acquired by {@link acquireAddLock}. Best-effort, non-throwing. */
   async releaseAddLock(groupId: string): Promise<void> {
     try {
       await this.f(`${this.historyUrl}/api/mls/add-lock`, {
@@ -344,6 +359,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Creates a new group row on the delivery service and returns the assigned `groupId`. */
   async createRemoteGroup(name: string, isGroup: boolean): Promise<string> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
@@ -365,6 +381,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Returns the number of one-time prekeys still available for this device on the server. */
   async fetchPrekeyCount(): Promise<number> {
     try {
       const res = await this.f(
@@ -387,6 +404,7 @@ export class MlsDeliveryApi {
     ).catch(() => {});
   }
 
+  /** POSTs an already-encrypted MLS ciphertext to `/api/mls/send` without epoch validation. Used by Tauri (native MLS handles epoch tracking internally). */
   async postApplicationMessage(
     groupId: string,
     protoBase64: string,
@@ -408,6 +426,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Fetches the Redis Stream history for a group, optionally paginated after `afterStreamId`. Returns `[]` on error. */
   async fetchHistory(
     groupId: string,
     afterStreamId?: string
@@ -433,6 +452,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Renames a group on the server. Throws on non-2xx. */
   async renameGroup(groupId: string, name: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'PATCH',
@@ -442,6 +462,7 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
   }
 
+  /** Clears the pending `welcome_request` queue for `groupId` after a successful reboot. */
   async clearPendingWelcomeRequests(groupId: string): Promise<void> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/welcome-request/group/${encodeURIComponent(groupId)}`,
@@ -450,6 +471,7 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`clearPendingWelcomeRequests failed: ${res.status}`);
   }
 
+  /** Soft-deletes `groupId` (and its successor chain) on the server. Returns `false` if already absent (404). */
   async deleteGroupOnServer(groupId: string): Promise<boolean> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
@@ -460,6 +482,7 @@ export class MlsDeliveryApi {
     return true;
   }
 
+  /** Removes `userId` from the server-side member list of `groupId`. */
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members/${userId}`, {
       method: 'DELETE',
@@ -468,6 +491,7 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
   }
 
+  /** Returns the current member list for `groupId`. Returns `[]` on error. */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
@@ -480,6 +504,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Returns all groups `userId` belongs to, including tombstones with successor/deleted metadata. */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
       headers: await this.auth(),
@@ -490,6 +515,7 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
+  /** Fetches group metadata — name, `successorId`, `deletedAt`. Returns `null` on 404 or error. */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
@@ -518,6 +544,10 @@ export class MlsDeliveryApi {
     }
   }
 
+  /**
+   * Atomic CAS: claims `successorId` as the replacement for dead group `deadGroupId`.
+   * Returns `{ claimed: true }` if this device won the race, or `{ claimed: false, successorId }` with the winner's ID if another device was faster.
+   */
   async claimGroupSuccessor(
     deadGroupId: string,
     successorId: string
@@ -550,6 +580,7 @@ export class MlsDeliveryApi {
     throw new Error(`claimGroupSuccessor failed: ${res.status}`);
   }
 
+  /** Returns outstanding Welcome invitations for a device (used by multi-device sync). */
   async getPendingInvitations(
     userId: string,
     deviceId: string
@@ -570,6 +601,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Returns device-level membership rows for a device, including status (`pending`/`active`) and `lastEpochSeen`. */
   async getDeviceMemberships(
     userId: string,
     deviceId: string
@@ -597,6 +629,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing. */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
@@ -615,6 +648,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Notifies the server to remove a stale leaf from the MLS tree (device lost its local state). Used alongside `removeMemberDevice` when a `DuplicateSignature` error is detected. */
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/kick-stale-device`, {
       method: 'POST',
@@ -624,6 +658,7 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
   }
 
+  /** Deletes the membership row for a specific device+group pair. Returns `{ affected: 0 }` on error. */
   async deleteDeviceMembership(
     userId: string,
     deviceId: string,
@@ -645,6 +680,7 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Deletes all group membership rows for a device (used when removing a device from the account). */
   async deleteAllDeviceMemberships(
     userId: string,
     deviceId: string
