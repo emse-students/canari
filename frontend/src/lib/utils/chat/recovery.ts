@@ -34,8 +34,9 @@ export interface RecoveryDeps {
  *
  * Flux :
  *  1. Si un timer est déjà actif pour ce groupe → retour immédiat (idempotent).
- *  2. Si le groupe a un successeur : redirection vers `requestReAdd(successorId)`.
- *     Si le successeur est déjà dans le WASM → skip (on est à jour).
+ *  2. Si le groupe a un successeur : appelle `requestReAdd(successorId)` puis appelle
+ *     `migrateConversation(groupId → successorId)` pour supprimer le groupe mort d'IndexedDB.
+ *     Si le successeur est déjà dans le WASM → migration directe sans recursion.
  *  3. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
  *  4. Envoyer `welcome_request` vers les membres actifs du groupe.
  *  5. Armer un timer `RECOVERY_TIMEOUT_MS` (60 s). À expiration : `reboot(groupId)` si le
@@ -57,24 +58,36 @@ export async function requestReAdd(
       deps.log(
         `[READD] ${groupId.slice(0, 8)}… mort — successeur ${meta.successorId.slice(0, 8)}… en WASM — skip`
       );
+      if (deps.conversations.has(groupId)) {
+        await migrateConversation(groupId, meta.successorId, deps).catch(() => {});
+      }
       return;
     }
     deps.log(
       `[READD] ${groupId.slice(0, 8)}… mort → redirection vers successeur ${meta.successorId.slice(0, 8)}…`
     );
-    return requestReAdd(meta.successorId, deps, timers);
+    await requestReAdd(meta.successorId, deps, timers);
+    // Migrer le groupe mort vers son successeur maintenant que le successeur est traité,
+    // pour éviter que b754f1ea… reste en IndexedDB à l'infini (checkGroupSuccessors ne
+    // voit que les groupes retournés par getUserGroups, pas les intermédiaires orphelins).
+    if (deps.conversations.has(groupId)) {
+      await migrateConversation(groupId, meta.successorId, deps).catch(() => {});
+    }
+    return;
   }
 
   // Groupe supprimé sans successeur : personne ne peut répondre à un welcome_request
   // et le CAS refusera tout reboot. Marquer la conversation deletedRemotely pour que
   // l'UI affiche la bannière appropriée, et éviter de boucler indéfiniment.
   if (meta?.deletedAt) {
-    deps.log(`[READD] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
     const convo = deps.conversations.get(groupId);
-    if (convo && (!convo.deletedRemotely || convo.isReady)) {
-      deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
-      await deps.saveConversation(groupId).catch(() => {});
-    }
+    // Si l'utilisateur a déjà supprimé la conversation localement (convo absent ou
+    // deletedRemotely=true et !isReady), on abandonne silencieusement : rien à sauvegarder
+    // et le log récurrent à chaque reload serait trompeur.
+    if (!convo || (convo.deletedRemotely && !convo.isReady)) return;
+    deps.log(`[READD] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
+    await deps.saveConversation(groupId).catch(() => {});
     return;
   }
 
