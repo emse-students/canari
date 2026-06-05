@@ -30,11 +30,16 @@ export interface RecoveryDeps {
 }
 
 /**
- * Demande à être ré-invité dans un groupe (Welcome manquant ou epoch décalée).
+ * Demande à être ré-invité dans `groupId` quand l'état MLS local est absent ou désynchronisé.
  *
- * Envoie un `welcome_request` puis arme un timer de 30s. Si le groupe
- * n'est toujours pas dans le WASM local à l'expiration, déclenche `reboot`.
- * Idempotent : si un timer est déjà actif pour ce groupe, l'appel est ignoré.
+ * Flux :
+ *  1. Si un timer est déjà actif pour ce groupe → retour immédiat (idempotent).
+ *  2. Si le groupe a un successeur : redirection vers `requestReAdd(successorId)`.
+ *     Si le successeur est déjà dans le WASM → skip (on est à jour).
+ *  3. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
+ *  4. Envoyer `welcome_request` vers les membres actifs du groupe.
+ *  5. Armer un timer `RECOVERY_TIMEOUT_MS` (60 s). À expiration : `reboot(groupId)` si le
+ *     groupe n'est toujours pas dans le WASM.
  */
 export async function requestReAdd(
   groupId: string,
@@ -95,7 +100,10 @@ export async function requestReAdd(
 }
 
 /**
- * Annule le timer de re-add pour un groupe (appelé quand le Welcome arrive).
+ * Annule le timer de recovery armé par `requestReAdd` pour `groupId`.
+ *
+ * Appelé dès qu'un Welcome est traité avec succès pour ce groupe, afin d'éviter
+ * qu'un `reboot` parasite se déclenche alors que le groupe vient d'être rejoint.
  */
 export function cancelReAdd(
   groupId: string,
@@ -109,11 +117,26 @@ export function cancelReAdd(
 }
 
 /**
- * Reboot fork resolution (OpenMLS book §fork-resolution).
+ * Résout un fork MLS (OpenMLS book §fork-resolution) pour `groupId`.
  *
- * Crée un groupe successeur, le revendique via CAS (premier arrivé premier servi),
- * invite tous les membres de l'ancien groupe, puis migre la conversation locale.
- * Si le CAS est perdu, rejoint le groupe du gagnant.
+ * Flux complet :
+ *  1. Guard WASM : si le groupe est déjà local, un Welcome tardif l'a devancé → abort.
+ *  2. Si un successeur existe déjà (autre device gagnant du CAS) → `joinSuccessor`.
+ *  3. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
+ *  4. Crée un candidat successeur S (serveur + WASM local).
+ *  5. CAS `claimGroupSuccessor(G, S)` — premier arrivé premier servi :
+ *     - Gagné : pose la clé localStorage `cas_winner:{G} = S` AVANT les opérations réseau
+ *       (crash-safety). Si le device crashe entre l'écriture de la clé et la suppression
+ *       finale, `resumePendingCasBundles` détecte la clé au prochain démarrage et
+ *       renvoie le bundle. La clé est retirée uniquement après envoi réussi.
+ *     - Perdu : supprime le candidat orphelin, rejoint le gagnant via `joinSuccessor`.
+ *  6. Invite tous les membres de G dans S (`inviteMembers`).
+ *     Cas important : si ce device n'a jamais rejoint G (nouveau device, ex. A2 après reboot
+ *     sans historique), son IndexedDB pour G est vide → `sendFullHistoryBundle` enverra un
+ *     bundle vide. L'historique sera redistribué quand un membre ayant les données (A1, B)
+ *     rejoindra S et exécutera `joinSuccessor`, qui appelle `sendFullHistoryBundle` après
+ *     `migrateConversation`.
+ *  7. Migre la conversation locale (G → S) et envoie le bundle historique complet.
  */
 export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void> {
   const { mlsService, userId, pin, log } = deps;
@@ -234,14 +257,23 @@ export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void>
 }
 
 /**
- * Rejoint un groupe successeur déjà revendiqué par un autre device.
- * Enregistre ce device comme membre puis appelle `requestReAdd` pour :
- *  1. Envoyer un welcome_request immédiatement.
- *  2. Armer un timer 30s → reboot(successorId) si aucun Welcome n'arrive.
+ * Rejoint le successeur déjà revendiqué par un autre device et redistribue l'historique.
  *
- * La map de timers est locale et anonyme : elle ne peut pas être annulée depuis
- * l'extérieur, mais `reboot` retourne immédiatement si le groupe est déjà rejoint
- * (guard `localGroups.includes`), donc le timer tardif est inoffensif.
+ * Flux :
+ *  1. Enregistre ce device comme membre du successeur côté serveur.
+ *  2. Si le successeur n'est pas encore dans le WASM local (Welcome pas encore reçu),
+ *     appelle `requestReAdd(successorId)` : envoie une welcome_request et arme un timer
+ *     60s → reboot(successorId). Le timer est inoffensif si le groupe est rejoint avant
+ *     expiration (guard `localGroups.includes` dans `reboot`).
+ *  3. `migrateConversation` : copie les messages de G vers S dans l'IndexedDB local et
+ *     fusionne les conversations en mémoire.
+ *  4. `sendFullHistoryBundle` : redistribue l'historique fraîchement migré depuis G aux
+ *     membres actifs de S.
+ *
+ * Étape 4 est indispensable pour couvrir le cas où le créateur du successeur (A2) n'avait
+ * pas d'historique au moment du reboot (nouveau device) et a donc envoyé un bundle vide.
+ * Maintenant que notre IndexedDB pour S contient les messages de G, on les rend disponibles
+ * à A2 et aux autres membres qui n'ont pas encore reçu le bundle complet.
  */
 async function joinSuccessor(
   deadGroupId: string,
@@ -258,6 +290,14 @@ async function joinSuccessor(
   }
 
   await migrateConversation(deadGroupId, successorId, deps);
+
+  // Redistribuer l'historique migré aux membres actifs du successeur.
+  await sendFullHistoryBundle(successorId, {
+    storage: deps.storage,
+    pin: deps.pin,
+    mlsService: deps.mlsService,
+    log: deps.log,
+  }).catch((e) => log(`[JOIN_SUCCESSOR] Erreur bundle historique : ${String(e)}`));
 }
 
 /**
@@ -296,11 +336,21 @@ async function findAncestorWithMembers(
 /**
  * Invite tous les membres de `deadGroupId` dans le nouveau groupe successeur.
  *
+ * Invite tous les membres du groupe source dans le successeur candidat.
+ *
+ * Récupère les devices de chaque userId membre, les ajoute en bulk à `successorId`
+ * (WASM + server), puis envoie commit → Welcomes → enregistre les nouveaux membres.
+ *
+ * Cas limite : si ce device est le créateur du successeur mais n'avait jamais rejoint
+ * le groupe source (ex. A2 nouveau device, G vide dans son IndexedDB), `sendFullHistoryBundle`
+ * enverra un bundle vide. L'historique sera redistribué plus tard par `joinSuccessor`
+ * quand un membre possédant les données rejoindra le successeur.
+ *
  * Corrections appliquées :
- * - R4 : le commit est envoyé via sendCommit (validation epoch)
- * - R5 : retry du add-lock après 2s si l'acquisition échoue
- * - Les Welcomes sont envoyés APRÈS le commit (ordre correct)
- * - R6 : enregistrement des membres non-créateurs dans dm_group_members
+ *  - R4 : le commit est envoyé via sendCommit (validation epoch)
+ *  - R5 : retry du add-lock après 2s si l'acquisition échoue
+ *  - Les Welcomes sont envoyés APRÈS le commit (ordre correct)
+ *  - R6 : enregistrement des membres non-créateurs dans dm_group_members
  *        (sans ça, getUserGroups ne retourne pas le successeur pour eux)
  */
 async function inviteMembers(
@@ -494,13 +544,31 @@ export async function migrateConversation(
 }
 
 /**
- * Health check périodique : pour tout groupe serveur ayant un successeur,
- * déclenche la migration locale si elle n'a pas encore eu lieu.
+ * Synchronise les successions de groupes détectées côté serveur.
  *
- * Également : si ce device a créé un successeur (epoch=0) mais a crashé avant
- * d'avoir invité les membres, retente l'invitation.
+ * Appelé une fois à la connexion puis toutes les 5 minutes (onglet leader uniquement).
  *
- * Appelé à la connexion et toutes les 5 minutes (onglet leader uniquement).
+ * Pour chaque groupe serveur ayant un successeur :
+ *
+ *  A) Migration locale (si G est en conversations mais pas S) :
+ *     Copie les messages de G vers S dans l'IndexedDB et met à jour le Map réactif.
+ *
+ *  B) Crash-safety — bundle non encore envoyé (Gap 2) :
+ *     Si `localStorage["cas_winner:{G}"] === S` et que S est dans le WASM local avec
+ *     epoch > 0, c'est que ce device a gagné le CAS, a fini d'inviter les membres, mais
+ *     a crashé avant d'envoyer le bundle historique. Le bundle est renvoyé ici, puis la
+ *     clé est supprimée.
+ *     La clé `cas_winner:{G}` est posée par `reboot()` AVANT les opérations réseau et
+ *     supprimée uniquement après succès — elle survit aux crashes et redémarrages.
+ *
+ *  C) Crash-safety — invitation incomplète (epoch = 0) :
+ *     Si S est dans le WASM mais à epoch 0, le device a créé S mais crashé avant
+ *     `inviteMembers`. L'invitation et le bundle sont relancés ici.
+ *
+ * Note : le scénario "device sans historique initie un reboot, envoie un bundle vide"
+ * (ex. A2 nouveau device) est couvert par `joinSuccessor` — quand un membre disposant
+ * des données (A1) rejoint S plus tard, il redistribue `sendFullHistoryBundle` après
+ * `migrateConversation`.
  */
 export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
   const { mlsService, userId, pin, conversations, log } = deps;

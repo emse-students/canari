@@ -341,17 +341,11 @@ export async function kickStaleLeaf(
 }
 
 /**
- * Envoie les `limit` derniers messages déchiffrés de `groupId` au nouveau membre
- * comme AppMessage système (`history_bundle`), chiffré sous l'epoch courante.
+ * Sérialise un `StoredMessage` pour le transport dans un `history_bundle`.
  *
- * Appelé par l'invitant juste après `sendCommit` pour que le destinataire reçoive
- * l'historique après avoir traité son Welcome (garantie d'ordre MLS).
- * Fail-silently : si l'envoi échoue, le destinataire démarre avec une conversation vide.
- */
-/**
- * Sérialise un StoredMessage pour le transport dans un history_bundle.
- * Inclut toutes les métadonnées (réactions, accusés de lecture, isDeleted, isEdited)
- * pour que le destinataire obtienne l'état complet, pas seulement le texte brut.
+ * Inclut toutes les métadonnées (réactions, accusés de lecture, isDeleted, isEdited,
+ * marqueurs temporels secondaires) pour que le destinataire obtienne l'état complet
+ * et puisse trier les messages de façon stable même après une migration de groupe.
  */
 function serializeForBundle(m: StoredMessage) {
   return {
@@ -370,46 +364,22 @@ function serializeForBundle(m: StoredMessage) {
   };
 }
 
-export async function sendHistoryBundle(
-  groupId: string,
-  deps: {
-    storage: IStorage | null;
-    pin: string;
-    mlsService: IMlsService;
-    log: (msg: string) => void;
-  },
-  limit = 50
-): Promise<void> {
-  const { storage, pin, mlsService, log } = deps;
-  if (!storage) return;
-
-  let messages: StoredMessage[];
-  try {
-    messages = await storage.getMessagesPage(groupId, pin, limit);
-  } catch {
-    return;
-  }
-  if (messages.length === 0) return;
-
-  const payload = messages.map(serializeForBundle);
-
-  const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: payload })));
-  try {
-    await mlsService.sendMessage(groupId, bytes, undefined, true);
-    log(`[HISTORY_BUNDLE] ${payload.length} messages envoyés à ${groupId}`);
-  } catch (e) {
-    log(`[HISTORY_BUNDLE] Erreur envoi: ${String(e)}`);
-  }
-}
-
 /**
- * Envoie l'intégralité de l'historique de `groupId` en chunks de `chunkSize` messages
- * (défaut 200) pour les devices fresh (population 3 d'un reboot).
+ * Envoie l'intégralité de l'historique local de `groupId` aux membres actifs du groupe,
+ * chiffré sous l'epoch MLS courante, en chunks de `chunkSize` messages (défaut 200).
  *
- * Contrairement à `sendHistoryBundle` (limité aux 50 derniers), cette fonction envoie
- * tous les messages via plusieurs `history_bundle` séquentiels. Le destinataire
- * déduplique à la réception — appels multiples idempotents.
- * S'arrête au premier chunk en erreur pour ne pas spammer en cas de panne réseau.
+ * Cas d'usage :
+ *  - Invitation d'un nouveau membre (handleWelcomeRequest, processPendingInvitations) :
+ *    le bundle arrive après le Welcome, garanti en ordre par MLS.
+ *  - Reboot CAS gagné : envoyé après inviteMembers pour que les members réinvités
+ *    obtiennent l'historique migré depuis le groupe mort.
+ *  - joinSuccessor : redistribue l'historique fraîchement migré au créateur du successeur
+ *    qui avait un bundle vide (device sans historique local au moment du reboot).
+ *  - resumePendingCasBundles : renvoi au redémarrage si le device a crashé entre
+ *    l'écriture de la clé `cas_winner:{G}` et la suppression de celle-ci.
+ *
+ * Le destinataire déduplique les messages par `id` à la réception — appels multiples
+ * idempotents. S'arrête au premier chunk en erreur pour éviter de spammer le réseau.
  */
 export async function sendFullHistoryBundle(
   groupId: string,
