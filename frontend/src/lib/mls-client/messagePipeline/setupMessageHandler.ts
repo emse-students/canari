@@ -316,8 +316,27 @@ async function handleUnknownGroup({
 }: UnknownGroupArgs): Promise<boolean> {
   const { mlsService, log } = deps;
 
+  // Guard : groupe mort dont on connaît le successeur — le message ne peut pas être
+  // déchiffré (mauvaise epoch). Évite un welcome_request inutile qui génère un doublon
+  // de conversation sur les autres devices et déclenche une cascade de recovery erronée.
   let buf = pendingBuffer.get(groupId);
   if (!buf) {
+    const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
+    if (meta?.successorId) {
+      const localGroups = mlsService.getLocalGroups();
+      if (localGroups.includes(meta.successorId)) {
+        log(
+          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… — successeur ${meta.successorId.slice(0, 8)}… en WASM — ACK silencieux`
+        );
+      } else {
+        log(
+          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… — requestReAdd vers successeur ${meta.successorId.slice(0, 8)}…`
+        );
+        await requestReAdd(meta.successorId, deps, recoveryTimers);
+      }
+      return true; // ACK : le message d'un groupe mort ne peut pas être déchiffré
+    }
+
     await mlsService.sendWelcomeRequest(groupId).catch(() => {});
     const timer = setTimeout(async () => {
       pendingBuffer.delete(groupId);

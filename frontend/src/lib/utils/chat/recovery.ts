@@ -43,6 +43,23 @@ export async function requestReAdd(
 ): Promise<void> {
   if (timers.has(groupId)) return;
 
+  // Guard : si le groupe est mort (a un successeur), envoyer la welcome_request
+  // vers le successeur ou ne rien faire si on est déjà dedans.
+  const meta = await deps.mlsService.getGroupMeta(groupId).catch(() => null);
+  if (meta?.successorId) {
+    const localGroups = deps.mlsService.getLocalGroups();
+    if (localGroups.includes(meta.successorId)) {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}… mort — successeur ${meta.successorId.slice(0, 8)}… en WASM — skip`
+      );
+      return;
+    }
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}… mort → redirection vers successeur ${meta.successorId.slice(0, 8)}…`
+    );
+    return requestReAdd(meta.successorId, deps, timers);
+  }
+
   await deps.mlsService
     .sendWelcomeRequest(groupId)
     .catch((e) =>
