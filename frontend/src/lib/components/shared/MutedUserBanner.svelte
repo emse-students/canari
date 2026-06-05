@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { ShieldAlert } from '@lucide/svelte';
   import { getMyMuteStatus } from '$lib/moderation/api';
   import { currentUserId } from '$lib/stores/user';
@@ -24,15 +23,16 @@
     }
   }
 
-  onMount(() => {
+  $effect(() => {
+    const uid = currentUserId();
+    if (!uid) {
+      isMuted = false;
+      mutedReason = null;
+      return;
+    }
     void refresh();
     const interval = setInterval(() => void refresh(), 60_000);
     return () => clearInterval(interval);
-  });
-
-  $effect(() => {
-    void currentUserId();
-    void refresh();
   });
 </script>
 

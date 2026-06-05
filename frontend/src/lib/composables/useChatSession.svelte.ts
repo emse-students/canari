@@ -665,6 +665,21 @@ export function useChatSession() {
         onGroupDeletedRemotely: (groupId) => markGroupDeletedRemotely(groupId, cb),
       });
 
+      // Avertir l'utilisateur si sa dernière connexion date de plus de 3 mois :
+      // les messages en attente et l'historique Redis sont purgés après 90 jours.
+      const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
+      const lastActiveKey = `canari_last_active:${userId}`;
+      const lastActiveRaw = localStorage.getItem(lastActiveKey);
+      if (lastActiveRaw) {
+        const lastActive = parseInt(lastActiveRaw, 10);
+        if (Number.isFinite(lastActive) && Date.now() - lastActive > STALE_SESSION_MS) {
+          appendLog(
+            '⚠️ Vous ne vous êtes pas connecté depuis plus de 3 mois. Certains anciens messages peuvent ne plus être disponibles.'
+          );
+        }
+      }
+      localStorage.setItem(lastActiveKey, String(Date.now()));
+
       // Only the leader tab syncs history and devices
       if (!getIsTabLeader()) return;
 

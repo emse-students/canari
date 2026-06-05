@@ -83,7 +83,7 @@ export interface AckMessagesBody {
 }
 
 /** QueuedMessages older than this are deleted (devices that never reconnected). */
-const QUEUED_MESSAGE_TTL_DAYS = 7;
+const QUEUED_MESSAGE_TTL_DAYS = 90;
 
 @Injectable()
 export class MessagingService implements OnModuleInit {
@@ -532,8 +532,8 @@ export class MessagingService implements OnModuleInit {
           'timestamp',
           new Date().toISOString(),
         );
-        // Refresh TTL on every write so abandoned groups are evicted after 7 days of inactivity.
-        await this.redis.expire(historyKey, 7 * 24 * 60 * 60);
+        // Refresh TTL on every write so abandoned groups are evicted after 90 days of inactivity.
+        await this.redis.expire(historyKey, 90 * 24 * 60 * 60);
         this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
       } catch (e) {
         this.logger.warn(

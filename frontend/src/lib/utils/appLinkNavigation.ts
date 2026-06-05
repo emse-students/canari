@@ -1,3 +1,4 @@
+import { goto } from '$app/navigation';
 import { inAppPathFromHref } from '$lib/utils/publicAppUrl';
 
 /**
@@ -10,7 +11,6 @@ export async function navigateInAppFromHref(href: string): Promise<boolean> {
 
   console.log('[appLink] In-app navigation →', path);
   try {
-    const { goto } = await import('$app/navigation');
     await goto(path);
   } catch {
     if (typeof window !== 'undefined') window.location.href = path;
