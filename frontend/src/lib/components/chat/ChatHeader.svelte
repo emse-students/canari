@@ -57,6 +57,10 @@
     onStartAudioCall?: () => void;
     /** Callback to start a video call. */
     onStartVideoCall?: () => void;
+    /** Debug: first characters of the current MLS group ID. */
+    debugId?: string;
+    /** Debug: last known successor group ID in the chain. */
+    debugSuccessorId?: string | null;
   }
 
   let {
@@ -80,6 +84,8 @@
     onOpenMembers,
     onStartAudioCall,
     onStartVideoCall,
+    debugId,
+    debugSuccessorId,
   }: Props = $props();
 
   const showCallButtons = $derived(
@@ -186,6 +192,18 @@
       </span>
     {/if}
   </div>
+
+  <!-- Debug IDs (temporaire) -->
+  {#if debugId}
+    <div class="shrink-0 flex flex-col items-end gap-0.5 text-[0.6rem] font-mono text-text-muted/60 leading-tight">
+      <span>Actuel : {debugId.slice(0, 8)}</span>
+      {#if debugSuccessorId && debugSuccessorId !== debugId}
+        <span>Dernier : {debugSuccessorId.slice(0, 8)}</span>
+      {:else}
+        <span class="opacity-40">Dernier : —</span>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Actions (Appels, Membres, Recherche, Paramètres) -->
   <div class="flex items-center gap-1 shrink-0">

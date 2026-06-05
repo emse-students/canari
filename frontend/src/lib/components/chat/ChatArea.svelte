@@ -96,6 +96,10 @@
     onLoadOlderMessages?: () => Promise<boolean>;
     /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
     onMessagesScrollEl?: (el: HTMLDivElement | null) => void;
+    /** Debug: current MLS group ID (full). */
+    debugId?: string;
+    /** Debug: last successor group ID in the chain. */
+    debugSuccessorId?: string | null;
   }
 
   let {
@@ -138,6 +142,8 @@
     isCatchingUpMessages = false,
     onLoadOlderMessages,
     onMessagesScrollEl,
+    debugId,
+    debugSuccessorId,
   }: Props = $props();
 
   const INITIAL_RENDER_GROUPS = 180;
@@ -457,6 +463,8 @@
         {onStartAudioCall}
         {onStartVideoCall}
         {onOpenMembers}
+        {debugId}
+        {debugSuccessorId}
         onToggleSearch={() => {
           showSearch = !showSearch;
           if (!showSearch) {
