@@ -225,16 +225,20 @@ async function handleWelcome({
     statePersister.persistNow();
 
     // Purger du WASM les prédécesseurs dont le successeur est le groupe qu'on vient de rejoindre.
-    // Le sync conserve intentionnellement A tant que B n'est pas rejoint (pour laisser le
-    // handler déchiffrer les messages en attente pour A). Une fois B rejoint, A est obsolète.
-    const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
-    for (const predId of otherLocalIds) {
-      const m = await mlsService.getGroupMeta(predId).catch(() => null);
-      if (m?.successorId === joinedGroupId) {
-        mlsService.forgetGroup(predId);
-        statePersister.persistNow();
-        log(`[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé du WASM (successeur rejoint)`);
+    // Isolé dans son propre try/catch : une erreur ici (ex. forgetGroup sur un groupe déjà absent)
+    // ne doit pas tomber dans le catch de processWelcome et déclencher un welcome_request parasite.
+    try {
+      const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
+      for (const predId of otherLocalIds) {
+        const m = await mlsService.getGroupMeta(predId).catch(() => null);
+        if (m?.successorId === joinedGroupId) {
+          mlsService.forgetGroup(predId);
+          statePersister.persistNow();
+          log(`[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé du WASM (successeur rejoint)`);
+        }
       }
+    } catch (e) {
+      log(`[WELCOME] Erreur purge prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
     }
 
     // Enregistrement côté serveur (idempotent — safety net si l'invitant n'a pas encore
