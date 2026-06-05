@@ -288,6 +288,13 @@ export interface IMlsService {
   sendWelcomeRequest(groupId: string): Promise<void>;
 
   /**
+   * Clears the server-side pending welcome_request queue for `groupId`.
+   * Called by the reboot winner after claiming the successor to prevent stale
+   * welcome_requests from being re-delivered to members on reconnect.
+   */
+  clearPendingWelcomeRequests(groupId: string): Promise<void>;
+
+  /**
    * Register a callback invoked when another device broadcasts a welcome_request
    * for a group this device is a member of.
    */

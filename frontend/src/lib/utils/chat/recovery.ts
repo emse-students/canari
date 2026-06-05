@@ -194,6 +194,13 @@ export async function reboot(groupId: string, deps: RecoveryDeps): Promise<void>
   const casBundleKey = `cas_winner:${groupId}`;
   localStorage.setItem(casBundleKey, candidateId);
 
+  // Vider la queue pending_welcome de l'ancien groupe : les welcome_requests stockées
+  // pendant l'indisponibilité des pairs ne doivent plus être re-délivrées maintenant
+  // que le successeur est prêt.
+  await mlsService
+    .clearPendingWelcomeRequests(groupId)
+    .catch((e) => log(`[REBOOT] Erreur clear pending welcome_requests : ${String(e)}`));
+
   // Inviter tous les membres de l'ancien groupe.
   // Si le groupe mort n'a plus de membres (deleteGroup a effacé dm_group_members),
   // remonter la chaîne pour trouver l'ancêtre le plus proche qui en a encore.

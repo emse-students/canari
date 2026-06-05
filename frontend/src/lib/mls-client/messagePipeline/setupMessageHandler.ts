@@ -241,6 +241,27 @@ async function handleWelcome({
       log(`[WELCOME] Erreur purge prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
     }
 
+    // Purger le prédécesseur du Map de conversations et d'IndexedDB.
+    // Sans ça, les deux groupes coexistent en base locale et provoquent un doublon
+    // au prochain login (mergeDirectConversationDuplicates), où le mauvais canonique
+    // peut être choisi si updatedAt est trompeur.
+    try {
+      for (const [predId] of deps.conversations.entries()) {
+        if (predId === joinedGroupId) continue;
+        const m = await mlsService.getGroupMeta(predId).catch(() => null);
+        if (m?.successorId === joinedGroupId) {
+          deps.conversations.delete(predId);
+          if (deps.getSelectedContact() === predId) deps.setSelectedContact(joinedGroupId);
+          await deps.deleteConversation?.(predId).catch(() => {});
+          log(
+            `[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé des conv. locales (successeur rejoint)`
+          );
+        }
+      }
+    } catch (e) {
+      log(`[WELCOME] Erreur purge conv prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
+    }
+
     // Enregistrement côté serveur (idempotent — safety net si l'invitant n'a pas encore
     // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});

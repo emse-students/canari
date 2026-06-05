@@ -283,8 +283,30 @@ export async function mergeDirectConversationDuplicates(
       continue;
     }
 
-    const canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
-    const duplicate = canonical.id === existing.id ? meta : existing;
+    // Priorité absolue à la relation de succession : le successeur est toujours canonique
+    // même si le prédécesseur a un updatedAt plus récent (il a de l'historique accumulé).
+    // Ne pas inverser cette règle — un deleteGroupOnServer sur le successeur actif est fatal.
+    let canonical: ConversationMeta;
+    let duplicate: ConversationMeta;
+    if (mlsService) {
+      const [metaExisting, metaMeta] = await Promise.all([
+        mlsService.getGroupMeta(existing.id).catch(() => null),
+        mlsService.getGroupMeta(meta.id).catch(() => null),
+      ]);
+      if (metaExisting?.successorId === meta.id) {
+        canonical = meta;
+        duplicate = existing;
+      } else if (metaMeta?.successorId === existing.id) {
+        canonical = existing;
+        duplicate = meta;
+      } else {
+        canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
+        duplicate = canonical.id === existing.id ? meta : existing;
+      }
+    } else {
+      canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
+      duplicate = canonical.id === existing.id ? meta : existing;
+    }
     canonicalByPeer.set(peer, canonical);
     duplicatesToMerge.push({ canonical, duplicate });
   }

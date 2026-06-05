@@ -1044,6 +1044,23 @@ export class MessagingService implements OnModuleInit {
   }
 
   /**
+   * Clears the pending welcome_request queue for a group.
+   * Called by the reboot winner after claiming the successor so that stale
+   * welcome_requests stored while peers were offline are not re-delivered.
+   */
+  async clearPendingWelcomeRequests(
+    groupId: string,
+  ): Promise<{ cleared: boolean }> {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const pendingSetKey = `pending_welcome:${safeGroupId}`;
+    const deleted = await this.redis.del(pendingSetKey);
+    this.logger.log(
+      `[WELCOME_REQ] clearPendingWelcomeRequests group=${safeGroupId} deleted=${deleted}`,
+    );
+    return { cleared: deleted > 0 };
+  }
+
+  /**
    * Returns the Redis stream history for a group, with optional cursor-based
    * pagination via an afterStreamId parameter.
    * Enforces group membership for non-admin callers.

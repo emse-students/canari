@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Post,
   Body,
@@ -51,6 +52,13 @@ export class MessagingController {
     },
   ) {
     return this.messagingService.sendWelcome(authUserId, body);
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls/welcome-request/group/:groupId')
+  /** Clears the pending welcome_request queue for a group after a successful reboot. */
+  async clearPendingWelcomeRequests(@Param('groupId') groupId: string) {
+    return this.messagingService.clearPendingWelcomeRequests(groupId);
   }
 
   @UseGuards(HeaderAuthGuard)

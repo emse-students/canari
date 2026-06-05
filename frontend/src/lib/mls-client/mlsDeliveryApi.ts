@@ -442,6 +442,14 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
   }
 
+  async clearPendingWelcomeRequests(groupId: string): Promise<void> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/welcome-request/group/${encodeURIComponent(groupId)}`,
+      { method: 'DELETE', headers: await this.auth() }
+    );
+    if (!res.ok) throw new Error(`clearPendingWelcomeRequests failed: ${res.status}`);
+  }
+
   async deleteGroupOnServer(groupId: string): Promise<boolean> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',

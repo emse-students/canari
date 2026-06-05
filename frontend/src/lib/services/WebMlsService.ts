@@ -616,6 +616,10 @@ export class WebMlsService implements IMlsService {
     });
   }
 
+  async clearPendingWelcomeRequests(groupId: string): Promise<void> {
+    await this.delivery.clearPendingWelcomeRequests(groupId);
+  }
+
   onWelcomeRequest(
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
