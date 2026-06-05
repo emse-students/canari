@@ -179,12 +179,16 @@ export class GroupsController {
     if (!body.successorId || typeof body.successorId !== 'string') {
       throw new BadRequestException('successorId is required');
     }
-    // Atomic CAS: only update if no successor has been claimed yet
+    // Atomic CAS: only update if no successor has been claimed yet AND the group
+    // has not been intentionally deleted. Without the deletedAt guard a reboot
+    // racing with deleteGroup would resurrect a group the user just removed.
     const result = await this.groupRepo
       .createQueryBuilder()
       .update(Group)
       .set({ successorId: body.successorId, deletedAt: () => 'NOW()' })
-      .where('id = :id AND "successorId" IS NULL', { id: safeGroupId })
+      .where('id = :id AND "successorId" IS NULL AND "deletedAt" IS NULL', {
+        id: safeGroupId,
+      })
       .execute();
 
     if (result.affected === 0) {

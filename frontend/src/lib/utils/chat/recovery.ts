@@ -60,6 +60,15 @@ export async function requestReAdd(
     return requestReAdd(meta.successorId, deps, timers);
   }
 
+  // Groupe supprimé intentionnellement (deletedAt posé par deleteGroup) et sans successeur.
+  // Ne pas envoyer de welcome_request ni armer un reboot : personne ne peut répondre
+  // (dm_group_members effacé) et le CAS de claimSuccessor refuse désormais les groupes
+  // déjà supprimés, donc le reboot créerait un candidat orphelin immédiatement nettoyé.
+  if (meta?.deletedAt) {
+    deps.log(`[READD] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    return;
+  }
+
   await deps.mlsService
     .sendWelcomeRequest(groupId)
     .catch((e) =>
