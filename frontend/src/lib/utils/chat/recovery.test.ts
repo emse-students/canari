@@ -22,6 +22,7 @@ beforeEach(() => {
 function makeMls(overrides: Record<string, unknown> = {}) {
   return {
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    clearPendingWelcomeRequests: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
     getUserGroups: vi.fn().mockResolvedValue([]),
