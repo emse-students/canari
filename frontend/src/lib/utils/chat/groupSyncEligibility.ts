@@ -1,4 +1,41 @@
-import type { UserGroupRow } from '$lib/mls-client/IMlsService';
+import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
+
+/**
+ * Follows the successor chain from `startId` to the terminal group
+ * (the one without a `successorId`), making at most `maxHops + 1` API calls.
+ *
+ * Returns `hasChain = false` when `startId` is already the terminal.
+ * The `deletedAt` field on the returned meta lets callers reject deleted lineages.
+ */
+export async function resolveTerminalGroup(
+  mlsService: IMlsService,
+  startId: string,
+  maxHops = 10
+): Promise<{
+  terminalId: string;
+  groupMeta: { name?: string; isGroup?: boolean; deletedAt?: string | null } | null;
+  hasChain: boolean;
+}> {
+  const visited = new Set<string>();
+  let current = startId;
+  let meta: { name?: string; isGroup?: boolean; deletedAt?: string | null } | null = null;
+
+  for (let hop = 0; hop <= maxHops; hop++) {
+    if (visited.has(current)) break; // cycle — s'arrêter au dernier connu
+    visited.add(current);
+
+    const m = await mlsService.getGroupMeta(current).catch(() => null);
+    meta = m ? { name: m.name, isGroup: m.isGroup, deletedAt: m.deletedAt } : null;
+
+    if (!m?.successorId) {
+      return { terminalId: current, groupMeta: meta, hasChain: current !== startId };
+    }
+    current = m.successorId;
+  }
+
+  // Chaîne trop longue ou cycle — retourner le dernier observé
+  return { terminalId: current, groupMeta: meta, hasChain: true };
+}
 
 /** Index built from `getUserGroups` for cheap deleted/active checks during MLS sync. */
 export interface UserGroupSyncIndex {

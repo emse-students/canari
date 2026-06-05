@@ -124,21 +124,45 @@ export class GroupsController {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId')
-  /** Soft-deletes a group (sets deletedAt) and hard-deletes all operational data.
-   *  The group row is kept as a tombstone so devices can detect the deletion. */
+  /**
+   * Soft-deletes a group and every successor in its lineage, then hard-deletes
+   * all operational data for each.
+   *
+   * Following the full chain is essential: if the caller holds an old version of
+   * the group (before a reboot), deleting only that version leaves the terminal
+   * successor alive. On the next sync the delivery service would see the live
+   * terminal and trigger a welcome_request, effectively resurrecting the group.
+   */
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    // Soft-delete: keep the row as a tombstone for recovery routing
-    await this.groupRepo.update({ id: safeGroupId }, { deletedAt: new Date() });
-    // Hard-delete operational data - no longer needed once the group is gone
-    await this.groupMemberRepo.delete({ groupId: safeGroupId });
-    await this.deviceGroupRepo.delete({ groupId: safeGroupId });
-    await this.queuedMessageRepo.delete({ groupId: safeGroupId });
-    await this.redis.del(`group:members:${safeGroupId}`);
-    // Purge the Redis Stream used for late-joining replay — the group is gone so
-    // the history is inaccessible anyway (membership check rejects all GET /history).
-    await this.redis.del(`history:${safeGroupId}`);
-    this.logger.log(`[DELETE_GROUP] group=${safeGroupId} (soft-deleted)`);
+
+    // Collect the full successor chain (cycle-safe, max 10 hops).
+    const toDelete: string[] = [];
+    let current: string | null = safeGroupId;
+    const visited = new Set<string>();
+    while (current && !visited.has(current) && toDelete.length < 10) {
+      visited.add(current);
+      toDelete.push(current);
+      const g = await this.groupRepo.findOne({
+        where: { id: current },
+        select: ['id', 'successorId'],
+      });
+      current = g?.successorId ?? null;
+    }
+
+    const now = new Date();
+    for (const id of toDelete) {
+      await this.groupRepo.update({ id }, { deletedAt: now });
+      await this.groupMemberRepo.delete({ groupId: id });
+      await this.deviceGroupRepo.delete({ groupId: id });
+      await this.queuedMessageRepo.delete({ groupId: id });
+      await this.redis.del(`group:members:${id}`);
+      await this.redis.del(`history:${id}`);
+    }
+
+    this.logger.log(
+      `[DELETE_GROUP] ${toDelete.length} group(s) soft-deleted: ${toDelete.map((id) => id.slice(0, 8)).join(' → ')}…`,
+    );
     return { status: 'deleted' };
   }
 

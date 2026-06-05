@@ -15,7 +15,10 @@ import {
   handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
-import { collectKnownSuccessorIds } from '$lib/utils/chat/groupSyncEligibility';
+import {
+  collectKnownSuccessorIds,
+  resolveTerminalGroup,
+} from '$lib/utils/chat/groupSyncEligibility';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -593,18 +596,38 @@ export async function handleWelcomeRequest(params: {
     groupId: requestedGroupId,
   } = params;
 
-  // Vérifier qu'on a une conversation prête pour ce groupe.
-  // Si le groupe a un successeur, rediriger vers celui-ci.
-  let groupId = requestedGroupId;
+  // Résoudre le groupe terminal dans la lignée de successeurs (max 10 hops).
+  const {
+    terminalId,
+    groupMeta: terminalMeta,
+    hasChain,
+  } = await resolveTerminalGroup(mlsService, requestedGroupId);
+
+  // Groupe introuvable sur le serveur.
+  if (!terminalMeta) {
+    log(`[WELCOME_REQ] Groupe ${requestedGroupId.slice(0, 8)}… introuvable — refus`);
+    return;
+  }
+
+  // Toute la lignée est supprimée — refuser d'inviter dans un groupe mort.
+  if (terminalMeta.deletedAt) {
+    log(`[WELCOME_REQ] Lignée de ${requestedGroupId.slice(0, 8)}… supprimée — refus`);
+    return;
+  }
+
+  if (hasChain) {
+    log(`[WELCOME_REQ] ${requestedGroupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}…`);
+  }
+
+  // groupId pointe désormais vers le terminal de la lignée.
+  const groupId = terminalId;
+
+  // Défense en profondeur : vérifier qu'on a une conversation prête pour ce groupe terminal.
+  // Si ce device n'est pas encore dans le groupe terminal (sync initial pas encore terminé,
+  // ou on n'est pas membre), refuser — le demandeur relancera une welcome_request à jour.
   if (!conversations.get(groupId)?.isReady) {
-    const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
-    if (meta?.successorId && conversations.get(meta.successorId)?.isReady) {
-      log(`[WELCOME_REQ] Groupe ${groupId} → successeur ${meta.successorId}`);
-      groupId = meta.successorId;
-    } else {
-      log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId} - skip`);
-      return;
-    }
+    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… — refus`);
+    return;
   }
 
   // Guard in-process : empêche deux traitements simultanés du même groupe

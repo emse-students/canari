@@ -3,9 +3,9 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { requestReAdd, cancelReAdd } from '$lib/utils/chat/recovery';
+import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
-import type { IMlsService } from '../IMlsService';
 import {
   installWasmDuplicateDeliveryLogInterceptor,
   resetWasmDuplicateDeliveryFlag,
@@ -179,6 +179,16 @@ async function handleWelcome({
   // Chaîne de N reboots : N+1 appels, mais on atteint le terminal directement
   // sans jamais rejoindre un groupe mort intermédiaire.
   const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(mlsService, groupId ?? '');
+
+  // Toute la lignée de successeurs est supprimée — ne pas rejoindre un groupe mort.
+  if (groupMeta?.deletedAt) {
+    log(
+      `[WELCOME] Lignée ${(groupId ?? '').slice(0, 8)}…→${terminalId.slice(0, 8)}… supprimée — Welcome ignoré`
+    );
+    cancelReAdd(groupId ?? '', recoveryTimers);
+    deps.cancelGroupRecovery?.(groupId ?? '');
+    return true;
+  }
 
   if (hasChain) {
     // Le groupe de l'enveloppe est mort — cibler le terminal à la place.
@@ -504,47 +514,6 @@ async function handleKnownGroup({
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Récupère les métadonnées d'un groupe depuis l'API REST. */
-/**
- * Suit la chaîne de successeurs depuis `startId` jusqu'au groupe terminal
- * (sans successeur), en faisant au plus `maxHops + 1` appels à `getGroupMeta`.
- *
- * Cas commun (aucun successeur) : 1 appel — remplace l'ancienne `fetchGroupMeta`.
- * Chaîne de N reboots : N + 1 appels séquentiels, mais on atteint directement
- * le groupe actif sans jamais rejoindre un intermédiaire mort.
- *
- * Retourne `hasChain = false` quand `startId` est déjà le groupe terminal.
- */
-async function resolveTerminalGroup(
-  mlsService: IMlsService,
-  startId: string,
-  maxHops = 10
-): Promise<{
-  terminalId: string;
-  groupMeta: { name?: string; isGroup?: boolean } | null;
-  hasChain: boolean;
-}> {
-  const visited = new Set<string>();
-  let current = startId;
-  let meta: { name?: string; isGroup?: boolean } | null = null;
-
-  for (let hop = 0; hop <= maxHops; hop++) {
-    if (visited.has(current)) break; // cycle — s'arrêter au dernier connu
-    visited.add(current);
-
-    const m = await mlsService.getGroupMeta(current).catch(() => null);
-    meta = m ? { name: m.name, isGroup: m.isGroup } : null;
-
-    if (!m?.successorId) {
-      return { terminalId: current, groupMeta: meta, hasChain: current !== startId };
-    }
-    current = m.successorId;
-  }
-
-  // Chaîne trop longue ou cycle — retourner le dernier observé
-  return { terminalId: current, groupMeta: meta, hasChain: true };
-}
 
 /**
  * Crée ou met à jour la conversation locale après un Welcome.
