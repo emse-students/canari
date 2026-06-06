@@ -58,6 +58,39 @@ export function parseDirectPeerFromName(rawName: string, userId: string): string
 /** Number of messages loaded from local DB on first display. Older messages load on scroll-up. */
 export const INITIAL_MESSAGES_PAGE = 60;
 
+/**
+ * Resolves the conversations-map key for a MLS `groupId`.
+ * Most entries use `groupId` as the key; legacy direct rows may use `userId::peerId`.
+ */
+export function findConversationKeyByGroupId(
+  conversations: Map<string, Conversation>,
+  groupId: string
+): string | undefined {
+  if (conversations.has(groupId)) return groupId;
+  for (const [key, convo] of conversations) {
+    if (convo.id === groupId) return key;
+  }
+  return undefined;
+}
+
+/**
+ * Marks a conversation as remotely deleted (`deletedRemotely=true`) so the UI shows
+ * the local-delete banner instead of silently keeping a live conversation shell.
+ */
+export function markConversationDeletedRemotely(
+  conversations: Map<string, Conversation>,
+  groupId: string,
+  saveConversation?: (key: string) => Promise<void>
+): boolean {
+  const key = findConversationKeyByGroupId(conversations, groupId);
+  if (!key) return false;
+  const convo = conversations.get(key);
+  if (!convo || convo.deletedRemotely) return false;
+  conversations.set(key, { ...convo, deletedRemotely: true });
+  saveConversation?.(key).catch(() => {});
+  return true;
+}
+
 // ---------- Archive persistence ----------
 
 /** Returns the localStorage key used to store the set of archived conversation IDs for a user. */

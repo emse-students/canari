@@ -136,12 +136,23 @@ export function useConversations() {
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  /** Resolves the open conversation synchronously; iterates the map so Svelte 5 tracks mutations reliably (`.get()` alone can miss updates). */
+  /**
+   * Resolves the open conversation synchronously.
+   * Iterates the map so Svelte 5 tracks set/delete; shallow-clones the entry so prop
+   * consumers (ChatArea on Android WebView) always see a fresh reference when messages
+   * or flags change.
+   */
   const currentConvo = $derived.by(() => {
     const key = selectedContact;
     if (!key) return null;
     for (const [k, v] of conversations) {
-      if (k === key) return v;
+      if (k !== key) continue;
+      void v.messages.length;
+      void v.lastMessageAt;
+      void v.isReady;
+      void v.deletedRemotely;
+      void v.unreadCount;
+      return { ...v, messages: v.messages };
     }
     return null;
   });

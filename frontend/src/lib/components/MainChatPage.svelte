@@ -32,6 +32,9 @@
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
 
+  /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
+  const activeConversation = $derived(convs.currentConvo);
+
   // ─── Notification click navigation ────────────────────────────────────────
   // When a system notification is clicked, notifNav.pending is set to the
   // target conversation ID. This effect consumes it and opens the conversation.
@@ -504,10 +507,10 @@
         {/snippet}
         <ChatArea
           currentUserId={session.userId}
-          conversation={convs.currentConvo}
+          conversation={activeConversation}
           {messageText}
           isChannel={isSelectedChannel ?? false}
-          imageMediaId={convs.currentConvo?.imageMediaId ?? null}
+          imageMediaId={activeConversation?.imageMediaId ?? null}
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}

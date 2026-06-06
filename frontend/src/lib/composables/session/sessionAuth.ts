@@ -28,6 +28,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleWelcomeRequest, processPendingInvitations } from '$lib/utils/chat/actions';
 import { cancelReAdd } from '$lib/utils/chat/recovery';
+import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
   scheduleReconnectImpl,
@@ -39,17 +40,6 @@ import { startHealthCheckImpl, startSyncWatchdogImpl } from './sessionWatchdogs'
 import { isBiometricPromptDismissed } from './sessionBiometrics';
 
 // ── Helpers internes ───────────────────────────────────────────────────────────
-
-/**
- * Marque une conversation comme supprimée côté serveur (deletedRemotely=true).
- * L'UI affiche une bannière pour que l'utilisateur puisse supprimer localement.
- */
-function markGroupDeletedRemotely(groupId: string, ctx: SessionContext, cb: ChatSessionCallbacks) {
-  const convo = cb.conversations.get(groupId);
-  if (!convo || convo.deletedRemotely) return;
-  cb.conversations.set(groupId, { ...convo, deletedRemotely: true });
-  cb.saveConversation(groupId).catch(() => {});
-}
 
 /**
  * Construit les RecoveryDeps nécessaires à requestReAdd / reboot.
@@ -506,7 +496,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       log: cb.log,
       onGroupMissing: (groupId) =>
         requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
-      onGroupDeletedRemotely: (groupId) => markGroupDeletedRemotely(groupId, ctx, cb),
+      onGroupDeletedRemotely: (groupId) =>
+        markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
     });
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;

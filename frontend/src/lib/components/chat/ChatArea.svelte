@@ -229,6 +229,10 @@
   const chatView = $derived.by(() => {
     const c = conversation;
     if (!c?.id) return null;
+    void c.messages.length;
+    void c.deletedRemotely;
+    void c.isReady;
+    void c.lastMessageAt;
     const pres = resolveConversationListPresentation(
       {
         id: c.id,

@@ -12,23 +12,13 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { requestReAdd, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
+import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 
 /** Durée du watchdog de connexion — même valeur que RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
-
-/**
- * Marque une conversation comme supprimée côté serveur (deletedRemotely=true).
- * Partagé avec sessionAuth via ce module pour éviter la duplication.
- */
-function markGroupDeletedRemotely(groupId: string, ctx: SessionContext, cb: ChatSessionCallbacks) {
-  const convo = cb.conversations.get(groupId);
-  if (!convo || convo.deletedRemotely) return;
-  cb.conversations.set(groupId, { ...convo, deletedRemotely: true });
-  cb.saveConversation(groupId).catch(() => {});
-}
 
 /**
  * Fires `discoverMissingGroups` and logs any error.
@@ -114,7 +104,8 @@ export async function attemptReconnectImpl(
       log: cb.log,
       onGroupMissing: (groupId: string) =>
         requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
-      onGroupDeletedRemotely: (groupId: string) => markGroupDeletedRemotely(groupId, ctx, cb),
+      onGroupDeletedRemotely: (groupId: string) =>
+        markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
     };
     const connected = await openGatewayConnection(connectionDeps);
     if (!connected) {

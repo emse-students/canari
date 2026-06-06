@@ -33,6 +33,8 @@ export class TauriMlsService extends BaseMlsService {
   private _knownGroups: Set<string> = new Set();
   /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
   private _epochByGroupId: Map<string, number> = new Map();
+  /** In-flight Rust MLS mutations; drained before `saveState` so mls.bin matches `_knownGroups`. */
+  private pendingRustMutations: Promise<unknown>[] = [];
   private appVersionCache: string | null | undefined = undefined;
   // PIN conservé en mémoire après init() pour chiffrer l'état MLS après
   // chaque message sans redemander le PIN à l'utilisateur.
@@ -45,6 +47,22 @@ export class TauriMlsService extends BaseMlsService {
   /** When true, Welcome is delivered only to the first available device (saves N-1 redundant deliveries on Tauri). */
   protected override get sendWelcomeToFirstDeviceOnly(): boolean {
     return true;
+  }
+
+  /** Tracks a native invoke so `saveState` can wait for Rust before persisting mls.bin. */
+  private trackRustMutation(promise: Promise<unknown>): void {
+    this.pendingRustMutations.push(promise);
+    void promise.finally(() => {
+      const idx = this.pendingRustMutations.indexOf(promise);
+      if (idx >= 0) this.pendingRustMutations.splice(idx, 1);
+    });
+  }
+
+  /** Waits for pending forget/drop invokes before serializing MLS state. */
+  private async awaitRustMutations(): Promise<void> {
+    const pending = [...this.pendingRustMutations];
+    if (pending.length === 0) return;
+    await Promise.allSettled(pending);
   }
 
   /** Refresh cached epoch from native MLS (best-effort). */
@@ -590,6 +608,7 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls` to encrypt and persist the MLS state to the native mls.bin file. */
   async saveState(pin: string): Promise<Uint8Array> {
+    await this.awaitRustMutations();
     // Native command handles save_encrypted + mls.bin write in one invoke to
     // avoid JS Array.from(...) conversion on large state blobs (notably Android).
     const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { pin });
@@ -793,15 +812,34 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - calls `oublier_groupe` in Rust to drop local MLS state and removes the group from the epoch cache. */
   forgetGroup(groupId: string, minEpoch = 0): void {
     this._epochByGroupId.delete(groupId);
-    invoke('oublier_groupe', { groupId, minEpoch }).catch((e) =>
-      console.warn('[MLS] forgetGroup error:', e)
+    // Keep `_knownGroups` in sync synchronously (Web reads WASM live via get_groups()).
+    this._knownGroups.delete(groupId);
+    this.trackRustMutation(
+      invoke('oublier_groupe', { groupId, minEpoch }).catch((e) => {
+        console.warn('[MLS] forgetGroup error:', e);
+        return invoke<string[]>('lister_groupes')
+          .then((groups) => {
+            this._knownGroups = new Set(groups);
+          })
+          .catch(() => {});
+      })
     );
   }
 
   /** Poison Pill - purge définitive via Tauri `supprimer_groupe` : mémoire Rust, stockage et verrou d'epoch à MAX. */
   dropGroup(groupId: string): void {
     this._epochByGroupId.delete(groupId);
-    invoke('supprimer_groupe', { groupId }).catch((e) => console.warn('[MLS] dropGroup error:', e));
+    this._knownGroups.delete(groupId);
+    this.trackRustMutation(
+      invoke('supprimer_groupe', { groupId }).catch((e) => {
+        console.warn('[MLS] dropGroup error:', e);
+        return invoke<string[]>('lister_groupes')
+          .then((groups) => {
+            this._knownGroups = new Set(groups);
+          })
+          .catch(() => {});
+      })
+    );
   }
 
   /** Tauri-native `invoke` wrapper - calls `retirer_membres` to generate a remove commit for all devices of the given users, then broadcasts it. */
