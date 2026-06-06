@@ -30,7 +30,13 @@
     Moon,
     Sun,
     Settings,
+    Camera,
   } from '@lucide/svelte';
+
+  async function changeProfilePhoto() {
+    const { navigateExternal } = await import('$lib/utils/openExternal');
+    await navigateExternal('https://gallery.mitv.fr/mes-photos');
+  }
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -218,10 +224,22 @@
     <div
       class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
     >
-      <div
-        class="relative w-24 h-24 sm:w-28 sm:h-28 shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full overflow-hidden"
-      >
-        <Avatar userId={profile.id} fill shape="circle" />
+      <div class="relative w-24 h-24 sm:w-28 sm:h-28 flex-shrink-0">
+        <div class="w-full h-full shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full overflow-hidden">
+          <Avatar userId={profile.id} fill shape="circle" />
+        </div>
+        <button
+          type="button"
+          onclick={changeProfilePhoto}
+          title="Changer la photo de profil"
+          aria-label="Changer la photo de profil"
+          class="absolute bottom-0 right-0 flex items-center justify-center w-8 h-8 rounded-full
+                 bg-amber-500 hover:bg-amber-400 text-[#151B2C]
+                 shadow-md shadow-amber-500/30 ring-2 ring-white dark:ring-[#151B2C]
+                 transition-all active:scale-95"
+        >
+          <Camera size={15} strokeWidth={2.5} />
+        </button>
       </div>
       <div class="flex-1 min-w-0">
         <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight truncate mb-1">
