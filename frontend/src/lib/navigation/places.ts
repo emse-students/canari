@@ -49,7 +49,7 @@ export const APP_PLACES: AppPlace[] = [
     description: 'Réactions, mentions et commentaires',
     icon: 'bell',
     href: '/notifications',
-    mobileNav: true,
+    mobileNav: false,
   },
   {
     id: 'calendar',

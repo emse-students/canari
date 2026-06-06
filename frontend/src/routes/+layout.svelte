@@ -7,6 +7,7 @@
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
+  import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
   import BottomNav from '$lib/components/navigation/BottomNav.svelte';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
@@ -300,6 +301,7 @@
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
     {#if !isLoginPage && !isKeyboardOpen}
       <Navbar />
+      <MobileHeader />
     {/if}
 
     <main id="main-content" class="relative flex-1 overflow-hidden">
