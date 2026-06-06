@@ -309,6 +309,12 @@ export async function initTabLeadershipAsync(log: (msg: string) => void): Promis
     return true;
   }
 
+  // Tauri environments (desktop/mobile) are single-instance webviews and should always be leader.
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    isTabLeader = true;
+    return true;
+  }
+
   // Prefer Web Locks (race-free, no polling required).
   // happy-dom exposes `locks` on navigator but leaves it null; Tauri WebKitGTK may lack the API.
   if (
