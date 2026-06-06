@@ -490,7 +490,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     );
 
     const tabLeaderNow = await initTabLeadershipAsync(cb.log);
-    // isTabLeaderState est géré dans useChatSession via le setTabLeaderPromotedHandler
+    ctx.setIsTabLeader(tabLeaderNow);
     if (!tabLeaderNow) {
       cb.log('[TAB] Onglet follower — WebSocket actif dans un autre onglet Canari.');
     }

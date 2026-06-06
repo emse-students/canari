@@ -143,6 +143,8 @@ export interface SessionContext {
     Array<{ requesterUserId: string; requesterDeviceId: string }>
   >;
 
+  /** Met à jour le flag réactif exposé par useChatSession pour l'UI (bannière follower). */
+  setIsTabLeader(v: boolean): void;
   /** Callback pour la promotion tab leader → reconnexion WebSocket. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
 

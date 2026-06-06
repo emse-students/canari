@@ -228,6 +228,9 @@ export function useChatSession() {
     deferredWelcomeRequests,
 
     // Tab leader
+    setIsTabLeader: (v) => {
+      isTabLeaderState = v;
+    },
     setTabLeaderSessionCb: (cb) => {
       tabLeaderSessionCb = cb;
     },
