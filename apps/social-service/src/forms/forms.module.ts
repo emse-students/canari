@@ -24,5 +24,6 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
   ],
   controllers: [FormsController],
   providers: [FormsService, FormReminderScheduler, PushService],
+  exports: [FormsService],
 })
 export class FormsModule {}

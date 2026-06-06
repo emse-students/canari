@@ -227,6 +227,9 @@ services:
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      FORM_URL: http://social-service:3014
+      FORM_SERVICE_URL: http://social-service:3014
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
       AVATAR_API_KEY: ${AVATAR_API_KEY:-}
     depends_on:

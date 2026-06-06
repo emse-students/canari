@@ -16,6 +16,7 @@
     submitForm as submitFormService,
     checkSubmission,
     getSubmission,
+    cancelPendingSubmission,
     type Form,
     type FormItem,
   } from '$lib/forms/api';
@@ -328,6 +329,19 @@
     await navigateExternal(pendingCheckoutUrl);
   }
 
+  async function handlePaymentFailed() {
+    if (!pendingSubmissionId) return;
+    try {
+      await cancelPendingSubmission(pendingSubmissionId);
+    } catch {
+      // charge-saved-method may have already cancelled server-side
+    }
+    pendingSubmissionId = '';
+    pendingCheckoutUrl = '';
+    showPaymentModal = false;
+    error = 'Le paiement a échoué. Vous pouvez soumettre à nouveau le formulaire.';
+  }
+
   // ── Progress bar ─────────────────────────────────────────────────
   const totalCount = $derived(visibleItems.length);
   const answeredCount = $derived.by(() => {
@@ -358,6 +372,7 @@
     onPayWithSaved={handlePayWithSaved}
     onPayWithNew={handlePayWithNew}
     onSuccess={handlePaySuccess}
+    onPaymentFailed={handlePaymentFailed}
     onClose={() => (showPaymentModal = false)}
   />
 {/if}

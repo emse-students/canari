@@ -572,10 +572,23 @@ export class FormsService {
     if (submission.userId !== callerId) {
       await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
     }
-    // Only cancel pending submissions - never touch paid ones
+    return this.cancelPendingSubmission(submissionId);
+  }
+
+  /**
+   * Marks a pending Stripe submission as cancelled without auth checks.
+   * Called by core-service when checkout expires or a charge fails definitively.
+   */
+  async cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) {
+      this.logger.warn(`[Forms] cancelPendingSubmission: submission ${submissionId} not found`);
+      return { ok: false };
+    }
     if (submission.paymentStatus !== 'pending') return { ok: true };
     submission.paymentStatus = 'cancelled';
     await this.submissionRepo.save(submission);
+    this.logger.log(`[Forms] Submission ${submissionId} cancelled (payment failed or abandoned)`);
     return { ok: true };
   }
 

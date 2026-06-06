@@ -4,6 +4,11 @@ import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { UsersService } from '../users/users.service';
+import {
+  getSocialServiceBase,
+  internalSocialRequestConfig,
+  internalSubmissionPath,
+} from './social-internal-client';
 
 /** Parse a service base URL for server-to-server calls: http(s) only, no userinfo, path must be empty or "/". */
 function parseSafeServiceOrigin(raw: string, envName: string): URL {
@@ -20,6 +25,17 @@ function parseSafeServiceOrigin(raw: string, envName: string): URL {
   return parsed;
 }
 
+const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/** Validates submissionId from Stripe metadata before embedding in a URL path. */
+function assertValidSubmissionId(submissionId: string): void {
+  if (!SUBMISSION_ID_RE.test(submissionId)) {
+    throw new Error(
+      `Invalid submissionId in webhook metadata: ${submissionId}`,
+    );
+  }
+}
+
 @Controller('payments')
 export class PaymentWebhookController {
   private readonly logger = new Logger(PaymentWebhookController.name);
@@ -33,6 +49,59 @@ export class PaymentWebhookController {
     this.stripe = key
       ? new Stripe(key, { apiVersion: '2026-03-25.dahlia' })
       : (null as unknown as Stripe);
+  }
+
+  private get formServiceOrigin(): string {
+    return getSocialServiceBase();
+  }
+
+  /** Marks a form submission as paid via the internal social-service route. */
+  private async markSubmissionPaidInternal(
+    submissionId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    assertValidSubmissionId(submissionId);
+    await axios.post(
+      `${this.formServiceOrigin}${internalSubmissionPath(submissionId, 'mark-paid')}`,
+      sessionId ? { sessionId } : {},
+      {
+        ...internalSocialRequestConfig(),
+        timeout: 15_000,
+        validateStatus: (s) => s >= 200 && s < 300,
+      },
+    );
+  }
+
+  /** Cancels a pending form submission via the internal social-service route. */
+  private async cancelPendingSubmissionInternal(
+    submissionId: string,
+  ): Promise<void> {
+    assertValidSubmissionId(submissionId);
+    await axios.post(
+      `${this.formServiceOrigin}${internalSubmissionPath(submissionId, 'cancel-pending')}`,
+      {},
+      {
+        ...internalSocialRequestConfig(),
+        timeout: 15_000,
+        validateStatus: (s) => s >= 200 && s < 300,
+      },
+    );
+  }
+
+  /** Reads submissionId from Stripe object metadata when present and valid. */
+  private submissionIdFromMetadata(
+    metadata: Stripe.Metadata | null | undefined,
+  ): string | null {
+    const submissionId = metadata?.submissionId;
+    if (!submissionId || !SUBMISSION_ID_RE.test(submissionId)) {
+      if (submissionId) {
+        this.logger.error(
+          `Invalid submissionId in webhook metadata: ${submissionId}`,
+        );
+      }
+      return null;
+    }
+    return submissionId;
   }
 
   @Post('webhook')
@@ -99,35 +168,14 @@ export class PaymentWebhookController {
       }
 
       if (submissionId) {
-        // Prevent SSRF: submissionId originates from Stripe session metadata which was
-        // set by the client at checkout creation time - validate before embedding in URL.
-        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
+        if (!SUBMISSION_ID_RE.test(submissionId)) {
           this.logger.error(
             `Invalid submissionId in webhook metadata: ${submissionId}`,
           );
           return res.status(400).send('Invalid submissionId');
         }
         try {
-          const formServiceBase =
-            this.config.get<string>('FORM_SERVICE_URL') ||
-            'http://social-service:3014';
-          const parsedBase = parseSafeServiceOrigin(
-            formServiceBase,
-            'FORM_SERVICE_URL',
-          );
-          const url = new URL(
-            `/api/forms/submissions/${encodeURIComponent(submissionId)}/mark-paid`,
-            `${parsedBase.origin}/`,
-          ).href;
-          await axios.post(
-            url,
-            { sessionId: session.id },
-            {
-              maxRedirects: 0,
-              timeout: 15_000,
-              validateStatus: (s) => s >= 200 && s < 300,
-            },
-          );
+          await this.markSubmissionPaidInternal(submissionId, session.id);
           this.logger.log(
             `Marked submission ${submissionId} as paid via form-service`,
           );
@@ -194,6 +242,51 @@ export class PaymentWebhookController {
         this.logger.warn(
           'checkout.session.completed without submissionId or productId metadata',
         );
+      }
+    }
+
+    if (
+      event.type === 'checkout.session.expired' ||
+      event.type === 'checkout.session.async_payment_failed'
+    ) {
+      const session = event.data.object;
+      const submissionId = this.submissionIdFromMetadata(session.metadata);
+      if (submissionId) {
+        try {
+          await this.cancelPendingSubmissionInternal(submissionId);
+          this.logger.log(
+            `Cancelled pending submission ${submissionId} after ${event.type}`,
+          );
+        } catch (err: unknown) {
+          const error = err as Error & { response?: { data?: unknown } };
+          this.logger.error(
+            `Failed to cancel submission after ${event.type}`,
+            error?.response?.data || error?.message || error,
+          );
+          return res.status(500).send('Failed to cancel pending submission');
+        }
+      }
+    }
+
+    if (event.type === 'payment_intent.payment_failed') {
+      const paymentIntent = event.data.object;
+      const submissionId = this.submissionIdFromMetadata(
+        paymentIntent.metadata,
+      );
+      if (submissionId) {
+        try {
+          await this.cancelPendingSubmissionInternal(submissionId);
+          this.logger.log(
+            `Cancelled pending submission ${submissionId} after payment_intent.payment_failed`,
+          );
+        } catch (err: unknown) {
+          const error = err as Error & { response?: { data?: unknown } };
+          this.logger.error(
+            'Failed to cancel submission after payment_intent.payment_failed',
+            error?.response?.data || error?.message || error,
+          );
+          return res.status(500).send('Failed to cancel pending submission');
+        }
       }
     }
 

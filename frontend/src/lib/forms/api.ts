@@ -272,6 +272,16 @@ export async function cancelCashSubmission(
   return res.json();
 }
 
+/** Cancels a pending Stripe submission after payment failure or user abort. */
+export async function cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/cancel`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw new Error('Cancellation failed');
+  return res.json();
+}
+
 export async function submitForm(
   id: string,
   payload: {

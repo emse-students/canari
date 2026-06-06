@@ -23,6 +23,11 @@ import { ChargeResult } from './payment.service';
 import { Stripe } from 'stripe';
 import axios from 'axios';
 import { resolveStripeCallbackUrl } from './stripe-callback-url';
+import {
+  getSocialServiceBase,
+  internalSocialRequestConfig,
+  internalSubmissionPath,
+} from './social-internal-client';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -39,9 +44,29 @@ export class PaymentController {
 
   /** Base URL for inter-service calls to social-service. */
   private get socialBase(): string {
-    return (process.env.FORM_URL || 'http://social-service:3014').replace(
-      /\/$/,
-      '',
+    return getSocialServiceBase();
+  }
+
+  /** Marks a form submission as paid via the internal social-service route. */
+  private async markSubmissionPaidInternal(
+    submissionId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    await axios.post(
+      `${this.socialBase}${internalSubmissionPath(submissionId, 'mark-paid')}`,
+      sessionId ? { sessionId } : {},
+      internalSocialRequestConfig(),
+    );
+  }
+
+  /** Cancels a pending form submission via the internal social-service route. */
+  private async cancelPendingSubmissionInternal(
+    submissionId: string,
+  ): Promise<void> {
+    await axios.post(
+      `${this.socialBase}${internalSubmissionPath(submissionId, 'cancel-pending')}`,
+      {},
+      internalSocialRequestConfig(),
     );
   }
 
@@ -305,11 +330,7 @@ export class PaymentController {
     }
 
     try {
-      await axios.post(
-        `${this.socialBase}/api/forms/submissions/${submissionId}/mark-paid`,
-        { sessionId: body.sessionId },
-        { maxRedirects: 0 },
-      );
+      await this.markSubmissionPaidInternal(submissionId, body.sessionId);
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
       this.logger.error(
@@ -348,11 +369,7 @@ export class PaymentController {
     }
 
     try {
-      await axios.post(
-        `${this.socialBase}/api/forms/submissions/${submissionId}/cancel`,
-        {},
-        { maxRedirects: 0 },
-      );
+      await this.cancelPendingSubmissionInternal(submissionId);
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
       this.logger.error(
@@ -535,6 +552,7 @@ export class PaymentController {
     const socialBase = this.socialBase;
 
     interface SubmissionData {
+      userId: string;
       paymentStatus: string;
       totalPaid: number;
       currency: string;
@@ -544,8 +562,8 @@ export class PaymentController {
     let submissionData: SubmissionData;
     try {
       const resp = await axios.get<SubmissionData>(
-        `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}`,
-        { maxRedirects: 0 },
+        `${socialBase}${internalSubmissionPath(submissionId)}`,
+        internalSocialRequestConfig(),
       );
       submissionData = resp.data;
     } catch (err: unknown) {
@@ -557,8 +575,19 @@ export class PaymentController {
       throw new BadRequestException('Could not retrieve submission details');
     }
 
+    if (submissionData.userId.toLowerCase() !== userId.toLowerCase()) {
+      throw new BadRequestException('Submission does not belong to this user');
+    }
+
     if (submissionData.paymentStatus === 'paid') {
       return { ok: true, alreadyPaid: true };
+    }
+    if (submissionData.paymentStatus === 'cancelled') {
+      return {
+        ok: false,
+        error:
+          'Cette soumission a été annulée. Soumettez à nouveau le formulaire.',
+      };
     }
     if (submissionData.paymentStatus === 'free' || !submissionData.totalPaid) {
       return { ok: true, noPaymentRequired: true };
@@ -577,13 +606,8 @@ export class PaymentController {
       });
 
     if (result.ok) {
-      // Mark submission as paid
       try {
-        await axios.post(
-          `${socialBase.replace(/\/$/, '')}/api/forms/submissions/${submissionId}/mark-paid`,
-          {},
-          { maxRedirects: 0 },
-        );
+        await this.markSubmissionPaidInternal(submissionId);
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
@@ -591,6 +615,16 @@ export class PaymentController {
           error?.response?.data || error?.message,
         );
         // Payment succeeded but marking failed - return ok, user can retry
+      }
+    } else if (!result.requiresAction) {
+      try {
+        await this.cancelPendingSubmissionInternal(submissionId);
+      } catch (err: unknown) {
+        const error = err as Error & { response?: { data?: unknown } };
+        this.logger.error(
+          'Failed to cancel submission after charge failure',
+          error?.response?.data || error?.message,
+        );
       }
     }
 

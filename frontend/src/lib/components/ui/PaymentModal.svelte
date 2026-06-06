@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { loadStripe } from '@stripe/stripe-js';
   import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from '@lucide/svelte';
   import type { PaymentMethod } from '$lib/stores/user';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { isTauriRuntime } from '$lib/utils/openExternal';
 
   interface Props {
     /** List of saved payment methods to display. */
@@ -20,6 +18,8 @@
     onPayWithNew: () => void;
     /** Called when inline 3DS authentication succeeds. */
     onSuccess: () => void;
+    /** Called when payment fails definitively (not when 3DS is required). */
+    onPaymentFailed?: () => void | Promise<void>;
     /** Called when the modal is dismissed. */
     onClose: () => void;
   }
@@ -31,6 +31,7 @@
     onPayWithSaved,
     onPayWithNew,
     onSuccess,
+    onPaymentFailed,
     onClose,
   }: Props = $props();
 
@@ -60,6 +61,14 @@
     return labels[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
   }
 
+  async function notifyPaymentFailed() {
+    try {
+      await onPaymentFailed?.();
+    } catch {
+      // Caller handles logging; keep modal error visible.
+    }
+  }
+
   async function handlePay() {
     if (!selectedMethodId) return;
     paying = true;
@@ -68,41 +77,21 @@
       const result = await onPayWithSaved(selectedMethodId);
       if (!result.ok) {
         if (result.requiresAction && result.clientSecret) {
-          // 3DS in WebView (Tauri/Android) is unreliable — use hosted Checkout instead.
-          if (isTauriRuntime()) {
-            onPayWithNew();
-            paying = false;
-            return;
-          }
-          // Handle 3DS inline - user stays in the app
-          const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
-          if (key) {
-            const stripe = await loadStripe(key);
-            if (!stripe) {
-              error = 'Impossible de charger le module de paiement.';
-              paying = false;
-            } else {
-              const { error: confirmError } = await stripe.confirmCardPayment(result.clientSecret);
-              if (confirmError) {
-                error = confirmError.message ?? 'Authentification 3D Secure échouée.';
-                paying = false;
-              } else {
-                onSuccess();
-              }
-            }
-          } else {
-            // No publishable key configured - fall back to hosted checkout
-            onPayWithNew();
-          }
+          // 3DS inline loads Stripe.js/hCaptcha and triggers strict CSP console errors — use Checkout.
+          onPayWithNew();
+          paying = false;
+          return;
         } else {
           error = result.error ?? 'Le paiement a échoué. Veuillez réessayer.';
           paying = false;
+          await notifyPaymentFailed();
         }
       }
       // If ok, caller handles redirect
     } catch {
       error = 'Une erreur est survenue lors du paiement.';
       paying = false;
+      await notifyPaymentFailed();
     }
   }
 </script>

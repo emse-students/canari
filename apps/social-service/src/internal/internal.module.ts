@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InternalController } from './internal.controller';
+import { InternalFormsController } from './internal-forms.controller';
+import { FormsModule } from '../forms/forms.module';
 import { Post } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
@@ -12,9 +14,10 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 
-/** Exposes the internal account-deletion endpoint, not reachable via Nginx. */
+/** Exposes internal endpoints for account deletion and form payment callbacks. */
 @Module({
   imports: [
+    FormsModule,
     TypeOrmModule.forFeature([
       Post,
       ChannelMember,
@@ -28,6 +31,6 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
       ContentReport,
     ]),
   ],
-  controllers: [InternalController],
+  controllers: [InternalController, InternalFormsController],
 })
 export class InternalModule {}
