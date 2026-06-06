@@ -235,9 +235,12 @@ export class PaymentService {
 
     const intentParams: Stripe.PaymentIntentCreateParams = {
       amount: params.amountCents,
-      currency: params.currency,
+      currency: params.currency.toLowerCase(),
       customer: params.customerId,
       payment_method: params.paymentMethodId,
+      // Required for off-session charges with a saved card — dynamic payment methods
+      // do not apply when creating a PaymentIntent directly (unlike Checkout).
+      payment_method_types: ['card'],
       confirm: true,
       off_session: true,
       metadata: params.metadata,
@@ -289,6 +292,9 @@ export class PaymentService {
           clientSecret: stripeErr.payment_intent.client_secret,
         };
       }
+      this.logger.error(
+        `[Stripe] chargeWithSavedMethod failed: ${stripeErr?.message ?? (err instanceof Error ? err.message : String(err))}`,
+      );
       return {
         ok: false,
         error: stripeErr?.message ?? 'Payment failed',
