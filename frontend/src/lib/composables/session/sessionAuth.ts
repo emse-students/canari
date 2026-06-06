@@ -11,7 +11,7 @@ import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
-import { checkGroupSuccessors, requestReAdd, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
+import { requestReAdd } from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   setupMessageHandler,
@@ -27,12 +27,10 @@ import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleWelcomeRequest, processPendingInvitations } from '$lib/utils/chat/actions';
-import { cancelReAdd, reboot } from '$lib/utils/chat/recovery';
-import { CallService } from '$lib/services/CallService';
+import { cancelReAdd } from '$lib/utils/chat/recovery';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
   scheduleReconnectImpl,
-  attemptReconnectImpl,
   runGroupDiscoveryImpl,
   startConnectionWatchdogImpl,
   stopConnectionWatchdogImpl,

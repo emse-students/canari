@@ -12,7 +12,6 @@ import type { IStorage } from '$lib/db';
 import { SvelteMap } from 'svelte/reactivity';
 import { setTabLeaderPromotedHandler, getIsTabLeader } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
-import { RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
@@ -28,13 +27,11 @@ import {
 } from './session/sessionAuth';
 import { dismissBiometricPromptImpl, enrollBiometricImpl } from './session/sessionBiometrics';
 import {
-  scheduleReconnectImpl,
   attemptReconnectImpl,
   pauseConnectionImpl,
   resumeConnectionImpl,
-  startConnectionWatchdogImpl,
-  stopConnectionWatchdogImpl,
   runGroupDiscoveryImpl,
+  scheduleReconnectImpl,
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
