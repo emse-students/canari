@@ -3,6 +3,7 @@
   import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from '@lucide/svelte';
   import type { PaymentMethod } from '$lib/stores/user';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
 
   interface Props {
     /** List of saved payment methods to display. */
@@ -67,6 +68,12 @@
       const result = await onPayWithSaved(selectedMethodId);
       if (!result.ok) {
         if (result.requiresAction && result.clientSecret) {
+          // 3DS in WebView (Tauri/Android) is unreliable — use hosted Checkout instead.
+          if (isTauriRuntime()) {
+            onPayWithNew();
+            paying = false;
+            return;
+          }
           // Handle 3DS inline - user stays in the app
           const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
           if (key) {

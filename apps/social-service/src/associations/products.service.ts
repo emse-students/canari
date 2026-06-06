@@ -127,7 +127,8 @@ export class ProductsService {
     associationId: string,
     productId: string,
     userId: string,
-    customAmountCents?: number
+    customAmountCents?: number,
+    callbackUrls?: { successUrl?: string; cancelUrl?: string }
   ): Promise<{ checkoutUrl: string }> {
     const [asso, product] = await Promise.all([
       this.assoRepo.findOne({ where: { id: associationId } }),
@@ -182,12 +183,12 @@ export class ProductsService {
     }
 
     const successUrl = resolveStripeCallbackUrl(
-      undefined,
+      callbackUrls?.successUrl,
       `${frontendUrl}/shop?purchase_success=1&productId=${product.id}`,
       frontendUrl
     );
     const cancelUrl = resolveStripeCallbackUrl(
-      undefined,
+      callbackUrls?.cancelUrl,
       `${frontendUrl}/shop?purchase_cancel=1`,
       frontendUrl
     );

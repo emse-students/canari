@@ -9,6 +9,7 @@
     type AssociationProduct,
     type Association,
   } from '$lib/associations/api';
+  import { shopCheckoutCallbacks } from '$lib/utils/stripeCallbacks';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { ShoppingBag } from '@lucide/svelte';
@@ -80,9 +81,11 @@
       const { checkoutUrl } = await createProductCheckout(
         product.associationId,
         product.id,
-        customCents
+        customCents,
+        shopCheckoutCallbacks(product.id)
       );
-      window.location.href = checkoutUrl;
+      const { navigateExternal } = await import('$lib/utils/openExternal');
+      await navigateExternal(checkoutUrl);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Erreur lors de la création du paiement');
     } finally {

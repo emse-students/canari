@@ -32,7 +32,8 @@ export function isAllowedStripeCallbackUrl(
       path === '/forms/success' ||
       path === '/forms/cancel' ||
       path === '/posts' ||
-      path === '/profile'
+      path === '/profile' ||
+      path === '/shop'
     );
   } catch {
     return false;

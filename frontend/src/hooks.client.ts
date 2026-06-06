@@ -132,7 +132,14 @@ if (isTauriRuntime()) {
               };
 
               if (path === '/success') {
-                if (sessionId) {
+                const purchaseSuccess = u.searchParams.get('purchase_success');
+                const productId =
+                  u.searchParams.get('product_id') ?? u.searchParams.get('productId');
+                if (purchaseSuccess && productId) {
+                  navigate(
+                    `/shop?purchase_success=${encodeURIComponent(purchaseSuccess)}&productId=${encodeURIComponent(productId)}`
+                  );
+                } else if (sessionId) {
                   navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {
                   navigate(`/profile?payment_setup=${encodeURIComponent(paymentSetup)}`);
@@ -144,7 +151,9 @@ if (isTauriRuntime()) {
                   navigate('/posts');
                 }
               } else if (path === '/cancel') {
-                if (sessionId) {
+                if (u.searchParams.get('purchase_cancel')) {
+                  navigate('/shop?purchase_cancel=1');
+                } else if (sessionId) {
                   navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {
                   navigate(`/profile?payment_setup=${encodeURIComponent(paymentSetup)}`);

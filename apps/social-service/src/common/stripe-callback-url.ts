@@ -24,7 +24,8 @@ export function isAllowedStripeCallbackUrl(url: string, frontendUrl: string): bo
       path === '/forms/success' ||
       path === '/forms/cancel' ||
       path === '/posts' ||
-      path === '/profile'
+      path === '/profile' ||
+      path === '/shop'
     );
   } catch {
     return false;

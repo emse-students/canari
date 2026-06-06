@@ -30,6 +30,24 @@ export function formCheckoutCallbacks(): { successUrl: string; cancelUrl: string
   };
 }
 
+/** Stripe Checkout callbacks for association shop product purchases. */
+export function shopCheckoutCallbacks(productId: string): {
+  successUrl: string;
+  cancelUrl: string;
+} {
+  const pid = encodeURIComponent(productId);
+  if (isMobileTauri()) {
+    return {
+      successUrl: stripeDeepLink('success', `purchase_success=1&productId=${pid}`),
+      cancelUrl: stripeDeepLink('cancel', 'purchase_cancel=1'),
+    };
+  }
+  return {
+    successUrl: webUrl(`/shop?purchase_success=1&productId=${pid}`),
+    cancelUrl: webUrl('/shop?purchase_cancel=1'),
+  };
+}
+
 /** Stripe Setup Checkout callbacks for saving a card on the profile page. */
 export function profileSetupCallbacks(): { successUrl: string; cancelUrl: string } {
   if (isMobileTauri()) {

@@ -789,13 +789,18 @@ export async function deleteProduct(associationId: string, productId: string): P
 export async function createProductCheckout(
   associationId: string,
   productId: string,
-  customAmountCents?: number
+  customAmountCents?: number,
+  callbacks?: { successUrl?: string; cancelUrl?: string }
 ): Promise<{ checkoutUrl: string }> {
   return request<{ checkoutUrl: string }>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
     {
       method: 'POST',
-      body: JSON.stringify(customAmountCents !== undefined ? { customAmountCents } : {}),
+      body: JSON.stringify({
+        ...(customAmountCents !== undefined ? { customAmountCents } : {}),
+        ...(callbacks?.successUrl ? { successUrl: callbacks.successUrl } : {}),
+        ...(callbacks?.cancelUrl ? { cancelUrl: callbacks.cancelUrl } : {}),
+      }),
     }
   );
 }
