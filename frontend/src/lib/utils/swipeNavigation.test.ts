@@ -33,9 +33,9 @@ describe('swipeNavTargetHref', () => {
     expect(swipeNavTargetHref('/dashboard', 'next')).toBeNull();
   });
 
-  it('reaches dashboard after notifications', () => {
-    expect(swipeNavTargetHref('/notifications', 'next')).toBe('/dashboard');
-    expect(swipeNavTargetHref('/notifications', 'prev')).toBe('/chat');
+  it('reaches dashboard directly after chat (notifications moved to header)', () => {
+    expect(swipeNavTargetHref('/chat', 'next')).toBe('/dashboard');
+    expect(swipeNavTargetHref('/dashboard', 'prev')).toBe('/chat');
   });
 });
 
