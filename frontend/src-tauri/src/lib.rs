@@ -41,19 +41,8 @@ fn write_mls_bin_atomically(path: &std::path::Path, data: &[u8]) -> Result<(), S
     std::fs::rename(&tmp, path).map_err(|e| format!("rename mls.bin.tmp → mls.bin: {e}"))
 }
 
-fn get_app_data_dir(app: &tauri::AppHandle) -> tauri::Result<std::path::PathBuf> {
-    let dir = app.path().app_data_dir()?;
-    #[cfg(target_os = "android")]
-    {
-        if let Some(parent) = dir.parent() {
-            return Ok(parent.to_path_buf());
-        }
-    }
-    Ok(dir)
-}
-
 fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Result<(), String> {
-    let data_dir = get_app_data_dir(app).map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
 }
@@ -832,7 +821,7 @@ fn exporter_secret(
 fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
     #[cfg(target_os = "android")]
     {
-        let data_dir = match get_app_data_dir(&app) {
+        let data_dir = match app.path().app_data_dir() {
             Ok(d) => d,
             Err(_) => return serde_json::json!({"ok": false, "reason": "no_context"}),
         };
@@ -861,9 +850,9 @@ fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
 fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     #[cfg(target_os = "android")]
     {
-        let data_dir = match get_app_data_dir(&app) {
+        let data_dir = match app.path().app_data_dir() {
             Ok(d) => d,
-            Err(e) => { log::warn!("[FCM] get_app_data_dir() failed: {e}"); return None; }
+            Err(e) => { log::warn!("[FCM] app_data_dir() failed: {e}"); return None; }
         };
         match std::fs::read_to_string(data_dir.join("fcm_token.txt")) {
             Ok(token) => {
@@ -1132,9 +1121,9 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 /// lors de la réception FCM - évite d'attendre la sync MLS complète (~10s).
 #[tauri::command]
 fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
-    let data_dir = match get_app_data_dir(&app) {
+    let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[FCM_CACHE] get_app_data_dir() failed: {e}"); return vec![]; }
+        Err(e) => { log::warn!("[FCM_CACHE] app_data_dir() failed: {e}"); return vec![]; }
     };
     let path = data_dir.join("fcm_message_cache.ndjson");
     let content = match std::fs::read_to_string(&path) {
@@ -1170,7 +1159,7 @@ fn store_push_context(
     push_token: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let data_dir = get_app_data_dir(&app).map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let json = serde_json::json!({
         "pin": pin,
@@ -1193,7 +1182,7 @@ fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(), String> {
 
 #[tauri::command]
 fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = get_app_data_dir(&app).map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let path = data_dir.join("mls.bin");
     if path.exists() {
         std::fs::remove_file(path).map_err(|e| e.to_string())
@@ -1206,9 +1195,9 @@ fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
 /// Utilisé pour restaurer le device ID quand localStorage est vide (réinstall Android).
 #[tauri::command]
 fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
-    let data_dir = match get_app_data_dir(&app) {
+    let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[PushCtx] get_app_data_dir() failed: {e}"); return None; }
+        Err(e) => { log::warn!("[PushCtx] app_data_dir() failed: {e}"); return None; }
     };
     let path = data_dir.join("push_context.json");
     let bytes = match std::fs::read(&path) {
@@ -1227,9 +1216,9 @@ fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
 /// Utilisé au démarrage sur mobile quand localStorage est vide (WebView nettoyé).
 #[tauri::command]
 fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
-    let data_dir = match get_app_data_dir(&app) {
+    let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[MLS] get_app_data_dir() failed: {e}"); return None; }
+        Err(e) => { log::warn!("[MLS] app_data_dir() failed: {e}"); return None; }
     };
     let path = data_dir.join("mls.bin");
     match std::fs::read(&path) {
@@ -1242,7 +1231,7 @@ fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
 // Supprime tous les fichiers .db dans le dossier de l'app
 #[tauri::command]
 fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = get_app_data_dir(&app).map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     if data_dir.exists() {
         for entry in std::fs::read_dir(data_dir).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -1262,7 +1251,7 @@ fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
 fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        let data_dir = get_app_data_dir(&app).map_err(|e| e.to_string())?;
+        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
         std::fs::write(data_dir.join("pending_push_secret.txt"), &secret)
             .map_err(|e| e.to_string())?;
@@ -1279,7 +1268,7 @@ fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String
 /// storage layer, which MIUI and other aggressive OEMs may clear between sessions.
 #[tauri::command]
 fn set_native_flag(key: String, value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = get_app_data_dir(&app).map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("native_flags.json");
     let mut flags: serde_json::Map<String, serde_json::Value> = if path.exists() {
@@ -1297,9 +1286,9 @@ fn set_native_flag(key: String, value: bool, app: tauri::AppHandle) -> Result<()
 /// Returns an empty object if the file does not exist yet.
 #[tauri::command]
 fn get_native_flags(app: tauri::AppHandle) -> serde_json::Value {
-    let data_dir = match get_app_data_dir(&app) {
+    let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[Flags] get_app_data_dir() failed: {e}"); return serde_json::Value::Object(serde_json::Map::new()); }
+        Err(e) => { log::warn!("[Flags] app_data_dir() failed: {e}"); return serde_json::Value::Object(serde_json::Map::new()); }
     };
     let path = data_dir.join("native_flags.json");
     if !path.exists() {
@@ -1368,8 +1357,8 @@ pub fn run() {
             // ── Pool SQLite pour les messages MLS en attente (gap recovery) ────────
             // Initialisé ici avec le chemin appData définitif.
             // block_on est sûr : setup() s'exécute avant le démarrage de l'event loop Tauri.
-            let data_dir = get_app_data_dir(app.handle()).map_err(|e| format!("{e}"))?;
-            log::info!("[Path] get_app_data_dir = {}", data_dir.display());
+            let data_dir = app.path().app_data_dir().map_err(|e| format!("{e}"))?;
+            log::info!("[Path] app_data_dir = {}", data_dir.display());
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("mls_pending.db");
             let pending_pool = tauri::async_runtime::block_on(async {

@@ -115,7 +115,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString(KEY_FCM_TOKEN, token).apply()
         try {
-            File(filesDir.parentFile, "fcm_token.txt").writeText(token)
+            File(filesDir, "fcm_token.txt").writeText(token)
         } catch (e: Exception) {
             Log.w(TAG, "onNewToken: impossible d'écrire fcm_token.txt: ${e.message}")
         }
@@ -270,7 +270,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (stored != null) return stored
 
         return try {
-            val file = File(filesDir.parentFile, "pending_push_secret.txt")
+            val file = File(filesDir, "pending_push_secret.txt")
             if (!file.exists()) return null
             val rawBytes = file.readBytes()
             val secret = rawBytes.toString(Charsets.UTF_8).trim()
@@ -376,7 +376,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent → abandon")
                     return
                 }
-                val filesDir = this.filesDir.parentFile!!.absolutePath
+                val filesDir = this.filesDir!!.absolutePath
                 val jsonStr = nativeCreateWelcomeBackground(
                     filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId,
                     groupId, keyPackage,
@@ -737,7 +737,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 msg.replyTo?.let { put("replyTo", it) }
                 msg.mediaKind?.let { put("mediaKind", it) }
             }
-            val file = File(filesDir.parentFile, "fcm_message_cache.ndjson")
+            val file = File(filesDir, "fcm_message_cache.ndjson")
             CACHE_LOCK.lock()
             try {
                 // Conserver au maximum MAX_FCM_CACHE_ENTRIES lignes : lire, tronquer, réécrire.
@@ -762,7 +762,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /** Fichier de cache pour l'avatar d'un userId (nom sécurisé pour le filesystem). */
     private fun avatarCacheFile(userId: String): File {
         val safeId = userId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(40)
-        return File(filesDir.parentFile, "avatar_$safeId.jpg")
+        return File(filesDir, "avatar_$safeId.jpg")
     }
 
     /**
