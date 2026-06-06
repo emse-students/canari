@@ -81,6 +81,10 @@ export class GroupsController {
       this.logger.log(
         `[CREATE_GROUP][${traceId}] creator membership set to active`,
       );
+      await this.redis.sadd(
+        `group:members:${groupId}`,
+        `${body.createdBy}:${body.creatorDeviceId}`,
+      );
     }
 
     this.logger.log(`[CREATE_GROUP][${traceId}] DONE groupId=${groupId}`);
@@ -249,7 +253,16 @@ export class GroupsController {
         .orIgnore()
         .execute();
       await this.deviceGroupRepo.delete({ groupId: safeGroupId });
+
+      // Propagate active members to the successor group in Redis
+      const activeMembers = deviceMemberships
+        .filter((dm) => dm.status === 'active')
+        .map((dm) => `${dm.userId}:${dm.deviceId}`);
+      if (activeMembers.length > 0) {
+        await this.redis.sadd(`group:members:${successorId}`, ...activeMembers);
+      }
     }
+    await this.redis.del(`group:members:${safeGroupId}`);
 
     this.logger.log(
       `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${successorId} members=${members.length} devices=${deviceMemberships.length}`,
