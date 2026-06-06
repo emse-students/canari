@@ -28,6 +28,7 @@
   const robotsContent = $derived(resolved.noindex ? 'noindex, nofollow' : 'index, follow');
   const ogType = $derived(resolved.ogType ?? SITE.defaultOgType);
   const showSiteJsonLd = $derived(pathname === '/posts' || pathname === '/');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- used inside <script type="application/ld+json"> below; ESLint doesn't track that usage
   const jsonLd = $derived(showSiteJsonLd ? buildSiteJsonLd() : '');
 </script>
 

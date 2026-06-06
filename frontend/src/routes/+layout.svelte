@@ -42,7 +42,6 @@
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
-  import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
 
@@ -60,13 +59,6 @@
     );
   });
 
-  const pageTitle = $derived(
-    (() => {
-      const activePlaceId = resolveActivePlaceId(pathname);
-      const place = APP_PLACES.find((p) => p.id === activePlaceId);
-      return place ? `${place.label} - Canari` : 'Canari';
-    })()
-  );
 
   // Hide BottomNav and remove its padding from the composer when a conversation
   // is open on mobile (only relevant on the chat / communities routes).

@@ -51,7 +51,6 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
-import { saveMlsState } from '$lib/utils/hex';
 import * as codec from '$lib/proto/codec';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import {
