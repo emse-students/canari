@@ -205,9 +205,55 @@ export class GroupsController {
       });
     }
 
+    const successorId = body.successorId;
+
+    // Propager les membres vers le successeur pour que getUserGroups / registerDevice
+    // ne pointent plus vers des tombstones.
+    const members = await this.groupMemberRepo.find({
+      where: { groupId: safeGroupId },
+    });
+    if (members.length > 0) {
+      await this.groupMemberRepo
+        .createQueryBuilder()
+        .insert()
+        .into(GroupMember)
+        .values(
+          members.map((m) => ({
+            groupId: successorId,
+            userId: m.userId,
+            role: m.role,
+          })),
+        )
+        .orIgnore()
+        .execute();
+      await this.groupMemberRepo.delete({ groupId: safeGroupId });
+    }
+
+    const deviceMemberships = await this.deviceGroupRepo.find({
+      where: { groupId: safeGroupId },
+    });
+    if (deviceMemberships.length > 0) {
+      await this.deviceGroupRepo
+        .createQueryBuilder()
+        .insert()
+        .into(DeviceGroupMembership)
+        .values(
+          deviceMemberships.map((dm) => ({
+            userId: dm.userId,
+            deviceId: dm.deviceId,
+            groupId: successorId,
+            status: dm.status,
+            lastEpochSeen: dm.lastEpochSeen,
+          })),
+        )
+        .orIgnore()
+        .execute();
+      await this.deviceGroupRepo.delete({ groupId: safeGroupId });
+    }
+
     this.logger.log(
-      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${body.successorId}`,
+      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${successorId} members=${members.length} devices=${deviceMemberships.length}`,
     );
-    return { claimed: true, successorId: body.successorId };
+    return { claimed: true, successorId };
   }
 }

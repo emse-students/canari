@@ -74,21 +74,10 @@ export async function processPendingInvitations(params: {
 
   let totalWelcomes = 0;
 
-  const MAX_SUCCESSOR_HOPS = 5;
-
   for (const [origGroupId, invitations] of byGroup) {
-    // Toujours résoudre la chaîne de successeurs en premier — même si le groupe local
-    // est isReady. Un reboot peut avoir créé un successeur pendant une déconnexion :
-    // sans cette vérification, les invitations atterrissent dans l'ancien groupe et
-    // échouent avec WrongEpoch (le serveur rejette tout commit sur un groupe migré).
-    let resolved = origGroupId;
-    for (let hop = 0; hop < MAX_SUCCESSOR_HOPS; hop++) {
-      const meta = await mlsService.getGroupMeta(resolved).catch(() => null);
-      if (!meta?.successorId) break;
-      resolved = meta.successorId;
-    }
-
-    const groupId = resolved;
+    // Résoudre le terminal avant tout traitement (reboot peut avoir allongé la chaîne).
+    const { terminalId: groupId } = await resolveTerminalGroup(mlsService, origGroupId);
+    const resolved = groupId;
 
     if (!conversations.get(groupId)?.isReady) {
       if (resolved !== origGroupId) {
@@ -347,6 +336,23 @@ export async function discoverMissingGroups(params: {
 
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
+
+      const { terminalId, hasChain } = await resolveTerminalGroup(mlsService, convo.id).catch(
+        () => ({ terminalId: convo.id, hasChain: false })
+      );
+      if (hasChain && terminalId !== convo.id && conversations.has(terminalId)) {
+        log(
+          `[DISCOVERY] Groupe UI "${convo.name || convo.id}" → terminal ${terminalId.slice(0, 8)}… - retrait`
+        );
+        await purgeLocalConversationRecord({
+          conversations,
+          contactKey: key,
+          groupId: convo.id,
+          deleteConversation,
+          log,
+        });
+        continue;
+      }
 
       const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
       if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {

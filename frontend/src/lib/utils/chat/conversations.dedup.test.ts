@@ -67,6 +67,30 @@ describe('mergeDirectConversationDuplicates', () => {
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });
 
+  it('fusionne une chaîne multi-niveaux vers le terminal actif', async () => {
+    const MID_ID = 'mid00000-0000-0000-0000-000000000000';
+    const storage = makeStorage();
+    const mls = makeMlsService((id) => {
+      if (id === PRED_ID) return { groupId: PRED_ID, successorId: MID_ID };
+      if (id === MID_ID) return { groupId: MID_ID, successorId: SUCC_ID };
+      if (id === SUCC_ID) return { groupId: SUCC_ID, successorId: null };
+      return null;
+    });
+
+    const result = await mergeDirectConversationDuplicates(
+      [makeMeta(PRED_ID, 700), makeMeta(MID_ID, 800), makeMeta(SUCC_ID, 900)],
+      ME,
+      'pin',
+      storage,
+      () => {},
+      mls
+    );
+
+    expect(result.map((c) => c.id)).toEqual([SUCC_ID]);
+    expect(storage.deleteConversation).toHaveBeenCalledWith(PRED_ID);
+    expect(storage.deleteConversation).toHaveBeenCalledWith(MID_ID);
+  });
+
   it('supprime bien deleteGroupOnServer pour un vrai doublon sans relation de succession', async () => {
     // Deux groupes indépendants pour le même pair (deux devices ont ouvert la conv en même temps).
     const storage = makeStorage();

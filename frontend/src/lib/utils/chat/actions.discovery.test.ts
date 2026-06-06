@@ -151,6 +151,58 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(mlsService.saveState).toHaveBeenCalledWith('1234');
   });
 
+  it('purges tombstone UI row when terminal conversation exists locally', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'dead-id',
+        {
+          id: 'dead-id',
+          contactName: 'bob',
+          name: 'bob',
+          messages: [],
+          isReady: false,
+          mlsStateHex: null,
+        },
+      ],
+      [
+        'terminal-id',
+        {
+          id: 'terminal-id',
+          contactName: 'bob',
+          name: 'bob',
+          messages: [],
+          isReady: false,
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const mlsService = makeMls({
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'terminal-id', name: 'user-a::bob', isGroup: false }]),
+      getGroupMeta: vi.fn().mockImplementation((id: string) => {
+        if (id === 'dead-id') return Promise.resolve({ successorId: 'mid-id' });
+        if (id === 'mid-id') return Promise.resolve({ successorId: 'terminal-id' });
+        return Promise.resolve({ successorId: null });
+      }),
+      getLocalGroups: vi.fn().mockReturnValue([]),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      pin: '1234',
+      conversations,
+      deleteConversation,
+      log: vi.fn(),
+    });
+
+    expect(conversations.has('terminal-id')).toBe(true);
+    expect(conversations.has('dead-id')).toBe(false);
+    expect(deleteConversation).toHaveBeenCalledWith('dead-id');
+  });
+
   it('keeps successor conversation referenced by a server tombstone', async () => {
     const conversations = new Map<string, Conversation>([
       [

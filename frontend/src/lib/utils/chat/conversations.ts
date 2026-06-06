@@ -17,6 +17,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
+import { isAncestorInLineage, resolveTerminalGroup } from './groupSyncEligibility';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -302,6 +303,16 @@ export async function mergeDirectConversationDuplicates(
   log: (msg: string) => void,
   mlsService?: IMlsService
 ): Promise<ConversationMeta[]> {
+  const directByPeer = new Map<string, ConversationMeta[]>();
+  for (const meta of convMetas) {
+    const identity = deriveConversationIdentity(meta.name, userId, meta.id);
+    if (identity.conversationType !== 'direct' || !identity.directPeerId) continue;
+    const peer = identity.directPeerId.toLowerCase();
+    const list = directByPeer.get(peer) ?? [];
+    list.push(meta);
+    directByPeer.set(peer, list);
+  }
+
   const canonicalByPeer = new Map<string, ConversationMeta>();
   const duplicatesToMerge: Array<{
     canonical: ConversationMeta;
@@ -313,46 +324,59 @@ export async function mergeDirectConversationDuplicates(
     duplicateIsAncestor: boolean;
   }> = [];
 
-  for (const meta of convMetas) {
-    const identity = deriveConversationIdentity(meta.name, userId, meta.id);
-    if (identity.conversationType !== 'direct' || !identity.directPeerId) continue;
-
-    const peer = identity.directPeerId.toLowerCase();
-    const existing = canonicalByPeer.get(peer);
-    if (!existing) {
-      canonicalByPeer.set(peer, meta);
+  for (const [peer, metas] of directByPeer) {
+    if (metas.length === 1) {
+      canonicalByPeer.set(peer, metas[0]);
       continue;
     }
 
-    // Priorité absolue à la relation de succession : le successeur est toujours canonique
-    // même si le prédécesseur a un updatedAt plus récent (il a de l'historique accumulé).
-    // Ne pas inverser cette règle — un deleteGroupOnServer sur le successeur actif est fatal.
+    const resolved = mlsService
+      ? await Promise.all(
+          metas.map((m) =>
+            resolveTerminalGroup(mlsService, m.id).then((r) => ({
+              meta: m,
+              terminalId: r.terminalId,
+            }))
+          )
+        )
+      : metas.map((m) => ({ meta: m, terminalId: m.id }));
+
+    const uniqueTerminals = new Set(resolved.map((r) => r.terminalId));
+    let terminalId: string;
     let canonical: ConversationMeta;
-    let duplicate: ConversationMeta;
-    let duplicateIsAncestor = false;
-    if (mlsService) {
-      const [metaExisting, metaMeta] = await Promise.all([
-        mlsService.getGroupMeta(existing.id).catch(() => null),
-        mlsService.getGroupMeta(meta.id).catch(() => null),
-      ]);
-      if (metaExisting?.successorId === meta.id) {
-        canonical = meta;
-        duplicate = existing;
-        duplicateIsAncestor = true;
-      } else if (metaMeta?.successorId === existing.id) {
-        canonical = existing;
-        duplicate = meta;
-        duplicateIsAncestor = true;
-      } else {
-        canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
-        duplicate = canonical.id === existing.id ? meta : existing;
+
+    if (uniqueTerminals.size === 1) {
+      terminalId = resolved[0].terminalId;
+      canonical =
+        metas.find((m) => m.id === terminalId) ??
+        metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+      if (canonical.id !== terminalId) {
+        canonical = { ...canonical, id: terminalId };
       }
     } else {
-      canonical = existing.updatedAt >= meta.updatedAt ? existing : meta;
-      duplicate = canonical.id === existing.id ? meta : existing;
+      // Vrais doublons indépendants (pas une chaîne de successeurs) : garder le plus récent.
+      canonical = metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
+      terminalId = canonical.id;
     }
+
     canonicalByPeer.set(peer, canonical);
-    duplicatesToMerge.push({ canonical, duplicate, duplicateIsAncestor });
+
+    for (const meta of metas) {
+      if (meta.id === canonical.id) continue;
+      let duplicateIsAncestor = false;
+      if (mlsService) {
+        duplicateIsAncestor = await isAncestorInLineage(mlsService, meta.id, terminalId);
+        if (!duplicateIsAncestor) {
+          const [a, b] = await Promise.all([
+            mlsService.getGroupMeta(meta.id).catch(() => null),
+            mlsService.getGroupMeta(canonical.id).catch(() => null),
+          ]);
+          duplicateIsAncestor =
+            a?.successorId === canonical.id || b?.successorId === meta.id || false;
+        }
+      }
+      duplicatesToMerge.push({ canonical, duplicate: meta, duplicateIsAncestor });
+    }
   }
 
   if (duplicatesToMerge.length === 0) return convMetas;
@@ -392,6 +416,19 @@ export async function mergeDirectConversationDuplicates(
 
   const duplicateIds = new Set(duplicatesToMerge.map((item) => item.duplicate.id));
   const merged = convMetas.filter((meta) => !duplicateIds.has(meta.id));
+
+  // Réinjecter le canonique re-keyé vers le terminal s'il n'était pas déjà dans la liste.
+  for (const canonical of canonicalByPeer.values()) {
+    if (merged.some((m) => m.id === canonical.id)) continue;
+    try {
+      await storage.saveConversation(canonical);
+    } catch (e) {
+      log(
+        `[WARN] Echec persistance canonique ${canonical.id}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    merged.push(canonical);
+  }
 
   // Normalize direct-conversation names for future consistent detection.
   const normalizedMetas: ConversationMeta[] = [];

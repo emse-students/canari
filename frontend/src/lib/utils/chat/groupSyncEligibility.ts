@@ -37,6 +37,19 @@ export async function resolveTerminalGroup(
   return { terminalId: current, groupMeta: meta, hasChain: true };
 }
 
+/**
+ * True when `ancestorId` is an earlier version in the same successor lineage as `terminalId`.
+ */
+export async function isAncestorInLineage(
+  mlsService: IMlsService,
+  ancestorId: string,
+  terminalId: string
+): Promise<boolean> {
+  if (ancestorId === terminalId) return false;
+  const { terminalId: resolved } = await resolveTerminalGroup(mlsService, ancestorId);
+  return resolved === terminalId;
+}
+
 /** Index built from `getUserGroups` for cheap deleted/active checks during MLS sync. */
 export interface UserGroupSyncIndex {
   byGroupId: Map<string, UserGroupRow>;

@@ -109,6 +109,26 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.claimGroupSuccessor).toHaveBeenCalled();
   });
 
+  it('suit la chaîne de successeurs et envoie le welcome_request au terminal', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getGroupMeta: vi.fn().mockImplementation((id: string) => {
+          if (id === 'dead-a') return Promise.resolve({ groupId: 'dead-a', successorId: 'dead-b' });
+          if (id === 'dead-b') return Promise.resolve({ groupId: 'dead-b', successorId: 'live' });
+          if (id === 'live') return Promise.resolve({ groupId: 'live', successorId: null });
+          return Promise.resolve(null);
+        }),
+      }),
+    });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('dead-a', deps, timers);
+
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('live');
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
+    expect(timers.has('live')).toBe(true);
+  });
+
   it('Welcome reçu avant 30s → cancelReAdd annule le timer, pas de reboot', async () => {
     const deps = makeDeps();
     // Au moment du timeout, le groupe est dans le WASM (Welcome reçu entre-temps)

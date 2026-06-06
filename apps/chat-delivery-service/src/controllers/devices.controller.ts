@@ -12,12 +12,13 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, DataSource } from 'typeorm';
+import { Repository, MoreThanOrEqual, DataSource, In, IsNull } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
+import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -41,6 +42,8 @@ export class DevicesController {
     private oneTimeKeyPackageRepo: Repository<OneTimeKeyPackage>,
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
+    @InjectRepository(Group)
+    private groupRepo: Repository<Group>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(PushToken)
@@ -162,25 +165,34 @@ export class DevicesController {
     // devices won't see the new device and will never send it a Welcome.
     // Uses INSERT ... ON CONFLICT DO NOTHING to tolerate concurrent registerDevice calls.
     const userGroups = await this.groupMemberRepo.find({ where: { userId } });
+    let activeGroupIds: string[] = [];
     if (userGroups.length > 0) {
-      await this.deviceGroupRepo
-        .createQueryBuilder()
-        .insert()
-        .into(DeviceGroupMembership)
-        .values(
-          userGroups.map((gm) => ({
-            userId,
-            deviceId,
-            groupId: gm.groupId,
-            status: 'pending' as const,
-          })),
-        )
-        .orIgnore()
-        .execute();
+      const groupIds = [...new Set(userGroups.map((gm) => gm.groupId))];
+      const activeGroups = await this.groupRepo.find({
+        where: { id: In(groupIds), deletedAt: IsNull() },
+        select: ['id'],
+      });
+      activeGroupIds = activeGroups.map((g) => g.id);
+      if (activeGroupIds.length > 0) {
+        await this.deviceGroupRepo
+          .createQueryBuilder()
+          .insert()
+          .into(DeviceGroupMembership)
+          .values(
+            activeGroupIds.map((groupId) => ({
+              userId,
+              deviceId,
+              groupId,
+              status: 'pending' as const,
+            })),
+          )
+          .orIgnore()
+          .execute();
+      }
     }
 
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${userGroups.length}`,
+      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${activeGroupIds.length}`,
     );
     return { status: 'registered' };
   }

@@ -4,6 +4,7 @@ import type { Conversation } from '$lib/types';
 import { saveMlsState } from '$lib/utils/hex';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendFullHistoryBundle } from './groupActions';
+import { resolveTerminalGroup } from './groupSyncEligibility';
 
 /**
  * Délai avant d'escalader de welcome_request vers reboot.
@@ -47,69 +48,70 @@ export async function requestReAdd(
   deps: RecoveryDeps,
   timers: Map<string, ReturnType<typeof setTimeout>>
 ): Promise<void> {
-  if (timers.has(groupId)) return;
+  const {
+    terminalId,
+    groupMeta: terminalMeta,
+    hasChain,
+  } = await resolveTerminalGroup(deps.mlsService, groupId);
 
-  // Guard : si le groupe est mort (a un successeur), envoyer la welcome_request
-  // vers le successeur ou ne rien faire si on est déjà dedans.
-  const meta = await deps.mlsService.getGroupMeta(groupId).catch(() => null);
-  if (meta?.successorId) {
-    const localGroups = deps.mlsService.getLocalGroups();
-    if (localGroups.includes(meta.successorId)) {
+  // Un seul timer / welcome_request par groupe terminal (déduplique les convs locales obsolètes).
+  if (timers.has(terminalId)) return;
+
+  const localGroups = deps.mlsService.getLocalGroups();
+
+  if (localGroups.includes(terminalId)) {
+    if (hasChain && groupId !== terminalId && deps.conversations.has(groupId)) {
       deps.log(
-        `[READD] ${groupId.slice(0, 8)}… mort — successeur ${meta.successorId.slice(0, 8)}… en WASM — skip`
+        `[READD] ${groupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}… déjà en WASM — migration`
       );
-      if (deps.conversations.has(groupId)) {
-        await migrateConversation(groupId, meta.successorId, deps).catch(() => {});
-      }
-      return;
-    }
-    deps.log(
-      `[READD] ${groupId.slice(0, 8)}… mort → redirection vers successeur ${meta.successorId.slice(0, 8)}…`
-    );
-    await requestReAdd(meta.successorId, deps, timers);
-    // Migrer le groupe mort vers son successeur maintenant que le successeur est traité,
-    // pour éviter que b754f1ea… reste en IndexedDB à l'infini (checkGroupSuccessors ne
-    // voit que les groupes retournés par getUserGroups, pas les intermédiaires orphelins).
-    if (deps.conversations.has(groupId)) {
-      await migrateConversation(groupId, meta.successorId, deps).catch(() => {});
+      await migrateConversation(groupId, terminalId, deps).catch(() => {});
     }
     return;
   }
 
-  // Groupe supprimé sans successeur : personne ne peut répondre à un welcome_request
-  // et le CAS refusera tout reboot. Marquer la conversation deletedRemotely pour que
-  // l'UI affiche la bannière appropriée, et éviter de boucler indéfiniment.
-  if (meta?.deletedAt) {
-    const convo = deps.conversations.get(groupId);
-    // Si l'utilisateur a déjà supprimé la conversation localement (convo absent ou
-    // deletedRemotely=true et !isReady), on abandonne silencieusement : rien à sauvegarder
-    // et le log récurrent à chaque reload serait trompeur.
+  if (hasChain && groupId !== terminalId) {
+    deps.log(`[READD] ${groupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}…`);
+    if (deps.conversations.has(groupId)) {
+      await migrateConversation(groupId, terminalId, deps).catch(() => {});
+    }
+  }
+
+  // Lignée supprimée sans successeur utilisable : abandon (pas de reboot possible).
+  if (terminalMeta?.deletedAt) {
+    const convo = deps.conversations.get(terminalId) ?? deps.conversations.get(groupId);
     if (!convo || (convo.deletedRemotely && !convo.isReady)) return;
-    deps.log(`[READD] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
-    deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
-    await deps.saveConversation(groupId).catch(() => {});
+    deps.log(`[READD] ${terminalId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    deps.conversations.set(terminalId, {
+      ...convo,
+      id: terminalId,
+      isReady: false,
+      deletedRemotely: true,
+    });
+    await deps.saveConversation(terminalId).catch(() => {});
     return;
   }
 
   await deps.mlsService
-    .sendWelcomeRequest(groupId)
+    .sendWelcomeRequest(terminalId)
     .catch((e) =>
-      deps.log(`[READD] welcome_request échoué pour ${groupId.slice(0, 8)}…: ${String(e)}`)
+      deps.log(`[READD] welcome_request échoué pour ${terminalId.slice(0, 8)}…: ${String(e)}`)
     );
-  deps.log(`[READD] welcome_request envoyé pour ${groupId.slice(0, 8)}… (timeout 30s)`);
+  deps.log(
+    `[READD] welcome_request envoyé pour ${terminalId.slice(0, 8)}… (timeout ${RECOVERY_TIMEOUT_MS / 1000}s)`
+  );
 
   const t = setTimeout(async () => {
-    timers.delete(groupId);
-    if (!deps.mlsService.getLocalGroups().includes(groupId)) {
+    timers.delete(terminalId);
+    if (!deps.mlsService.getLocalGroups().includes(terminalId)) {
       deps.log(
-        `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${groupId.slice(0, 8)}… — reboot`
+        `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${terminalId.slice(0, 8)}… — reboot`
       );
-      await reboot(groupId, deps, timers).catch((e) =>
-        deps.log(`[READD] reboot échoué pour ${groupId.slice(0, 8)}…: ${String(e)}`)
+      await reboot(terminalId, deps, timers).catch((e) =>
+        deps.log(`[READD] reboot échoué pour ${terminalId.slice(0, 8)}…: ${String(e)}`)
       );
     }
   }, RECOVERY_TIMEOUT_MS);
-  timers.set(groupId, t);
+  timers.set(terminalId, t);
 }
 
 /**
