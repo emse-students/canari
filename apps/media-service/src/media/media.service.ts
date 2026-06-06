@@ -15,6 +15,8 @@ const MEDIA_DATA_DIR = path.join(process.cwd(), 'media_meta');
 const MEDIA_META_FILE = path.join(MEDIA_DATA_DIR, 'media_metadata.json');
 /** Encrypted chat media blobs are purged after this idle period. Public assets are never purged. */
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** Purged metadata entries (tombstones) are removed from the index after this delay. */
+const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
 
 type PurgeReason = 'retention_expired' | 'manual_delete';
@@ -377,9 +379,22 @@ export class MediaService {
       purgedCount += 1;
     }
 
-    if (purgedCount > 0) {
+    // Remove tombstone entries (purgedAt != null) older than META_TOMBSTONE_MAX_AGE_MS.
+    // Prevents the metadata JSON from growing unbounded after many retention cycles.
+    let trimmedCount = 0;
+    for (const [mediaId, entry] of Object.entries(this.meta.items)) {
+      if (entry.purgedAt && now - entry.purgedAt > META_TOMBSTONE_MAX_AGE_MS) {
+        delete this.meta.items[mediaId];
+        trimmedCount += 1;
+      }
+    }
+
+    if (purgedCount > 0 || trimmedCount > 0) {
       await this.persistMetadata();
-      this.logger.log(`Purged ${purgedCount} expired media object(s) (retention 30 days)`);
+      if (purgedCount > 0)
+        this.logger.log(`Purged ${purgedCount} expired media object(s) (retention 30 days)`);
+      if (trimmedCount > 0)
+        this.logger.log(`Trimmed ${trimmedCount} metadata tombstone(s) > 90 days`);
     }
 
     // Purge orphaned chunked upload temp files older than 24 hours.

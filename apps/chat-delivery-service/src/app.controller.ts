@@ -13,6 +13,7 @@ import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
+import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
 import * as admin from 'firebase-admin';
 
@@ -28,6 +29,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupKeyPackagesInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
+  private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
 
   /**
    * Single source of truth for message retention / stale device TTL.
@@ -48,6 +50,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(PushToken)
+    private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
@@ -118,10 +122,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Purge push tokens not renewed in 90 days (device désinstallé / abandonné)
+    this.cleanupStalePushTokensInterval = setInterval(() => {
+      void this.cleanupStalePushTokens().catch((e) =>
+        this.logger.error('[CRON] cleanupStalePushTokens failed', e),
+      );
+    }, 24 * ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'key-package cleanup (1h), orphaned Redis groups cleanup (6h), ' +
-        'soft-deleted groups purge (24h) scheduled',
+        'soft-deleted groups purge (24h), stale push tokens purge (24h) scheduled',
     );
   }
 
@@ -160,6 +171,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupKeyPackagesInterval);
     clearInterval(this.cleanupOrphanedRedisGroupsInterval);
     clearInterval(this.softDeletedGroupsCleanupInterval);
+    clearInterval(this.cleanupStalePushTokensInterval);
   }
 
   /**
@@ -280,6 +292,24 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `[CRON] cleanupSoftDeletedGroups: purged ${ids.length} tombstone(s)`,
     );
+  }
+
+  /**
+   * Purge push tokens whose updatedAt is older than 90 days.
+   * Un token non renouvelé depuis 90 jours correspond à un device désinstallé
+   * ou abandonné ; continuer à l'envoyer provoque des erreurs FCM/APNs évitables.
+   */
+  private async cleanupStalePushTokens() {
+    const PUSH_TOKEN_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+    const cutoff = new Date(Date.now() - PUSH_TOKEN_MAX_AGE_MS);
+    const result = await this.pushTokenRepo.delete({
+      updatedAt: LessThan(cutoff),
+    });
+    if (result.affected && result.affected > 0) {
+      this.logger.log(
+        `[CRON] cleanupStalePushTokens: deleted ${result.affected} token(s) not renewed in 90 days`,
+      );
+    }
   }
 
   /**
