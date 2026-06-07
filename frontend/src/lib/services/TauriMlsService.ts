@@ -29,6 +29,10 @@ interface NativeKeyPackageBatchResult {
 export class TauriMlsService extends BaseMlsService {
   private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
   private wsUnlisten: (() => void) | null = null;
+  /** Consecutive pings sent without any incoming data frame from the server. */
+  private missedHeartbeats = 0;
+  /** Maximum consecutive pings without any server activity before we force-close (parité WebMlsService). */
+  private static readonly MAX_MISSED_HEARTBEATS = 3;
   /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
   private _knownGroups: Set<string> = new Set();
   /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
@@ -39,6 +43,10 @@ export class TauriMlsService extends BaseMlsService {
   // PIN conservé en mémoire après init() pour chiffrer l'état MLS après
   // chaque message sans redemander le PIN à l'utilisateur.
   private _pin = '';
+  // Timer de retry in-session : si un message delivery-queue n'a pas été ACKé (return false),
+  // on reprogramme fetchPendingMessages après PENDING_RETRY_DELAY_MS (parité WebMlsService).
+  private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly PENDING_RETRY_DELAY_MS = 15_000;
 
   constructor() {
     super('tauri', fetch);
@@ -76,9 +84,58 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
+  /** Resets the heartbeat miss counter whenever a data frame is received from the server. */
+  private resetHeartbeatCounter(): void {
+    this.missedHeartbeats = 0;
+  }
+
+  /** Clears the heartbeat interval and the in-session retry timer. */
+  private clearHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.pendingRetryTimer !== null) {
+      clearTimeout(this.pendingRetryTimer);
+      this.pendingRetryTimer = null;
+    }
+  }
+
+  /** Starts the 8-second heartbeat interval (zombie detection + ping). */
+  private startHeartbeat(): void {
+    this.clearHeartbeat();
+    this.missedHeartbeats = 0;
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.ws) {
+        this.clearHeartbeat();
+        return;
+      }
+      // Check if the server has sent anything since the last ping (parité WebMlsService).
+      this.missedHeartbeats += 1;
+      if (this.missedHeartbeats > TauriMlsService.MAX_MISSED_HEARTBEATS) {
+        console.warn(
+          `[WS] ${this.missedHeartbeats} pings sans réponse serveur — fermeture connexion zombie`
+        );
+        this.clearHeartbeat();
+        void this.ws.disconnect().catch(() => {});
+        this.ws = null;
+        this.disconnectCallback?.();
+        return;
+      }
+      this.ws.send(JSON.stringify({ type: 'ping' })).catch(() => {
+        /* socket closed between check and send */
+      });
+    }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
+  }
+
+  isWsOpen(): boolean {
+    return this.ws !== null;
+  }
+
   /** Tauri-native `invoke` wrapper - opens a NativeWebSocket to the chat gateway, passing the Bearer token in the URL query string for mobile compatibility. */
   async connect(token?: string): Promise<void> {
-    // Unlisten before disconnecting so the Close event doesn't trigger disconnectCallback.
+    // Unlisten + disconnect before reconnecting so the Close event doesn't trigger disconnectCallback.
+    this.clearHeartbeat();
     if (this.ws) {
       try {
         this.wsUnlisten?.();
@@ -88,11 +145,6 @@ export class TauriMlsService extends BaseMlsService {
         /* ignore */
       }
       this.ws = null;
-    }
-
-    if (this.heartbeatTimer !== null) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
     }
 
     if (!this._visibilityHandler && typeof document !== 'undefined') {
@@ -121,7 +173,8 @@ export class TauriMlsService extends BaseMlsService {
       }
     }
 
-    const wsBase = this.baseUrl.replace(/^http/, 'ws');
+    // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
+    const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
     const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
     const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
     console.log(
@@ -129,16 +182,27 @@ export class TauriMlsService extends BaseMlsService {
     );
 
     // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
-    this.ws = await NativeWebSocket.connect(wsUrl);
+    // Impose the same 15-second timeout as WebMlsService to prevent silent hangs on Android.
+    let resolved = false;
+    const connectPromise = NativeWebSocket.connect(wsUrl);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        if (!resolved) reject(new Error('WebSocket connection timeout after 15s'));
+      }, 15_000)
+    );
+    this.ws = await Promise.race([connectPromise, timeoutPromise]);
+    resolved = true;
     console.log(`[WS] Connecté au Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
+      // Any incoming frame proves the server is alive — reset heartbeat miss counter (parité WebMlsService).
+      if (msg.type !== 'Close') {
+        this.resetHeartbeatCounter();
+      }
+
       if (msg.type === 'Close') {
         this.ws = null;
-        if (this.heartbeatTimer !== null) {
-          clearInterval(this.heartbeatTimer);
-          this.heartbeatTimer = null;
-        }
+        this.clearHeartbeat();
         const closeData = msg.data as { code: number; reason: string } | null;
         const code = closeData?.code ?? 0;
         const codeDesc =
@@ -226,13 +290,7 @@ export class TauriMlsService extends BaseMlsService {
       })();
     });
 
-    this.heartbeatTimer = setInterval(() => {
-      if (this.ws) {
-        this.ws.send(JSON.stringify({ type: 'ping' })).catch(() => {
-          /* socket closed between check and send */
-        });
-      }
-    }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
+    this.startHeartbeat();
 
     // Pending queue fetch is handled by initializeConnection() to keep
     // behavior aligned between WebMlsService and TauriMlsService.
@@ -319,6 +377,7 @@ export class TauriMlsService extends BaseMlsService {
     if (!this.messageCallback) return;
 
     const ackIds: string[] = [];
+    let hadFailedQueuedMessage = false;
 
     await this.messageScheduler.drain(
       async (msg) => {
@@ -373,6 +432,7 @@ export class TauriMlsService extends BaseMlsService {
           if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
             ackIds.push(msg.queuedMessageId);
           } else if (flags.hasQueuedId && cbResult === false) {
+            hadFailedQueuedMessage = true;
             logMlsMetric({
               kind: 'queue_skip_ack',
               platform: 'tauri',
@@ -433,6 +493,20 @@ export class TauriMlsService extends BaseMlsService {
               messageIds: ackIds,
             });
           }
+
+          // Retry in-session : si un message n'a pas été ACKé, reprogrammer fetchPendingMessages
+          // après PENDING_RETRY_DELAY_MS (parité WebMlsService — évite d'attendre la reconnexion).
+          if (hadFailedQueuedMessage && this.ws !== null) {
+            if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
+            this.pendingRetryTimer = setTimeout(() => {
+              this.pendingRetryTimer = null;
+              if (this.ws !== null) {
+                console.log('[QUEUE] Retry in-session: fetchPendingMessages (message non-ACKé)');
+                void this.fetchPendingMessages();
+              }
+            }, TauriMlsService.PENDING_RETRY_DELAY_MS);
+          }
+
           await this.bulkIngestEnd?.(true, true);
         },
       }
@@ -445,9 +519,6 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
-  isWsOpen(): boolean {
-    return this.ws !== null;
-  }
 
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */
   sendDisconnect(): void {
@@ -460,6 +531,7 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Releases Tauri-specific resources: closes the native WebSocket and its listener. */
   protected override destroyPlatformResources(): void {
+    this.clearHeartbeat();
     if (this.wsUnlisten) {
       this.wsUnlisten();
       this.wsUnlisten = null;

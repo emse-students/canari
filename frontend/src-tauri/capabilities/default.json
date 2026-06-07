@@ -30,6 +30,16 @@
     "fs:default",
     "dialog:default",
     "websocket:default",
+    {
+      "identifier": "websocket:allow-connect",
+      "allow": [
+        { "url": "wss://canari-emse.fr" },
+        { "url": "wss://www.canari-emse.fr" },
+        { "url": "ws://localhost:*" },
+        { "url": "ws://127.0.0.1:*" },
+        { "url": "wss://**" }
+      ]
+    },
     "log:default",
     "log:allow-log",
     "store:default"

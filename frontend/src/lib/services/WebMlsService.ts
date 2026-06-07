@@ -4,6 +4,7 @@ import {
   shouldAckAfterWebException,
   logMlsMetric,
   detectRuntimeDeviceOs,
+  commitBaseEpochForValidation,
 } from '$lib/mls-client';
 import { getToken } from '$lib/stores/auth';
 import { saveMlsState } from '$lib/utils/hex';
@@ -420,6 +421,16 @@ export class WebMlsService extends BaseMlsService {
       async (msg) => {
         const groupId = msg.groupId;
 
+        // Parité TauriMlsService : ACK et ignore les messages de contrôle group_reset.
+        // Sur Web, la reconnexion WebSocket suffit — pas de resync epoch supplémentaire.
+        if (msg.type === 'group_reset') {
+          console.log(`[QUEUE] group_reset (contrôle) ignoré sur Web — groupe=${groupId ?? 'inconnu'}`);
+          if (msg.queuedMessageId) {
+            ackIds.push(msg.queuedMessageId);
+          }
+          return;
+        }
+
         try {
           console.log(
             `[QUEUE] Traitement ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
@@ -569,6 +580,24 @@ export class WebMlsService extends BaseMlsService {
             const msgId = (msg.id || msg._id) as string | undefined;
             const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
             const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
+
+            // ── Messages de contrôle (group_reset persisté pour devices offline) ──
+            // Parité TauriMlsService : ces messages n'ont pas de payload MLS (proto vide).
+            // Sur Web, on ACK et on ignore : le backend n'utilise group_reset que pour
+            // déclencher une resync epoch côté Tauri. Côté Web, la reconnexion WS suffit.
+            if (msg.type === 'group_reset') {
+              this.enqueueMessage({
+                senderId: (msg.senderId as string) || 'unknown',
+                ciphertext: new Uint8Array(0),
+                groupId: (msg.groupId as string) || undefined,
+                isWelcome: false,
+                isCommit: false,
+                queuedMessageId: msgId,
+                type: 'group_reset',
+                queuedCreatedAt,
+              });
+              continue;
+            }
 
             if (proto) {
               try {
@@ -887,13 +916,17 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** WASM client wrapper - validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
+  /** WASM client wrapper - validates the commit epoch client-side then broadcasts the MLS commit to all group members (parité TauriMlsService). */
   async sendCommit(
     commitBytes: Uint8Array,
     groupId: string,
     excludeDeviceIds?: string[]
   ): Promise<void> {
-    return this.delivery.sendCommitBytes(commitBytes, groupId, excludeDeviceIds);
+    const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
+    // WASM getEpoch() reads from in-memory state — always up-to-date at send time.
+    const currentEpoch = this.getEpoch(groupId);
+    const baseEpoch = commitBaseEpochForValidation(currentEpoch);
+    await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
   }
 
   /** WASM client wrapper - returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
