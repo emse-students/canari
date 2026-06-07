@@ -140,20 +140,29 @@ impl Drop for ConnectionGuard {
 
 /// Axum handler for `GET /api/ws`.
 ///
-/// Validates the JWT from the `canari_ws_token` cookie (query-param fallback is
-/// intentionally removed to prevent token leakage in proxy logs), then upgrades
-/// to a WebSocket.  Returns `401 Unauthorized` if no valid token is found.
-///
-/// Device ID is always generated server-side (UUID) to prevent clients from
-/// spoofing another user's device presence.
+/// Validates the JWT from the `canari_ws_token` cookie.
+/// Falls back to the `?token=` query parameter for Tauri Android/mobile where
+/// the native WebSocket plugin cannot forward WebView cookies.
+/// Returns `401 Unauthorized` if no valid token is found.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    Query(_params): Query<AuthParams>,
+    Query(params): Query<AuthParams>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    // Cookie-only: no query-param fallback to avoid token exposure in access logs.
-    let Some(token) = extract_cookie_value(&headers, "canari_ws_token") else {
+    // Cookie is preferred (web browser) — query-param is the Tauri mobile fallback.
+    let token = extract_cookie_value(&headers, "canari_ws_token")
+        .or_else(|| {
+            params.token.as_deref().map(|t| {
+                tracing::debug!(
+                    "[ws] Using ?token= fallback (Tauri mobile), prefix={}…",
+                    t.chars().take(8).collect::<String>()
+                );
+                t.to_string()
+            })
+        });
+
+    let Some(token) = token else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 
@@ -181,7 +190,7 @@ pub async fn ws_handler(
             // Utiliser le device_id fourni par le client pour conserver la même clé de
             // routage entre les reconnexions (sinon group:members devient périmé).
             // La sécurité repose sur le JWT : seul l'userId du token peut accéder aux messages.
-            let device_id = _params
+            let device_id = params
                 .device_id
                 .as_deref()
                 .filter(|id| !id.is_empty() && id.len() <= 256)
@@ -195,6 +204,7 @@ pub async fn ws_handler(
         Err(_) => (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response(),
     }
 }
+
 
 // ── Socket lifecycle ──────────────────────────────────────────────────────
 
