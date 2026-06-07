@@ -21,9 +21,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Setup
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 
 $ScriptDir = $PSScriptRoot
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -32,16 +32,16 @@ $InfraDir = Join-Path $ProjectRoot "infrastructure"
 
 # Colors
 function Write-Info { Write-Host "[setup-env] $args" -ForegroundColor Cyan }
-function Write-Success { Write-Host "✓ $args" -ForegroundColor Green }
-function Write-Warn { Write-Host "⚠ $args" -ForegroundColor Yellow }
-function Write-Error { Write-Host "✗ $args" -ForegroundColor Red }
+function Write-Success { Write-Host "OK $args" -ForegroundColor Green }
+function Write-Warn { Write-Host "WARN $args" -ForegroundColor Yellow }
+function Write-Error { Write-Host "ERROR $args" -ForegroundColor Red }
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Helper Functions
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 
 function Show-Help {
-    @"
+@"
 setup-env.ps1 - Environment & Secrets Management Script
 
 Usage:
@@ -162,9 +162,9 @@ function Normalize-ImagePrefix {
     }
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Main Logic
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 
 if ($Help) {
     Show-Help
@@ -183,9 +183,9 @@ if (-not (Test-Path $FrontendDir) -or -not (Test-Path $InfraDir)) {
 }
 Write-Success "Project structure detected"
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Frontend Setup
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 Write-Info "Setting up frontend environment..."
 
 $FrontendEnv = Join-Path $FrontendDir ".env"
@@ -206,9 +206,9 @@ elseif (Test-Path $FrontendEnv) {
     Write-Success "Frontend .env already exists"
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Infrastructure Setup
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 Write-Info "Setting up infrastructure environment..."
 
 $InfraEnv = Join-Path $InfraDir ".env"
@@ -232,9 +232,9 @@ elseif (Test-Path $InfraEnv) {
 # Migrate legacy placeholders in infrastructure env
 Normalize-ImagePrefix $InfraEnv
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # JWT Secret Synchronization
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 Write-Info "Synchronizing JWT secrets..."
 
 $FrontendSecret = ""
@@ -304,9 +304,9 @@ if (Test-Path $InfraEnv) {
     Write-Success "Updated infrastructure JWT_SECRET"
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Validation
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 Write-Info "Validating configuration..."
 
 # Check frontend required vars
@@ -344,7 +344,7 @@ if ((Test-Path $FrontendEnv) -and (Test-Path $InfraEnv)) {
     $FeSecret = Read-EnvVar $FrontendEnv "VITE_JWT_SECRET"
     $InfraSecretCheck = Read-EnvVar $InfraEnv "JWT_SECRET"
     if ($FeSecret -eq $InfraSecretCheck) {
-        Write-Success "✓ JWT secrets are synchronized"
+        Write-Success "OK JWT secrets are synchronized"
     }
     else {
         Write-Error "JWT secrets are NOT synchronized!"
@@ -352,13 +352,13 @@ if ((Test-Path $FrontendEnv) -and (Test-Path $InfraEnv)) {
     }
 }
 
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 # Summary
-# ──────────────────────────────────────────────────────────────────────────────
+# 
 Write-Host ""
-Write-Host "════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "" -ForegroundColor Green
 Write-Host "Environment Setup Complete" -ForegroundColor Green
-Write-Host "════════════════════════════════════════════════════════" -ForegroundColor Green
+Write-Host "" -ForegroundColor Green
 Write-Host ""
 
 if (Test-Path $FrontendEnv) {
@@ -374,11 +374,11 @@ if (Test-Path $InfraEnv) {
 }
 
 Write-Host ""
-Write-Host "⚠  Important Reminders:" -ForegroundColor Yellow
-Write-Host "   • NEVER commit .env files to git"
-Write-Host "   • NEVER share secrets with others"
-Write-Host "   • Rotate secrets regularly in production"
-Write-Host "   • Keep .env files in sync between frontend and backend"
+Write-Host "WARNING: Important Reminders:" -ForegroundColor Yellow
+Write-Host "   - NEVER commit .env files to git"
+Write-Host "   - NEVER share secrets with others"
+Write-Host "   - Rotate secrets regularly in production"
+Write-Host "   - Keep .env files in sync between frontend and backend"
 Write-Host ""
 
 if (-not $Prod -and -not $SyncOnly) {
