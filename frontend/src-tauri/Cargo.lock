@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "canari"
-version = "0.6.2"
+version = "0.7.6"
 dependencies = [
  "base64 0.22.1",
  "jni",
@@ -592,6 +592,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-sql",
+ "tauri-plugin-store",
  "tauri-plugin-websocket",
  "tokio",
 ]
@@ -3227,7 +3228,7 @@ dependencies = [
 
 [[package]]
 name = "mls-core"
-version = "0.6.2"
+version = "0.7.6"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -6010,6 +6011,22 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "tauri-plugin-store"
+version = "2.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c72dda16786eb4a3f903e43a17b64d8d78dc0f00fe2aa4b757c28f617a8630b"
+dependencies = [
+ "dunce",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

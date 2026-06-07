@@ -32,14 +32,14 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     exit 1
   }
   git diff --name-only -- frontend/ | xargs -r git add
-  (cd frontend && npx svelte-check --tsconfig ./tsconfig.json --threshold warning) || {
+  (cd frontend && bun run check -- --threshold warning) || {
     echo "❌ Frontend svelte-check échoué."
     exit 1
   }
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
-  (cd apps/chat-delivery-service && npm run lint) || {
+  (cd apps/chat-delivery-service && ./node_modules/.bin/eslint "{src,apps,libs,test}/**/*.ts" --fix) || {
     echo "❌ chat-delivery-service lint échoué."
     exit 1
   }
@@ -55,7 +55,7 @@ if [ "$RUN_GATEWAY" -eq 1 ]; then
 fi
 
 if [ "$RUN_SOCIAL" -eq 1 ]; then
-  (cd apps/social-service && npm run lint) || {
+  (cd apps/social-service && ./node_modules/.bin/eslint "{src,apps,libs,test}/**/*.ts" --fix) || {
     echo "❌ social-service lint échoué."
     exit 1
   }
@@ -63,7 +63,7 @@ if [ "$RUN_SOCIAL" -eq 1 ]; then
 fi
 
 if [ "$RUN_CORE" -eq 1 ]; then
-  (cd apps/core-service && npm run lint) || {
+  (cd apps/core-service && ./node_modules/.bin/eslint "{src,apps,libs,test}/**/*.ts" --fix) || {
     echo "❌ core-service lint échoué."
     exit 1
   }
@@ -71,7 +71,7 @@ if [ "$RUN_CORE" -eq 1 ]; then
 fi
 
 if [ "$RUN_MEDIA" -eq 1 ]; then
-  (cd apps/media-service && npm run lint) || {
+  (cd apps/media-service && ./node_modules/.bin/eslint "{src,apps,libs,test}/**/*.ts" --fix) || {
     echo "❌ media-service lint échoué."
     exit 1
   }
@@ -79,7 +79,7 @@ if [ "$RUN_MEDIA" -eq 1 ]; then
 fi
 
 if [ "$RUN_SHARED_TS" -eq 1 ]; then
-  (cd libs/shared-ts && npm run lint) || {
+  (cd libs/shared-ts && ./node_modules/.bin/eslint "src/**/*.ts" --fix) || {
     echo "❌ shared-ts lint échoué."
     exit 1
   }

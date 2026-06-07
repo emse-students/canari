@@ -424,7 +424,9 @@ export class WebMlsService extends BaseMlsService {
         // Parité TauriMlsService : ACK et ignore les messages de contrôle group_reset.
         // Sur Web, la reconnexion WebSocket suffit — pas de resync epoch supplémentaire.
         if (msg.type === 'group_reset') {
-          console.log(`[QUEUE] group_reset (contrôle) ignoré sur Web — groupe=${groupId ?? 'inconnu'}`);
+          console.log(
+            `[QUEUE] group_reset (contrôle) ignoré sur Web — groupe=${groupId ?? 'inconnu'}`
+          );
           if (msg.queuedMessageId) {
             ackIds.push(msg.queuedMessageId);
           }

@@ -151,16 +151,15 @@ pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
 ) -> Response {
     // Cookie is preferred (web browser) — query-param is the Tauri mobile fallback.
-    let token = extract_cookie_value(&headers, "canari_ws_token")
-        .or_else(|| {
-            params.token.as_deref().map(|t| {
-                tracing::debug!(
-                    "[ws] Using ?token= fallback (Tauri mobile), prefix={}…",
-                    t.chars().take(8).collect::<String>()
-                );
-                t.to_string()
-            })
-        });
+    let token = extract_cookie_value(&headers, "canari_ws_token").or_else(|| {
+        params.token.as_deref().map(|t| {
+            tracing::debug!(
+                "[ws] Using ?token= fallback (Tauri mobile), prefix={}…",
+                t.chars().take(8).collect::<String>()
+            );
+            t.to_string()
+        })
+    });
 
     let Some(token) = token else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
@@ -204,7 +203,6 @@ pub async fn ws_handler(
         Err(_) => (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response(),
     }
 }
-
 
 // ── Socket lifecycle ──────────────────────────────────────────────────────
 

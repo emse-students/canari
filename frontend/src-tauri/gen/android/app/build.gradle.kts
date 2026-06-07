@@ -96,6 +96,11 @@ android {
         checkReleaseBuilds = false
         abortOnError = false
     }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
 }
 
 rust {
@@ -157,6 +162,15 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
     implementation("org.slf4j:slf4j-nop:2.0.9")
     implementation("androidx.core:core-splashscreen:1.0.1")
+}
+
+configurations.all {
+    resolutionStrategy {
+        force("androidx.datastore:datastore:1.1.1")
+        force("androidx.datastore:datastore-core:1.1.1")
+        force("androidx.datastore:datastore-preferences:1.1.1")
+        force("androidx.datastore:datastore-preferences-core:1.1.1")
+    }
 }
 
 apply(from = "tauri.build.gradle.kts")

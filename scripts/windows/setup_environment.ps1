@@ -66,7 +66,7 @@ catch {
     Write-Host "   Tentative d'installation via Winget..." -ForegroundColor Yellow
     winget install Rustlang.Rustup
     Write-Host "IMPORTANT : L'installation de Rust n'est pas finie !" -ForegroundColor Magenta
-    Write-Host "   Veuillez executer 'rustup-init.exe' manuellement, choisir l'installation par defaut (1), puis redemarrer votre terminal." 
+    Write-Host "   Veuillez executer 'rustup-init.exe' manuellement, choisir l'installation par defaut (1), puis redemarrer votre terminal."
 
     # On ne peut pas continuer pour les trucs Rust sans Rust
 }

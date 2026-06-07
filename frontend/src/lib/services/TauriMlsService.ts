@@ -519,7 +519,6 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
-
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */
   sendDisconnect(): void {
     if (this.ws) {

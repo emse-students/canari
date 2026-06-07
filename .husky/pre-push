@@ -41,7 +41,7 @@ fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
   (
-    cd apps/chat-delivery-service && npm run lint && npm test
+    cd apps/chat-delivery-service && ./node_modules/.bin/eslint "{src,apps,libs,test}/**/*.ts" --fix && bun test
   ) || {
     echo "❌ chat-delivery-service checks failed (lint/test)."
     exit 1
