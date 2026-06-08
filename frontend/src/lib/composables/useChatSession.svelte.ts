@@ -297,6 +297,10 @@ export function useChatSession() {
     get isLoginInProgress() {
       return isLoginInProgress;
     },
+    /** Allows ChatBackgroundService to set the flag early (before loginImpl) to close the layout race window. */
+    set isLoginInProgress(v: boolean) {
+      isLoginInProgress = v;
+    },
     /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {
       return isWsConnected;

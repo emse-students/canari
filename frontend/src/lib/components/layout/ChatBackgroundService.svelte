@@ -12,7 +12,7 @@
    * connexion persiste sur toutes les routes et non seulement sur /chat.
    */
   import { onMount, untrack } from 'svelte';
-  import { afterNavigate, goto } from '$app/navigation';
+  import { afterNavigate } from '$app/navigation';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
   import { getToken } from '$lib/stores/auth';
@@ -123,8 +123,9 @@
 
   /**
    * Returns true only if the user has zero MLS devices on the server — i.e. a genuinely
-   * new account, not an existing user on a new device. Falls back to the localStorage
-   * heuristic when the network is unavailable.
+   * new account that has never registered a device anywhere. Defaults to false on any
+   * network/auth failure so that users with an existing PIN on another device are never
+   * shown the "first setup" wording by mistake.
    */
   async function detectFirstPinSetup(uid: string): Promise<boolean> {
     try {
@@ -132,11 +133,11 @@
       const res = await fetch(`/api/mls/devices/${encodeURIComponent(uid)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return !localStorage.getItem(`mls_device_id_${uid}`);
+      if (!res.ok) return false;
       const devices: unknown[] = await res.json();
       return devices.length === 0;
     } catch {
-      return !localStorage.getItem(`mls_device_id_${uid}`);
+      return false;
     }
   }
 
@@ -351,6 +352,90 @@
     }
   }
 
+  /**
+   * Core login flow: checks platform, discovers biometrics/saved PIN, and either starts
+   * loginImpl or opens the PIN modal. Shared between onMount, afterNavigate, and the
+   * reactive $effect so the flow triggers regardless of how the user reaches a page.
+   *
+   * Sets globalSession.isLoginInProgress = true BEFORE any await so the layout guard
+   * (`+layout.ts`) never fires fetchUserProfile while login is pending.
+   */
+  async function startLoginFlow() {
+    if (_loginInProgress || globalSession.isLoggedIn || globalSession.isLoginInProgress) return;
+    _loginInProgress = true;
+    globalSession.isLoginInProgress = true;
+    try {
+      if (!(await ensurePlatformAllowsUnlock())) {
+        globalSession.isLoginInProgress = false;
+        return;
+      }
+
+      const configured = await BiometricService.isConfigured().catch(() => false);
+      biometricConfigured = configured;
+
+      if (configured && isTauriRuntime()) {
+        // Only invoke the biometric prompt if the device actually has enrolled
+        // biometrics. If not (e.g., fingerprint hardware present but no fingerprint
+        // set up), skip straight to PIN to avoid a confusing OS error dialog.
+        const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
+        if (biometricAvailable) {
+          await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+        }
+        if (!globalSession.isLoggedIn) {
+          // Biométrie annulée, échouée ou non disponible → fallback modal PIN
+          const savedUser2 = currentUserId();
+          if (savedUser2) {
+            globalSession.isLoginInProgress = false;
+            await openPinModal(savedUser2);
+          } else {
+            globalSession.isLoginInProgress = false;
+          }
+        }
+        return;
+      }
+
+      const savedUser = currentUserId();
+      const savedPin = await loadPin();
+      if (savedUser && savedPin) {
+        globalSession.userId = savedUser;
+        globalSession.pin = savedPin;
+        // loginImpl sets + clears isLoginInProgress itself; don't reset it here.
+        void globalSession.login({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+      } else if (savedUser) {
+        globalSession.userId = savedUser;
+        if (isTauriRuntime()) {
+          const ok = await globalSession.nativeStorageLogin({
+            ...sessionCb(),
+            onLoginFailed: onSavedPinFailed,
+          });
+          if (ok) return;
+        }
+        globalSession.isLoginInProgress = false;
+        await openPinModal(savedUser);
+      } else {
+        globalSession.isLoginInProgress = false;
+      }
+    } finally {
+      if (!globalSession.isLoggedIn && !showPinModal) _loginInProgress = false;
+    }
+  }
+
+  // ── Reactive trigger: userId becomes available after OIDC (Tauri Android) ──
+  // Fires as soon as currentUserId() transitions from null → value so the PIN/
+  // biometric modal appears immediately without requiring a manual navigation.
+  $effect(() => {
+    const uid = currentUserId();
+    const loggedIn = globalSession.isLoggedIn;
+    if (!uid || loggedIn) return;
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname;
+    if (path.startsWith('/login') || path.startsWith('/auth/') || path.startsWith('/legal')) return;
+    untrack(() => {
+      globalSession.initServices(appendLog);
+      void startLoginFlow();
+    });
+  });
+
   // ── Mount ─────────────────────────────────────────────────────────────────
   onMount(() => {
     // Déjà connecté (ex. navigation depuis /chat) → rien à faire.
@@ -362,66 +447,7 @@
     w.wasm_bindings_log = (level: string, msg: string) => appendLog(`[RUST::${level}] ${msg}`);
 
     globalSession.initServices(appendLog);
-
-    const tryLogin = async () => {
-      // Prevent concurrent calls from onMount + afterNavigate.
-      if (_loginInProgress || globalSession.isLoggedIn) return;
-      _loginInProgress = true;
-      try {
-        if (!(await ensurePlatformAllowsUnlock())) return;
-
-        const configured = await BiometricService.isConfigured().catch(() => false);
-        biometricConfigured = configured;
-        if (configured && isTauriRuntime()) {
-          // Only invoke the biometric prompt if the device actually has enrolled
-          // biometrics. If not (e.g., fingerprint hardware present but no fingerprint
-          // set up), skip straight to PIN to avoid a confusing OS error dialog.
-          const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
-          if (biometricAvailable) {
-            await globalSession.biometricLogin(sessionCb());
-          }
-          if (!globalSession.isLoggedIn) {
-            // Biométrie annulée, échouée ou non disponible → fallback modal PIN
-            const savedUser2 = currentUserId();
-            if (savedUser2) {
-              await openPinModal(savedUser2);
-            } else {
-              // No saved user - the layout auth guard will redirect to /login.
-            }
-          }
-          return;
-        }
-        const savedUser = currentUserId();
-        const savedPin = await loadPin();
-        if (savedUser && savedPin) {
-          globalSession.userId = savedUser;
-          globalSession.pin = savedPin;
-          void globalSession.login({
-            ...sessionCb(),
-            onLoginFailed: onSavedPinFailed,
-          });
-        } else if (savedUser) {
-          globalSession.userId = savedUser;
-          // On Tauri (Android, no biometrics): try silent login from push_context.json
-          if (isTauriRuntime()) {
-            const ok = await globalSession.nativeStorageLogin({
-              ...sessionCb(),
-              onLoginFailed: onSavedPinFailed,
-            });
-            if (ok) return;
-          }
-          await openPinModal(savedUser);
-        } else {
-          // No saved user - the layout auth guard will redirect to /login.
-        }
-      } finally {
-        // Reset flag so afterNavigate can re-try if this invocation did nothing
-        // useful (e.g. redirected to /login because no user was available yet).
-        if (!globalSession.isLoggedIn && !showPinModal) _loginInProgress = false;
-      }
-    };
-
-    void tryLogin();
+    void startLoginFlow();
 
     // Pause/resume WebSocket based on app visibility (fires on Android when backgrounded).
     // Presence polling and other intervals self-manage via createPausableInterval.
@@ -487,11 +513,17 @@
   async function handleBiometricFromModal() {
     pinError = '';
     pinLoading = true;
-    await globalSession.biometricLogin(sessionCb());
+    await globalSession.biometricLogin({
+      ...sessionCb(),
+      onLoginFailed: (msg: string) => {
+        pinError = msg;
+        pinLoading = false;
+      },
+    });
     pinLoading = false;
     if (globalSession.isLoggedIn) {
       showPinModal = false;
-    } else {
+    } else if (!pinError) {
       pinError = "L'empreinte digitale a échoué. Entrez votre PIN.";
     }
   }
@@ -515,12 +547,8 @@
     });
   }
 
-  // Safety net for the OIDC race condition:
-  // `onMount` runs once on the initial page load. When the user first arrives
-  // via the OIDC callback (`/auth/callback`), `onMount` fires before
-  // `currentUserId()` is set, so `tryLogin()` does nothing useful.
-  // After the callback sets the user and navigates to `/chat`,
-  // this `afterNavigate` hook re-tries the login flow.
+  // Safety net for navigations that arrive before onMount's startLoginFlow completes
+  // (e.g. the OIDC callback navigates to /posts while onMount already ran with uid=null).
   afterNavigate(async ({ to }) => {
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
@@ -529,12 +557,19 @@
       path.startsWith('/auth/') ||
       path.startsWith('/legal');
     if (isAuthRoute) return;
-    if (globalSession.isLoggedIn || _loginInProgress) return;
+    if (globalSession.isLoggedIn || _loginInProgress || globalSession.isLoginInProgress) return;
 
     const uid = currentUserId();
     if (!uid) return;
 
-    if (!(await ensurePlatformAllowsUnlock())) return;
+    // Set the flag early — before the first async call — so that the layout guard
+    // in +layout.ts sees isLoginInProgress = true and skips fetchUserProfile.
+    globalSession.isLoginInProgress = true;
+
+    if (!(await ensurePlatformAllowsUnlock())) {
+      globalSession.isLoginInProgress = false;
+      return;
+    }
 
     // Arriving on a non-auth route with a user but not yet logged in:
     // trigger the login flow that onMount missed.
@@ -554,16 +589,17 @@
     } else {
       globalSession.userId = uid;
       // Try biometric before falling back to the PIN modal.
-      // biometricConfigured is set by onMount.tryLogin which runs before afterNavigate.
+      // biometricConfigured is set by startLoginFlow which runs before afterNavigate.
       if (biometricConfigured) {
         const bioAvailable = await BiometricService.isAvailable().catch(() => false);
         if (bioAvailable) {
           _loginInProgress = true;
-          await globalSession.biometricLogin(sessionCb());
+          await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
           if (globalSession.isLoggedIn) return;
           _loginInProgress = false;
         }
       }
+      globalSession.isLoginInProgress = false;
       await openPinModal(uid);
     }
   });
@@ -576,8 +612,7 @@
   onClose={() => {
     showPinModal = false;
     _loginInProgress = false;
-    const returnTo = encodeURIComponent(window.location.pathname);
-    void goto(`/login?returnTo=${returnTo}`, { replaceState: true });
+    globalSession.isLoginInProgress = false;
   }}
   onBiometricRequest={handleBiometricFromModal}
   showBiometricButton={biometricConfigured}
