@@ -194,8 +194,12 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     }
   }
 
-  // 3. Purger les états WASM pour des groupes plus connus du serveur
-  for (const localId of mlsService.getLocalGroups()) {
+  // 3. Purger les états WASM pour des groupes plus connus du serveur.
+  // Utilise le snapshot `localGroups` capturé au début de la fonction (même instant que
+  // `serverIds`) : évite de purger des groupes créés par REBOOT pendant les opérations
+  // async de l'étape 2, ce qui déclencherait une boucle infinie (migrateConversation
+  // pointe vers un groupe absent du WASM).
+  for (const localId of localGroups) {
     if (!serverIds.has(localId)) {
       mlsService.forgetGroup(localId);
       stateMutated = true;

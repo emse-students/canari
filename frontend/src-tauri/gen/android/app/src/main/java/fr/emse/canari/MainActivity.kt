@@ -36,7 +36,8 @@ class MainActivity : TauriActivity() {
         FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
             if (!token.isNullOrEmpty()) {
                 try {
-                    File(filesDir, "fcm_token.txt").writeText(token)
+                    val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
+                    File(dataDir, "fcm_token.txt").writeText(token)
                     getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
                         .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
                     Log.i("MainActivity", "FCM token synced (${token.take(20)}…)")

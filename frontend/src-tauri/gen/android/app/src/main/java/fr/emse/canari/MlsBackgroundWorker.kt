@@ -89,7 +89,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             Log.e(TAG, "doWork: push_context.json manquant ou invalide → failure")
             return Result.failure()
         }
-        val filesDir = applicationContext.filesDir!!.absolutePath
+        val filesDir = MlsContextLoader.tauriDataDir(applicationContext).also { it.mkdirs() }.absolutePath
 
         // Acquire lock BEFORE reading mls.bin: FCM threads write mls.bin concurrently
         // (nativeDecryptMessage). Reading outside the lock risks JNI-processing stale state.

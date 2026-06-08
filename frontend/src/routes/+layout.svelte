@@ -303,7 +303,9 @@
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
     {#if !isLoginPage && !isKeyboardOpen}
       <Navbar />
-      <MobileHeader />
+      {#if !isMobileConvoOpen}
+        <MobileHeader />
+      {/if}
     {/if}
 
     <main id="main-content" class="relative flex-1 overflow-hidden">

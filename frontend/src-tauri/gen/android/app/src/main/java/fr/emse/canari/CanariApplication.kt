@@ -45,9 +45,10 @@ class CanariApplication : Application() {
      */
     private fun checkKeystoreHealth() {
         try {
-            val contextFile = File(filesDir, "push_context.json")
+            val dataDir = MlsContextLoader.tauriDataDir(this)
+            val contextFile = File(dataDir, "push_context.json")
             if (!contextFile.exists()) return // pas encore authentifié, aucun secret attendu
-            val markerFile = File(filesDir, "keystore_ok.flag")
+            val markerFile = File(dataDir, "keystore_ok.flag")
             val secret = PushSecretKeystore.retrieve(this)
             if (secret != null) {
                 markerFile.writeText("ok")
@@ -63,7 +64,7 @@ class CanariApplication : Application() {
 
     private fun processPendingPushSecret() {
         try {
-            val file = File(filesDir, "pending_push_secret.txt")
+            val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
             if (!file.exists()) return
             // Read raw bytes first so the overwrite covers the exact file size, including
             // any trailing newline. secret.length is a char count and diverges from byte

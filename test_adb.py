@@ -588,7 +588,7 @@ class TauriManagerApp:
             device_id, device_name = list(self.devices.items())[0]
             text_area = scrolledtext.ScrolledText(notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#569cd6", font=("Consolas", 9))
             notebook.add(text_area, text=f"📱 {device_name}")
-            self.device_text_areas[device_id] = text_area
+            self.device_text_areas[device_name] = text_area
         elif len(self.devices) >= 2:
             # Deux appareils ou plus : affichage côte à côte
             monitoring_frame = ttk.Frame(notebook)
@@ -603,7 +603,7 @@ class TauriManagerApp:
                 paned.add(device_frame)  # type: ignore
                 text_area: scrolledtext.ScrolledText = scrolledtext.ScrolledText(device_frame, wrap=tk.WORD, bg="#1e1e1e", fg=color, font=("Consolas", 9))
                 text_area.pack(fill=tk.BOTH, expand=True)
-                self.device_text_areas[device_id] = text_area
+                self.device_text_areas[device_name] = text_area
 
         # Onglet combiné
         self.text_combined: scrolledtext.ScrolledText = scrolledtext.ScrolledText(notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 10))

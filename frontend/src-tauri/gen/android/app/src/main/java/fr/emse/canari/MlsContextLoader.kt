@@ -23,11 +23,18 @@ object MlsContextLoader {
     )
 
     /**
-     * Charge push_context.json depuis le répertoire parent de filesDir.
+     * Répertoire géré par Tauri sur Android : context.filesDir + bundle identifier.
+     * Tauri 2 résout app_data_dir() vers filesDir/fr.emse.canari, donc tous les fichiers
+     * échangés entre Rust (app_data_dir) et Kotlin doivent utiliser ce répertoire.
+     */
+    fun tauriDataDir(context: Context): File = File(context.filesDir, "fr.emse.canari")
+
+    /**
+     * Charge push_context.json depuis le répertoire Tauri (app_data_dir).
      * Retourne null si le fichier est absent ou si un champ obligatoire est vide/manquant.
      */
     fun loadPushContext(context: Context): PushContext? {
-        val file = File(context.filesDir, "push_context.json")
+        val file = File(tauriDataDir(context), "push_context.json")
         if (!file.exists()) return null
         return try {
             val j = JSONObject(file.readText())
@@ -41,11 +48,11 @@ object MlsContextLoader {
     }
 
     /**
-     * Charge l'état MLS binaire depuis mls.bin dans le répertoire parent de filesDir.
+     * Charge l'état MLS binaire depuis mls.bin dans le répertoire Tauri (app_data_dir).
      * Retourne null si le fichier est absent ou illisible.
      */
     fun loadMlsState(context: Context): ByteArray? {
-        val file = File(context.filesDir, "mls.bin")
+        val file = File(tauriDataDir(context), "mls.bin")
         return if (file.exists()) try { file.readBytes() } catch (_: Exception) { null } else null
     }
 }
