@@ -15,6 +15,7 @@
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
   import MessageMobileActions from './MessageMobileActions.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { settings } from '$lib/stores/settingsStore.svelte';
   import { onDestroy } from 'svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -232,7 +233,7 @@
         lastTapTime = 0;
         showInfo = false;
         onReact(messageId, '❤️');
-        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
           navigator.vibrate(12);
         }
         return;
@@ -288,7 +289,7 @@
         showMobileActions = true;
         showEmojiPicker = false;
         showInfo = false;
-        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
           navigator.vibrate(10);
         }
       }, 420);
@@ -335,7 +336,7 @@
     if (shouldTriggerReplySwipe(dx, dy, isOwn, replyGesture.phase)) {
       swipeHandled = true;
       onReply?.(messageId);
-      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate(12);
       }
     }
@@ -623,7 +624,7 @@
       onReactEmoji={(emoji) => {
         onReact?.(messageId, emoji);
         showMobileActions = false;
-        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
           navigator.vibrate(12);
         }
       }}
