@@ -1,0 +1,15 @@
+{
+  "identifier": "development",
+  "description": "Dev-only capability: local WebSocket and HTTP (localhost). NOT included in production builds.",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "websocket:allow-connect",
+      "allow": [{ "url": "ws://localhost:*" }, { "url": "ws://127.0.0.1:*" }]
+    },
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [{ "url": "http://**" }]
+    }
+  ]
+}

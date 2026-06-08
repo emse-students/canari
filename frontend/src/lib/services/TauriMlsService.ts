@@ -106,8 +106,13 @@ export class TauriMlsService extends BaseMlsService {
           `[WS] ${this.missedHeartbeats} pings without server response — closing zombie connection`
         );
         this.clearHeartbeat();
-        void this.ws.disconnect().catch(() => {});
+        // Unlisten before disconnecting to prevent the Close event from firing
+        // disconnectCallback a second time (same pattern as connect() cleanup).
+        const deadWs = this.ws;
+        this.wsUnlisten?.();
+        this.wsUnlisten = null;
         this.ws = null;
+        void deadWs.disconnect().catch(() => {});
         this.disconnectCallback?.();
         return;
       }
@@ -117,6 +122,13 @@ export class TauriMlsService extends BaseMlsService {
     }, 8_000); // data frame bypasses nginx proxy_read_timeout; keeps presence TTL fresh
   }
 
+  /**
+   * Returns true while the native WebSocket instance exists.
+   * Unlike WebMlsService (which checks `readyState === OPEN`), the Tauri native WS
+   * plugin exposes no `readyState`. `this.ws` is set to null synchronously on every
+   * disconnect path (Close event, heartbeat zombie kill, connect() reconnect), so
+   * `!== null` is the best available equivalent.
+   */
   isWsOpen(): boolean {
     return this.ws !== null;
   }
@@ -627,6 +639,9 @@ export class TauriMlsService extends BaseMlsService {
     const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
     let baseEpoch = 0;
     try {
+      // Rust applies the commit locally during add/remove, so obtenir_epoch returns
+      // the post-apply epoch. commitBaseEpochForValidation(n) = n-1 (pre-commit epoch
+      // the server uses to validate the transition).
       const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
       this._epochByGroupId.set(groupId, currentEpoch);
       baseEpoch = commitBaseEpochForValidation(currentEpoch);
@@ -634,6 +649,10 @@ export class TauriMlsService extends BaseMlsService {
       // If epoch retrieval fails, send 0 (server will validate)
     }
     await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
+    // Re-read the epoch after the server has accepted the commit: the epoch visible
+    // to other members is now confirmed. Best-effort — failure leaves the cache at
+    // the pre-send value which is off by one until the next message is processed.
+    void this.refreshEpochCache(groupId);
   }
 
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */

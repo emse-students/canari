@@ -1,4 +1,3 @@
-import { commitBaseEpochForValidation } from './mlsDesyncPrevention';
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import type { GroupMeta, UserGroupRow } from './IMlsService';
 
@@ -7,8 +6,6 @@ export type MlsDeliveryFetch = typeof fetch;
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
-  /** Current MLS epoch for `groupId` (used by `sendCommit` validation). */
-  getEpoch: (groupId: string) => number;
   /** Defaults to `globalThis.fetch` (browser); Tauri passes `plugin-http` fetch. */
   fetchImpl?: MlsDeliveryFetch;
 };
@@ -23,13 +20,11 @@ export class MlsDeliveryApi {
   deviceId = 'pending';
 
   private readonly getToken: () => Promise<string>;
-  private readonly getEpoch: (groupId: string) => number;
   private readonly f: MlsDeliveryFetch;
 
   constructor(opts: MlsDeliveryApiOptions) {
     this.historyUrl = opts.historyUrl;
     this.getToken = opts.getToken;
-    this.getEpoch = opts.getEpoch;
     this.f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -274,18 +269,7 @@ export class MlsDeliveryApi {
     );
   }
 
-  /** Web path: derive `baseEpoch` from `getEpoch` then validate + broadcast. */
-  async sendCommitBytes(
-    commitBytes: Uint8Array,
-    groupId: string,
-    excludeDeviceIds?: string[]
-  ): Promise<void> {
-    const proto = this.uint8ToB64(commitBytes);
-    const baseEpoch = commitBaseEpochForValidation(this.getEpoch(groupId));
-    await this.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
-  }
-
-  /** Shared validate-then-send for MLS commits (Web + Tauri). */
+  /** Validates then broadcasts an MLS commit to all group members. `baseEpoch` is the epoch before the commit was applied, computed by the caller (WebMlsService/TauriMlsService). */
   async sendValidatedCommit(
     protoBase64: string,
     groupId: string,

@@ -103,7 +103,6 @@ export abstract class BaseMlsService implements IMlsService {
     this.delivery = new MlsDeliveryApi({
       historyUrl: this.historyUrl,
       getToken,
-      getEpoch: (groupId) => this.getEpoch(groupId),
       ...(fetchImpl ? { fetchImpl } : {}),
     });
   }
