@@ -1,14 +1,13 @@
 /**
- * Single source of truth for delivery-queue ACK rules (Web vs Tauri).
+ * Single source of truth for delivery-queue ACK rules (Web and Tauri).
  *
  * Contract with `connection.ts`:
  * - Callback returns `false` → do not ACK (retry later).
  * - Callback throws on unexpected Welcome error → do not ACK (retry on reconnect).
  *
- * Intentional platform difference on **processing exceptions**:
- * - **Web**: only ACK **commits** on exception (app messages stay queued for retry).
- * - **Tauri**: ACK non-welcome messages on generic exception to avoid infinite loops
- *   (matches existing processQueue behavior); Welcome errors never ACK.
+ * ACK policy on **processing exceptions** (both platforms):
+ * - Only ACK **commits** on exception (idempotent); Welcome retries on reconnect;
+ *   application messages stay queued for retry.
  */
 
 export type QueueMsgFlags = {
@@ -32,16 +31,9 @@ export function shouldAckGroupResetControl(flags: Pick<QueueMsgFlags, 'hasQueued
 }
 
 /**
- * Web: exception in processQueue - ack commits only (idempotent); Welcome retries; app stays queued.
+ * Exception in processQueue - ACK commits only (idempotent); Welcome retries on reconnect;
+ * application messages stay queued. Applies to both Web and Tauri.
  */
-export function shouldAckAfterWebException(flags: QueueMsgFlags): boolean {
+export function shouldAckAfterException(flags: QueueMsgFlags): boolean {
   return flags.hasQueuedId && flags.isCommit;
-}
-
-/**
- * Tauri: exception in processQueue - Welcome errors handled first by caller.
- * Remaining errors ack if queued id exists.
- */
-export function shouldAckAfterTauriGenericException(flags: QueueMsgFlags): boolean {
-  return flags.hasQueuedId;
 }

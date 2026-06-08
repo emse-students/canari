@@ -166,7 +166,15 @@ export function useNotifications() {
       // Détection fiable : Linux desktop = "Linux" dans platform/userAgent SANS "Android".
       const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
       const isLinuxDesktop = /linux/i.test(ua) && !/android/i.test(ua) && !/cros/i.test(ua);
-      if (isLinuxDesktop) return;
+      if (isLinuxDesktop) {
+        // Tauri on Linux desktop: the dbus/GLib event loop deadlocks when the
+        // notification plugin tries to request permission via WebKitGTK.
+        // Notifications are intentionally disabled on this platform.
+        console.info(
+          '[Push] Notifications désactivées sur Tauri Linux desktop (bug dbus/GLib/WebKitGTK).'
+        );
+        return;
+      }
       try {
         const { isPermissionGranted, requestPermission } =
           await import('@tauri-apps/plugin-notification');
@@ -222,6 +230,33 @@ export function useNotifications() {
             body,
             ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
           });
+          // Best-effort: register a tap action so tapping the notification on
+          // Tauri desktop navigates to the conversation (parity with Web onclick).
+          // onAction is only available on some Tauri notification plugin versions.
+          if (conversationId) {
+            try {
+              const notifPlugin = await import('@tauri-apps/plugin-notification');
+              if ('onAction' in notifPlugin && typeof notifPlugin.onAction === 'function') {
+                (
+                  notifPlugin.onAction as unknown as (
+                    cb: (action: { notification: { id?: number } }) => void
+                  ) => Promise<unknown>
+                )(async (action) => {
+                  if (action.notification.id === stableNotifId(conversationId)) {
+                    notifNav.navigate(conversationId);
+                    try {
+                      const { goto } = await import('$app/navigation');
+                      await goto('/chat');
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                });
+              }
+            } catch {
+              /* onAction unavailable on this platform/version */
+            }
+          }
         }
         return;
       } catch {

@@ -16,8 +16,11 @@
     ) => Promise<{ ok: boolean; requiresAction?: boolean; clientSecret?: string; error?: string }>;
     /** Called when user wants to pay with a new card (Stripe hosted checkout). */
     onPayWithNew: () => void;
-    /** Called when inline 3DS authentication succeeds. */
-    onSuccess: () => void;
+    /** Called when inline 3DS authentication succeeds. No longer triggered directly
+     * by this modal (3DS redirects to Stripe Checkout via onPayWithNew instead).
+     * Kept in the interface for API compatibility; callers may pass it safely.
+     */
+    onSuccess?: () => void;
     /** Called when payment fails definitively (not when 3DS is required). */
     onPaymentFailed?: () => void | Promise<void>;
     /** Called when the modal is dismissed. */
@@ -30,7 +33,7 @@
     currency = 'eur',
     onPayWithSaved,
     onPayWithNew,
-    onSuccess,
+    onSuccess: _onSuccess,
     onPaymentFailed,
     onClose,
   }: Props = $props();

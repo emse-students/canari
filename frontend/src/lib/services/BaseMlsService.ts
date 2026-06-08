@@ -3,6 +3,13 @@ import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
 import type { MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
+import {
+  shouldAckAfterSuccess,
+  shouldAckAfterException,
+  shouldAckGroupResetControl,
+  logMlsMetric,
+} from '$lib/mls-client';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 
 /**
@@ -11,7 +18,8 @@ import { getToken } from '$lib/stores/auth';
  * Contains every field and method that is identical between the two platforms:
  * - All `/api/mls/*` delivery REST wrappers (delegated to {@link MlsDeliveryApi})
  * - WebSocket callback registrations (onMessage, onDisconnect, etc.)
- * - Queue plumbing (enqueueMessage, waitForMessageQueueIdle)
+ * - Queue plumbing (enqueueMessage, waitForMessageQueueIdle, processQueue, fetchPendingMessages)
+ * - Pending-retry scheduling (pendingRetryTimer / scheduleRetry)
  * - Lifecycle boilerplate (init promise dedup, destroy base listeners)
  *
  * Platform-specific code lives exclusively in the subclasses:
@@ -19,6 +27,9 @@ import { getToken } from '$lib/stores/auth';
  * - TauriMlsService: invoke() calls, native WebSocket, epoch/group caches
  */
 export abstract class BaseMlsService implements IMlsService {
+  // ── Platform identity ─────────────────────────────────────────────────────
+  protected readonly platform: 'web' | 'tauri';
+
   // ── Callbacks ─────────────────────────────────────────────────────────────
   onChannelEvent?: (event: { type: string; data: any }) => void;
 
@@ -61,6 +72,14 @@ export abstract class BaseMlsService implements IMlsService {
   protected _visibilityHandler: (() => void) | null = null;
   protected _onlineHandler: (() => void) | null = null;
 
+  // ── In-session retry timer ────────────────────────────────────────────────
+  /**
+   * Reschedules `fetchPendingMessages` after PENDING_RETRY_DELAY_MS when a queued
+   * message returned `false` from the callback (rather than waiting for a reconnect).
+   */
+  private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly PENDING_RETRY_DELAY_MS = 15_000;
+
   // ── Message queue ─────────────────────────────────────────────────────────
   /** Per-conversation queues with round-robin scheduling and a global MLS mutex. */
   protected readonly messageScheduler: MlsPerGroupScheduler;
@@ -72,6 +91,7 @@ export abstract class BaseMlsService implements IMlsService {
   ) => void | Promise<void>;
 
   constructor(platform: 'web' | 'tauri', fetchImpl?: MlsDeliveryFetch) {
+    this.platform = platform;
     // Device ID is resolved per-user in init() to avoid collisions when multiple
     // users share the same browser (e.g. two tabs in the same browser window).
     this.deviceId = 'pending';
@@ -112,6 +132,10 @@ export abstract class BaseMlsService implements IMlsService {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    if (this.pendingRetryTimer !== null) {
+      clearTimeout(this.pendingRetryTimer);
+      this.pendingRetryTimer = null;
+    }
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
       this._visibilityHandler = null;
@@ -131,7 +155,6 @@ export abstract class BaseMlsService implements IMlsService {
   abstract connect(token?: string): Promise<void>;
   abstract isWsOpen(): boolean;
   abstract sendDisconnect(): void;
-  abstract fetchPendingMessages(): Promise<void>;
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -201,8 +224,249 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  /** Platform-specific drain loop (Web vs Tauri differ in ACK strategy and group_reset handling). */
-  protected abstract processQueue(): Promise<void>;
+  /**
+   * Schedules an in-session retry of `fetchPendingMessages` after PENDING_RETRY_DELAY_MS.
+   * Only fires if the WebSocket is still open at the time of execution.
+   * Cancels any previously scheduled retry before registering a new one.
+   */
+  protected scheduleRetry(): void {
+    if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
+    this.pendingRetryTimer = setTimeout(() => {
+      this.pendingRetryTimer = null;
+      if (this.isWsOpen()) {
+        console.log('[QUEUE] In-session retry: fetchPendingMessages (unacknowledged message)');
+        void this.fetchPendingMessages();
+      }
+    }, BaseMlsService.PENDING_RETRY_DELAY_MS);
+  }
+
+  /** Drains per-group queues with round-robin scheduling and a global MLS mutex. */
+  protected async processQueue(): Promise<void> {
+    if (!this.messageCallback) {
+      console.warn('[QUEUE] messageCallback not set - queued messages will not be processed');
+      return;
+    }
+
+    const ackIds: string[] = [];
+    let hadFailedQueuedMessage = false;
+
+    await this.messageScheduler.drain(
+      async (msg) => {
+        const groupId = msg.groupId;
+
+        // group_reset control messages: ACK and ignore on both platforms.
+        // The WebSocket reconnect is sufficient to re-sync state.
+        if (msg.type === 'group_reset') {
+          console.log(`[QUEUE] group_reset (control) ignored - group=${groupId ?? 'unknown'}`);
+          if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
+            ackIds.push(msg.queuedMessageId!);
+          }
+          return;
+        }
+
+        try {
+          console.log(
+            `[QUEUE] Processing ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} group=${groupId ?? 'unknown'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          );
+
+          const deliveryMeta: IncomingDeliveryMeta | undefined =
+            msg.queuedCreatedAt !== undefined || msg.queuedMessageId
+              ? {
+                  ...(msg.queuedCreatedAt !== undefined
+                    ? { queuedCreatedAt: msg.queuedCreatedAt }
+                    : {}),
+                  ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
+                }
+              : undefined;
+
+          const cbResult = await this.messageCallback!(
+            msg.senderId,
+            msg.ciphertext,
+            msg.groupId,
+            msg.isWelcome,
+            msg.ratchetTreeBytes,
+            msg.isCommit,
+            deliveryMeta
+          );
+
+          console.log(
+            `[QUEUE] messageCallback → ${cbResult} (group=${groupId ?? 'unknown'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
+          );
+
+          const flags = {
+            isWelcome: msg.isWelcome,
+            isCommit: msg.isCommit,
+            hasQueuedId: Boolean(msg.queuedMessageId),
+          };
+          if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
+            ackIds.push(msg.queuedMessageId);
+          } else if (flags.hasQueuedId && cbResult === false) {
+            hadFailedQueuedMessage = true;
+            logMlsMetric({
+              kind: 'queue_skip_ack',
+              platform: this.platform,
+              reason: 'callback_retry',
+              isWelcome: msg.isWelcome,
+              isCommit: msg.isCommit,
+            });
+          }
+
+          if (msg.isWelcome && groupId) {
+            this.messageScheduler.reinjectAfterWelcome(groupId);
+            this.welcomeProcessedCallback?.(groupId);
+          }
+
+          // Platform hook: called after each successful message (e.g. Tauri epoch cache refresh).
+          await this.onMessageProcessed(groupId);
+        } catch (e) {
+          console.error(`[QUEUE] Error processing message:`, e);
+
+          if (msg.isWelcome) {
+            logMlsMetric({
+              kind: 'queue_skip_ack',
+              platform: this.platform,
+              reason: 'welcome_error',
+            });
+            console.error(
+              `[QUEUE] Welcome failed for group=${groupId} - NOT ACKed, retry on reconnect`
+            );
+            if (groupId) this.messageScheduler.clearWelcomePending(groupId);
+          } else {
+            const exFlags = {
+              isWelcome: msg.isWelcome,
+              isCommit: msg.isCommit,
+              hasQueuedId: Boolean(msg.queuedMessageId),
+            };
+            if (shouldAckAfterException(exFlags) && msg.queuedMessageId) {
+              ackIds.push(msg.queuedMessageId);
+            } else if (exFlags.hasQueuedId) {
+              logMlsMetric({
+                kind: 'queue_skip_ack',
+                platform: this.platform,
+                reason: 'exception_non_commit',
+                isWelcome: msg.isWelcome,
+                isCommit: msg.isCommit,
+              });
+            }
+            if (groupId && this.messageScheduler.hasWelcomePending(groupId)) {
+              this.messageScheduler.reinjectAfterWelcome(groupId);
+            }
+          }
+        }
+      },
+      {
+        onDrainStart: (pendingCount) => this.bulkIngestStart?.(true, pendingCount > 1),
+        onDrainEnd: async () => {
+          if (ackIds.length > 0) {
+            logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
+            void this.delivery.deliveryPost('messages/ack', {
+              userId: this.userId,
+              deviceId: this.deviceId,
+              messageIds: ackIds,
+            });
+          }
+
+          // In-session retry: if a message was not ACKed, reschedule fetchPendingMessages
+          // rather than waiting for the next reconnect.
+          if (hadFailedQueuedMessage) {
+            this.scheduleRetry();
+          }
+
+          await this.bulkIngestEnd?.(true, true);
+        },
+      }
+    );
+
+    // Messages that arrived via WebSocket while onDrainEnd was awaiting (draining=true)
+    // were enqueued but could not start a new drain. Restart here so they are not stuck.
+    if (this.messageScheduler.getPendingCount() > 0 && !this.messageScheduler.draining) {
+      void this.processQueue();
+    }
+  }
+
+  /**
+   * Platform hook called after each successfully processed message.
+   * Override in subclasses to perform platform-specific post-processing
+   * (e.g. refreshing epoch cache on Tauri).
+   */
+  protected async onMessageProcessed(_groupId: string | undefined): Promise<void> {}
+
+  /** Fetches offline-queued messages from the delivery service and routes each through the priority queue. */
+  async fetchPendingMessages(): Promise<void> {
+    if (this.userId === 'unknown') return;
+
+    const FETCH_TIMEOUT = 10_000;
+
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+      const messages = await this.delivery.pullPendingMessagesJson(ctrl.signal);
+      clearTimeout(tid);
+
+      if (Array.isArray(messages)) {
+        if (messages.length > 0) {
+          console.log(`[PENDING] Fetched ${messages.length} pending messages`);
+
+          // Route all pending messages through the serialized queue so they
+          // never race with live WebSocket messages calling messageCallback.
+          for (const msg of messages as Record<string, unknown>[]) {
+            const msgId = (msg.id || msg._id) as string | undefined;
+            const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
+            const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
+
+            // ── Control messages (group_reset persisted for offline devices) ──
+            // These have no MLS payload (empty proto). Both platforms ACK and ignore:
+            // WebSocket reconnect is sufficient to re-sync state.
+            if (msg.type === 'group_reset') {
+              this.enqueueMessage({
+                senderId: (msg.senderId as string) || 'unknown',
+                ciphertext: new Uint8Array(0),
+                groupId: (msg.groupId as string) || undefined,
+                isWelcome: false,
+                isCommit: false,
+                queuedMessageId: msgId,
+                type: 'group_reset',
+                queuedCreatedAt,
+              });
+              continue;
+            }
+
+            if (proto) {
+              try {
+                const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
+                if (ciphertext.length > 0) {
+                  this.enqueueMessage({
+                    senderId: (msg.senderId as string) || 'unknown',
+                    ciphertext,
+                    groupId: (msg.groupId as string) || undefined,
+                    isWelcome: msg.isWelcome === true,
+                    isCommit: msg.isCommit === true,
+                    ratchetTreeBytes:
+                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                        : undefined,
+                    queuedMessageId: msgId,
+                    queuedCreatedAt,
+                  });
+                }
+              } catch (e) {
+                console.error('[PENDING] Failed to enqueue proto message:', e);
+              }
+            }
+          }
+        } else {
+          console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
+        }
+      } else {
+        console.warn(
+          `[PENDING] Pending message fetch failed or non-array (${this.userId}:${this.deviceId})`
+        );
+      }
+    } catch (e) {
+      console.error('[PENDING] Failed to fetch pending messages:', e);
+    }
+    await this.waitForMessageQueueIdle();
+  }
 
   // ── Delivery wrappers ─────────────────────────────────────────────────────
   // All methods below are pure pass-throughs to this.delivery. Both Web and Tauri
@@ -221,10 +485,7 @@ export abstract class BaseMlsService implements IMlsService {
     await this.delivery.clearPendingWelcomeRequests(groupId);
   }
 
-  /**
-   * Delivers a Welcome message to the target user/device.
-   * Tauri overrides {@link sendWelcomeToFirstDeviceOnly} to true to save N-1 redundant deliveries.
-   */
+  /** Delivers a Welcome message to the target user/device. */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
@@ -237,14 +498,8 @@ export abstract class BaseMlsService implements IMlsService {
       targetUserId,
       groupId,
       targetDeviceId,
-      ratchetTreeBytes,
-      this.sendWelcomeToFirstDeviceOnly ? { firstDeviceOnly: true } : undefined
+      ratchetTreeBytes
     );
-  }
-
-  /** When true, Welcome is delivered only to the first available device (Tauri). */
-  protected get sendWelcomeToFirstDeviceOnly(): boolean {
-    return false;
   }
 
   getDeviceId(): string {

@@ -8,6 +8,7 @@
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import { isTauriRuntime } from '$lib/utils/openExternal';
 
   interface ReplyTo {
     id: string;
@@ -64,7 +65,11 @@
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
   let isMobileViewport = $state(false);
-  const isVoiceRecordingSupported = $derived(hasMediaRecorder && isMobileViewport);
+  const isVoiceRecordingSupported = $derived(
+    // Show on mobile/coarse-pointer devices AND on Tauri desktop where MediaRecorder is available.
+    // Hidden on regular desktop Web browsers to keep the composer uncluttered.
+    hasMediaRecorder && (isMobileViewport || isTauriRuntime())
+  );
 
   const isSendDisabled = $derived(
     interactionLocked ||
@@ -398,9 +403,9 @@
       role="group"
       aria-label="Zone de saisie et dépôt de fichiers"
       class="chat-composer-panel {isDragOver ? 'is-dragover' : ''}"
-      ondragover={handleDragOver}
-      ondragleave={handleDragLeave}
-      ondrop={handleDrop}
+      ondragover={!isMobileViewport ? handleDragOver : undefined}
+      ondragleave={!isMobileViewport ? handleDragLeave : undefined}
+      ondrop={!isMobileViewport ? handleDrop : undefined}
     >
       <!-- Badge de Drag & Drop au-dessus -->
       {#if isDragOver}

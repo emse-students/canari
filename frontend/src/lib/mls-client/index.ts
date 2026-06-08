@@ -6,8 +6,7 @@ export type { IMlsService, GroupMeta, UserGroupRow } from './IMlsService';
 export { loadAndInitWasm } from './mlsWasmLoader';
 export {
   shouldAckAfterSuccess,
-  shouldAckAfterWebException,
-  shouldAckAfterTauriGenericException,
+  shouldAckAfterException,
   shouldAckGroupResetControl,
   type QueueMsgFlags,
 } from './mlsQueueAckPolicy';

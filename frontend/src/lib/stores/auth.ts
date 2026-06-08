@@ -82,7 +82,10 @@ const awarn = (msg: string) => console.warn('[A] ' + msg);
  */
 function setWsSessionCookie(token: string): void {
   if (typeof document === 'undefined') return;
-  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  // Tauri desktop runs under tauri:// which is not https: but traffic is local
+  // → we still want the Secure flag for parity with the web production build.
+  const proto = window.location.protocol;
+  const secure = proto === 'https:' || proto === 'tauri:' ? '; Secure' : '';
   document.cookie = `canari_ws_token=${encodeURIComponent(token)}; Path=/; SameSite=Lax${secure}`;
   alog('ws+');
 }
@@ -90,7 +93,8 @@ function setWsSessionCookie(token: string): void {
 /** Removes the `canari_ws_token` cookie by setting `Max-Age=0`. */
 function clearWsSessionCookie(): void {
   if (typeof document === 'undefined') return;
-  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  const proto = window.location.protocol;
+  const secure = proto === 'https:' || proto === 'tauri:' ? '; Secure' : '';
   document.cookie = `canari_ws_token=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
   alog('ws-');
 }
@@ -234,10 +238,14 @@ export async function handleOidcCallback(
   return data.user;
 }
 
-/** Get the intended return path after OIDC callback, then clear it. */
-export function getOidcReturnTo(): string {
-  const returnTo = localStorage.getItem(OIDC_RETURN_KEY) || '/chat';
-  localStorage.removeItem(OIDC_RETURN_KEY);
+/**
+ * Get the intended return path after OIDC callback, then clear it.
+ * Async because on Tauri desktop the value lives in the native Store
+ * (WebKitGTK clears localStorage during cross-origin navigation to Authentik).
+ */
+export async function getOidcReturnTo(): Promise<string> {
+  const returnTo = (await getOidcEntry(OIDC_RETURN_KEY)) || '/chat';
+  await removeOidcEntry(OIDC_RETURN_KEY);
   return returnTo;
 }
 

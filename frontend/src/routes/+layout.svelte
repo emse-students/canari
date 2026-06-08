@@ -3,7 +3,6 @@
   import { beforeNavigate, goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
-  import { attachConsole } from '@tauri-apps/plugin-log';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
@@ -92,9 +91,12 @@
     const teardownHistory = initHistoryOverlayStack();
     const teardownKeyboard = initKeyboardViewport();
 
-    // Redirige console.log/warn/error vers tauri-plugin-log → adb logcat sur Android.
+    // Redirect console.log/warn/error to tauri-plugin-log → adb logcat on Android.
+    // Dynamic import prevents @tauri-apps/plugin-log from being bundled in the Web build.
     if (isTauriRuntime()) {
-      attachConsole().catch(() => {});
+      import('@tauri-apps/plugin-log')
+        .then(({ attachConsole }) => attachConsole())
+        .catch(() => {});
     }
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();

@@ -510,8 +510,33 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           '⚠️ Vous ne vous êtes pas connecté depuis plus de 3 mois. Certains anciens messages peuvent ne plus être disponibles.'
         );
       }
+    } else if (isTauriRuntime()) {
+      // localStorage may be empty after Android process kill — try Tauri Store fallback.
+      try {
+        const { load } = await import('@tauri-apps/plugin-store');
+        const store = await load('session-meta.json', { autoSave: true, defaults: {} });
+        const nativeLastActive = await store.get<number>(lastActiveKey);
+        if (
+          typeof nativeLastActive === 'number' &&
+          Date.now() - nativeLastActive > STALE_SESSION_MS
+        ) {
+          appendLog(
+            '⚠️ Vous ne vous êtes pas connecté depuis plus de 3 mois. Certains anciens messages peuvent ne plus être disponibles.'
+          );
+        }
+      } catch {
+        /* non-blocking */
+      }
     }
-    localStorage.setItem(lastActiveKey, String(Date.now()));
+    const nowMs = Date.now();
+    localStorage.setItem(lastActiveKey, String(nowMs));
+    // Persist to Tauri Store so the value survives Android process kills.
+    if (isTauriRuntime()) {
+      import('@tauri-apps/plugin-store')
+        .then(({ load }) => load('session-meta.json', { autoSave: true, defaults: {} }))
+        .then((store) => store.set(lastActiveKey, nowMs))
+        .catch(() => {});
+    }
 
     if (!getIsTabLeader()) return;
 
@@ -532,7 +557,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (
       isTauriRuntime() &&
       !(await BiometricService.isConfigured()) &&
-      !isBiometricPromptDismissed()
+      !(await isBiometricPromptDismissed())
     ) {
       ctx.setShowBiometricEnrollPrompt(true);
     }

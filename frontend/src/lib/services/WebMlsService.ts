@@ -1,15 +1,11 @@
 import {
   loadAndInitWasm,
-  shouldAckAfterSuccess,
-  shouldAckAfterWebException,
-  logMlsMetric,
   detectRuntimeDeviceOs,
   commitBaseEpochForValidation,
 } from '$lib/mls-client';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { saveMlsState } from '$lib/utils/hex';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
 
@@ -37,10 +33,6 @@ export class WebMlsService extends BaseMlsService {
   private keyPackageWorker: Worker | null = null;
   /** Feature flag for workerized key package generation (enabled by default). */
   private readonly useKeyPackageWorker = import.meta.env.VITE_MLS_KEYPACKAGE_WORKER !== 'false';
-  // Timer de retry in-session : si un message delivery-queue n'a pas été ACKé (return false),
-  // on reprogramme fetchPendingMessages après PENDING_RETRY_DELAY_MS plutôt d'attendre reconnect.
-  private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly PENDING_RETRY_DELAY_MS = 15_000;
 
   constructor() {
     super('web');
@@ -62,14 +54,14 @@ export class WebMlsService extends BaseMlsService {
   /**
    * Runs key package generation in a worker and resolves with generated artifacts.
    *
-   * Garanties :
-   * - Timeout 30s : le timer est annulé dès que le worker répond (pas de fuite de timer).
-   * - Cleanup des listeners : `removeEventListener` est toujours appelé, qu'on résolve,
-   *   rejette ou timeout, grâce au flag `settled` et à `cleanup()`.
-   * - Fin de worker sur timeout : le worker est terminé (`terminate()`) et le singleton
-   *   mis à null pour éviter qu'une réponse tardive ne contamine le prochain appel.
-   * - Transfert du buffer d'état : le `ArrayBuffer` est transféré (pas copié) pour éviter
-   *   la duplication mémoire sur un snapshot qui peut peser plusieurs centaines de ko.
+   * Guarantees:
+   * - 30s timeout: the timer is cancelled as soon as the worker responds (no timer leak).
+   * - Listener cleanup: `removeEventListener` is always called, whether we resolve,
+   *   reject or timeout, thanks to the `settled` flag and `cleanup()`.
+   * - Worker termination on timeout: the worker is terminated (`terminate()`) and the singleton
+   *   set to null to prevent a late response from contaminating the next call.
+   * - State buffer transfer: the `ArrayBuffer` is transferred (not copied) to avoid
+   *   memory duplication on snapshots that may weigh several hundred KB.
    */
   private runWorkerKeyPackageGeneration(
     pin: string,
@@ -117,13 +109,13 @@ export class WebMlsService extends BaseMlsService {
         reject(event.error ?? new Error(event.message || 'worker error'));
       };
 
-      // Le timer est annulé par cleanup() dans onMessage/onError — pas de fuite.
+      // The timer is cancelled by cleanup() in onMessage/onError — no leak.
       const timeoutId = setTimeout(() => {
         if (settled) return;
         settled = true;
         cleanup();
-        // Terminer l'instance worker pour qu'une réponse tardive n'arrive pas sur
-        // un nouveau listener enregistré par le prochain appel à generateKeyPackage.
+        // Terminate the worker instance so a late response does not arrive on
+        // a new listener registered by the next generateKeyPackage call.
         this.keyPackageWorker?.terminate();
         this.keyPackageWorker = null;
         reject(new Error('key package worker timeout after 15s'));
@@ -132,8 +124,8 @@ export class WebMlsService extends BaseMlsService {
       worker.addEventListener('message', onMessage);
       worker.addEventListener('error', onError);
 
-      // Transférer le buffer (ownership move, pas de copie) pour éviter de doubler
-      // la mémoire sur un snapshot pouvant peser plusieurs centaines de ko.
+      // Transfer the buffer (ownership move, no copy) to avoid doubling
+      // memory on a snapshot that may weigh several hundred KB.
       const workerState = state ? state.slice() : undefined;
       worker.postMessage(
         {
@@ -155,10 +147,6 @@ export class WebMlsService extends BaseMlsService {
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
-    }
-    if (this.pendingRetryTimer !== null) {
-      clearTimeout(this.pendingRetryTimer);
-      this.pendingRetryTimer = null;
     }
   }
 
@@ -191,7 +179,7 @@ export class WebMlsService extends BaseMlsService {
       this.missedHeartbeats += 1;
       if (this.missedHeartbeats > WebMlsService.MAX_MISSED_HEARTBEATS) {
         console.warn(
-          `[WS] ${this.missedHeartbeats} pings sans réponse serveur — fermeture connexion zombie`
+          `[WS] ${this.missedHeartbeats} pings without server response — closing zombie connection`
         );
         this.clearHeartbeat();
         this.safeCloseWebSocket(ws, 1001, 'heartbeat timeout');
@@ -270,7 +258,7 @@ export class WebMlsService extends BaseMlsService {
     const logUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam ? '&token=***' : ''}`;
 
     return new Promise((resolve, reject) => {
-      console.log(`Connecting to WebSocket: ${logUrl}`);
+      console.log(`[WS] Opening connection → ${logUrl}`);
       this.ws = new WebSocket(fullWsUrl);
       let resolved = false;
 
@@ -286,12 +274,12 @@ export class WebMlsService extends BaseMlsService {
         clearTimeout(timeout);
         resolved = true;
         this.startHeartbeat();
-        console.log('Connected to Chat Gateway with DeviceID:', this.deviceId);
+        console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
         resolve();
       };
       this.ws.onerror = (event) => {
         clearTimeout(timeout);
-        console.error('WebSocket Error:', event);
+        console.error('[WS] WebSocket error:', event);
         if (!resolved) {
           resolved = true;
           reject(
@@ -313,7 +301,7 @@ export class WebMlsService extends BaseMlsService {
         } else {
           this.clearHeartbeat();
           console.warn(
-            `WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason || 'no reason'}`
+            `[WS] Disconnected. Code: ${event.code}, Reason: ${event.reason || 'no reason'}`
           );
           this.disconnectCallback?.();
         }
@@ -399,151 +387,14 @@ export class WebMlsService extends BaseMlsService {
             console.warn(`[WS RCV] No proto or no messageCallback set. Message ignored.`);
           }
         } catch (e) {
-          console.error('Failed to process WebSocket message:', e);
+          console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
       };
     });
   }
 
-  /** Drains per-group queues (round-robin across conversations, sequential MLS mutex). */
-  protected async processQueue(): Promise<void> {
-    if (!this.messageCallback) {
-      console.warn(
-        '[QUEUE] messageCallback non défini - messages en attente ne seront pas traités'
-      );
-      return;
-    }
-
-    const ackIds: string[] = [];
-    let hadFailedQueuedMessage = false;
-
-    await this.messageScheduler.drain(
-      async (msg) => {
-        const groupId = msg.groupId;
-
-        // Parité TauriMlsService : ACK et ignore les messages de contrôle group_reset.
-        // Sur Web, la reconnexion WebSocket suffit — pas de resync epoch supplémentaire.
-        if (msg.type === 'group_reset') {
-          console.log(
-            `[QUEUE] group_reset (contrôle) ignoré sur Web — groupe=${groupId ?? 'inconnu'}`
-          );
-          if (msg.queuedMessageId) {
-            ackIds.push(msg.queuedMessageId);
-          }
-          return;
-        }
-
-        try {
-          console.log(
-            `[QUEUE] Traitement ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'message'} groupe=${groupId ?? 'inconnu'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-          );
-          const deliveryMeta: IncomingDeliveryMeta | undefined =
-            msg.queuedCreatedAt !== undefined || msg.queuedMessageId
-              ? {
-                  ...(msg.queuedCreatedAt !== undefined
-                    ? { queuedCreatedAt: msg.queuedCreatedAt }
-                    : {}),
-                  ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
-                }
-              : undefined;
-          const cbResult = await this.messageCallback!(
-            msg.senderId,
-            msg.ciphertext,
-            msg.groupId,
-            msg.isWelcome,
-            msg.ratchetTreeBytes,
-            msg.isCommit,
-            deliveryMeta
-          );
-          console.log(
-            `[QUEUE] messageCallback → ${cbResult} (groupe=${groupId ?? 'inconnu'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-          );
-
-          const flags = {
-            isWelcome: msg.isWelcome,
-            isCommit: msg.isCommit,
-            hasQueuedId: Boolean(msg.queuedMessageId),
-          };
-          if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
-            ackIds.push(msg.queuedMessageId);
-          } else if (flags.hasQueuedId && cbResult === false) {
-            hadFailedQueuedMessage = true;
-            logMlsMetric({
-              kind: 'queue_skip_ack',
-              platform: 'web',
-              reason: 'callback_retry',
-              isWelcome: msg.isWelcome,
-              isCommit: msg.isCommit,
-            });
-          }
-
-          if (msg.isWelcome && groupId) {
-            this.messageScheduler.reinjectAfterWelcome(groupId);
-            this.welcomeProcessedCallback?.(groupId);
-          }
-        } catch (e) {
-          console.error(`[QUEUE] Error processing message:`, e);
-          const exFlags = {
-            isWelcome: msg.isWelcome,
-            isCommit: msg.isCommit,
-            hasQueuedId: Boolean(msg.queuedMessageId),
-          };
-          if (shouldAckAfterWebException(exFlags) && msg.queuedMessageId) {
-            ackIds.push(msg.queuedMessageId);
-          } else if (exFlags.hasQueuedId) {
-            logMlsMetric({
-              kind: 'queue_skip_ack',
-              platform: 'web',
-              reason: 'web_exception_non_commit',
-              isWelcome: msg.isWelcome,
-              isCommit: msg.isCommit,
-            });
-          }
-          if (groupId && this.messageScheduler.hasWelcomePending(groupId)) {
-            this.messageScheduler.reinjectAfterWelcome(groupId);
-          }
-        }
-      },
-      {
-        onDrainStart: (pendingCount) => this.bulkIngestStart?.(true, pendingCount > 1),
-        onDrainEnd: async () => {
-          if (ackIds.length > 0) {
-            logMlsMetric({ kind: 'queue_ack', platform: 'web', count: ackIds.length });
-            void this.delivery.deliveryPost('messages/ack', {
-              userId: this.userId,
-              deviceId: this.deviceId,
-              messageIds: ackIds,
-            });
-          }
-
-          if (hadFailedQueuedMessage && this.ws?.readyState === WebSocket.OPEN) {
-            if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
-            this.pendingRetryTimer = setTimeout(() => {
-              this.pendingRetryTimer = null;
-              if (this.ws?.readyState === WebSocket.OPEN) {
-                console.log('[QUEUE] Retry in-session: fetchPendingMessages (message non-ACKé)');
-                this.fetchPendingMessages();
-              }
-            }, WebMlsService.PENDING_RETRY_DELAY_MS);
-          }
-
-          await this.bulkIngestEnd?.(true, true);
-        },
-      }
-    );
-
-    // Messages arrivés via WebSocket pendant onDrainEnd (isDraining=true) : relancer le drain.
-    if (this.messageScheduler.getPendingCount() > 0 && !this.messageScheduler.draining) {
-      void this.processQueue();
-    }
-  }
-
-  /** Releases Web-specific resources: terminates the key package worker and clears retry timers. */
+  /** Releases Web-specific resources: terminates the key package worker. */
   protected override destroyPlatformResources(): void {
-    if (this.pendingRetryTimer !== null) {
-      clearTimeout(this.pendingRetryTimer);
-      this.pendingRetryTimer = null;
-    }
     if (this.keyPackageWorker) {
       this.keyPackageWorker.terminate();
       this.keyPackageWorker = null;
@@ -559,83 +410,6 @@ export class WebMlsService extends BaseMlsService {
         // Best-effort - ignore if the socket is already closing
       }
     }
-  }
-
-  /** WASM client wrapper - fetches offline-queued messages from the delivery service and routes each one through the message queue. */
-  async fetchPendingMessages(): Promise<void> {
-    if (this.userId === 'unknown') return;
-
-    const FETCH_TIMEOUT = 10_000;
-
-    try {
-      const ctrl2 = new AbortController();
-      const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
-      const messages = await this.delivery.pullPendingMessagesJson(ctrl2.signal);
-      clearTimeout(tid2);
-      if (Array.isArray(messages)) {
-        if (messages.length > 0) {
-          console.log(`Fetched ${messages.length} pending messages`);
-
-          // Route all pending messages through the serialized queue so they
-          // never race with live WebSocket messages calling messageCallback.
-          for (const msg of messages as Record<string, unknown>[]) {
-            const msgId = (msg.id || msg._id) as string | undefined;
-            const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
-            const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
-
-            // ── Messages de contrôle (group_reset persisté pour devices offline) ──
-            // Parité TauriMlsService : ces messages n'ont pas de payload MLS (proto vide).
-            // Sur Web, on ACK et on ignore : le backend n'utilise group_reset que pour
-            // déclencher une resync epoch côté Tauri. Côté Web, la reconnexion WS suffit.
-            if (msg.type === 'group_reset') {
-              this.enqueueMessage({
-                senderId: (msg.senderId as string) || 'unknown',
-                ciphertext: new Uint8Array(0),
-                groupId: (msg.groupId as string) || undefined,
-                isWelcome: false,
-                isCommit: false,
-                queuedMessageId: msgId,
-                type: 'group_reset',
-                queuedCreatedAt,
-              });
-              continue;
-            }
-
-            if (proto) {
-              try {
-                const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
-                if (ciphertext.length > 0) {
-                  this.enqueueMessage({
-                    senderId: (msg.senderId as string) || 'unknown',
-                    ciphertext,
-                    groupId: (msg.groupId as string) || undefined,
-                    isWelcome: msg.isWelcome === true,
-                    isCommit: msg.isCommit === true,
-                    ratchetTreeBytes:
-                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
-                        : undefined,
-                    queuedMessageId: msgId,
-                    queuedCreatedAt,
-                  });
-                }
-              } catch (e) {
-                console.error('[PENDING] Failed to enqueue proto message:', e);
-              }
-            }
-          }
-        } else {
-          console.log(`[MSG][PENDING] No pending MLS message for ${this.userId}:${this.deviceId}`);
-        }
-      } else {
-        console.warn(
-          `[MSG][PENDING] Pending message fetch failed or non-array (${this.userId}:${this.deviceId})`
-        );
-      }
-    } catch (e) {
-      console.error('Failed to fetch pending messages', e);
-    }
-    await this.waitForMessageQueueIdle();
   }
 
   /**
@@ -677,10 +451,10 @@ export class WebMlsService extends BaseMlsService {
     try {
       this.client = await loadAndInitWasm(userId, this.deviceId, state, pin);
     } catch (e) {
-      // Si l'init échoue ET qu'un état sauvegardé existait, c'est l'état qui est fautif
-      // (credential mismatch, corruption partielle, clé Argon2 invalide…).
-      // → fresh-start systématique pour ne pas bloquer l'utilisateur indéfiniment.
-      // Si state == null et erreur → crash réel (pas d'état à blâmer) → on remonte.
+      // If init fails AND a saved state existed, the state is to blame
+      // (credential mismatch, partial corruption, invalid Argon2 key…).
+      // → systematic fresh-start to avoid blocking the user indefinitely.
+      // If state == null and error → real crash (no state to blame) → rethrow.
       const errStr = String(e);
       const isCredentialMismatch =
         errStr.includes('identity mismatch') || errStr.includes('Credential identity');
@@ -690,7 +464,7 @@ export class WebMlsService extends BaseMlsService {
           console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
         } else {
           console.warn(
-            '[MLS] État chargé inutilisable (corruption ?) → fresh-start:',
+            '[MLS] Loaded state unusable (corruption?) → fresh-start:',
             errStr.slice(0, 200)
           );
         }
@@ -708,7 +482,7 @@ export class WebMlsService extends BaseMlsService {
           console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
         );
       } else {
-        console.error('WASM Init Failed:', e);
+        console.error('[MLS] WASM init failed:', e);
         throw e;
       }
     }
@@ -739,7 +513,7 @@ export class WebMlsService extends BaseMlsService {
     const newState = this.client.save_state(newPin) as Uint8Array;
     this.lastKnownState = newState.slice();
     await saveMlsState(this.userId, newState);
-    console.log('[MLS] PIN changé — état re-chiffré et persisté.');
+    console.log('[MLS] PIN changed — state re-encrypted and persisted.');
   }
 
   /** WASM client wrapper - calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
@@ -763,16 +537,16 @@ export class WebMlsService extends BaseMlsService {
     let stateBytesToPersist: Uint8Array | undefined;
 
     if (this.useKeyPackageWorker && typeof Worker !== 'undefined') {
-      // Le worker génère les KeyPackages off-thread, mais son résultat contient des clés
-      // privées issues d'un snapshot qui peut être périmé si des messages WebSocket ont été
-      // traités en parallèle. On tient le verrou MLS pendant toute la durée du worker pour
-      // empêcher tout traitement concurrent — reloadClientFromState est ainsi toujours sûr.
+      // The worker generates KeyPackages off-thread, but its result contains private keys
+      // from a snapshot that may be stale if WebSocket messages were processed in parallel.
+      // We hold the MLS lock for the entire duration of the worker to prevent any
+      // concurrent processing — reloadClientFromState is thus always safe.
       const workerGenResult = await this.messageScheduler.runUnderMlsLock(async () => {
         try {
-          console.log('[MLS] generateKeyPackage via worker (sous mlsLock)');
+          console.log('[MLS] generateKeyPackage via worker (under mlsLock)');
           const snapshot = (this.client.save_state(pin) as Uint8Array).slice();
           const workerResult = await this.runWorkerKeyPackageGeneration(pin, needed, snapshot);
-          // Le verrou est tenu : aucun message n'a pu modifier l'état WASM pendant le worker.
+          // Lock is held: no message could have modified WASM state during worker execution.
           await this.reloadClientFromState(workerResult.state, pin);
           return {
             fallback: workerResult.fallback,
@@ -780,7 +554,7 @@ export class WebMlsService extends BaseMlsService {
             stateBytesToPersist: workerResult.state,
           };
         } catch (e) {
-          console.warn('[MLS] key package worker failed, fallback main thread path:', e);
+          console.warn('[MLS] key package worker failed, fallback to main thread path:', e);
           const fb = this.client.generate_key_package() as Uint8Array;
           const pool =
             needed > 0
@@ -813,7 +587,7 @@ export class WebMlsService extends BaseMlsService {
         await saveMlsState(this.userId, stateBytesToPersist);
         this.lastKnownState = stateBytesToPersist.slice();
       } catch (e) {
-        console.warn('Auto-save failed in WASM mode', e);
+        console.warn('[MLS] Auto-save failed in WASM mode:', e);
       }
     }
 
@@ -918,7 +692,7 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** WASM client wrapper - validates the commit epoch client-side then broadcasts the MLS commit to all group members (parité TauriMlsService). */
+  /** WASM client wrapper - validates the commit epoch client-side then broadcasts the MLS commit to all group members (parity TauriMlsService). */
   async sendCommit(
     commitBytes: Uint8Array,
     groupId: string,
@@ -957,7 +731,7 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
-  /** Poison Pill - purge définitive : mémoire WASM, stockage OpenMLS et verrou d'epoch à MAX. */
+  /** Poison Pill - definitive purge: WASM memory, OpenMLS storage and epoch lock at MAX. */
   dropGroup(groupId: string): void {
     if (!this.client) return;
     try {

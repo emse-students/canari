@@ -35,7 +35,7 @@ describe('mlsRecoveryMetrics', () => {
     logMlsMetric({
       kind: 'queue_skip_ack',
       platform: 'web',
-      reason: 'web_exception_non_commit',
+      reason: 'exception_non_commit',
       isWelcome: true,
       isCommit: false,
     });

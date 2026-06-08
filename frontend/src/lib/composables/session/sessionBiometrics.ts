@@ -12,10 +12,30 @@ const BIOMETRIC_DISMISSED_KEY = 'canari_biometric_prompt_dismissed';
 
 /**
  * Returns true if the user has permanently dismissed the biometric enrolment prompt.
- * Reads a localStorage flag set by dismissBiometricPromptImpl.
+ *
+ * Primary source: `localStorage` (fast, synchronous).
+ * Fallback on Tauri: native flag via `invoke('get_native_flag')`, used when
+ * `localStorage` was purged after an Android process kill. Writing both stores
+ * in `dismissBiometricPromptImpl` ensures the flag survives such resets.
  */
-export function isBiometricPromptDismissed(): boolean {
-  return localStorage.getItem(BIOMETRIC_DISMISSED_KEY) === 'true';
+export async function isBiometricPromptDismissed(): Promise<boolean> {
+  if (localStorage.getItem(BIOMETRIC_DISMISSED_KEY) === 'true') return true;
+  if (isTauriRuntime()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const nativeVal = await invoke<boolean | null>('get_native_flag', {
+        key: 'biometricPromptDismissed',
+      });
+      if (nativeVal === true) {
+        // Restore localStorage so subsequent (sync) reads are instant.
+        localStorage.setItem(BIOMETRIC_DISMISSED_KEY, 'true');
+        return true;
+      }
+    } catch {
+      /* native flag unavailable — treat as not dismissed */
+    }
+  }
+  return false;
 }
 
 /**

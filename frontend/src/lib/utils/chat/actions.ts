@@ -3,7 +3,6 @@ import { fromHex, toHex, saveMlsState, loadMlsState, exportMlsStateAsHex } from 
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
-import { downloadDir } from '@tauri-apps/api/path';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   sendFullHistoryBundle,
@@ -466,6 +465,8 @@ export async function exportUserBackup(params: {
 
     const dialog = await import('@tauri-apps/plugin-dialog');
     const fs = await import('@tauri-apps/plugin-fs');
+    // Dynamic import: avoids bundling @tauri-apps/api/path in the Web build.
+    const { downloadDir } = await import('@tauri-apps/api/path');
 
     const path = await dialog.open({
       multiple: false,
@@ -479,6 +480,7 @@ export async function exportUserBackup(params: {
     const file = await fs.create(`${path}/${filename}`);
     await file.write(new Uint8Array(blob.buffer as ArrayBuffer));
     await file.close();
+    log(`[OK] Sauvegarde exportée : ${filename}`);
   } else {
     const url = URL.createObjectURL(
       new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })

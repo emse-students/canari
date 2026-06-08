@@ -2,17 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
 import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
-import {
-  shouldAckAfterSuccess,
-  shouldAckAfterTauriGenericException,
-  shouldAckGroupResetControl,
-  logMlsMetric,
-  commitBaseEpochForValidation,
-  detectRuntimeDeviceOs,
-} from '$lib/mls-client';
-import { getToken } from '$lib/stores/auth';
+import { logMlsMetric, commitBaseEpochForValidation, detectRuntimeDeviceOs } from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
+import { getToken } from '$lib/stores/auth';
 import { BaseMlsService } from './BaseMlsService';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
@@ -31,7 +23,7 @@ export class TauriMlsService extends BaseMlsService {
   private wsUnlisten: (() => void) | null = null;
   /** Consecutive pings sent without any incoming data frame from the server. */
   private missedHeartbeats = 0;
-  /** Maximum consecutive pings without any server activity before we force-close (parité WebMlsService). */
+  /** Maximum consecutive pings without any server activity before we force-close (parity WebMlsService). */
   private static readonly MAX_MISSED_HEARTBEATS = 3;
   /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
   private _knownGroups: Set<string> = new Set();
@@ -40,21 +32,12 @@ export class TauriMlsService extends BaseMlsService {
   /** In-flight Rust MLS mutations; drained before `saveState` so mls.bin matches `_knownGroups`. */
   private pendingRustMutations: Promise<unknown>[] = [];
   private appVersionCache: string | null | undefined = undefined;
-  // PIN conservé en mémoire après init() pour chiffrer l'état MLS après
-  // chaque message sans redemander le PIN à l'utilisateur.
+  // PIN kept in memory after init() to re-encrypt the MLS state after each message
+  // without asking the user for the PIN again.
   private _pin = '';
-  // Timer de retry in-session : si un message delivery-queue n'a pas été ACKé (return false),
-  // on reprogramme fetchPendingMessages après PENDING_RETRY_DELAY_MS (parité WebMlsService).
-  private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly PENDING_RETRY_DELAY_MS = 15_000;
 
   constructor() {
     super('tauri', fetch);
-  }
-
-  /** When true, Welcome is delivered only to the first available device (saves N-1 redundant deliveries on Tauri). */
-  protected override get sendWelcomeToFirstDeviceOnly(): boolean {
-    return true;
   }
 
   /** Tracks a native invoke so `saveState` can wait for Rust before persisting mls.bin. */
@@ -84,20 +67,26 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
+  /**
+   * Platform hook: refresh the epoch cache after each successfully processed message.
+   * Called by BaseMlsService.processQueue after a successful messageCallback invocation.
+   */
+  protected override async onMessageProcessed(groupId: string | undefined): Promise<void> {
+    if (groupId) {
+      await this.refreshEpochCache(groupId);
+    }
+  }
+
   /** Resets the heartbeat miss counter whenever a data frame is received from the server. */
   private resetHeartbeatCounter(): void {
     this.missedHeartbeats = 0;
   }
 
-  /** Clears the heartbeat interval and the in-session retry timer. */
+  /** Clears the heartbeat interval. */
   private clearHeartbeat(): void {
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
-    }
-    if (this.pendingRetryTimer !== null) {
-      clearTimeout(this.pendingRetryTimer);
-      this.pendingRetryTimer = null;
     }
   }
 
@@ -110,11 +99,11 @@ export class TauriMlsService extends BaseMlsService {
         this.clearHeartbeat();
         return;
       }
-      // Check if the server has sent anything since the last ping (parité WebMlsService).
+      // Check if the server has sent anything since the last ping (parity WebMlsService).
       this.missedHeartbeats += 1;
       if (this.missedHeartbeats > TauriMlsService.MAX_MISSED_HEARTBEATS) {
         console.warn(
-          `[WS] ${this.missedHeartbeats} pings sans réponse serveur — fermeture connexion zombie`
+          `[WS] ${this.missedHeartbeats} pings without server response — closing zombie connection`
         );
         this.clearHeartbeat();
         void this.ws.disconnect().catch(() => {});
@@ -178,7 +167,7 @@ export class TauriMlsService extends BaseMlsService {
     const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
     const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
     console.log(
-      `[WS] Ouverture connexion → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (sans token)'}`
+      `[WS] Opening connection → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (no token)'}`
     );
 
     // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
@@ -192,10 +181,10 @@ export class TauriMlsService extends BaseMlsService {
     );
     this.ws = await Promise.race([connectPromise, timeoutPromise]);
     resolved = true;
-    console.log(`[WS] Connecté au Chat Gateway - device=${this.deviceId}`);
+    console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
-      // Any incoming frame proves the server is alive — reset heartbeat miss counter (parité WebMlsService).
+      // Any incoming frame proves the server is alive — reset heartbeat miss counter (parity WebMlsService).
       if (msg.type !== 'Close') {
         this.resetHeartbeatCounter();
       }
@@ -207,17 +196,17 @@ export class TauriMlsService extends BaseMlsService {
         const code = closeData?.code ?? 0;
         const codeDesc =
           code === 1000
-            ? 'fermeture normale'
+            ? 'normal closure'
             : code === 1001
-              ? 'serveur en arrêt'
+              ? 'server shutting down'
               : code === 1006
-                ? 'fermeture anormale (pas de close frame)'
+                ? 'abnormal closure (no close frame)'
                 : code === 1008
-                  ? 'violation de politique (auth?)'
+                  ? 'policy violation (auth?)'
                   : code === 1011
-                    ? 'erreur serveur interne'
+                    ? 'internal server error'
                     : `code=${code}`;
-        console.warn(`[WS] Déconnecté - ${codeDesc}, reason="${closeData?.reason ?? ''}"`);
+        console.warn(`[WS] Disconnected - ${codeDesc}, reason="${closeData?.reason ?? ''}"`);
         this.disconnectCallback?.();
         return;
       }
@@ -285,7 +274,7 @@ export class TauriMlsService extends BaseMlsService {
             console.warn(`[WS RCV] No proto or no messageCallback set. Message ignored.`);
           }
         } catch (e) {
-          console.error('Failed to process WebSocket message:', e);
+          console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
       })();
     });
@@ -294,229 +283,6 @@ export class TauriMlsService extends BaseMlsService {
 
     // Pending queue fetch is handled by initializeConnection() to keep
     // behavior aligned between WebMlsService and TauriMlsService.
-  }
-
-  /** Fetches offline-queued messages from the delivery service and routes each one through the priority queue. */
-  async fetchPendingMessages(): Promise<void> {
-    if (this.userId === 'unknown') return;
-
-    const FETCH_TIMEOUT = 10_000;
-
-    try {
-      const ctrl2 = new AbortController();
-      const tid2 = setTimeout(() => ctrl2.abort(), FETCH_TIMEOUT);
-      const messages = await this.delivery.pullPendingMessagesJson(ctrl2.signal);
-      clearTimeout(tid2);
-      if (Array.isArray(messages)) {
-        if (messages.length > 0) {
-          console.log(`Fetched ${messages.length} pending messages`);
-
-          // Route all pending messages through the serialized queue so they
-          // never race with live WebSocket messages calling messageCallback.
-          for (const msg of messages as Record<string, unknown>[]) {
-            const msgId = (msg.id || msg._id) as string | undefined;
-            const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
-            const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
-
-            // ── Messages de contrôle (group_reset persisté pour devices offline) ──
-            // Ces messages n'ont pas de payload MLS (proto vide). Ils sont injectés
-            // directement dans controlQueue via enqueueMessage({ type: 'group_reset' }).
-            if (msg.type === 'group_reset') {
-              this.enqueueMessage({
-                senderId: (msg.senderId as string) || 'unknown',
-                ciphertext: new Uint8Array(0),
-                groupId: (msg.groupId as string) || undefined,
-                isWelcome: false,
-                isCommit: false,
-                queuedMessageId: msgId,
-                type: 'group_reset',
-                queuedCreatedAt,
-              });
-              continue;
-            }
-
-            if (proto) {
-              try {
-                const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
-                if (ciphertext.length > 0) {
-                  this.enqueueMessage({
-                    senderId: (msg.senderId as string) || 'unknown',
-                    ciphertext,
-                    groupId: (msg.groupId as string) || undefined,
-                    isWelcome: msg.isWelcome === true,
-                    isCommit: msg.isCommit === true,
-                    ratchetTreeBytes:
-                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
-                        : undefined,
-                    queuedMessageId: msgId,
-                    queuedCreatedAt,
-                  });
-                }
-              } catch (e) {
-                console.error('[PENDING] Failed to enqueue proto message:', e);
-              }
-            }
-          }
-        } else {
-          console.log(`[MSG][PENDING] No pending MLS message for ${this.userId}:${this.deviceId}`);
-        }
-      } else {
-        console.warn(
-          `[MSG][PENDING] Pending message fetch failed or non-array (${this.userId}:${this.deviceId})`
-        );
-      }
-    } catch (e) {
-      console.error('Failed to fetch pending messages', e);
-    }
-    await this.waitForMessageQueueIdle();
-  }
-
-  /** Drains per-group queues (round-robin; global MLS mutex via scheduler). */
-  protected async processQueue(): Promise<void> {
-    if (!this.messageCallback) return;
-
-    const ackIds: string[] = [];
-    let hadFailedQueuedMessage = false;
-
-    await this.messageScheduler.drain(
-      async (msg) => {
-        const groupId = msg.groupId;
-
-        if (msg.type === 'group_reset') {
-          console.log(`[QUEUE] group_reset (persisté) pour groupe ${groupId ?? 'inconnu'}`);
-          if (groupId) {
-            this.messageScheduler.clearWelcomePending(groupId);
-          }
-          if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
-            ackIds.push(msg.queuedMessageId!);
-          }
-          if (groupId) {
-            await this.refreshEpochCache(groupId);
-          }
-          return;
-        }
-
-        try {
-          console.log(
-            `[QUEUE] ${msg.isWelcome ? 'Welcome' : msg.isCommit ? 'Commit' : 'Msg'} groupe=${groupId ?? '?'} sender=${msg.senderId}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-          );
-
-          const deliveryMeta: IncomingDeliveryMeta | undefined =
-            msg.queuedCreatedAt !== undefined || msg.queuedMessageId
-              ? {
-                  ...(msg.queuedCreatedAt !== undefined
-                    ? { queuedCreatedAt: msg.queuedCreatedAt }
-                    : {}),
-                  ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
-                }
-              : undefined;
-          const cbResult = await this.messageCallback!(
-            msg.senderId,
-            msg.ciphertext,
-            msg.groupId,
-            msg.isWelcome,
-            msg.ratchetTreeBytes,
-            msg.isCommit,
-            deliveryMeta
-          );
-          console.log(
-            `[QUEUE] → ${cbResult} (groupe=${groupId ?? '?'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
-          );
-
-          const flags = {
-            isWelcome: msg.isWelcome,
-            isCommit: msg.isCommit,
-            hasQueuedId: Boolean(msg.queuedMessageId),
-          };
-          if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
-            ackIds.push(msg.queuedMessageId);
-          } else if (flags.hasQueuedId && cbResult === false) {
-            hadFailedQueuedMessage = true;
-            logMlsMetric({
-              kind: 'queue_skip_ack',
-              platform: 'tauri',
-              reason: 'callback_retry',
-              isWelcome: msg.isWelcome,
-              isCommit: msg.isCommit,
-            });
-          }
-
-          if (msg.isWelcome && groupId) {
-            this.messageScheduler.reinjectAfterWelcome(groupId);
-            this.welcomeProcessedCallback?.(groupId);
-          }
-
-          // L'état MLS est persisté par mlsStatePersister (enregistré via setBulkIngestHooks) :
-          // coalescement automatique (1 seul Argon2 à la fin du drain, pas 1 par message).
-          // L'ancienne sauvegarde directe ici causait N × Argon2 (~3s chacun) sur Android
-          // pendant le rattrapage des messages, ce qui bloquait le traitement pendant >30s.
-
-          if (groupId) {
-            await this.refreshEpochCache(groupId);
-          }
-        } catch (e) {
-          const errStr = String(e);
-          console.error(`[QUEUE] Erreur traitement message:`, errStr);
-
-          if (msg.isWelcome) {
-            logMlsMetric({
-              kind: 'queue_skip_ack',
-              platform: 'tauri',
-              reason: 'tauri_welcome_error',
-            });
-            console.error(
-              `[QUEUE] Welcome échoué pour groupe=${groupId} - NE PAS ACK, retry sur reconnexion`
-            );
-            if (groupId) this.messageScheduler.clearWelcomePending(groupId);
-          } else {
-            const exFlags = {
-              isWelcome: msg.isWelcome,
-              isCommit: msg.isCommit,
-              hasQueuedId: Boolean(msg.queuedMessageId),
-            };
-            if (shouldAckAfterTauriGenericException(exFlags) && msg.queuedMessageId) {
-              ackIds.push(msg.queuedMessageId);
-            }
-            if (groupId) this.messageScheduler.clearWelcomePending(groupId);
-          }
-        }
-      },
-      {
-        onDrainStart: (pendingCount) => this.bulkIngestStart?.(true, pendingCount > 1),
-        onDrainEnd: async () => {
-          if (ackIds.length > 0) {
-            logMlsMetric({ kind: 'queue_ack', platform: 'tauri', count: ackIds.length });
-            void this.delivery.deliveryPost('messages/ack', {
-              userId: this.userId,
-              deviceId: this.deviceId,
-              messageIds: ackIds,
-            });
-          }
-
-          // Retry in-session : si un message n'a pas été ACKé, reprogrammer fetchPendingMessages
-          // après PENDING_RETRY_DELAY_MS (parité WebMlsService — évite d'attendre la reconnexion).
-          if (hadFailedQueuedMessage && this.ws !== null) {
-            if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
-            this.pendingRetryTimer = setTimeout(() => {
-              this.pendingRetryTimer = null;
-              if (this.ws !== null) {
-                console.log('[QUEUE] Retry in-session: fetchPendingMessages (message non-ACKé)');
-                void this.fetchPendingMessages();
-              }
-            }, TauriMlsService.PENDING_RETRY_DELAY_MS);
-          }
-
-          await this.bulkIngestEnd?.(true, true);
-        },
-      }
-    );
-
-    // Messages that arrived via WebSocket while onDrainEnd was awaiting (isDraining=true)
-    // were enqueued but could not start a new drain. Restart here so they are not stuck.
-    if (this.messageScheduler.getPendingCount() > 0 && !this.messageScheduler.draining) {
-      void this.processQueue();
-    }
   }
 
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */
@@ -591,10 +357,10 @@ export class TauriMlsService extends BaseMlsService {
     try {
       await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
     } catch (e) {
-      // Si l'init échoue ET qu'un état sauvegardé existait, c'est l'état qui est fautif
-      // (credential mismatch, corruption partielle, clé Argon2 invalide…).
-      // → fresh-start systématique pour ne pas bloquer l'utilisateur indéfiniment.
-      // Si state == null et erreur → crash réel (pas d'état à blâmer) → on remonte.
+      // If init fails AND a saved state existed, the state is to blame
+      // (credential mismatch, partial corruption, invalid Argon2 key…).
+      // → systematic fresh-start to avoid blocking the user indefinitely.
+      // If state == null and error → real crash (no state to blame) → rethrow.
       const errStr = String(e);
       const isCredentialMismatch =
         errStr.includes('identity mismatch') || errStr.includes('Credential identity');
@@ -604,7 +370,7 @@ export class TauriMlsService extends BaseMlsService {
           console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
         } else {
           console.warn(
-            '[MLS] État chargé inutilisable (corruption ?) → fresh-start:',
+            '[MLS] Loaded state unusable (corruption?) → fresh-start:',
             errStr.slice(0, 200)
           );
         }
@@ -635,9 +401,9 @@ export class TauriMlsService extends BaseMlsService {
       }
     }
 
-    // Sauvegarde le contexte de session pour les notifications push Android (no-op desktop).
-    // Le pushToken est inclus pour que le service Kotlin puisse fetch le proto MLS
-    // quand il n'est pas inclus inline dans le payload FCM (messages volumineux).
+    // Save session context for Android push notifications (no-op on desktop).
+    // The pushToken is included so the Kotlin service can fetch the MLS proto
+    // when it is not included inline in the FCM payload (large messages).
     void getToken()
       .then((pushToken: string) =>
         invoke('store_push_context', {
@@ -650,8 +416,8 @@ export class TauriMlsService extends BaseMlsService {
       )
       .catch(() => {});
 
-    // Écrit mls.bin dès l'init pour que le service FCM puisse déchiffrer
-    // même si aucun message n'a encore été traité (saveState non appelé).
+    // Write mls.bin immediately after init so the FCM service can decrypt
+    // even if no message has been processed yet (saveState not yet called).
     void this.saveState(pin).catch(() => {});
 
     // Populate the local groups cache from Rust after init.
@@ -694,7 +460,7 @@ export class TauriMlsService extends BaseMlsService {
   async changePIN(newPin: string): Promise<void> {
     this._pin = newPin;
     await this.saveState(newPin);
-    console.log('[MLS][Tauri] PIN changé — état re-chiffré et persisté.');
+    console.log('[MLS][Tauri] PIN changed — state re-encrypted and persisted.');
   }
 
   /** Tauri-native `invoke` wrapper - calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
@@ -897,7 +663,7 @@ export class TauriMlsService extends BaseMlsService {
     );
   }
 
-  /** Poison Pill - purge définitive via Tauri `supprimer_groupe` : mémoire Rust, stockage et verrou d'epoch à MAX. */
+  /** Poison Pill - definitive purge via Tauri `supprimer_groupe`: Rust memory, storage and epoch lock at MAX. */
   dropGroup(groupId: string): void {
     this._epochByGroupId.delete(groupId);
     this._knownGroups.delete(groupId);

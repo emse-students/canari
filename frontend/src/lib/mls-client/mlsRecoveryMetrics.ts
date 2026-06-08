@@ -15,11 +15,9 @@ export type MlsMetricEvent =
       kind: 'queue_skip_ack';
       platform: 'web' | 'tauri';
       reason:
-        | 'callback_retry'
-        | 'web_exception_non_commit'
-        | 'tauri_welcome_error'
-        | 'tauri_gap'
-        | 'tauri_unrecoverable';
+        | 'callback_retry' // messageCallback returned false → retry later
+        | 'exception_non_commit' // exception on non-commit message → retry on reconnect
+        | 'welcome_error'; // Welcome processing error → retry on reconnect
       isWelcome?: boolean;
       isCommit?: boolean;
     }

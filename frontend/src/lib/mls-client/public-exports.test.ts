@@ -3,6 +3,7 @@ import type { IMlsService } from '$lib/mls-client';
 import {
   loadAndInitWasm,
   shouldAckAfterSuccess,
+  shouldAckAfterException,
   commitBaseEpochForValidation,
   logMlsMetric,
   initTabLeadershipAsync,
@@ -21,6 +22,7 @@ describe('$lib/mls-client public barrel', () => {
   it('exports types and functions without throwing on import', () => {
     expect(typeof loadAndInitWasm).toBe('function');
     expect(typeof shouldAckAfterSuccess).toBe('function');
+    expect(typeof shouldAckAfterException).toBe('function');
     expect(typeof commitBaseEpochForValidation).toBe('function');
     expect(typeof logMlsMetric).toBe('function');
     expect(typeof initTabLeadershipAsync).toBe('function');

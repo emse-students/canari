@@ -37,7 +37,7 @@
       console.debug('[callback] handleOidcCallback resolved, user:', user?.id);
 
       status = 'Connexion réussie ! Redirection…';
-      const returnTo = getOidcReturnTo();
+      const returnTo = await getOidcReturnTo();
       console.debug('[callback] goto ->', returnTo);
       await goto(returnTo, { replaceState: true });
       console.debug('[callback] goto resolved');
