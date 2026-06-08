@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "canari"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "base64 0.22.1",
  "jni",
@@ -3228,7 +3228,7 @@ dependencies = [
 
 [[package]]
 name = "mls-core"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "argon2",
  "base64 0.22.1",

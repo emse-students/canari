@@ -1,13 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.mines_app" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="android:windowBackground">@color/app_background</item>
-    </style>
-    <!-- Thème de démarrage pour le SplashScreen API (Android 12+). Évite le flash blanc/noir
-         au lancement en affichant l'icône de l'app sur le fond de l'appli. -->
-    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/app_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.mines_app</item>
+        <!-- Customize your theme here. -->
     </style>
 </resources>
