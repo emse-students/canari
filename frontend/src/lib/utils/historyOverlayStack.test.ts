@@ -40,8 +40,8 @@ describe('historyOverlayStack', () => {
     pushHistoryOverlay(close);
     const handler = (window.addEventListener as ReturnType<typeof vi.fn>).mock.calls.find(
       (c) => c[0] === 'popstate'
-    )?.[1] as () => void;
-    handler?.();
+    )?.[1] as ((e: PopStateEvent) => void) | undefined;
+    handler?.({ state: null } as PopStateEvent);
     expect(close).toHaveBeenCalled();
     expect(historyOverlayStackDepth()).toBe(0);
   });

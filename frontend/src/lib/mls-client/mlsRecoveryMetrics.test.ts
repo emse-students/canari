@@ -41,7 +41,8 @@ describe('mlsRecoveryMetrics', () => {
     });
     const json = String(spy.mock.calls[0]?.[1]);
     expect(json).toContain('queue_skip_ack');
-    expect(json).toContain('web_exception_non_commit');
+    expect(json).toContain('"platform":"web"');
+    expect(json).toContain('"reason":"exception_non_commit"');
     spy.mockRestore();
   });
 });
