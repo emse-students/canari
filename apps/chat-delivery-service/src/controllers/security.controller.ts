@@ -23,6 +23,7 @@ import {
 import {
   assertSafeExternalUrl,
   fetchYouTubeOEmbed,
+  fetchMiGalleryPreview,
   buildLinkPreviewPayload,
 } from '../utils/url-guard';
 
@@ -134,6 +135,11 @@ export class SecurityController {
       const oembedPayload = await fetchYouTubeOEmbed(targetUrl);
       if (oembedPayload) {
         return oembedPayload;
+      }
+
+      const galleryPayload = await fetchMiGalleryPreview(targetUrl);
+      if (galleryPayload) {
+        return galleryPayload;
       }
 
       let currentUrl = targetUrl;

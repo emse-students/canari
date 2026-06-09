@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowUpRight, ExternalLink } from '@lucide/svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
+  import MiGalleryLinkPreview from '$lib/components/messages/MiGalleryLinkPreview.svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
@@ -30,6 +31,11 @@
       };
     }
   });
+
+  /** Vrai si le lien pointe vers un album MiGallery (gallery.mitv.fr/albums/[id]). */
+  const isMiGalleryAlbum = $derived(
+    parsed.host === 'gallery.mitv.fr' && /^\/albums\/[0-9a-f-]+\/?$/i.test(parsed.path)
+  );
 
   const fallbackInAppLabel = $derived(publicAppLinkLabel(url));
   const inAppPath = $derived(inAppPathFromHref(url));
@@ -111,6 +117,9 @@
   }
 </script>
 
+{#if isMiGalleryAlbum}
+  <MiGalleryLinkPreview url={parsed.href} preview={externalPreview} {isLoading} />
+{:else}
 <a
   onclick={handleClick}
   href={isInApp ? (inAppPath ?? '#') : parsed.href}
@@ -176,3 +185,4 @@
     {/if}
   </div>
 </a>
+{/if}

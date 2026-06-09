@@ -179,6 +179,78 @@ export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
   };
 }
 
+const GALLERY_HOST = 'gallery.mitv.fr';
+const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
+
+/**
+ * Fetches a link-preview payload for a MiGallery album URL via the og-preview API.
+ * Returns `null` when the URL is not a recognised album link or the API call fails.
+ * The returned object has the same shape as `buildLinkPreviewPayload`.
+ */
+export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
+  url: string;
+  title: string;
+  description: string;
+  image: string;
+  siteName: string;
+} | null> {
+  if (targetUrl.hostname !== GALLERY_HOST) return null;
+  const match = GALLERY_ALBUM_RE.exec(targetUrl.pathname);
+  if (!match) return null;
+
+  const albumId = match[1];
+  const previewApiUrl = `https://${GALLERY_HOST}/api/albums/${albumId}/og-preview`;
+
+  try {
+    const res = await fetch(previewApiUrl, {
+      method: 'GET',
+      headers: {
+        'user-agent': 'CanariLinkPreview/1.0',
+        accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      name?: string;
+      date?: string | null;
+      location?: string | null;
+      coverUrl?: string | null;
+    };
+
+    if (!data.name) return null;
+
+    const descParts: string[] = [];
+    if (data.date) {
+      try {
+        const d = new Date(data.date + 'T12:00:00');
+        descParts.push(
+          d.toLocaleDateString('fr-FR', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          }),
+        );
+      } catch {
+        descParts.push(data.date);
+      }
+    }
+    if (data.location) descParts.push(data.location);
+
+    return {
+      url: targetUrl.toString(),
+      title: data.name.slice(0, 180),
+      description: descParts.join(' · '),
+      image: data.coverUrl ?? '',
+      siteName: 'MiGallery',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Returns true when `hostname` is one of the known YouTube domains (`youtube.com`, `youtu.be`, etc.). */
 export function isYouTubeHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
