@@ -22,9 +22,18 @@
 
   const normalizedSearchTerm = $derived(searchTerm.trim().toLowerCase());
 
+  /** Vrai si le message ne contient qu'un lien (pas de texte autour) — on masque l'URL brute.
+   * Exclut les GIFs qui s'affichent en inline dans le <p>. */
+  const isLinkOnly = $derived(
+    firstLink !== null &&
+      !isGifUrl(firstLink) &&
+      textSegments.every((s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === ''))
+  );
+
 
 </script>
 
+{#if !isLinkOnly}
 <p
   class="text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap [overflow-wrap:anywhere] {isDeleted
     ? 'italic opacity-60'
@@ -76,6 +85,7 @@
     {/if}
   {/each}
 </p>
+{/if}
 {#if firstLink}
   <LinkPreviewCard url={firstLink} />
 {/if}
