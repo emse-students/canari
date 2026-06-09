@@ -277,9 +277,19 @@ export async function discoverMissingGroups(params: {
   saveConversation?: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
+  /** Optionnel : accès IndexedDB pour vérifier que les messages ont été migrés avant purge. */
+  storage?: IStorage | null;
 }) {
-  const { mlsService, userId, pin, conversations, saveConversation, deleteConversation, log } =
-    params;
+  const {
+    mlsService,
+    userId,
+    pin,
+    conversations,
+    saveConversation,
+    deleteConversation,
+    log,
+    storage,
+  } = params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
@@ -340,6 +350,17 @@ export async function discoverMissingGroups(params: {
         () => ({ terminalId: convo.id, hasChain: false })
       );
       if (hasChain && terminalId !== convo.id && conversations.has(terminalId)) {
+        // Sécurité migration : ne pas supprimer la source si ses messages ne sont pas encore
+        // dans le groupe terminal (cas d'un reboot/migration interrompu).
+        if (storage) {
+          const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
+          if (pendingMsgs.length > 0) {
+            log(
+              `[DISCOVERY] ${convo.id.slice(0, 8)}… conservé - ${pendingMsgs.length} msg(s) non encore migrés vers ${terminalId.slice(0, 8)}…`
+            );
+            continue;
+          }
+        }
         log(
           `[DISCOVERY] Groupe UI "${convo.name || convo.id}" → terminal ${terminalId.slice(0, 8)}… - retrait`
         );
@@ -355,6 +376,17 @@ export async function discoverMissingGroups(params: {
 
       const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
       if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {
+        // Sécurité migration : ne pas supprimer la source si ses messages ne sont pas encore
+        // dans le groupe successeur (cas d'un reboot/migration interrompu).
+        if (storage) {
+          const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
+          if (pendingMsgs.length > 0) {
+            log(
+              `[DISCOVERY] ${convo.id.slice(0, 8)}… conservé - ${pendingMsgs.length} msg(s) non encore migrés vers ${serverEntry.successorId.slice(0, 8)}…`
+            );
+            continue;
+          }
+        }
         log(
           `[DISCOVERY] Groupe UI "${convo.name || convo.id}" migré vers ${serverEntry.successorId} - retrait`
         );

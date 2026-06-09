@@ -39,6 +39,7 @@ export function runGroupDiscoveryImpl(
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id) => st.deleteConversation(id) : undefined,
     log: cb.log,
+    storage: st,
   }).catch((e) =>
     cb.log(
       `[WARN] Echec decouverte groupes${label ? ` (${label})` : ''}: ${

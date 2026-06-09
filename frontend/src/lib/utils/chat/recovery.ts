@@ -503,6 +503,10 @@ export async function migrateConversation(
   // Un second appel retourne 0 résultats car l'ancienne conversationId n'existe plus.
   // Le guard !existingTarget précédent causait la perte des messages sur les devices
   // population 2 (Welcome reçu → S dans conversations, mais messages de G non migrés).
+  //
+  // messagesCopied = true si la copie a réussi (ou s'il n'y avait rien à copier).
+  // Si false, la source est conservée en IndexedDB pour éviter toute perte de messages.
+  let messagesCopied = false;
   if (storage) {
     try {
       const msgs = await storage.getMessages(fromGroupId, pin);
@@ -511,9 +515,12 @@ export async function migrateConversation(
         await storage.saveMessages(rekeyed, pin);
         log(`[MIGRATE] ${msgs.length} message(s) copié(s)`);
       }
+      messagesCopied = true;
     } catch (e) {
-      log(`[MIGRATE] Erreur copie messages : ${String(e)}`);
+      log(`[MIGRATE] Erreur copie messages : ${String(e)} - source conservée en DB`);
     }
+  } else {
+    messagesCopied = true; // pas de storage : rien à protéger
   }
 
   // Persister la nouvelle conversation avant de supprimer l'ancienne
@@ -555,8 +562,14 @@ export async function migrateConversation(
 
   if (getSelectedContact() === fromGroupId) setSelectedContact(toGroupId);
 
+  // Ne supprimer la source de l'IndexedDB que si les messages ont été copiés avec succès.
+  // Si la copie a échoué, la source reste en DB et checkGroupSuccessors retente la migration.
   conversations.delete(fromGroupId);
-  if (deleteConversation) await deleteConversation(fromGroupId).catch(() => {});
+  if (messagesCopied) {
+    if (deleteConversation) await deleteConversation(fromGroupId).catch(() => {});
+  } else {
+    log(`[MIGRATE] Source ${fromGroupId.slice(0, 8)}… conservée en DB (messages non migrés)`);
+  }
 
   try {
     deps.mlsService.forgetGroup(fromGroupId);
