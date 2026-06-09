@@ -408,6 +408,9 @@
           // choose PIN instead without seeing a jarring system dialog.
           const confirmed = await askBiometricChoice();
           if (confirmed) {
+            // loginImpl guards against isLoginInProgress=true — reset it so it can run,
+            // mirroring the savedPin path below that does the same before calling login().
+            globalSession.isLoginInProgress = false;
             await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
           }
         }
@@ -621,6 +624,8 @@
       globalSession.userId = uid;
       globalSession.pin = savedPin;
       _loginInProgress = true;
+      // loginImpl bails if isLoginInProgress=true — reset before delegating.
+      globalSession.isLoginInProgress = false;
       void globalSession.login({
         ...sessionCb(),
         onLoginFailed: (msg: string) => {
@@ -636,6 +641,8 @@
         const bioAvailable = await BiometricService.isAvailable().catch(() => false);
         if (bioAvailable) {
           _loginInProgress = true;
+          // loginImpl bails if isLoginInProgress=true — reset before delegating.
+          globalSession.isLoginInProgress = false;
           await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
           if (globalSession.isLoggedIn) return;
           _loginInProgress = false;
