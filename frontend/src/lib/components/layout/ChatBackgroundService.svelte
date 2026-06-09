@@ -27,6 +27,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import PinModal from '$lib/components/auth/PinModal.svelte';
+  import BiometricBottomSheet from '$lib/components/auth/BiometricBottomSheet.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
@@ -96,6 +97,29 @@
   let pinLoading = $state(false);
   let pinStep = $state('');
   let biometricConfigured = $state(false);
+
+  let showBiometricSheet = $state(false);
+  let _biometricSheetResolve: ((confirmed: boolean) => void) | null = null;
+
+  /** Shows the biometric choice sheet and returns true if the user confirms, false if they skip. */
+  function askBiometricChoice(): Promise<boolean> {
+    return new Promise((resolve) => {
+      _biometricSheetResolve = resolve;
+      showBiometricSheet = true;
+    });
+  }
+
+  function onBiometricConfirm() {
+    showBiometricSheet = false;
+    _biometricSheetResolve?.(true);
+    _biometricSheetResolve = null;
+  }
+
+  function onBiometricSkip() {
+    showBiometricSheet = false;
+    _biometricSheetResolve?.(false);
+    _biometricSheetResolve = null;
+  }
 
   /** Returns false when min-version or maintenance gates block MLS unlock. */
   async function ensurePlatformAllowsUnlock(): Promise<boolean> {
@@ -380,7 +404,12 @@
         // set up), skip straight to PIN to avoid a confusing OS error dialog.
         const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
         if (biometricAvailable) {
-          await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+          // Ask the user before invoking the OS biometric prompt so they can
+          // choose PIN instead without seeing a jarring system dialog.
+          const confirmed = await askBiometricChoice();
+          if (confirmed) {
+            await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+          }
         }
         if (!globalSession.isLoggedIn) {
           // Biométrie annulée, échouée ou non disponible → fallback modal PIN
@@ -615,6 +644,13 @@
     }
   });
 </script>
+
+<!-- Biometric choice sheet (shown before OS biometric prompt) -->
+<BiometricBottomSheet
+  open={showBiometricSheet}
+  onConfirm={onBiometricConfirm}
+  onSkip={onBiometricSkip}
+/>
 
 <!-- PIN modal global (visible sur toutes les routes) -->
 <PinModal
