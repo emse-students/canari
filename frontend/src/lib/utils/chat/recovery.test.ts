@@ -85,14 +85,18 @@ describe('requestReAdd', () => {
     expect(timers.has('g1')).toBe(true);
   });
 
-  it('est idempotent : second appel ignoré si timer actif', async () => {
+  it('un seul timer armé mais welcome_request renvoyée à chaque reconnexion', async () => {
     const deps = makeDeps();
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
     await requestReAdd('g1', deps, timers);
 
-    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
+    // La welcome_request est re-envoyée silencieusement même quand le timer tourne déjà
+    // (le peer peut être revenu en ligne depuis la dernière fois).
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+    // Mais un seul timer doit être actif (pas de double reboot).
+    expect(timers.size).toBe(1);
   });
 
   it(`après ${RECOVERY_TIMEOUT_MS / 1000}s sans Welcome → appelle reboot`, async () => {
