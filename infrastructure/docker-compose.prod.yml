@@ -147,6 +147,8 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+      AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
+      AVATAR_API_KEY: ${AVATAR_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
