@@ -114,7 +114,7 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Daily at 03:00 — supprime les notifications de posts de plus de 90 jours.
+   * Daily at 03:00 - supprime les notifications de posts de plus de 90 jours.
    * Rétention choisie par analogie avec les réseaux sociaux grand public (Instagram, Twitter).
    */
   @Cron('0 3 * * *')
@@ -134,7 +134,7 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Daily at 03:15 — supprime les rappels de formulaires dont les deux notifications
+   * Daily at 03:15 - supprime les rappels de formulaires dont les deux notifications
    * ont été envoyées et dont l'ouverture remonte à plus de 30 jours.
    */
   @Cron('15 3 * * *')
@@ -154,7 +154,7 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Daily at 03:30 — supprime les tags d'adhérent expirés depuis plus de 30 jours.
+   * Daily at 03:30 - supprime les tags d'adhérent expirés depuis plus de 30 jours.
    * La grâce de 30 jours permet de traiter les litiges de renouvellement.
    */
   @Cron('30 3 * * *')
@@ -176,7 +176,7 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Weekly (Sunday 04:00) — supprime les webhook deliveries livrées avec succès
+   * Weekly (Sunday 04:00) - supprime les webhook deliveries livrées avec succès
    * après 30 jours. Les échouées sont conservées pour retry manuel.
    */
   @Cron('0 4 * * 0')
@@ -198,7 +198,7 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Weekly (Sunday 04:30) — archive les signalements traités (reviewed/dismissed)
+   * Weekly (Sunday 04:30) - archive les signalements traités (reviewed/dismissed)
    * de plus d'un an. Les signalements "pending" sont conservés indéfiniment.
    */
   @Cron('30 4 * * 0')

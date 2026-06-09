@@ -49,6 +49,7 @@
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
   let error = $state('');
+  let isTouchDevice = $state(false);
 
   // Bio state
   let editingBio = $state(false);
@@ -95,6 +96,7 @@
   });
 
   onMount(async () => {
+    isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
     try {
       profile = await fetchMyProfile();
       bioInput = profile.bio || '';
@@ -434,39 +436,41 @@
           </button>
         </div>
 
-        <div class="flex items-center justify-between gap-4">
-          <div class="flex items-center gap-3.5">
-            <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
-              {#if settings.vibrationsEnabled}
-                <Vibrate size={20} strokeWidth={2.5} />
-              {:else}
-                <VibrateOff size={20} strokeWidth={2.5} />
-              {/if}
+        {#if isTouchDevice}
+          <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3.5">
+              <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+                {#if settings.vibrationsEnabled}
+                  <Vibrate size={20} strokeWidth={2.5} />
+                {:else}
+                  <VibrateOff size={20} strokeWidth={2.5} />
+                {/if}
+              </div>
+              <div>
+                <p class="text-sm font-bold text-text-main">Vibrations</p>
+                <p class="text-xs font-medium text-text-muted mt-0.5">
+                  Retour haptique sur les actions (réactions, réponses…)
+                </p>
+              </div>
             </div>
-            <div>
-              <p class="text-sm font-bold text-text-main">Vibrations</p>
-              <p class="text-xs font-medium text-text-muted mt-0.5">
-                Retour haptique sur les actions (réactions, réponses…)
-              </p>
-            </div>
-          </div>
 
-          <button
-            role="switch"
-            aria-checked={settings.vibrationsEnabled}
-            aria-label="Activer ou désactiver les vibrations"
-            onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
-            class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-              {settings.vibrationsEnabled
-              ? 'bg-amber-500'
-              : 'bg-black/20 dark:bg-white/15'}"
-          >
-            <span
-              class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
-                {settings.vibrationsEnabled ? 'translate-x-6' : 'translate-x-0'}"
-            ></span>
-          </button>
-        </div>
+            <button
+              role="switch"
+              aria-checked={settings.vibrationsEnabled}
+              aria-label="Activer ou désactiver les vibrations"
+              onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
+              class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
+                {settings.vibrationsEnabled
+                ? 'bg-amber-500'
+                : 'bg-black/20 dark:bg-white/15'}"
+            >
+              <span
+                class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
+                  {settings.vibrationsEnabled ? 'translate-x-6' : 'translate-x-0'}"
+              ></span>
+            </button>
+          </div>
+        {/if}
 
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-3.5">

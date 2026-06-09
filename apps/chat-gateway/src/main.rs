@@ -467,7 +467,7 @@ async fn main() {
                 {
                     Ok(c) => break c,
                     Err(e) => {
-                        tracing::warn!("[kafka] Consumer creation failed: {} — retrying in 10s", e);
+                        tracing::warn!("[kafka] Consumer creation failed: {} - retrying in 10s", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     }
                 }
@@ -478,7 +478,7 @@ async fn main() {
                 match consumer.subscribe(&["post.created"]) {
                     Ok(_) => break,
                     Err(e) => {
-                        tracing::warn!("[kafka] Subscribe failed: {} — retrying in 10s", e);
+                        tracing::warn!("[kafka] Subscribe failed: {} - retrying in 10s", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     }
                 }

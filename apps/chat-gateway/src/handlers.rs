@@ -150,7 +150,7 @@ pub async fn ws_handler(
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    // Cookie is preferred (web browser) — query-param is the Tauri mobile fallback.
+    // Cookie is preferred (web browser) - query-param is the Tauri mobile fallback.
     let token = extract_cookie_value(&headers, "canari_ws_token").or_else(|| {
         params.token.as_deref().map(|t| {
             tracing::debug!(
@@ -178,7 +178,7 @@ pub async fn ws_handler(
             };
             if total >= MAX_CONNECTIONS {
                 tracing::warn!(
-                    "[ws] Connection limit reached ({}/{}) — rejecting upgrade for {}",
+                    "[ws] Connection limit reached ({}/{}) - rejecting upgrade for {}",
                     total,
                     MAX_CONNECTIONS,
                     token_data.claims.sub
@@ -211,8 +211,8 @@ pub async fn ws_handler(
 /// Responsibilities:
 /// - Registers the outbound sender in `AppState::connected_users`.
 /// - Sets (and periodically refreshes) the `user:online:{userId}:{deviceId}` Redis key.
-/// - Drains `pending_welcome_notify:{userId}` — welcome_request signals stored while
-///   all group members were offline — and forwards them so this device can handle them.
+/// - Drains `pending_welcome_notify:{userId}` - welcome_request signals stored while
+///   all group members were offline - and forwards them so this device can handle them.
 /// - Spawns two concurrent tasks: a **send task** (outbound frames + ping heartbeat) and
 ///   a **recv task** (inbound frame dispatch).
 /// - Uses `ConnectionGuard` to ensure cleanup happens even on task cancellation.

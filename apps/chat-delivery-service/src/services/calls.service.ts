@@ -67,7 +67,7 @@ export class CallsService {
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
       this.logger.error(
-        '[calls] CALL_ROOM_SECRET is not set — cannot issue room tokens',
+        '[calls] CALL_ROOM_SECRET is not set - cannot issue room tokens',
       );
       throw new ServiceUnavailableException(
         'Call room tokens are not configured on this server',

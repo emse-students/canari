@@ -186,7 +186,7 @@ export class MembersController {
       }
     });
 
-    // NB: NOT added to group:members Redis here — devices enter the routing
+    // NB: NOT added to group:members Redis here - devices enter the routing
     // set only when their Welcome is sent (sendWelcome sets status to active).
     this.logger.log(
       `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length}`,

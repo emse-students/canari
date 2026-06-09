@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
 
@@ -41,7 +42,11 @@
   let pin = $state('');
   let internalError = $state('');
   let showForgotPin = $state(false);
+  // Default to numpad on touch devices, keyboard input on desktop.
   let useNumpad = $state(true);
+  onMount(() => {
+    useNumpad = window.matchMedia('(pointer: coarse)').matches;
+  });
 
   $effect(() => {
     if (externalError) internalError = '';

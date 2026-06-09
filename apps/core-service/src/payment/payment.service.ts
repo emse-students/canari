@@ -228,7 +228,7 @@ export class PaymentService {
     currency: string;
     metadata?: Record<string, string>;
     stripeConnectAccountId?: string;
-    /** Stable key for idempotency — prevents double-charge on network retry. */
+    /** Stable key for idempotency - prevents double-charge on network retry. */
     idempotencyKey?: string;
   }): Promise<ChargeResult> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
@@ -238,7 +238,7 @@ export class PaymentService {
       currency: params.currency.toLowerCase(),
       customer: params.customerId,
       payment_method: params.paymentMethodId,
-      // Required for off-session charges with a saved card — dynamic payment methods
+      // Required for off-session charges with a saved card - dynamic payment methods
       // do not apply when creating a PaymentIntent directly (unlike Checkout).
       payment_method_types: ['card'],
       confirm: true,

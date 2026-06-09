@@ -1,7 +1,7 @@
 # Installation Script for Mines App Environment
 
 <#
-  Wrapper (Windows) — Deprecated helper
+  Wrapper (Windows) - Deprecated helper
 
   Ce fichier existait comme script d'installation autonome. Le projet utilise
   maintenant le script principal `scripts/setup-env.ps1`. Ce wrapper appelle

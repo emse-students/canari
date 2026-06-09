@@ -593,7 +593,7 @@ export class PaymentController {
       return { ok: true, noPaymentRequired: true };
     }
 
-    // Charge — idempotencyKey prevents double-charge on client retry.
+    // Charge - idempotencyKey prevents double-charge on client retry.
     const result: ChargeResult =
       await this.paymentService.chargeWithSavedMethod({
         customerId,

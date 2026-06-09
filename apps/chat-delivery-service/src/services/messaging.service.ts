@@ -868,7 +868,7 @@ export class MessagingService implements OnModuleInit {
       });
       if (groupMeta?.successorId) {
         this.logger.log(
-          `[WELCOME_REQ][${traceId}] group=${groupId} has successor=${groupMeta.successorId} — redirecting`,
+          `[WELCOME_REQ][${traceId}] group=${groupId} has successor=${groupMeta.successorId} - redirecting`,
         );
         return this.notifyWelcomeRequest(
           { ...body, groupId: groupMeta.successorId },

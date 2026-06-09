@@ -417,11 +417,11 @@ export class MediaService {
             removed++;
           }
         } catch {
-          // File may have been removed concurrently — ignore.
+          // File may have been removed concurrently - ignore.
         }
       }
     } catch {
-      // CHUNK_DIR may not exist yet on first run — ignore.
+      // CHUNK_DIR may not exist yet on first run - ignore.
     }
     if (removed > 0) {
       this.logger.log(`Purged ${removed} orphaned chunked upload temp file(s) (>24h)`);

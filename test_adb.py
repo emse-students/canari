@@ -888,6 +888,7 @@ class TauriManagerApp:
             'fr.emse.canari:D',         # Logs du plugin log de Tauri
             'chromium:I',               # console.log() JS si le plugin Tauri les rate
             'Tauri/Console:V',          # Logs Tauri internes
+            'MainActivity:D',           # Sync token FCM au démarrage (addOnSuccessListener)
             'FirebaseMessaging:W',      # SDK FCM Android (erreurs token, connexion)
             'WM-WorkerWrapper:W',       # WorkManager internals (retry/failure)
             'AndroidRuntime:E',         # Crashs (Panic/Exceptions)

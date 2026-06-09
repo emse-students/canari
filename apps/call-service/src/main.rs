@@ -53,7 +53,7 @@ struct RoomClaims {
 }
 
 /// Query parameters for the WebSocket upgrade endpoint.
-/// `token` is NOT accepted as a query param — authentication uses the `canari_ws_token` cookie only.
+/// `token` is NOT accepted as a query param - authentication uses the `canari_ws_token` cookie only.
 #[derive(Deserialize)]
 struct AuthParams {}
 
@@ -69,7 +69,7 @@ struct Room {
     peers: DashMap<PeerId, PeerContext>,
     /// Per-peer generation counter to debounce renegotiation (audio + video = one offer).
     renegotiate_gen: DashMap<PeerId, u64>,
-    /// Last signal activity timestamp — used to evict stale rooms.
+    /// Last signal activity timestamp - used to evict stale rooms.
     last_activity: std::sync::Mutex<std::time::Instant>,
 }
 
@@ -157,7 +157,7 @@ async fn ws_handler(
         return (StatusCode::INTERNAL_SERVER_ERROR, "JWT not configured").into_response();
     }
 
-    // Token must come from the HttpOnly `canari_ws_token` cookie only — never from query params.
+    // Token must come from the HttpOnly `canari_ws_token` cookie only - never from query params.
     let Some(token) = extract_cookie_value(&headers, "canari_ws_token") else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
@@ -205,7 +205,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                         }
                         rate_count += 1;
                         if rate_count > 50 {
-                            warn!("[rate-limit] Peer {} exceeded 50 msg/s — disconnecting", peer_id);
+                            warn!("[rate-limit] Peer {} exceeded 50 msg/s - disconnecting", peer_id);
                             break;
                         }
 
@@ -241,7 +241,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
         };
         if remove_room {
             state.rooms.remove(&room_id);
-            info!("Room {} removed — no peers remaining", room_id);
+            info!("Room {} removed - no peers remaining", room_id);
         } else {
             info!("Peer {} removed from room {}", peer_id, room_id);
         }
@@ -263,7 +263,7 @@ async fn handle_signal(
                 let token = match room_token {
                     Some(ref t) => t.as_str(),
                     None => {
-                        warn!("[auth] Peer {} attempted Join without room_token — rejected", peer_id);
+                        warn!("[auth] Peer {} attempted Join without room_token - rejected", peer_id);
                         return;
                     }
                 };
@@ -287,7 +287,7 @@ async fn handle_signal(
                 }
             }
 
-            // Reject if peer is already in a room — prevents multi-room joins.
+            // Reject if peer is already in a room - prevents multi-room joins.
             if let Some(existing) = current_room_id {
                 warn!("[busy] Peer {} tried to join room {} but is already in room {}", peer_id, room_id, existing);
                 return;
@@ -786,9 +786,9 @@ async fn apply_remote_ice_candidate(peer_id: &str, ctx: &PeerContext, cand: RTCI
         let n = {
             let mut pending = ctx.pending_ice_candidates.lock().await;
             // Hard cap: drop candidates if the buffer overflows (prevents memory leak when
-            // Offer never arrives — e.g. abandoned connections).
+            // Offer never arrives - e.g. abandoned connections).
             if pending.len() >= 200 {
-                warn!("[ICE] {} candidate buffer overflow (>=200) — clearing buffer", peer_id);
+                warn!("[ICE] {} candidate buffer overflow (>=200) - clearing buffer", peer_id);
                 pending.clear();
                 return;
             }

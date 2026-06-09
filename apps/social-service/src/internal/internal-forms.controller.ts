@@ -13,7 +13,7 @@ import { FormsService } from '../forms/forms.service';
 
 /**
  * Internal form-submission endpoints for core-service (charge-saved-method, webhooks).
- * Protected by X-Internal-Secret — not exposed through nginx auth headers.
+ * Protected by X-Internal-Secret - not exposed through nginx auth headers.
  */
 @Controller('internal/forms')
 export class InternalFormsController {

@@ -858,7 +858,7 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
 
-    // Reject early if the invitee has no MLS device — the key DM could never be delivered.
+    // Reject early if the invitee has no MLS device - the key DM could never be delivered.
     const hasDevices = await this.userHasMlsDevices(input.targetUserId);
     if (!hasDevices) {
       throw new BadRequestException(
@@ -996,7 +996,7 @@ export class ChannelService {
     if (!member) throw new NotFoundException('Member not found');
 
     // Rotate the key BEFORE removing the member so there is no window where the member
-    // is absent but the key hasn't been rotated — which would let them decrypt messages
+    // is absent but the key hasn't been rotated - which would let them decrypt messages
     // sent with the still-valid old key during that gap.
     if (!channel.masterSecret) {
       channel.masterSecret = crypto.randomBytes(32).toString('base64');

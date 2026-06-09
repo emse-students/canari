@@ -6,7 +6,7 @@ import {
   MaxLength,
 } from 'class-validator';
 
-/** Body for PATCH /api/users/admin/platform — partial platform settings update. */
+/** Body for PATCH /api/users/admin/platform - partial platform settings update. */
 export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsBoolean()

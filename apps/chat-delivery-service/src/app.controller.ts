@@ -193,7 +193,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .getMany();
 
     for (const member of staleMembers) {
-      // Remettre en pending — le device devra recevoir un nouveau Welcome.
+      // Remettre en pending - le device devra recevoir un nouveau Welcome.
       member.status = 'pending';
       member.lastEpochSeen = 0;
       await this.deviceGroupRepo.save(member);

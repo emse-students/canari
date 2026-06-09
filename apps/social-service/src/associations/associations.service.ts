@@ -472,7 +472,7 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    // Only protect removal when the member holds MANAGE_MEMBERS — the critical flag.
+    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag.
     const holdsManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
     if (holdsManageMembers && !opts?.bypassLastAdmin) {
@@ -484,7 +484,7 @@ export class AssociationsService {
   }
 
   /**
-   * Counts members holding MANAGE_MEMBERS — the flag required to manage the association.
+   * Counts members holding MANAGE_MEMBERS - the flag required to manage the association.
    * Used to prevent locking an association out of member management.
    * Using `permissions > 0` was insufficient: a member with only MANAGE_STRIPE_CONNECT
    * counts as non-zero but cannot unblock the association.
@@ -1098,7 +1098,7 @@ export class AssociationsService {
     );
     await this.notifRepo.save(notifs);
 
-    // Push notifications are fire-and-forget — failures do not block the response.
+    // Push notifications are fire-and-forget - failures do not block the response.
     void Promise.all(
       targets.map((m) =>
         this.push

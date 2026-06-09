@@ -16,7 +16,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-/** Max keys per answers record — prevents oversized payloads. */
+/** Max keys per answers record - prevents oversized payloads. */
 const ANSWERS_MAX_KEYS = 50;
 /** Max character length per string answer. */
 const ANSWERS_MAX_STRING_LEN = 2000;
