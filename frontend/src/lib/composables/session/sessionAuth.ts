@@ -275,11 +275,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     saveUserLocally({ id: ctx.getUserId(), admin: isGlobalAdmin() });
     cb.onMlsReady?.();
 
-    if (!isTauriRuntime()) {
-      await savePin(ctx.getPin());
-    } else if (!(await BiometricService.isConfigured().catch(() => false))) {
-      await savePin(ctx.getPin());
-    }
+    // Fire-and-forget : savePin est indépendant du chargement des conversations.
+    // Sur Tauri, BiometricService.isConfigured() est une lecture rapide (localStorage +
+    // éventuel invoke natif) et n'a pas besoin de bloquer la suite du login.
+    void (async () => {
+      if (!isTauriRuntime() || !(await BiometricService.isConfigured().catch(() => false))) {
+        await savePin(ctx.getPin());
+      }
+    })();
 
     // Check push health AFTER registration so pending_push_secret.txt is present
     // (written by store_push_secret during startPushService) before the health check runs.
@@ -307,9 +310,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         cb.log(`[WARN] Echec enregistrement push: ${e instanceof Error ? e.message : String(e)}`)
       );
 
-    await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(() => {});
-
+    // Charger les conversations d'abord : consumeFcmCache peut accéder
+    // à la Map conversations via addMessageToChat une fois qu'elle est peuplée.
     await cb.loadAndRestoreConversations();
+
+    await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(() => {});
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
@@ -334,9 +339,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       console.warn('[INIT] Erreur détection groupes MLS manquants:', e);
     }
 
-    processDeviceInvitationsLocally(ctx, cb).catch((e) =>
-      cb.log(`[WARN] Echec sync appareils (login): ${e instanceof Error ? e.message : String(e)}`)
-    );
+    // processDeviceInvitationsLocally est appelé en fin de syncConnectionAfterWsOpen —
+    // l'appeler ici avant l'ouverture du WebSocket est redondant.
 
     setupMessageHandler({
       mlsService,
@@ -558,12 +562,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     startSyncWatchdogImpl(ctx, cb);
     startConnectionWatchdogImpl(ctx, cb);
 
-    if (
-      isTauriRuntime() &&
-      !(await BiometricService.isConfigured()) &&
-      !(await isBiometricPromptDismissed())
-    ) {
-      ctx.setShowBiometricEnrollPrompt(true);
+    if (isTauriRuntime()) {
+      const [isConfig, isDismissed] = await Promise.all([
+        BiometricService.isConfigured().catch(() => false),
+        isBiometricPromptDismissed(),
+      ]);
+      if (!isConfig && !isDismissed) ctx.setShowBiometricEnrollPrompt(true);
     }
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
