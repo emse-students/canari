@@ -162,7 +162,7 @@
 
   function buildListOptions(offset = 0) {
     const u = page.url.searchParams;
-    const feed = (u.get('feed') || 'all') as PostFeed;
+    const feed = (u.get('feed') || 'associations') as PostFeed;
     const promoStr = u.get('promo');
     const promo = promoStr !== null && promoStr !== '' ? parseInt(promoStr, 10) : undefined;
     const formation = u.get('formation')?.trim() || undefined;
@@ -277,15 +277,6 @@
           <p class="text-text-muted text-sm mt-0.5">Partage, sondages et évènements</p>
         </div>
         <div class="flex items-center gap-2">
-          <button
-            type="button"
-            onclick={refreshPosts}
-            disabled={loading}
-            class="p-2 rounded-xl border border-cn-border text-text-muted hover:text-text-main hover:bg-[var(--cn-surface)] transition-colors disabled:opacity-40"
-            aria-label="Rafraîchir"
-          >
-            <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />
-          </button>
           <Button onclick={() => (showCreateModal = true)} class="!py-2 !px-4 !text-sm !rounded-xl">
             <PenSquare size={16} class="mr-1" />
             Publier

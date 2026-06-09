@@ -23,6 +23,10 @@ export interface ContentReport {
   /** User ID of the reported content's author. Null for association posts or messages. */
   reportedUserId: string | null;
   createdAt: string;
+  /** Short text excerpt of the reported content (first ~250 chars). Null for messages or deleted content. */
+  contentPreview: string | null;
+  /** For comment reports: ID of the parent post, used for navigation. Null otherwise. */
+  postId: string | null;
 }
 
 /** A muted user record. */

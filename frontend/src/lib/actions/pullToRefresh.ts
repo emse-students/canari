@@ -56,8 +56,11 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
       flexShrink: '0',
     });
     indicator.appendChild(spinner);
-    // The node must be relatively positioned so `absolute` indicator aligns correctly.
-    node.style.position = 'relative';
+    // Only promote to `relative` when the node has no positioning of its own.
+    // Overriding `position: absolute` would collapse the element's height and break scroll.
+    if (getComputedStyle(node).position === 'static') {
+      node.style.position = 'relative';
+    }
     node.prepend(indicator);
     return indicator;
   }

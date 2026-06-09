@@ -12,6 +12,7 @@
     Eye,
     Trash2,
     Copy,
+    ExternalLink,
   } from '@lucide/svelte';
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
@@ -473,28 +474,65 @@
                 </p>
               {/if}
 
-              <!-- Content ID + link -->
+              <!-- Content preview -->
+              {#if report.contentPreview}
+                <div class="rounded-lg bg-black/5 px-3 py-2 mb-3">
+                  {#if report.contentType === 'post'}
+                    <button
+                      type="button"
+                      onclick={() => openPostPreview(report.contentId)}
+                      class="text-left w-full text-xs text-text-main leading-relaxed hover:opacity-80 transition-opacity"
+                      title="Aperçu complet de la publication"
+                    >
+                      {excerpt(report.contentPreview, 200)}
+                    </button>
+                  {:else}
+                    <p class="text-xs text-text-main leading-relaxed">
+                      {excerpt(report.contentPreview, 180)}
+                    </p>
+                  {/if}
+                </div>
+              {/if}
+
+              <!-- ID + navigation -->
               <div class="flex items-center gap-2 mb-3">
-                <code class="text-[10px] text-text-muted/50 font-mono flex-1 truncate">
-                  {report.contentId}
-                </code>
                 <button
                   onclick={() => copyId(report.contentId)}
-                  class="p-1 rounded text-text-muted/50 hover:text-text-muted transition-colors"
+                  class="flex items-center gap-1 text-[10px] text-text-muted/50 hover:text-text-muted font-mono transition-colors"
                   title="Copier l'ID"
                 >
-                  <Copy size={11} />
+                  {report.contentId.slice(0, 8)}…
+                  <Copy size={10} />
                 </button>
                 {#if report.contentType === 'post'}
                   <button
                     type="button"
                     onclick={() => openPostPreview(report.contentId)}
-                    class="flex items-center gap-1 text-[11px] font-semibold text-cn-yellow hover:underline"
+                    class="flex items-center gap-1 text-[11px] font-semibold text-cn-yellow hover:underline ml-auto"
                     title="Aperçu de la publication"
                   >
                     <Eye size={11} />
-                    Voir
+                    Aperçu
                   </button>
+                  <a
+                    href="/posts/{report.contentId}"
+                    target="_blank"
+                    class="flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-text-main"
+                    title="Ouvrir la publication"
+                  >
+                    <ExternalLink size={11} />
+                    Ouvrir
+                  </a>
+                {:else if report.contentType === 'comment' && report.postId}
+                  <a
+                    href="/posts/{report.postId}"
+                    target="_blank"
+                    class="flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-text-main ml-auto"
+                    title="Ouvrir le post contenant ce commentaire"
+                  >
+                    <ExternalLink size={11} />
+                    Voir le post
+                  </a>
                 {/if}
               </div>
 
@@ -625,6 +663,23 @@
                 >
                   <Eye size={11} />
                 </button>
+                <a
+                  href="/posts/{report.contentId}"
+                  target="_blank"
+                  class="text-[11px] text-text-muted/60 hover:text-text-muted shrink-0"
+                  title="Ouvrir la publication"
+                >
+                  <ExternalLink size={11} />
+                </a>
+              {:else if report.contentType === 'comment' && report.postId}
+                <a
+                  href="/posts/{report.postId}"
+                  target="_blank"
+                  class="text-[11px] text-text-muted/60 hover:text-text-muted shrink-0"
+                  title="Ouvrir le post"
+                >
+                  <ExternalLink size={11} />
+                </a>
               {/if}
               <span class="ml-auto text-[11px] text-text-muted/60 shrink-0"
                 >{formatDate(report.createdAt)}</span

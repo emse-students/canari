@@ -266,8 +266,10 @@ h6,
 }
 
 .mobile-convo-open .chat-messages-scroll {
-  padding-bottom: calc(var(--chat-composer-height, 6rem) + env(safe-area-inset-bottom, 0px));
-  scroll-padding-bottom: calc(var(--chat-composer-height, 6rem) + env(safe-area-inset-bottom, 0px));
+  /* --chat-composer-height already includes env(safe-area-inset-bottom) via the footer's
+     padding-bottom, so we must not add it again here. */
+  padding-bottom: var(--chat-composer-height, 6rem);
+  scroll-padding-bottom: var(--chat-composer-height, 6rem);
 }
 
 .chat-composer-footer {
@@ -283,12 +285,8 @@ h6,
   transition: bottom 180ms ease;
 }
 
-/* On mobile the BottomNav (h-16 = 4rem) sits above the composer - push it up */
-@media (max-width: 767px) {
-  .chat-composer-footer {
-    padding-bottom: calc(4rem + max(0.75rem, env(safe-area-inset-bottom)));
-  }
-}
+/* The chat composer is only visible when the BottomNav is unmounted (mobile-convo-open),
+   so no extra padding is needed to clear it. */
 
 /* Keyboard open: shell height follows visual viewport; only lift composer when layout did not resize (adjustPan). */
 .keyboard-open .chat-composer-footer {
