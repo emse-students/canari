@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { beforeNavigate, goto } from '$app/navigation';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
@@ -88,6 +88,17 @@
 
   onMount(() => {
     themeStore.init();
+
+    // Dismiss the inline splash screen (see app.html) once the first frame is rendered.
+    // tick() ensures SvelteKit has completed its initial render before we fade out.
+    void tick().then(() => {
+      const splash = document.getElementById('canari-splash');
+      if (splash) {
+        splash.classList.add('done');
+        setTimeout(() => splash.remove(), 450);
+      }
+    });
+
     const teardownHistory = initHistoryOverlayStack();
     const teardownKeyboard = initKeyboardViewport();
 

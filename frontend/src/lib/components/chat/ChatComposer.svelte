@@ -6,6 +6,7 @@
   import VoiceRecorder from './VoiceRecorder.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
+  import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -60,6 +61,32 @@
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
   let previewUrls = $state<Record<string, string>>({});
+  /** Index into imageEntries of the currently open lightbox, or null when closed. */
+  let lightboxIndex = $state<number | null>(null);
+
+  /** Ordered list of pending image entries that have a preview URL, for lightbox navigation. */
+  const imageEntries = $derived(
+    pendingFiles
+      .map((entry, index) => ({ entry, index, key: fileKey(entry.file, index) }))
+      .filter(({ entry, key }) => isImageFile(entry.file) && !!previewUrls[key])
+  );
+
+  function openLightbox(key: string) {
+    const idx = imageEntries.findIndex((e) => e.key === key);
+    if (idx !== -1) lightboxIndex = idx;
+  }
+
+  function downloadLightboxImage() {
+    if (lightboxIndex === null) return;
+    const entry = imageEntries[lightboxIndex];
+    if (!entry) return;
+    const url = previewUrls[entry.key];
+    if (!url) return;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = entry.entry.file.name;
+    link.click();
+  }
   const hasMediaRecorder =
     typeof window !== 'undefined' &&
     typeof MediaRecorder !== 'undefined' &&
@@ -346,7 +373,15 @@
               style="{thumbAspect}; max-height: 6rem;"
             >
               {#if isImageFile(file) && previewUrls[key]}
-                <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  class="block w-full h-full p-0 border-0 cursor-zoom-in"
+                  aria-label="Agrandir l'aperçu"
+                  onclick={(e) => { e.stopPropagation(); openLightbox(key); }}
+                  onpointerdown={(e) => e.stopPropagation()}
+                >
+                  <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
+                </button>
               {:else if isPdfFile(file) && previewUrls[key]}
                 <div class="w-full h-full bg-white/50 dark:bg-black/50">
                   <embed
@@ -486,3 +521,26 @@
     </div>
   </div>
 </footer>
+
+{#if lightboxIndex !== null && imageEntries[lightboxIndex]}
+  {@const currentEntry = imageEntries[lightboxIndex]}
+  <MediaLightbox
+    open={true}
+    onClose={() => (lightboxIndex = null)}
+    title={currentEntry.entry.file.name}
+    onDownload={downloadLightboxImage}
+    showPrev={lightboxIndex > 0}
+    showNext={lightboxIndex < imageEntries.length - 1}
+    onPrev={() => (lightboxIndex = (lightboxIndex ?? 1) - 1)}
+    onNext={() => (lightboxIndex = (lightboxIndex ?? 0) + 1)}
+    dotCount={imageEntries.length > 1 ? imageEntries.length : 0}
+    dotIndex={lightboxIndex}
+    onDotSelect={(i) => (lightboxIndex = i)}
+  >
+    <img
+      src={previewUrls[currentEntry.key]}
+      alt={currentEntry.entry.file.name}
+      class="max-h-full max-w-full object-contain select-none"
+    />
+  </MediaLightbox>
+{/if}
