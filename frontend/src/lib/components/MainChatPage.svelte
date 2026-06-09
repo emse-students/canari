@@ -21,6 +21,7 @@
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
   import TabFollowerBanner from './chat/TabFollowerBanner.svelte';
+  import { WifiOff } from '@lucide/svelte';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -268,6 +269,14 @@
         convs.selectConversation(channelId);
         void convs.loadHistoryForConversation(channelId, channelId, convCtx());
       },
+      onRefresh: async () => {
+        // If disconnected, give the auto-reconnect mechanism a moment to kick in.
+        // The actual reconnect is triggered by the visibility-change watchdog in
+        // ChatBackgroundService; this just provides the UX feedback.
+        if (!session.isWsConnected) {
+          await new Promise<void>((r) => setTimeout(r, 600));
+        }
+      },
     };
   }
 
@@ -485,6 +494,13 @@
   <div class="app-layout" in:fade>
     <!-- Bandeau onglet follower (multi-onglets) -->
     <TabFollowerBanner />
+
+    {#if !session.isWsConnected}
+      <div class="flex items-center justify-center gap-1.5 py-1.5 px-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20">
+        <WifiOff size={11} strokeWidth={2.5} class="shrink-0" />
+        En attente de connexion…
+      </div>
+    {/if}
 
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->

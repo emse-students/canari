@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
@@ -257,6 +258,13 @@
 
     const stored = localStorage.getItem(LAST_SEEN_KEY);
     lastSeenTs = stored ? parseInt(stored, 10) : 0;
+
+    // Attach pull-to-refresh to the root scroll container (page-scroll-wrap in +layout.svelte).
+    const scrollContainer = document.querySelector<HTMLElement>('.page-scroll-wrap');
+    if (scrollContainer) {
+      const { destroy } = pullToRefresh(scrollContainer, { onRefresh: refreshPosts });
+      return destroy;
+    }
   });
 </script>
 

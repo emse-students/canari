@@ -94,6 +94,7 @@
   let isFirstPinSetup = $state(false);
   let pinError = $state('');
   let pinLoading = $state(false);
+  let pinStep = $state('');
   let biometricConfigured = $state(false);
 
   /** Returns false when min-version or maintenance gates block MLS unlock. */
@@ -531,18 +532,28 @@
   function handlePinSubmit(submittedPin: string) {
     pinError = '';
     pinLoading = true;
+    pinStep = 'Vérification du PIN…';
     globalSession.pin = submittedPin;
     _loginInProgress = true;
+
+    // Transition to the MLS loading step after PIN derivation (~800 ms)
+    const stepTimer = setTimeout(() => {
+      if (pinLoading) pinStep = 'Chargement MLS…';
+    }, 800);
 
     void globalSession.login({
       ...sessionCb(),
       onMlsReady: () => {
+        clearTimeout(stepTimer);
         showPinModal = false;
         pinLoading = false;
+        pinStep = '';
       },
       onLoginFailed: (msg: string) => {
+        clearTimeout(stepTimer);
         pinError = msg;
         pinLoading = false;
+        pinStep = '';
       },
     });
   }
@@ -618,6 +629,7 @@
   showBiometricButton={biometricConfigured}
   externalError={pinError}
   isLoading={pinLoading}
+  loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
 />
 

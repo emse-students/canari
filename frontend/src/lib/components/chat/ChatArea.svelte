@@ -14,6 +14,7 @@
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
+  import { swipeBack } from '$lib/actions/swipeBack';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -439,6 +440,7 @@
   class="relative flex-1 min-h-0 min-w-0 flex flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
+  use:swipeBack={{ onBack: onBack ?? (() => {}), enabled: _isMobile && !!onBack }}
 >
   {#if chatView}
     <div>
@@ -640,21 +642,13 @@
 
     {#if isCatchingUpMessages}
       <div
-        class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--color-bg)]/65 backdrop-blur-sm pointer-events-auto"
+        class="absolute top-0 inset-x-0 z-40 flex items-center justify-center gap-2 py-1.5 px-4 bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20 pointer-events-none"
         role="status"
         aria-live="polite"
         aria-busy="true"
-        aria-label="Synchronisation MLS en cours"
       >
-        <div
-          class="flex flex-col items-center gap-3 rounded-2xl border border-black/8 dark:border-white/10 bg-[var(--color-surface)] px-6 py-5 shadow-lg"
-        >
-          <Loader2 size={28} class="animate-spin text-amber-500" strokeWidth={2.25} />
-          <p class="text-sm font-medium text-[var(--color-text)]">Synchronisation MLS…</p>
-          <p class="text-xs text-[var(--color-text-muted)] text-center max-w-[16rem]">
-            Mise à jour du chiffrement — envoi indisponible
-          </p>
-        </div>
+        <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
+        Synchronisation MLS en cours — envoi temporairement indisponible
       </div>
     {/if}
   {:else}

@@ -26,8 +26,10 @@
   import {
     createReplySwipeGesture,
     replySwipeDragOffset,
+    reactionSwipeDragOffset,
     replySwipeProgress,
     shouldTriggerReplySwipe,
+    shouldTriggerReactionSwipe,
     updateReplySwipeGesture,
     type ReplySwipeGestureState,
   } from '$lib/utils/messageSwipeReply';
@@ -149,6 +151,8 @@
   let swipeHandled = $state(false);
   let replyGesture = $state<ReplySwipeGestureState | null>(null);
   let replyDragPx = $state(0);
+  let reactDragPx = $state(0);
+  let showQuickReactions = $state(false);
 
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
@@ -310,8 +314,10 @@
     if (updated.phase === 'horizontal') {
       if ('touches' in e) e.stopPropagation();
       const dx = x - updated.startX;
-      const offset = replySwipeDragOffset(dx, isOwn);
-      replyDragPx = offset ?? 0;
+      const replyOffset = replySwipeDragOffset(dx, isOwn);
+      const reactOffset = reactionSwipeDragOffset(dx, isOwn);
+      replyDragPx = replyOffset ?? 0;
+      reactDragPx = reactOffset ?? 0;
       cancelLongPress();
       return;
     }
@@ -339,10 +345,17 @@
       if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate(12);
       }
+    } else if (shouldTriggerReactionSwipe(dx, dy, isOwn, replyGesture.phase) && onReact) {
+      swipeHandled = true;
+      showQuickReactions = true;
+      if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate(12);
+      }
     }
 
     replyGesture = null;
     replyDragPx = 0;
+    reactDragPx = 0;
   }
 
   /** Non-passive `touchmove` so horizontal reply swipes do not bubble to tab navigation. */
@@ -475,6 +488,17 @@
         </div>
       {/if}
 
+      {#if reactDragPx !== 0 && onReact}
+        <div
+          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 dark:bg-black/60 shadow-md transition-opacity
+          {isOwn ? 'left-full ml-1.5' : 'right-full mr-1.5'}"
+          style:opacity={Math.min(1, Math.abs(reactDragPx) / 56)}
+          aria-hidden="true"
+        >
+          😊
+        </div>
+      {/if}
+
       <!-- Bulle de message principale -->
       <div
         role="button"
@@ -501,7 +525,7 @@
             toggleInfo(e as unknown as MouseEvent);
           }
         }}
-        style:transform={replyDragPx !== 0 ? `translate3d(${replyDragPx}px, 0, 0)` : undefined}
+        style:transform={replyDragPx !== 0 || reactDragPx !== 0 ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)` : undefined}
         class="{isMediaOnly
           ? 'p-0'
           : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly
@@ -612,6 +636,28 @@
       existingReactionEmojis={Object.keys(groupedReactions)}
       onEmojiSelect={(emoji) => onReact?.(messageId, emoji)}
     />
+
+    {#if showQuickReactions && onReact}
+      <div
+        class="absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 dark:border-white/10 bg-white/95 dark:bg-[#1a1f2e]/95 backdrop-blur-xl shadow-lg px-2 py-1.5
+          {isOwn ? 'right-0 bottom-full mb-2' : 'left-0 bottom-full mb-2'}"
+        use:clickOutside={() => (showQuickReactions = false)}
+      >
+        {#each ['❤️', '😂', '😮', '😢', '👍', '👎'] as emoji (emoji)}
+          <button
+            type="button"
+            onclick={() => {
+              onReact(messageId, emoji);
+              showQuickReactions = false;
+              if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                navigator.vibrate(12);
+              }
+            }}
+            class="text-xl leading-none px-1 py-0.5 rounded-xl hover:bg-black/8 dark:hover:bg-white/10 active:scale-125 transition-all"
+          >{emoji}</button>
+        {/each}
+      </div>
+    {/if}
 
     <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
 

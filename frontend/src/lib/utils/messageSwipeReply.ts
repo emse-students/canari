@@ -75,3 +75,33 @@ export function replySwipeProgress(dragPx: number, _isOwn: boolean): number {
   const magnitude = Math.abs(dragPx);
   return Math.min(1, magnitude / REPLY_SWIPE_TRIGGER_PX);
 }
+
+/**
+ * Like replySwipeDragOffset but for the reaction direction (opposite of reply).
+ * Own messages drag rightward; others' messages drag leftward.
+ */
+export function reactionSwipeDragOffset(
+  deltaX: number,
+  isOwn: boolean,
+  maxDrag = REPLY_SWIPE_MAX_DRAG_PX
+): number | null {
+  if (isOwn) {
+    if (deltaX < -6) return null; // left = reply direction for own
+    return Math.min(maxDrag, Math.max(0, deltaX));
+  }
+  if (deltaX > 6) return null; // right = reply direction for others
+  return Math.max(-maxDrag, Math.min(0, deltaX));
+}
+
+/** True when the user released a valid reaction swipe (away from thread center). */
+export function shouldTriggerReactionSwipe(
+  deltaX: number,
+  deltaY: number,
+  isOwn: boolean,
+  phase: ReplySwipePhase,
+  threshold = REPLY_SWIPE_TRIGGER_PX
+): boolean {
+  if (phase !== 'horizontal') return false;
+  const awayFromCenter = isOwn ? deltaX > threshold : deltaX < -threshold;
+  return awayFromCenter && Math.abs(deltaY) < threshold * 0.75;
+}

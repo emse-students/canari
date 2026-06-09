@@ -2,7 +2,6 @@
   import {
     ChevronLeft,
     LockKeyhole,
-    Clock,
     Settings,
     Search,
     Users,
@@ -181,7 +180,7 @@
         {#if isReady}
           <LockKeyhole size={12} strokeWidth={2.5} /> Bout-en-bout vérifié
         {:else}
-          <Clock size={12} strokeWidth={2.5} class="animate-pulse" /> Négociation sécurisée...
+          <LockKeyhole size={12} strokeWidth={2.5} class="animate-pulse" title="Négociation sécurisée en cours…" />
         {/if}
       </span>
     {/if}

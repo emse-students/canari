@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteMap } from 'svelte/reactivity';
-  import { Hand, Hash, Lock, Plus } from '@lucide/svelte';
+  import { Hash, Lock, MessageSquarePlus, Plus } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
@@ -12,6 +12,7 @@
   import SidebarCommunityAdminModal from './SidebarCommunityAdminModal.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import { pullToRefresh } from '$lib/actions/pullToRefresh';
 
   interface Conversation {
     id: string;
@@ -102,6 +103,8 @@
     onCloseDrawer?: () => void;
     /** ID of the currently authenticated user. */
     currentUserId?: string;
+    /** Optional pull-to-refresh handler for the conversations list. */
+    onRefresh?: () => Promise<void>;
   }
 
   let {
@@ -129,6 +132,7 @@
     drawerMode = false,
     onCloseDrawer,
     currentUserId = '',
+    onRefresh,
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -413,7 +417,10 @@
     {/if}
 
     <!-- Conversation List -->
-    <div class="flex-1 overflow-y-auto p-2.5">
+    <div
+      class="flex-1 overflow-y-auto p-2.5"
+      use:pullToRefresh={{ onRefresh: onRefresh ?? (() => Promise.resolve()) }}
+    >
       {#if activeSidebarTab === 'discussions'}
         {#each filteredConversationEntries as [name, convo] (name)}
           {@const resolved = resolveConversationListPresentation(
@@ -439,15 +446,25 @@
         {/each}
 
         {#if filteredConversationEntries.length === 0}
-          <div class="text-center py-8 px-4 text-text-muted">
-            <div class="mb-4 opacity-50 flex justify-center items-center">
-              <Hand size={48} />
+          <div class="text-center py-12 px-6 text-text-muted">
+            <div class="mb-4 flex justify-center">
+              <div class="p-4 rounded-2xl bg-black/5 dark:bg-white/5">
+                <MessageSquarePlus size={36} class="opacity-40" />
+              </div>
             </div>
-            <p class="text-sm">
-              {searchQuery.trim()
-                ? 'Aucune discussion correspondante.'
-                : 'Votre messagerie est vide. Cliquez sur + pour demarrer.'}
-            </p>
+            {#if searchQuery.trim()}
+              <p class="text-sm font-medium">Aucune discussion correspondante.</p>
+            {:else}
+              <p class="text-sm font-bold text-text-main mb-1">Aucune discussion</p>
+              <p class="text-xs mb-4">Commencez à écrire à quelqu'un !</p>
+              <button
+                type="button"
+                onclick={() => (showNewChatModal = true)}
+                class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-semibold transition-all active:scale-95"
+              >
+                Nouvelle discussion
+              </button>
+            {/if}
           </div>
         {/if}
       {:else}
