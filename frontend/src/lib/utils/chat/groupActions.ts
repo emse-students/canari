@@ -13,9 +13,12 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
 
 /**
  * Supprime un groupe MLS :
- *  1. Diffuse un message "groupDeleted" à tous les membres (pour qu'ils archiven leur conv).
+ *  1. Diffuse un message "groupDeleted" à tous les membres AVANT la suppression serveur.
  *  2. Supprime le groupe côté serveur (DB + Redis).
  *  3. Oublie l'état MLS local.
+ *
+ * L'ordre 1→2 est critique : deleteGroupOnServer hard-delete dm_group_members, ce qui
+ * prive le serveur de toute info de routage. Un message envoyé après serait perdu.
  */
 export async function deleteGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -26,26 +29,10 @@ export async function deleteGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, pin, log } = params;
 
-  // 1. Supprimer sur le serveur en premier (404 = déjà absent, pas de notify MLS).
-  let serverDeleted = false;
-  try {
-    serverDeleted = await mlsService.deleteGroupOnServer(groupId);
-    if (!serverDeleted) {
-      log?.(`[DELETE] Groupe ${groupId.slice(0, 8)}… introuvable sur le serveur (déjà supprimé ?)`);
-    }
-  } catch (e) {
-    // Si le groupe a un successeur (reboot en cours), la suppression peut échouer.
-    // On envoie quand même le message MLS pour prévenir les pairs si on a le groupe localement.
-    log?.(`[DELETE] Erreur suppression serveur pour ${groupId.slice(0, 8)}…: ${String(e)}`);
-    console.error('[DELETE] deleteGroupOnServer failed:', e);
-    // Si on a le groupe localement, tenter quand même d'en informer les membres
-    if (mlsService.getLocalGroups().includes(groupId)) {
-      serverDeleted = true;
-    }
-  }
-
-  // 2. Notifier les pairs via MLS seulement si le serveur avait encore le groupe.
-  if (serverDeleted) {
+  // 1. Notifier les pairs via MLS AVANT la suppression serveur.
+  // Le chiffrement requiert l'état WASM (donc le groupe doit être local),
+  // et le routage requiert dm_group_members (donc le groupe doit être sur le serveur).
+  if (mlsService.getLocalGroups().includes(groupId)) {
     try {
       const controlMsg = encodeAppMessage(
         mkSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
@@ -54,6 +41,17 @@ export async function deleteGroupAndBroadcast(params: {
     } catch {
       // Non-blocking : les pairs découvriront la suppression lors du prochain pull
     }
+  }
+
+  // 2. Supprimer sur le serveur.
+  try {
+    const serverDeleted = await mlsService.deleteGroupOnServer(groupId);
+    if (!serverDeleted) {
+      log?.(`[DELETE] Groupe ${groupId.slice(0, 8)}… introuvable sur le serveur (déjà supprimé ?)`);
+    }
+  } catch (e) {
+    log?.(`[DELETE] Erreur suppression serveur pour ${groupId.slice(0, 8)}…: ${String(e)}`);
+    console.error('[DELETE] deleteGroupOnServer failed:', e);
   }
 
   // 3. Oublier le groupe localement - après l'envoi du message (le chiffrement requiert l'état MLS).

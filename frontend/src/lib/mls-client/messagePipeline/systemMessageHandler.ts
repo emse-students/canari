@@ -186,19 +186,24 @@ export async function handleSystemEvent(
     }
     persistMlsStateNow();
 
-    // Ajouter un message système visible dans l'historique, puis marquer la
-    // conversation deletedRemotely=true au lieu de la supprimer immédiatement.
-    // L'utilisateur peut lire l'historique et choisit quand supprimer localement.
-    const label =
-      senderNorm === userId
-        ? 'Vous avez supprimé cette conversation sur un autre appareil.'
-        : `${senderName} a supprimé cette conversation.`;
-    await addMessageToChat('system', label, convoKey, { isSystem: true });
-    // Re-lire la conv après addMessageToChat (elle a pu mettre à jour messages[])
-    const updated = conversations.get(convoKey);
-    if (updated) conversations.set(convoKey, { ...updated, deletedRemotely: true });
-    await saveConversation(convoKey).catch(() => {});
-    log(`[INFO] Groupe supprimé par ${senderName} - conversation marquée deletedRemotely`);
+    if (senderNorm === userId) {
+      // Suppression effectuée par nous-mêmes sur un autre appareil : supprimer immédiatement
+      // sans interaction utilisateur (synchronisation de notre propre action).
+      if (getSelectedContact() === convoKey) setSelectedContact(null);
+      conversations.delete(convoKey);
+      await deleteConversation?.(convoKey).catch(() => {});
+      log(`[INFO] Groupe supprimé sur un autre appareil - conversation retirée immédiatement`);
+    } else {
+      // Suppression par un autre participant : ajouter un message visible et marquer
+      // deletedRemotely pour que l'utilisateur puisse lire l'historique avant de fermer.
+      await addMessageToChat('system', `${senderName} a supprimé cette conversation.`, convoKey, {
+        isSystem: true,
+      });
+      const updated = conversations.get(convoKey);
+      if (updated) conversations.set(convoKey, { ...updated, deletedRemotely: true });
+      await saveConversation(convoKey).catch(() => {});
+      log(`[INFO] Groupe supprimé par ${senderName} - conversation marquée deletedRemotely`);
+    }
     return true;
   }
 
