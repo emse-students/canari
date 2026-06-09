@@ -22,6 +22,7 @@
     splitTextWithLinks,
     extractFirstUrl,
     getBubbleShapeClass,
+    isGifUrl,
   } from '$lib/utils/chat/messageDisplay';
   import {
     createReplySwipeGesture,
@@ -173,6 +174,11 @@
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
   let textSegments = $derived(splitTextWithLinks(textContent));
+  // Link-only message (no surrounding text, no reply, not a GIF) - also renders naked
+  const isLinkOnly = $derived.by(() => {
+    if (!firstLink || isGifUrl(firstLink) || effectiveReplyTo) return false;
+    return textSegments.every((s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === ''));
+  });
 
   let replySenderDisplayName = $state('');
   $effect(() => {
@@ -526,14 +532,14 @@
           }
         }}
         style:transform={replyDragPx !== 0 || reactDragPx !== 0 ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)` : undefined}
-        class="{isMediaOnly
+        class="{isMediaOnly || isLinkOnly
           ? 'p-0'
-          : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly
+          : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly || isLinkOnly
           ? ''
           : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
           ? 'message-swipe-reply-active'
           : 'transition-shadow duration-200'}
-        {isMediaOnly
+        {isMediaOnly || isLinkOnly
           ? ''
           : isOwn
             ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-dark shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'

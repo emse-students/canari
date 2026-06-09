@@ -87,5 +87,5 @@
 </p>
 {/if}
 {#if firstLink}
-  <LinkPreviewCard url={firstLink} />
+  <LinkPreviewCard url={firstLink} standalone={isLinkOnly} />
 {/if}

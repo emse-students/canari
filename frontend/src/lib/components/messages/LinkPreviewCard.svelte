@@ -9,9 +9,11 @@
   interface Props {
     /** The URL whose Open Graph / meta preview should be fetched and displayed. */
     url: string;
+    /** When true, removes the top margin (card is the only element in the bubble). */
+    standalone?: boolean;
   }
 
-  let { url }: Props = $props();
+  let { url, standalone = false }: Props = $props();
 
   const isInApp = $derived(isInAppHref(url));
 
@@ -118,14 +120,14 @@
 </script>
 
 {#if isMiGalleryAlbum}
-  <MiGalleryLinkPreview url={parsed.href} preview={externalPreview} {isLoading} />
+  <MiGalleryLinkPreview url={parsed.href} preview={externalPreview} {isLoading} {standalone} />
 {:else}
 <a
   onclick={handleClick}
   href={isInApp ? (inAppPath ?? '#') : parsed.href}
   target={isInApp ? undefined : '_blank'}
   rel={isInApp ? undefined : 'noopener noreferrer'}
-  class="group mt-3 flex items-stretch gap-3.5 p-3 sm:p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/45 dark:bg-black/25 backdrop-blur-xl transition-all duration-300 hover:bg-white/70 dark:hover:bg-black/40 hover:border-amber-500/35 hover:shadow-md overflow-hidden {isInApp
+  class="group {standalone ? '' : 'mt-3'} flex items-stretch gap-3.5 p-3 sm:p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/45 dark:bg-black/25 backdrop-blur-xl transition-all duration-300 hover:bg-white/70 dark:hover:bg-black/40 hover:border-amber-500/35 hover:shadow-md overflow-hidden {isInApp
     ? 'ring-1 ring-amber-500/12'
     : ''}"
 >
