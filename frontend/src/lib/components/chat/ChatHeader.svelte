@@ -172,17 +172,14 @@
         Canal de communauté
       </span>
     {:else}
-      <span
-        class="inline-flex items-center gap-1.5 text-[0.7rem] md:text-xs font-bold {isReady
+      <LockKeyhole
+        size={12}
+        strokeWidth={2.5}
+        class={isReady
           ? 'text-emerald-600 dark:text-emerald-400'
-          : 'text-amber-600 dark:text-amber-500'}"
-      >
-        {#if isReady}
-          <LockKeyhole size={12} strokeWidth={2.5} /> Bout-en-bout vérifié
-        {:else}
-          <LockKeyhole size={12} strokeWidth={2.5} class="animate-pulse" title="Négociation sécurisée en cours…" />
-        {/if}
-      </span>
+          : 'animate-pulse text-amber-600 dark:text-amber-500'}
+        title={isReady ? 'Chiffrement bout-en-bout vérifié' : 'Négociation sécurisée en cours…'}
+      />
     {/if}
   </div>
 
