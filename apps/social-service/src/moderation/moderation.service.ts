@@ -88,13 +88,57 @@ export class ModerationService {
     });
   }
 
-  /** Returns all content reports regardless of status, newest first. */
-  async listAllReports(limit = 50, offset = 0): Promise<ContentReport[]> {
-    return this.reportRepo.find({
+  /**
+   * Returns all content reports regardless of status, newest first.
+   * Each report is enriched with `contentPreview` (a short text excerpt of the
+   * reported content) and `postId` (the parent post ID for comment reports).
+   */
+  async listAllReports(
+    limit = 50,
+    offset = 0
+  ): Promise<Array<ContentReport & { contentPreview: string | null; postId: string | null }>> {
+    const reports = await this.reportRepo.find({
       order: { createdAt: 'DESC' },
       take: Math.min(limit, 200),
       skip: offset,
     });
+
+    const postIds = reports.filter((r) => r.contentType === 'post').map((r) => r.contentId);
+    const commentIds = reports.filter((r) => r.contentType === 'comment').map((r) => r.contentId);
+
+    const postPreviews = new Map<string, string>();
+    if (postIds.length > 0) {
+      const rows: { id: string; markdown: string }[] = await this.reportRepo.manager.query(
+        `SELECT id::text, LEFT(markdown, 250) AS markdown FROM posts WHERE id = ANY($1)`,
+        [postIds]
+      );
+      for (const row of rows) postPreviews.set(row.id, row.markdown);
+    }
+
+    const commentPreviews = new Map<string, { text: string; postId: string }>();
+    if (commentIds.length > 0) {
+      const rows: { post_id: string; comment_id: string; text: string }[] =
+        await this.reportRepo.manager.query(
+          `SELECT p.id::text AS post_id, elem->>'id' AS comment_id, elem->>'text' AS text
+           FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
+           WHERE elem->>'id' = ANY($1)`,
+          [commentIds]
+        );
+      for (const row of rows)
+        commentPreviews.set(row.comment_id, { text: row.text, postId: row.post_id });
+    }
+
+    return reports.map((r) => ({
+      ...r,
+      contentPreview:
+        r.contentType === 'post'
+          ? (postPreviews.get(r.contentId) ?? null)
+          : r.contentType === 'comment'
+            ? (commentPreviews.get(r.contentId)?.text ?? null)
+            : null,
+      postId:
+        r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,
+    }));
   }
 
   /**
