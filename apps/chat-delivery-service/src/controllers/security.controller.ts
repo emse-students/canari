@@ -4,12 +4,15 @@ import {
   Post,
   Body,
   Query,
+  Param,
+  Res,
   BadRequestException,
   ForbiddenException,
   UseGuards,
   Headers,
   Logger,
 } from '@nestjs/common';
+import type { Response as ExpressResponse } from 'express';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -196,6 +199,64 @@ export class SecurityController {
       throw new BadRequestException('Link preview failed');
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Proxies a MiGallery album cover image using the server-side API key so the
+   * browser never needs to handle MiGallery credentials directly.
+   * This endpoint is intentionally unauthenticated — it only exposes album
+   * thumbnails, which are already visible to all EMSE students on MiGallery.
+   */
+  @Get('mls/gallery-cover/:albumId')
+  async getGalleryCover(
+    @Param('albumId') albumId: string,
+    @Res() res: ExpressResponse,
+  ): Promise<void> {
+    if (!albumId || !/^[0-9a-f-]{36}$/i.test(albumId)) {
+      res.status(400).end('Invalid album ID');
+      return;
+    }
+
+    const galleryBaseUrl = (
+      process.env.AVATAR_API_URL || 'https://gallery.mitv.fr'
+    ).replace(/\/$/, '');
+    const apiKey = process.env.AVATAR_API_KEY || '';
+
+    if (!apiKey) {
+      res.status(503).end('Gallery API key not configured');
+      return;
+    }
+
+    try {
+      const coverRes = await fetch(
+        `${galleryBaseUrl}/api/albums/${albumId}/og-cover`,
+        {
+          headers: {
+            'user-agent': 'CanariLinkPreview/1.0',
+            'x-api-key': apiKey,
+          },
+          signal: AbortSignal.timeout(6000),
+        },
+      );
+
+      if (!coverRes.ok) {
+        res.status(coverRes.status).end();
+        return;
+      }
+
+      const contentType = coverRes.headers.get('content-type') || 'image/webp';
+      const buffer = Buffer.from(await coverRes.arrayBuffer());
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('Content-Length', buffer.length);
+      res.end(buffer);
+    } catch {
+      this.logger.warn(
+        `[gallery-cover] Failed to fetch cover for album ${albumId}`,
+      );
+      res.status(502).end();
     }
   }
 }

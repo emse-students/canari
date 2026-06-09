@@ -183,7 +183,15 @@ const GALLERY_HOST = 'gallery.mitv.fr';
 const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
 
 /**
- * Fetches a link-preview payload for a MiGallery album URL via the og-preview API.
+ * Fetches a link-preview payload for a MiGallery album URL.
+ *
+ * Uses `AVATAR_API_URL` / `AVATAR_API_KEY` from the environment to call the
+ * authenticated `/api/albums/[id]/info` endpoint — works for all visibility
+ * levels (unlisted, authenticated, private).
+ *
+ * The cover image URL points to Canari's own `/api/mls/gallery-cover/:albumId`
+ * proxy so the browser never needs the MiGallery API key directly.
+ *
  * Returns `null` when the URL is not a recognised album link or the API call fails.
  * The returned object has the same shape as `buildLinkPreviewPayload`.
  */
@@ -199,14 +207,23 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
   if (!match) return null;
 
   const albumId = match[1];
-  const previewApiUrl = `https://${GALLERY_HOST}/api/albums/${albumId}/og-preview`;
+  const galleryBaseUrl = (
+    process.env.AVATAR_API_URL || `https://${GALLERY_HOST}`
+  ).replace(/\/$/, '');
+  const apiKey = process.env.AVATAR_API_KEY || '';
+  const frontendUrl = (
+    process.env.FRONTEND_URL || 'https://canari-emse.fr'
+  ).replace(/\/$/, '');
+
+  if (!apiKey) return null;
 
   try {
-    const res = await fetch(previewApiUrl, {
+    const res = await fetch(`${galleryBaseUrl}/api/albums/${albumId}/info`, {
       method: 'GET',
       headers: {
         'user-agent': 'CanariLinkPreview/1.0',
         accept: 'application/json',
+        'x-api-key': apiKey,
       },
       signal: AbortSignal.timeout(4000),
     });
@@ -214,18 +231,16 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
     if (!res.ok) return null;
 
     const data = (await res.json()) as {
-      name?: string;
-      date?: string | null;
-      location?: string | null;
-      coverUrl?: string | null;
+      album?: { name?: string; date?: string | null; location?: string | null };
     };
 
-    if (!data.name) return null;
+    const album = data.album;
+    if (!album?.name) return null;
 
     const descParts: string[] = [];
-    if (data.date) {
+    if (album.date) {
       try {
-        const d = new Date(data.date + 'T12:00:00');
+        const d = new Date(album.date + 'T12:00:00');
         descParts.push(
           d.toLocaleDateString('fr-FR', {
             day: 'numeric',
@@ -234,16 +249,16 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
           }),
         );
       } catch {
-        descParts.push(data.date);
+        descParts.push(album.date);
       }
     }
-    if (data.location) descParts.push(data.location);
+    if (album.location) descParts.push(album.location);
 
     return {
       url: targetUrl.toString(),
-      title: data.name.slice(0, 180),
+      title: album.name.slice(0, 180),
       description: descParts.join(' · '),
-      image: data.coverUrl ?? '',
+      image: `${frontendUrl}/api/mls/gallery-cover/${albumId}`,
       siteName: 'MiGallery',
     };
   } catch {
