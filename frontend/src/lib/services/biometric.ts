@@ -58,6 +58,13 @@ export class BiometricService {
       return await keystoreRetrieve(KEYSTORE_SERVICE, KEYSTORE_USER);
     } catch (e) {
       console.error('Biometric authentication failed:', e);
+      // If the Keystore key was lost (TEE corruption, reinstall, etc.) the cipher
+      // init fails with a null-key error. Clear the "configured" flag so the user
+      // gets the re-enrollment prompt after their next PIN login.
+      const msg = String(e);
+      if (msg.includes('Error initializing cipher') || msg.includes('null cannot be cast')) {
+        await BiometricService.disable().catch(() => {});
+      }
       return null;
     }
   }
