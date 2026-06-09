@@ -135,7 +135,7 @@
 
   // Preset swatches for quick picks
   const PRESETS = [
-    '#122035',
+    '#151B2C',
     '#1e3a5f',
     '#0f4c81',
     '#1565c0',

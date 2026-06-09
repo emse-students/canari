@@ -17,11 +17,11 @@ export interface CalendarExportOptions {
   bgDataUrl?: string | null;
   /** Background image opacity in percent (0–100). Default: 14. */
   bgOpacity?: number;
-  /** Header bar background color (hex). Default: '#122035'. */
+  /** Header bar background color (hex). Default: '#151B2C'. */
   headerBg?: string;
-  /** Month title text color (hex). Default: '#122035'. */
+  /** Month title text color (hex). Default: '#151B2C'. */
   monthTitleColor?: string;
-  /** Weekday row background color (hex). Default: '#122035'. */
+  /** Weekday row background color (hex). Default: '#151B2C'. */
   weekdayRowBg?: string;
   /** Mon–Fri label color (hex). Default: '#c8d8eb'. */
   weekdayLabelColor?: string;
@@ -37,7 +37,7 @@ export interface CalendarExportOptions {
   weekendCellBgOpacity?: number;
   /** Cell border color (hex). Default: '#dde3ec'. */
   borderColor?: string;
-  /** Grid outer border color (hex). Default: '#122035'. */
+  /** Grid outer border color (hex). Default: '#151B2C'. */
   gridOuterBorder?: string;
   /** Day number color on event-free cells (hex). Default: '#b8c4d0'. */
   emptyDayColor?: string;
@@ -50,8 +50,8 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   bgOpacity: 14,
   // Original design: no extra background on the header bar - it inherits the container bg (#f0f4f8).
   headerBg: '#f0f4f8',
-  monthTitleColor: '#122035',
-  weekdayRowBg: '#122035',
+  monthTitleColor: '#151B2C',
+  weekdayRowBg: '#151B2C',
   weekdayLabelColor: '#c8d8eb',
   weekendLabelColor: '#f5c518',
   cellBg: '#ffffff',
@@ -59,7 +59,7 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   weekendCellBg: '#f1f5f9',
   weekendCellBgOpacity: 92,
   borderColor: '#dde3ec',
-  gridOuterBorder: '#122035',
+  gridOuterBorder: '#151B2C',
   emptyDayColor: '#b8c4d0',
   enableTextShadow: false,
 };

@@ -76,6 +76,7 @@
     "prettier-plugin-svelte": "^3.5.2",
     "protobufjs": "^8.2.0",
     "protobufjs-cli": "^2.0.1",
+    "sharp": "^0.34.5",
     "svelte": "^5.55.7",
     "svelte-check": "^4.4.8",
     "tailwindcss": "^4.3.0",
