@@ -105,11 +105,16 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   if (!getIsTabLeader()) return;
 
   // 1. Publier les KeyPackages
+  // Les welcome_requests ne doivent être envoyées que si cette étape réussit :
+  // un device qui envoie une welcome_request doit avoir ses KP disponibles sur
+  // le serveur pour que l'hôte puisse l'inviter dans la foulée.
+  let keyPackagePublished = false;
   try {
     await mlsService.generateKeyPackage(pin);
     log('KeyPackage publié.');
-  } catch {
-    /* non-bloquant - réessayé à la prochaine connexion */
+    keyPackagePublished = true;
+  } catch (e) {
+    log(`[KP] Publication échouée (${e}) - welcome_request reportée à la prochaine connexion`);
   }
 
   // 2. Groupes du serveur
@@ -165,6 +170,12 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
 
     // Groupe cible absent du WASM.
     if (!localGroups.has(targetId)) {
+      // Ne pas envoyer de welcome_request si les KP ne sont pas publiés :
+      // l'hôte ne trouverait pas notre KP et ne pourrait pas nous inviter.
+      if (!keyPackagePublished) {
+        log(`[SYNC] ${targetId.slice(0, 8)}… absent - welcome_request différée (KP non publié)`);
+        continue;
+      }
       const targetEntry = groups.find((x) => x.groupId === targetId);
       if (targetEntry?.deletedAt && !targetEntry?.successorId) {
         // Successeur terminal soft-deleted sans successeur.

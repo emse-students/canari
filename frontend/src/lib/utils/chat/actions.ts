@@ -669,16 +669,11 @@ export async function handleWelcomeRequest(params: {
 
   try {
     // Récupérer le KeyPackage frais du device demandeur.
-    // Retry unique après 5 s : le device peut être en train de publier son KP
-    // au même moment qu'il envoie la welcome_request (race publish ↔ forward).
-    let devices = await mlsService.fetchUserDevices(requesterUserId);
-    let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
-    if (!targetDevice) {
-      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} - retry dans 5 s`);
-      await new Promise((r) => setTimeout(r, 5_000));
-      devices = await mlsService.fetchUserDevices(requesterUserId);
-      targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
-    }
+    // Si absent : le device n'a pas encore publié ses KP → on ne peut pas l'inviter.
+    // La causalité est assurée en amont : syncConnectionAfterWsOpen n'envoie pas de
+    // welcome_request tant que generateKeyPackage n'a pas réussi.
+    const devices = await mlsService.fetchUserDevices(requesterUserId);
+    const targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
       log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} - abandon`);
       return;
