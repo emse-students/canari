@@ -12,6 +12,7 @@
     uploadCalendarEventImage,
     deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
+    associationLogoSrc,
     type AssociationCalendarEvent,
     type AssociationLinkCandidates,
     type Association,
@@ -754,9 +755,9 @@
             {new Date(ev.startsAt).getDate()}
           </div>
           <div class="min-w-0 flex-1">
-            {#if ev.imageUrl}
+            {#if associationLogoSrc(ev.imageUrl)}
               <img
-                src={ev.imageUrl}
+                src={associationLogoSrc(ev.imageUrl) ?? ''}
                 alt=""
                 class="w-full rounded-xl object-cover max-h-40 mb-2 border border-cn-border/40"
               />

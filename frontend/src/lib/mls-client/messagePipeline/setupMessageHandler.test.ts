@@ -227,7 +227,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const mls = deps.mlsService as any;
     mls.processWelcome = vi
       .fn()
-      .mockRejectedValue(new Error('NoMatchingKeyPackage — key consumed'));
+      .mockRejectedValue(new Error('NoMatchingKeyPackage - key consumed'));
     mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (

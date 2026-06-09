@@ -83,7 +83,7 @@ export async function processPendingInvitations(params: {
         // Le successeur terminal existe mais n'est pas encore prêt (Welcome en transit).
         // onGroupReady() déclenchera un nouveau passage dans 500 ms.
         log(
-          `[PENDING] ${origGroupId.slice(0, 8)}… → successeur ${resolved.slice(0, 8)}… pas encore prêt — skip`
+          `[PENDING] ${origGroupId.slice(0, 8)}… → successeur ${resolved.slice(0, 8)}… pas encore prêt - skip`
         );
       } else {
         // Groupe original non prêt localement. Si totalement absent (pas même un
@@ -129,7 +129,7 @@ export async function processPendingInvitations(params: {
 
     try {
       // ── Ajouter les devices pending ───────────────────────────────────────
-      // Seul l'état 'pending' existe désormais (stale supprimé — RFC 9420).
+      // Seul l'état 'pending' existe désormais (stale supprimé - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
 
       for (const inv of currentPending) {
@@ -171,7 +171,7 @@ export async function processPendingInvitations(params: {
               await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
               const kickState = await mlsService.saveState(pin);
               await saveMlsState(userId, kickState);
-              // Le kick ne change pas le KP du device — targetDevice.keyPackage reste valide.
+              // Le kick ne change pas le KP du device - targetDevice.keyPackage reste valide.
             }
           } catch {
             /* proceed with add attempt */
@@ -624,13 +624,13 @@ export async function handleWelcomeRequest(params: {
 
   // Groupe introuvable sur le serveur.
   if (!terminalMeta) {
-    log(`[WELCOME_REQ] Groupe ${requestedGroupId.slice(0, 8)}… introuvable — refus`);
+    log(`[WELCOME_REQ] Groupe ${requestedGroupId.slice(0, 8)}… introuvable - refus`);
     return;
   }
 
-  // Toute la lignée est supprimée — refuser d'inviter dans un groupe mort.
+  // Toute la lignée est supprimée - refuser d'inviter dans un groupe mort.
   if (terminalMeta.deletedAt) {
-    log(`[WELCOME_REQ] Lignée de ${requestedGroupId.slice(0, 8)}… supprimée — refus`);
+    log(`[WELCOME_REQ] Lignée de ${requestedGroupId.slice(0, 8)}… supprimée - refus`);
     return;
   }
 
@@ -645,7 +645,7 @@ export async function handleWelcomeRequest(params: {
   // Si ce device n'est pas encore dans le groupe terminal (Welcome en transit ou sync initial
   // pas terminé), signaler via onNotReady pour que l'appelant diffère et réessaie.
   if (!conversations.get(groupId)?.isReady) {
-    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… — report`);
+    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… - report`);
     onNotReady?.(groupId);
     return;
   }
@@ -692,12 +692,12 @@ export async function handleWelcomeRequest(params: {
         const membership = memberships.find((m) => m.groupId === groupId);
         if (membership?.status === 'active') {
           log(
-            `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… déjà actif dans ${groupId.slice(0, 8)}… — welcome_request redondante, skip`
+            `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… déjà actif dans ${groupId.slice(0, 8)}… - welcome_request redondante, skip`
           );
           return;
         }
 
-        // Cas A : device stale — kick + ré-ajout.
+        // Cas A : device stale - kick + ré-ajout.
         log(
           `[WELCOME_REQ] ${requesterDeviceId} déjà dans l'arbre MLS - kick du leaf stale avant ré-ajout`
         );

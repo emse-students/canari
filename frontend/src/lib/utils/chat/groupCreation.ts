@@ -254,7 +254,7 @@ async function processBulkAddition(
       .catch(() => false);
     if (!lockAcquired) {
       log(
-        `[WARN] Verrou occupé pour ${conversation.id} — invitation annulée (un autre device est en cours).`
+        `[WARN] Verrou occupé pour ${conversation.id} - invitation annulée (un autre device est en cours).`
       );
       console.warn(
         `[SYNC] Add-lock busy for ${conversation.id}, aborting to avoid concurrent commits`
@@ -537,7 +537,7 @@ export async function startNewConversation(
         return;
       }
 
-      // MLS state missing locally — recover via successor / welcome flow.
+      // MLS state missing locally - recover via successor / welcome flow.
       log(`[1v1] État MLS absent pour ${key} - déclenchement de la récupération...`);
       if (deadKey && conversations.has(deadKey) && !conversations.has(key)) {
         await ensureDirectConvo(deadKey, false);

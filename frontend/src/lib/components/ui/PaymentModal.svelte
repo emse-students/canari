@@ -80,7 +80,7 @@
       const result = await onPayWithSaved(selectedMethodId);
       if (!result.ok) {
         if (result.requiresAction && result.clientSecret) {
-          // 3DS inline loads Stripe.js/hCaptcha and triggers strict CSP console errors — use Checkout.
+          // 3DS inline loads Stripe.js/hCaptcha and triggers strict CSP console errors - use Checkout.
           onPayWithNew();
           paying = false;
           return;

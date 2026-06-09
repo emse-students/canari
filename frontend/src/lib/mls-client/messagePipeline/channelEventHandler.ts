@@ -20,7 +20,7 @@ export interface ChannelEventContext extends Pick<
   | 'onWorkspaceUpdated'
   | 'log'
 > {
-  /** Appelé quand un commit est rejeté (epoch désynchronisée) — déclenche une demande de re-add. */
+  /** Appelé quand un commit est rejeté (epoch désynchronisée) - déclenche une demande de re-add. */
   onOutOfSync: (groupId: string) => Promise<void>;
 }
 
@@ -142,7 +142,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const groupId = String(data.groupId || '');
     const currentEpoch = Number(data.currentEpoch || 0);
     log(
-      `[EPOCH] Commit rejeté pour groupe ${groupId.slice(0, 8)}… (epoch serveur: ${currentEpoch}) — re-add`
+      `[EPOCH] Commit rejeté pour groupe ${groupId.slice(0, 8)}… (epoch serveur: ${currentEpoch}) - re-add`
     );
     if (groupId) await onOutOfSync(groupId);
     return;

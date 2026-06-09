@@ -56,7 +56,7 @@ export async function deleteGroupAndBroadcast(params: {
     }
   }
 
-  // 3. Oublier le groupe localement — après l'envoi du message (le chiffrement requiert l'état MLS).
+  // 3. Oublier le groupe localement - après l'envoi du message (le chiffrement requiert l'état MLS).
   // Sans ça, le groupe reste dans l'état WASM du supprimeur et continue à apparaître
   // dans getLocalGroups(), ce qui provoque des tentatives de recovery fantômes.
   try {
@@ -116,7 +116,7 @@ async function notifyMembershipChange(
 
 /**
  * Retire un membre du groupe MLS (action d'un administrateur) :
- *  1. Commit MLS remove — retire le leaf de l'arbre et avance l'epoch pour tous.
+ *  1. Commit MLS remove - retire le leaf de l'arbre et avance l'epoch pour tous.
  *  2. Diffuse `memberRemoved` aux membres restants.
  *  3. Nettoie le registre serveur (dm_group_members + dm_device_group_memberships).
  */
@@ -147,7 +147,7 @@ export async function removeMemberAndBroadcast(params: {
 
 /**
  * Quitte un groupe MLS (auto-retrait du membre lui-même) :
- *  1. Diffuse `memberLeft` aux autres membres (avant toute suppression —
+ *  1. Diffuse `memberLeft` aux autres membres (avant toute suppression -
  *     l'état WASM doit être valide pour chiffrer le message).
  *  2. Se retire du registre serveur (dm_group_members + dm_device_group_memberships).
  *  3. Oublie le groupe localement pour ne pas laisser un leaf orphelin dans
@@ -285,7 +285,7 @@ export async function isGroupActiveOnServer(
 /**
  * Traitement unifié d'une erreur `DuplicateSignature` levée par `addMember` :
  *  - Si le device est déjà `active` côté serveur → Welcome déjà livré, on skip.
- *  - Sinon (leaf stale — état local perdu) → `kickStaleLeaf` pour que le device
+ *  - Sinon (leaf stale - état local perdu) → `kickStaleLeaf` pour que le device
  *    puisse renvoyer un `welcome_request` avec un KeyPackage frais.
  *
  * Factorisé ici car le même traitement est requis dans `handleWelcomeRequest`
@@ -309,12 +309,12 @@ export async function handleDuplicateLeafError(params: {
     memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
   } catch {
     // Erreur réseau : impossible de vérifier le statut en toute sécurité → skip.
-    log(`[MLS] DuplicateSignature: statut inconnu pour ${targetDeviceId.slice(0, 12)}… — skip`);
+    log(`[MLS] DuplicateSignature: statut inconnu pour ${targetDeviceId.slice(0, 12)}… - skip`);
     return;
   }
 
   if (memberStatus === 'active') {
-    log(`[MLS] ${targetDeviceId.slice(0, 12)}… déjà actif (Welcome reçu) — skip`);
+    log(`[MLS] ${targetDeviceId.slice(0, 12)}… déjà actif (Welcome reçu) - skip`);
     return;
   }
 
@@ -378,7 +378,7 @@ function serializeForBundle(m: StoredMessage) {
  *  - resumePendingCasBundles : renvoi au redémarrage si le device a crashé entre
  *    l'écriture de la clé `cas_winner:{G}` et la suppression de celle-ci.
  *
- * Le destinataire déduplique les messages par `id` à la réception — appels multiples
+ * Le destinataire déduplique les messages par `id` à la réception - appels multiples
  * idempotents. S'arrête au premier chunk en erreur pour éviter de spammer le réseau.
  */
 export async function sendFullHistoryBundle(
@@ -412,7 +412,7 @@ export async function sendFullHistoryBundle(
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, true);
       log(
-        `[HISTORY_BUNDLE] Chunk ${Math.floor(i / chunkSize) + 1}/${totalChunks} — ${payload.length} msg → ${groupId.slice(0, 8)}…`
+        `[HISTORY_BUNDLE] Chunk ${Math.floor(i / chunkSize) + 1}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
       );
     } catch (e) {
       log(`[HISTORY_BUNDLE] Erreur envoi chunk ${Math.floor(i / chunkSize) + 1}: ${String(e)}`);

@@ -21,7 +21,7 @@ export async function resolveTerminalGroup(
   let meta: { name?: string; isGroup?: boolean; deletedAt?: string | null } | null = null;
 
   for (let hop = 0; hop <= maxHops; hop++) {
-    if (visited.has(current)) break; // cycle — s'arrêter au dernier connu
+    if (visited.has(current)) break; // cycle - s'arrêter au dernier connu
     visited.add(current);
 
     const m = await mlsService.getGroupMeta(current).catch(() => null);
@@ -33,7 +33,7 @@ export async function resolveTerminalGroup(
     current = m.successorId;
   }
 
-  // Chaîne trop longue ou cycle — retourner le dernier observé
+  // Chaîne trop longue ou cycle - retourner le dernier observé
   return { terminalId: current, groupMeta: meta, hasChain: true };
 }
 

@@ -15,7 +15,7 @@ export const RECOVERY_TIMEOUT_MS = 60_000;
 
 /**
  * Dépendances minimales requises par les fonctions de recovery.
- * Sous-ensemble de MessageHandlerDeps — les deux sont compatibles.
+ * Sous-ensemble de MessageHandlerDeps - les deux sont compatibles.
  */
 export interface RecoveryDeps {
   mlsService: IMlsService;
@@ -62,7 +62,7 @@ export async function requestReAdd(
   if (localGroups.includes(terminalId)) {
     if (hasChain && groupId !== terminalId && deps.conversations.has(groupId)) {
       deps.log(
-        `[READD] ${groupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}… déjà en WASM — migration`
+        `[READD] ${groupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}… déjà en WASM - migration`
       );
       await migrateConversation(groupId, terminalId, deps).catch(() => {});
     }
@@ -80,7 +80,7 @@ export async function requestReAdd(
   if (terminalMeta?.deletedAt) {
     const convo = deps.conversations.get(terminalId) ?? deps.conversations.get(groupId);
     if (!convo || (convo.deletedRemotely && !convo.isReady)) return;
-    deps.log(`[READD] ${terminalId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    deps.log(`[READD] ${terminalId.slice(0, 8)}… supprimé sans successeur - abandon`);
     deps.conversations.set(terminalId, {
       ...convo,
       id: terminalId,
@@ -104,7 +104,7 @@ export async function requestReAdd(
     timers.delete(terminalId);
     if (!deps.mlsService.getLocalGroups().includes(terminalId)) {
       deps.log(
-        `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${terminalId.slice(0, 8)}… — reboot`
+        `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${terminalId.slice(0, 8)}… - reboot`
       );
       await reboot(terminalId, deps, timers).catch((e) =>
         deps.log(`[READD] reboot échoué pour ${terminalId.slice(0, 8)}…: ${String(e)}`)
@@ -139,7 +139,7 @@ export function cancelReAdd(
  *  2. Si un successeur existe déjà (autre device gagnant du CAS) → `joinSuccessor`.
  *  3. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
  *  4. Crée un candidat successeur S (serveur + WASM local).
- *  5. CAS `claimGroupSuccessor(G, S)` — premier arrivé premier servi :
+ *  5. CAS `claimGroupSuccessor(G, S)` - premier arrivé premier servi :
  *     - Gagné : pose la clé localStorage `cas_winner:{G} = S` AVANT les opérations réseau
  *       (crash-safety). Si le device crashe entre l'écriture de la clé et la suppression
  *       finale, `resumePendingCasBundles` détecte la clé au prochain démarrage et
@@ -164,7 +164,7 @@ export async function reboot(
   // Protège contre les races entre un Welcome tardif et les timers de reboot (requestReAdd,
   // watchdog) : sans ce guard, le reboot créerait un successeur pour un groupe fonctionnel.
   if (mlsService.getLocalGroups().includes(groupId)) {
-    log(`[REBOOT] ${groupId.slice(0, 8)}… déjà dans WASM — annulé`);
+    log(`[REBOOT] ${groupId.slice(0, 8)}… déjà dans WASM - annulé`);
     return;
   }
 
@@ -178,9 +178,9 @@ export async function reboot(
 
   // Groupe supprimé sans successeur : le CAS claimSuccessor échouera systématiquement
   // (condition "deletedAt IS NULL" non satisfaite), créant un candidat orphelin à chaque
-  // tentative. Même abandon que requestReAdd — marquer la conversation deletedRemotely.
+  // tentative. Même abandon que requestReAdd - marquer la conversation deletedRemotely.
   if (meta?.deletedAt && !meta.successorId) {
-    log(`[REBOOT] ${groupId.slice(0, 8)}… supprimé sans successeur — abandon`);
+    log(`[REBOOT] ${groupId.slice(0, 8)}… supprimé sans successeur - abandon`);
     const convo = deps.conversations.get(groupId);
     if (convo && (!convo.deletedRemotely || convo.isReady)) {
       deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
@@ -217,13 +217,13 @@ export async function reboot(
     throw e;
   }
 
-  // Étape 4 : CAS — premier arrivé premier servi
+  // Étape 4 : CAS - premier arrivé premier servi
   const claim = await mlsService.claimGroupSuccessor(groupId, candidateId);
 
   if (!claim.claimed) {
-    // CAS perdu — nettoyer le candidat orphelin et rejoindre le gagnant
+    // CAS perdu - nettoyer le candidat orphelin et rejoindre le gagnant
     log(
-      `[REBOOT] CAS perdu — suppression ${candidateId.slice(0, 8)}…, migration vers ${claim.successorId?.slice(0, 8)}…`
+      `[REBOOT] CAS perdu - suppression ${candidateId.slice(0, 8)}…, migration vers ${claim.successorId?.slice(0, 8)}…`
     );
     await mlsService.deleteGroupOnServer(candidateId).catch(() => {});
     mlsService.forgetGroup(candidateId);
@@ -231,7 +231,7 @@ export async function reboot(
     return;
   }
 
-  // Étape 5 : CAS gagné — marquer ce device comme responsable du bundle historique
+  // Étape 5 : CAS gagné - marquer ce device comme responsable du bundle historique
   // avant toute opération réseau pour survivre aux crashes.
   const casBundleKey = `cas_winner:${groupId}`;
   localStorage.setItem(casBundleKey, candidateId);
@@ -246,7 +246,7 @@ export async function reboot(
   // Inviter tous les membres de l'ancien groupe.
   // Si le groupe mort n'a plus de membres (deleteGroup a effacé dm_group_members),
   // remonter la chaîne pour trouver l'ancêtre le plus proche qui en a encore.
-  log(`[REBOOT] CAS gagné — invitation membres dans ${candidateId.slice(0, 8)}…`);
+  log(`[REBOOT] CAS gagné - invitation membres dans ${candidateId.slice(0, 8)}…`);
   const memberSourceId = await findAncestorWithMembers(groupId, groups, deps);
   await inviteMembers(memberSourceId, candidateId, deps).catch((e) =>
     log(`[REBOOT] Erreur invitation membres : ${String(e)}`)
@@ -262,7 +262,7 @@ export async function reboot(
     await deps.saveConversation(candidateId).catch(() => {});
   }
 
-  // Étape 7 : envoyer l'historique complet aux membres invités (population 3 — fresh devices)
+  // Étape 7 : envoyer l'historique complet aux membres invités (population 3 - fresh devices)
   // Appelé après migrateConversation : les messages de G sont maintenant dans S.
   await sendFullHistoryBundle(candidateId, {
     storage: deps.storage,
@@ -344,7 +344,7 @@ async function findAncestorWithMembers(
     const parentMembers = await deps.mlsService.getGroupMembers(parent.groupId).catch(() => []);
     if (parentMembers.length > 0) {
       deps.log(
-        `[REBOOT] Groupe mort sans membres — fallback ancêtre ${parent.groupId.slice(0, 8)}…`
+        `[REBOOT] Groupe mort sans membres - fallback ancêtre ${parent.groupId.slice(0, 8)}…`
       );
       return parent.groupId;
     }
@@ -406,13 +406,13 @@ async function inviteMembers(
     return;
   }
 
-  // Acquérir le add-lock — retry une fois après 2s (fix R5)
+  // Acquérir le add-lock - retry une fois après 2s (fix R5)
   let locked = await mlsService.acquireAddLock(successorId).catch(() => false);
   if (!locked) {
     await new Promise((r) => setTimeout(r, 2_000));
     locked = await mlsService.acquireAddLock(successorId).catch(() => false);
     if (!locked) {
-      log('[REBOOT] Add-lock non disponible — abandon (un autre device le traite).');
+      log('[REBOOT] Add-lock non disponible - abandon (un autre device le traite).');
       return;
     }
   }
@@ -462,7 +462,7 @@ async function inviteMembers(
 
 /**
  * Migre une conversation de l'ancien groupe vers le successeur :
- * - Copie les messages locaux (avec déduplication — fix C8)
+ * - Copie les messages locaux (avec déduplication - fix C8)
  * - Remet la conversation à jour dans le map réactif
  * - Redirige l'UI si la conversation active était l'ancienne
  * - Supprime l'ancienne entrée
@@ -485,7 +485,7 @@ export async function migrateConversation(
 
   const oldConvo = conversations.get(fromGroupId);
   if (!oldConvo) {
-    log(`[MIGRATE] Conversation source ${fromGroupId.slice(0, 8)}… introuvable — skip`);
+    log(`[MIGRATE] Conversation source ${fromGroupId.slice(0, 8)}… introuvable - skip`);
     return;
   }
   log(`[MIGRATE] ${fromGroupId.slice(0, 8)}… → ${toGroupId.slice(0, 8)}… ("${oldConvo.name}")`);
@@ -494,7 +494,7 @@ export async function migrateConversation(
   const localGroups = deps.mlsService.getLocalGroups();
   const targetAlreadyReady = existingTarget?.isReady === true || localGroups.includes(toGroupId);
 
-  // Toujours copier les messages — saveMessages est un upsert (idempotent par id).
+  // Toujours copier les messages - saveMessages est un upsert (idempotent par id).
   // Un second appel retourne 0 résultats car l'ancienne conversationId n'existe plus.
   // Le guard !existingTarget précédent causait la perte des messages sur les devices
   // population 2 (Welcome reçu → S dans conversations, mais messages de G non migrés).
@@ -560,7 +560,7 @@ export async function migrateConversation(
   }
 
   await saveConversation(toGroupId);
-  log(`[MIGRATE] Terminé — "${oldConvo.name}" vit maintenant dans ${toGroupId.slice(0, 8)}…`);
+  log(`[MIGRATE] Terminé - "${oldConvo.name}" vit maintenant dans ${toGroupId.slice(0, 8)}…`);
 }
 
 /**
@@ -573,20 +573,20 @@ export async function migrateConversation(
  *  A) Migration locale (si G est en conversations mais pas S) :
  *     Copie les messages de G vers S dans l'IndexedDB et met à jour le Map réactif.
  *
- *  B) Crash-safety — bundle non encore envoyé (Gap 2) :
+ *  B) Crash-safety - bundle non encore envoyé (Gap 2) :
  *     Si `localStorage["cas_winner:{G}"] === S` et que S est dans le WASM local avec
  *     epoch > 0, c'est que ce device a gagné le CAS, a fini d'inviter les membres, mais
  *     a crashé avant d'envoyer le bundle historique. Le bundle est renvoyé ici, puis la
  *     clé est supprimée.
  *     La clé `cas_winner:{G}` est posée par `reboot()` AVANT les opérations réseau et
- *     supprimée uniquement après succès — elle survit aux crashes et redémarrages.
+ *     supprimée uniquement après succès - elle survit aux crashes et redémarrages.
  *
- *  C) Crash-safety — invitation incomplète (epoch = 0) :
+ *  C) Crash-safety - invitation incomplète (epoch = 0) :
  *     Si S est dans le WASM mais à epoch 0, le device a créé S mais crashé avant
  *     `inviteMembers`. L'invitation et le bundle sont relancés ici.
  *
  * Note : le scénario "device sans historique initie un reboot, envoie un bundle vide"
- * (ex. A2 nouveau device) est couvert par `joinSuccessor` — quand un membre disposant
+ * (ex. A2 nouveau device) est couvert par `joinSuccessor` - quand un membre disposant
  * des données (A1) rejoint S plus tard, il redistribue `sendFullHistoryBundle` après
  * `migrateConversation`.
  */
@@ -612,7 +612,7 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
     // qui avait G mais n'a pas encore S dans conversations).
     if (conversations.has(g.groupId) && !conversations.has(successorId)) {
       log(
-        `[HEALTH] Successeur détecté ${g.groupId.slice(0, 8)}… → ${successorId.slice(0, 8)}… — migration`
+        `[HEALTH] Successeur détecté ${g.groupId.slice(0, 8)}… → ${successorId.slice(0, 8)}… - migration`
       );
       await migrateConversation(g.groupId, successorId, deps).catch((e) =>
         log(`[HEALTH] Erreur migration : ${String(e)}`)
@@ -654,7 +654,7 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
 
     // Crash recovery : ce device a gagné le CAS mais n'a pas invité les membres (epoch=0)
     if (localGroups.includes(successorId) && mlsService.getEpoch(successorId) === 0) {
-      log(`[HEALTH] Successeur ${successorId.slice(0, 8)}… epoch=0 — ré-invitation post-crash`);
+      log(`[HEALTH] Successeur ${successorId.slice(0, 8)}… epoch=0 - ré-invitation post-crash`);
       await inviteMembers(g.groupId, successorId, deps).catch((e) =>
         log(`[HEALTH] Erreur ré-invitation : ${String(e)}`)
       );

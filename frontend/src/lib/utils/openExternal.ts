@@ -59,7 +59,7 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
     return true;
   }
 
-  // Public Canari URL without a mapped in-app route — do not swallow the click.
+  // Public Canari URL without a mapped in-app route - do not swallow the click.
   if (isPublicAppUrl(href)) return false;
 
   if (!isTauriRuntime() || !shouldOpenExternalHref(href)) return false;

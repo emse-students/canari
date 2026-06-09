@@ -7,7 +7,7 @@
     error === 'oom'
       ? {
           bg: 'bg-red-600',
-          text: "Mémoire insuffisante — rechargez l'application pour recevoir de nouveaux messages.",
+          text: "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
           action: 'Recharger',
           onAction: () => window.location.reload(),
           dismissible: false,
@@ -15,7 +15,7 @@
       : error === 'private_mode'
         ? {
             bg: 'bg-blue-600',
-            text: 'Mode navigation privée — les messages ne seront pas conservés après fermeture.',
+            text: 'Mode navigation privée - les messages ne seront pas conservés après fermeture.',
             action: 'Compris',
             onAction: () => globalSession.clearMlsFatalError(),
             dismissible: true,
@@ -23,7 +23,7 @@
         : error === 'keystore_lost'
           ? {
               bg: 'bg-amber-600',
-              text: 'Notifications push dégradées — reconnectez-vous pour les réactiver.',
+              text: 'Notifications push dégradées - reconnectez-vous pour les réactiver.',
               action: 'Compris',
               onAction: () => globalSession.clearMlsFatalError(),
               dismissible: true,

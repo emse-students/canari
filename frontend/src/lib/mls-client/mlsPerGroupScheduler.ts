@@ -174,7 +174,7 @@ export class MlsPerGroupScheduler {
     hooks?: MlsPerGroupDrainHooks
   ): Promise<void> {
     if (this.isDraining) {
-      console.log('[QUEUE] Drain already running — skipped');
+      console.log('[QUEUE] Drain already running - skipped');
       return;
     }
 

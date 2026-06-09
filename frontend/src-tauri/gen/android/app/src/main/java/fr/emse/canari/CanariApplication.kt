@@ -55,7 +55,7 @@ class CanariApplication : Application() {
                 Log.d(TAG, "checkKeystoreHealth: Keystore opérationnel")
             } else {
                 markerFile.delete()
-                Log.e(TAG, "checkKeystoreHealth: Keystore perdu — push background désactivé")
+                Log.e(TAG, "checkKeystoreHealth: Keystore perdu - push background désactivé")
             }
         } catch (e: Exception) {
             Log.e(TAG, "checkKeystoreHealth: exception: ${e.message}", e)

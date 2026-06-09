@@ -39,7 +39,7 @@ object PushSecretKeystore {
     /**
      * Déchiffre le secret stocké par [store] et retourne la valeur en clair.
      * Retourne null si le secret n'a jamais été stocké ou si le Keystore échoue
-     * (panne TEE, réinitialisation appareil) — l'erreur est tracée en logcat.
+     * (panne TEE, réinitialisation appareil) - l'erreur est tracée en logcat.
      */
     fun retrieve(context: Context): String? {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

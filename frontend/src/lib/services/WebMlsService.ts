@@ -109,7 +109,7 @@ export class WebMlsService extends BaseMlsService {
         reject(event.error ?? new Error(event.message || 'worker error'));
       };
 
-      // The timer is cancelled by cleanup() in onMessage/onError — no leak.
+      // The timer is cancelled by cleanup() in onMessage/onError - no leak.
       const timeoutId = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -179,7 +179,7 @@ export class WebMlsService extends BaseMlsService {
       this.missedHeartbeats += 1;
       if (this.missedHeartbeats > WebMlsService.MAX_MISSED_HEARTBEATS) {
         console.warn(
-          `[WS] ${this.missedHeartbeats} pings without server response — closing zombie connection`
+          `[WS] ${this.missedHeartbeats} pings without server response - closing zombie connection`
         );
         this.clearHeartbeat();
         this.safeCloseWebSocket(ws, 1001, 'heartbeat timeout');
@@ -307,7 +307,7 @@ export class WebMlsService extends BaseMlsService {
         }
       };
       this.ws.onmessage = async (event) => {
-        // Any incoming frame proves the server is alive — reset heartbeat miss counter.
+        // Any incoming frame proves the server is alive - reset heartbeat miss counter.
         this.resetHeartbeatCounter();
         try {
           // Gateway sends JSON text frames: { senderId, senderDeviceId, groupId, isWelcome, proto: base64(ciphertext) }
@@ -383,9 +383,12 @@ export class WebMlsService extends BaseMlsService {
                 queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
               });
             }
-          } else {
-            console.warn(`[WS RCV] No proto or no messageCallback set. Message ignored.`);
+          } else if (msg.proto && !this.messageCallback) {
+            console.warn(
+              `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
+            );
           }
+          // Pas de proto → event non-MLS (post, channel), ignoré silencieusement.
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
@@ -513,7 +516,7 @@ export class WebMlsService extends BaseMlsService {
     const newState = this.client.save_state(newPin) as Uint8Array;
     this.lastKnownState = newState.slice();
     await saveMlsState(this.userId, newState);
-    console.log('[MLS] PIN changed — state re-encrypted and persisted.');
+    console.log('[MLS] PIN changed - state re-encrypted and persisted.');
   }
 
   /** WASM client wrapper - calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
@@ -540,7 +543,7 @@ export class WebMlsService extends BaseMlsService {
       // The worker generates KeyPackages off-thread, but its result contains private keys
       // from a snapshot that may be stale if WebSocket messages were processed in parallel.
       // We hold the MLS lock for the entire duration of the worker to prevent any
-      // concurrent processing — reloadClientFromState is thus always safe.
+      // concurrent processing - reloadClientFromState is thus always safe.
       const workerGenResult = await this.messageScheduler.runUnderMlsLock(async () => {
         try {
           console.log('[MLS] generateKeyPackage via worker (under mlsLock)');
@@ -699,7 +702,7 @@ export class WebMlsService extends BaseMlsService {
     excludeDeviceIds?: string[]
   ): Promise<void> {
     const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
-    // WASM getEpoch() reads from in-memory state — always up-to-date at send time.
+    // WASM getEpoch() reads from in-memory state - always up-to-date at send time.
     const currentEpoch = this.getEpoch(groupId);
     const baseEpoch = commitBaseEpochForValidation(currentEpoch);
     await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);

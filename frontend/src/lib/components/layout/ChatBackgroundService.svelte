@@ -34,7 +34,10 @@
   import { Fingerprint } from '@lucide/svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
-  import { refreshAppVersionCheck, shouldBlockSessionUnlock } from '$lib/stores/appVersionCheck.svelte';
+  import {
+    refreshAppVersionCheck,
+    shouldBlockSessionUnlock,
+  } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
@@ -99,26 +102,9 @@
   let biometricConfigured = $state(false);
 
   let showBiometricSheet = $state(false);
-  let _biometricSheetResolve: ((confirmed: boolean) => void) | null = null;
-
-  /** Shows the biometric choice sheet and returns true if the user confirms, false if they skip. */
-  function askBiometricChoice(): Promise<boolean> {
-    return new Promise((resolve) => {
-      _biometricSheetResolve = resolve;
-      showBiometricSheet = true;
-    });
-  }
-
-  function onBiometricConfirm() {
-    showBiometricSheet = false;
-    _biometricSheetResolve?.(true);
-    _biometricSheetResolve = null;
-  }
 
   function onBiometricSkip() {
     showBiometricSheet = false;
-    _biometricSheetResolve?.(false);
-    _biometricSheetResolve = null;
   }
 
   /** Returns false when min-version or maintenance gates block MLS unlock. */
@@ -147,7 +133,7 @@
   }
 
   /**
-   * Returns true only if the user has zero MLS devices on the server — i.e. a genuinely
+   * Returns true only if the user has zero MLS devices on the server - i.e. a genuinely
    * new account that has never registered a device anywhere. Defaults to false on any
    * network/auth failure so that users with an existing PIN on another device are never
    * shown the "first setup" wording by mistake.
@@ -404,15 +390,12 @@
         // set up), skip straight to PIN to avoid a confusing OS error dialog.
         const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
         if (biometricAvailable) {
-          // Ask the user before invoking the OS biometric prompt so they can
-          // choose PIN instead without seeing a jarring system dialog.
-          const confirmed = await askBiometricChoice();
-          if (confirmed) {
-            // loginImpl guards against isLoginInProgress=true — reset it so it can run,
-            // mirroring the savedPin path below that does the same before calling login().
-            globalSession.isLoginInProgress = false;
-            await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
-          }
+          // Show the sheet as backdrop then immediately trigger the OS biometric prompt —
+          // no click needed. The sheet stays visible until auth completes or fails.
+          showBiometricSheet = true;
+          globalSession.isLoginInProgress = false;
+          await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+          showBiometricSheet = false;
         }
         if (!globalSession.isLoggedIn) {
           // Biométrie annulée, échouée ou non disponible → fallback modal PIN
@@ -607,7 +590,7 @@
     const uid = currentUserId();
     if (!uid) return;
 
-    // Set the flag early — before the first async call — so that the layout guard
+    // Set the flag early - before the first async call - so that the layout guard
     // in +layout.ts sees isLoginInProgress = true and skips fetchUserProfile.
     globalSession.isLoginInProgress = true;
 
@@ -624,7 +607,7 @@
       globalSession.userId = uid;
       globalSession.pin = savedPin;
       _loginInProgress = true;
-      // loginImpl bails if isLoginInProgress=true — reset before delegating.
+      // loginImpl bails if isLoginInProgress=true - reset before delegating.
       globalSession.isLoginInProgress = false;
       void globalSession.login({
         ...sessionCb(),
@@ -641,7 +624,7 @@
         const bioAvailable = await BiometricService.isAvailable().catch(() => false);
         if (bioAvailable) {
           _loginInProgress = true;
-          // loginImpl bails if isLoginInProgress=true — reset before delegating.
+          // loginImpl bails if isLoginInProgress=true - reset before delegating.
           globalSession.isLoginInProgress = false;
           await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
           if (globalSession.isLoggedIn) return;
@@ -655,11 +638,7 @@
 </script>
 
 <!-- Biometric choice sheet (shown before OS biometric prompt) -->
-<BiometricBottomSheet
-  open={showBiometricSheet}
-  onConfirm={onBiometricConfirm}
-  onSkip={onBiometricSkip}
-/>
+<BiometricBottomSheet open={showBiometricSheet} onSkip={onBiometricSkip} />
 
 <!-- PIN modal global (visible sur toutes les routes) -->
 <PinModal
@@ -677,7 +656,6 @@
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
 />
-
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}
   <CallOverlay

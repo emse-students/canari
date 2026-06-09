@@ -15,7 +15,7 @@ export interface ConnectionDeps {
   /**
    * Appelé pour chaque groupe absent du WASM au moment de la connexion.
    * Doit envoyer un `welcome_request` ET armer un timer de reboot (30s).
-   * Si absent, fallback sur `sendWelcomeRequest` seul (pas de timer — moins fiable).
+   * Si absent, fallback sur `sendWelcomeRequest` seul (pas de timer - moins fiable).
    */
   onGroupMissing?: (groupId: string) => Promise<void>;
   /**
@@ -109,7 +109,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     await mlsService.generateKeyPackage(pin);
     log('KeyPackage publié.');
   } catch {
-    /* non-bloquant — réessayé à la prochaine connexion */
+    /* non-bloquant - réessayé à la prochaine connexion */
   }
 
   // 2. Groupes du serveur
@@ -155,7 +155,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     // Oublier l'ancien groupe seulement si le successeur est DÉJÀ dans le WASM
     // (on a déjà rejoint B lors d'une session précédente).
     // Si B n'est pas encore rejoint, on garde A pour pouvoir déchiffrer ses messages
-    // en attente avant de le purger — la purge se fera dans handleWelcome() dès que
+    // en attente avant de le purger - la purge se fera dans handleWelcome() dès que
     // B sera rejoint dans cette même session.
     if (g.successorId && localGroups.has(g.groupId) && localGroups.has(targetId)) {
       mlsService.forgetGroup(g.groupId);
@@ -174,7 +174,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
         // g.groupId dont dm_group_members est intact (claimSuccessor ne le purge pas).
         // Le simple watchdog était insuffisant : il aurait lancé reboot(g.groupId)
         // → joinSuccessor(g.groupId, targetId) → welcome_request pour 0 membres → bloqué.
-        log(`[SYNC] Groupe terminal ${targetId.slice(0, 8)}… supprimé — recovery via ancêtre`);
+        log(`[SYNC] Groupe terminal ${targetId.slice(0, 8)}… supprimé - recovery via ancêtre`);
         if (deps.onGroupMissing) {
           await deps.onGroupMissing(targetId).catch(() => {});
         }

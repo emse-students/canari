@@ -23,7 +23,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         const val KEY_FAILED   = "mls_bg_failed"
 
         /**
-         * Réinitialise le flag d'échec persistant — à appeler depuis [MainActivity.onResume]
+         * Réinitialise le flag d'échec persistant - à appeler depuis [MainActivity.onResume]
          * dès que l'utilisateur ouvre l'app, pour que les prochains FCM enqueueront à nouveau.
          */
         fun resetFailureFlag(context: Context) {
@@ -43,7 +43,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             )
             val notif = NotificationCompat.Builder(ctx, CanariFirebaseMessagingService.CHANNEL_MESSAGES)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Canari — Synchronisation en attente")
+                .setContentTitle("Canari - Synchronisation en attente")
                 .setContentText("Ouvrez l'app pour recevoir vos messages chiffrés.")
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -93,7 +93,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
 
         // Acquire lock BEFORE reading mls.bin: FCM threads write mls.bin concurrently
         // (nativeDecryptMessage). Reading outside the lock risks JNI-processing stale state.
-        // tryLock throws InterruptedException under Android memory pressure — must be caught.
+        // tryLock throws InterruptedException under Android memory pressure - must be caught.
         val lockAcquired = try {
             MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {

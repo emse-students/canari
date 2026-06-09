@@ -169,7 +169,7 @@ export async function handleOidcCallback(
   code: string,
   state: string
 ): Promise<{ id: string; email: string; displayName: string }> {
-  // CSRF state check — enforced on all platforms.
+  // CSRF state check - enforced on all platforms.
   // On desktop (Tauri) the state is read from the native Store plugin (survives
   // WebKitGTK navigation that clears localStorage). On web, localStorage is used.
   console.debug('[auth] handleOidcCallback isDesktop:', isTauriRuntime());

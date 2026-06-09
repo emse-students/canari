@@ -81,7 +81,9 @@
         await navigateExternal(result.url);
       }
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : 'Impossible de démarrer l\'enregistrement de carte');
+      showToast(
+        err instanceof Error ? err.message : "Impossible de démarrer l'enregistrement de carte"
+      );
     } finally {
       savingCard = false;
     }
@@ -98,7 +100,7 @@
     if (savedUser) {
       userId = savedUser;
       await getToken().catch(() => {
-        // Silently ignore — the form loads fine without a pre-fetched token;
+        // Silently ignore - the form loads fine without a pre-fetched token;
         // apiFetch will retry on the first API call.
       });
     }
@@ -873,7 +875,7 @@
 
       {#if paymentPending}
         <p class="pointer-events-auto text-sm text-amber-600 font-medium text-center mt-2">
-          Votre soumission est enregistrée — le paiement est en cours de confirmation.
+          Votre soumission est enregistrée - le paiement est en cours de confirmation.
         </p>
       {:else if formFull && !submitted}
         <p class="pointer-events-auto text-sm text-text-muted font-medium text-center mt-2">

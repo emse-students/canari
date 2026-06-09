@@ -4,13 +4,11 @@
   interface Props {
     /** Whether the sheet is visible. */
     open: boolean;
-    /** Called when the user taps the biometric button. */
-    onConfirm: () => void;
     /** Called when the user chooses to use PIN instead. */
     onSkip: () => void;
   }
 
-  let { open, onConfirm, onSkip }: Props = $props();
+  let { open, onSkip }: Props = $props();
 </script>
 
 {#if open}
@@ -45,17 +43,8 @@
       Déverrouillage biométrique
     </h2>
     <p class="text-center text-sm text-text-muted mb-6 leading-relaxed">
-      Utilisez votre empreinte ou Face ID pour déchiffrer vos messages.
+      Confirmez votre identité avec votre empreinte ou Face ID.
     </p>
-
-    <button
-      type="button"
-      onclick={onConfirm}
-      class="w-full py-3.5 bg-amber-500 text-[#151B2C] rounded-2xl font-extrabold text-sm hover:bg-amber-400 active:scale-[0.98] transition-all shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2.5"
-    >
-      <Fingerprint size={18} strokeWidth={2.5} />
-      Utiliser la biométrie
-    </button>
 
     <button
       type="button"

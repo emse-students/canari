@@ -7,7 +7,7 @@ export const prerender = true;
 /** Crawler rules for the public Canari web app. */
 export const GET: RequestHandler = () => {
   const origin = siteOrigin();
-  const body = `# Canari — https://canari-emse.fr
+  const body = `# Canari - https://canari-emse.fr
 User-agent: *
 Allow: /posts
 Allow: /associations

@@ -499,7 +499,7 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
-  /** Fetches group metadata — name, `successorId`, `deletedAt`. Returns `null` on 404 or error. */
+  /** Fetches group metadata - name, `successorId`, `deletedAt`. Returns `null` on 404 or error. */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {

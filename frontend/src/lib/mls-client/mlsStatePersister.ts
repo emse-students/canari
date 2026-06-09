@@ -26,7 +26,7 @@ export interface MlsStatePersister {
   onBulkIngestEnd(): Promise<void>;
 }
 
-// 2s pour les messages applicatifs (ratchet advance) — fenêtre de perte réduite vs 8s initial.
+// 2s pour les messages applicatifs (ratchet advance) - fenêtre de perte réduite vs 8s initial.
 // Les commits sont persistés immédiatement via persistNow() et n'atteignent pas ce timer.
 const DEFAULT_DEFERRED_MS = 2_000;
 

@@ -17,7 +17,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 
-/** Durée du watchdog de connexion — même valeur que RECOVERY_TIMEOUT_MS. */
+/** Durée du watchdog de connexion - même valeur que RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
 
 /**
@@ -150,7 +150,7 @@ export function pauseConnectionImpl(ctx: SessionContext): void {
   stopConnectionWatchdogImpl(ctx);
   ctx.getStorage(); // no-op read to keep the pattern, actual disconnect below
   // MLS service disconnect
-  // Note: mls est accédé via ctx.ensureMls() — mais sendDisconnect ne doit PAS créer le service.
+  // Note: mls est accédé via ctx.ensureMls() - mais sendDisconnect ne doit PAS créer le service.
   // On check via getStorage (présent si loggé) et on appelle directement via ensureMls guard.
   try {
     const svc = ctx.ensureMls();

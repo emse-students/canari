@@ -17,18 +17,13 @@
     ChevronLeft,
     ChevronRight,
     CalendarDays,
-    CalendarPlus,
     CalendarCheck,
     ClipboardList,
     ShieldAlert,
     FileDown,
   } from '@lucide/svelte';
-  import {
-    buildIcsCalendar,
-    downloadTextFile,
-    googleCalendarTemplateUrl,
-    type AgendaExportEvent,
-  } from '$lib/calendar/agendaExport';
+  import { type AgendaExportEvent } from '$lib/calendar/agendaExport';
+  import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
 
   let focusDate = $state(new Date());
   let associations = $state<Association[]>([]);
@@ -145,6 +140,7 @@
     return `${window.location.origin}/associations/${encodeURIComponent(ev.associationSlug)}`;
   }
 
+  /** Converts a feed event to the generic export shape expected by AddEventToCalendarButton. */
   function toAgendaExport(ev: AssociationCalendarFeedEvent): AgendaExportEvent {
     return {
       id: ev.id,
@@ -156,22 +152,13 @@
     };
   }
 
-  /** webcal:// URL pointing to the public ICS feed - calendar apps subscribe and auto-refresh. */
+  /** webcal:// URL for calendar app subscription (desktop only). */
   function calendarSubscribeUrl(): string {
     if (typeof window === 'undefined') return '';
     const query = filterAssociationId
       ? `?associationId=${encodeURIComponent(filterAssociationId)}`
       : '';
     return `webcal://${window.location.host}/api/associations/calendar/feed.ics${query}`;
-  }
-
-  /** Silently downloads a single-event ICS - the OS calendar app opens it automatically. */
-  function addEventToCalendar(ev: AssociationCalendarFeedEvent) {
-    downloadTextFile(
-      `canari-event-${ev.id}.ics`,
-      buildIcsCalendar([toAgendaExport(ev)]),
-      'text/calendar;charset=utf-8'
-    );
   }
 
   function formatEventRange(ev: AssociationCalendarFeedEvent): string {
@@ -185,7 +172,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} – ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   const sortedEvents = $derived(
@@ -304,7 +291,7 @@
       </a>
       <a
         href={calendarSubscribeUrl()}
-        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        class="hidden sm:inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
         title="Abonner votre appli calendrier à ce feed (Apple Calendar, Google Calendar, Outlook…)"
       >
         <CalendarCheck size={18} />
@@ -321,91 +308,74 @@
     </div>
   {/if}
 
-  {#if loading}
-    <div class="flex justify-center py-16">
-      <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
-      ></div>
-    </div>
-  {:else if sortedEvents.length === 0}
-    <Card class="p-8 text-center text-text-muted text-sm">Aucun événement ce mois-ci.</Card>
-  {:else if displayedEvents.length === 0}
-    <Card class="p-8 text-center text-text-muted text-sm">
-      Aucun événement ce jour-là.
-      <button
-        type="button"
-        class="mt-2 block mx-auto text-sm font-semibold text-cn-dark hover:underline"
-        onclick={() => (selectedDay = null)}
-      >
-        Voir tout le mois
-      </button>
-    </Card>
-  {:else}
-    {#if selectedDay != null}
-      <p class="text-sm font-semibold text-text-muted px-1">
-        {displayedEvents.length} événement{displayedEvents.length > 1 ? 's' : ''} le {selectedDay}
-        {new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(focusDate)}
-      </p>
-    {/if}
-    <ul class="space-y-3">
-      {#each displayedEvents as ev (ev.id)}
-        <li>
-          <Card class="p-4 sm:p-5">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div class="min-w-0 flex-1 space-y-1">
-                <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
-                  <a
-                    href="/associations/{encodeURIComponent(ev.associationSlug)}"
-                    class="hover:underline"
-                  >
-                    {ev.associationName}
-                  </a>
-                </p>
-                <h2 class="text-lg font-bold text-text-main leading-tight">{ev.title}</h2>
-                <p class="text-sm text-text-muted flex items-center gap-1.5">
-                  <CalendarDays size={14} class="shrink-0" />
-                  {formatEventRange(ev)}
-                </p>
-                {#if ev.description?.trim()}
-                  <p class="text-sm text-text-main/90 whitespace-pre-wrap">{ev.description}</p>
-                {/if}
-                {#if ev.linkedFormId}
-                  <div class="flex flex-wrap gap-2 pt-1">
+  <!-- Desktop-only: event list with details and calendar export (mobile uses MonthCalendarGridRich list) -->
+  <div class="hidden sm:block space-y-3">
+    {#if loading}
+      <div class="flex justify-center py-16">
+        <div
+          class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        ></div>
+      </div>
+    {:else if sortedEvents.length === 0}
+      <Card class="p-8 text-center text-text-muted text-sm">Aucun événement ce mois-ci.</Card>
+    {:else if displayedEvents.length === 0}
+      <Card class="p-8 text-center text-text-muted text-sm">
+        Aucun événement ce jour-là.
+        <button
+          type="button"
+          class="mt-2 block mx-auto text-sm font-semibold text-cn-dark hover:underline"
+          onclick={() => (selectedDay = null)}
+        >
+          Voir tout le mois
+        </button>
+      </Card>
+    {:else}
+      {#if selectedDay != null}
+        <p class="text-sm font-semibold text-text-muted px-1">
+          {displayedEvents.length} événement{displayedEvents.length > 1 ? 's' : ''} le {selectedDay}
+          {new Intl.DateTimeFormat('fr-FR', { month: 'long' }).format(focusDate)}
+        </p>
+      {/if}
+      <ul class="space-y-3">
+        {#each displayedEvents as ev (ev.id)}
+          <li>
+            <Card class="p-4 sm:p-5">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1 space-y-1">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
                     <a
-                      href="/forms/{encodeURIComponent(ev.linkedFormId)}"
-                      class="inline-flex items-center gap-1 rounded-lg bg-cn-yellow/15 px-2 py-1 text-xs font-semibold text-cn-dark hover:bg-cn-yellow/25"
+                      href="/associations/{encodeURIComponent(ev.associationSlug)}"
+                      class="hover:underline"
                     >
-                      <ClipboardList size={12} />
-                      Formulaire
+                      {ev.associationName}
                     </a>
-                  </div>
-                {/if}
+                  </p>
+                  <h2 class="text-lg font-bold text-text-main leading-tight">{ev.title}</h2>
+                  <p class="text-sm text-text-muted flex items-center gap-1.5">
+                    <CalendarDays size={14} class="shrink-0" />
+                    {formatEventRange(ev)}
+                  </p>
+                  {#if ev.description?.trim()}
+                    <p class="text-sm text-text-main/90 whitespace-pre-wrap">{ev.description}</p>
+                  {/if}
+                  {#if ev.linkedFormId}
+                    <div class="flex flex-wrap gap-2 pt-1">
+                      <a
+                        href="/forms/{encodeURIComponent(ev.linkedFormId)}"
+                        class="inline-flex items-center gap-1 rounded-lg bg-cn-yellow/15 px-2 py-1 text-xs font-semibold text-cn-dark hover:bg-cn-yellow/25"
+                      >
+                        <ClipboardList size={12} />
+                        Formulaire
+                      </a>
+                    </div>
+                  {/if}
+                </div>
+                <AddEventToCalendarButton event={toAgendaExport(ev)} />
               </div>
-              <div class="flex flex-wrap gap-2 shrink-0">
-                <button
-                  type="button"
-                  onclick={() => addEventToCalendar(ev)}
-                  class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
-                  title="Ajouter à Apple Calendar, Outlook ou tout autre agenda"
-                >
-                  <CalendarPlus size={14} />
-                  Ajouter à l'agenda
-                </button>
-                <a
-                  href={googleCalendarTemplateUrl(toAgendaExport(ev))}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center justify-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
-                  title="Ouvrir dans Google Calendar"
-                >
-                  <CalendarPlus size={14} />
-                  Google Calendar
-                </a>
-              </div>
-            </div>
-          </Card>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+            </Card>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
 </div>

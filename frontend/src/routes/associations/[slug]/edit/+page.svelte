@@ -132,13 +132,7 @@
   let showCropper = $state(false);
 
   let editSection = $state<
-    | 'profile'
-    | 'members'
-    | 'documents'
-    | 'cotisants'
-    | 'payments'
-    | 'formulaires'
-    | 'danger'
+    'profile' | 'members' | 'documents' | 'cotisants' | 'payments' | 'formulaires' | 'danger'
   >('profile');
 
   let canManageDocuments = $derived(
@@ -223,14 +217,18 @@
   onMount(async () => {
     await loadData();
     // Detect return from Stripe Connect onboarding and poll for webhook confirmation.
-    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('stripe_return') === '1' && asso) {
+    if (
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('stripe_return') === '1' &&
+      asso
+    ) {
       // Clean up the URL param without triggering a navigation.
       const clean = window.location.pathname;
       window.history.replaceState(null, '', clean);
       if (!asso.stripeOnboardingComplete) {
         void pollStripeCompletion();
       } else {
-        console.log('[Stripe] Retour Stripe — onboarding déjà marqué complet en DB.');
+        console.log('[Stripe] Retour Stripe - onboarding déjà marqué complet en DB.');
       }
     }
   });
@@ -305,7 +303,14 @@
   }
 
   async function handleDelete() {
-    if (!asso || !await showConfirm('Supprimer cette association ? Cette action est irréversible.', { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (
+      !asso ||
+      !(await showConfirm('Supprimer cette association ? Cette action est irréversible.', {
+        danger: true,
+        confirmLabel: 'Supprimer',
+      }))
+    )
+      return;
     try {
       await deleteAssociation(asso.id);
       await goto('/associations');
@@ -374,7 +379,7 @@
       const live = await fetchStripeConnectStatus(asso.id);
       stripeConnectStatus = live;
       console.log(
-        `[Stripe] Statut Connect — status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`,
+        `[Stripe] Statut Connect - status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`
       );
       if (isStripeConnectReady(live)) {
         const refreshed = await getAssociationBySlug(slug);
@@ -393,13 +398,17 @@
     stripeLoading = true;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const base = `${origin}/associations/${encodeURIComponent(asso.slug)}/edit`;
-    console.log(`[Stripe] Lancement onboarding — asso=${asso.id} accountId=${asso.stripeAccountId ?? 'nouveau'}`);
+    console.log(
+      `[Stripe] Lancement onboarding - asso=${asso.id} accountId=${asso.stripeAccountId ?? 'nouveau'}`
+    );
     try {
       const result = await startStripeOnboarding(asso.id, asso.stripeAccountId ?? undefined, {
         returnUrl: `${base}?stripe_return=1`,
         refreshUrl: `${base}?stripe_return=1`,
       });
-      console.log(`[Stripe] URL onboarding reçue — accountId=${result.accountId} url=${result.url}`);
+      console.log(
+        `[Stripe] URL onboarding reçue - accountId=${result.accountId} url=${result.url}`
+      );
       if (result.accountId) {
         asso = { ...asso, stripeAccountId: result.accountId };
       }
@@ -415,15 +424,17 @@
   async function pollStripeCompletion() {
     const MAX_ATTEMPTS = 10;
     const DELAY_MS = 3000;
-    console.log('[Stripe] Retour depuis Stripe — attente confirmation webhook (max 30 s)…');
+    console.log('[Stripe] Retour depuis Stripe - attente confirmation webhook (max 30 s)…');
     for (let i = 1; i <= MAX_ATTEMPTS; i++) {
       await new Promise((r) => setTimeout(r, DELAY_MS));
       try {
         const refreshed = await getAssociationBySlug(slug);
-        console.log(`[Stripe] Poll ${i}/${MAX_ATTEMPTS} — stripeOnboardingComplete=${refreshed.stripeOnboardingComplete} chargesEnabled=${refreshed.stripeOnboardingComplete}`);
+        console.log(
+          `[Stripe] Poll ${i}/${MAX_ATTEMPTS} - stripeOnboardingComplete=${refreshed.stripeOnboardingComplete} chargesEnabled=${refreshed.stripeOnboardingComplete}`
+        );
         if (refreshed.stripeOnboardingComplete) {
           asso = refreshed;
-          console.log('[Stripe] ✓ Connexion Stripe confirmée — onboarding complet.');
+          console.log('[Stripe] ✓ Connexion Stripe confirmée - onboarding complet.');
           await refreshStripeConnectStatus();
           return;
         }
@@ -437,7 +448,9 @@
         console.warn(`[Stripe] Poll ${i} échoué:`, e);
       }
     }
-    console.warn('[Stripe] Webhook non reçu après 30 s — vérifier le dashboard Stripe et la config STRIPE_WEBHOOK_SECRET.');
+    console.warn(
+      '[Stripe] Webhook non reçu après 30 s - vérifier le dashboard Stripe et la config STRIPE_WEBHOOK_SECRET.'
+    );
   }
 
   async function onLogoExported(blob: Blob) {
@@ -456,7 +469,14 @@
   }
 
   async function handleRemoveLogo() {
-    if (!asso || !await showConfirm('Retirer le logo affiché sur le fil et la page publique ?', { danger: true, confirmLabel: 'Retirer' })) return;
+    if (
+      !asso ||
+      !(await showConfirm('Retirer le logo affiché sur le fil et la page publique ?', {
+        danger: true,
+        confirmLabel: 'Retirer',
+      }))
+    )
+      return;
     logoBusy = true;
     try {
       asso = await deleteAssociationLogo(asso.id);
@@ -513,7 +533,14 @@
   }
 
   async function handleRevokeTag(tag: UserTag) {
-    if (!asso || !await showConfirm(`Révoquer le tag « ${tag.tagName} » pour cet utilisateur ?`, { danger: true, confirmLabel: 'Révoquer' })) return;
+    if (
+      !asso ||
+      !(await showConfirm(`Révoquer le tag « ${tag.tagName} » pour cet utilisateur ?`, {
+        danger: true,
+        confirmLabel: 'Révoquer',
+      }))
+    )
+      return;
     try {
       await revokeAssociationTag(asso.id, tag.id);
       tags = tags.filter((t) => t.id !== tag.id);
@@ -625,7 +652,10 @@
   async function handleDeleteProduct(product: AssociationProduct) {
     if (
       !asso ||
-      !await showConfirm(`Supprimer le produit « ${product.name} » ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })
+      !(await showConfirm(
+        `Supprimer le produit « ${product.name} » ? Cette action est irréversible.`,
+        { danger: true, confirmLabel: 'Supprimer' }
+      ))
     )
       return;
     try {
@@ -1015,12 +1045,13 @@
                 </p>
                 <p class="text-sm leading-relaxed">
                   Votre dossier a bien été transmis. Stripe valide généralement le compte sous
-                  quelques heures à quelques jours ouvrés — aucune action n’est requise de votre
+                  quelques heures à quelques jours ouvrés - aucune action n’est requise de votre
                   part pour l’instant.
                 </p>
                 {#if stripeConnectStatus.pendingVerification && stripeConnectStatus.pendingVerification.length > 0}
                   <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
-                    Éléments en cours de vérification : {stripeConnectStatus.pendingVerification.length}
+                    Éléments en cours de vérification : {stripeConnectStatus.pendingVerification
+                      .length}
                   </p>
                 {/if}
               </div>
@@ -1648,18 +1679,20 @@
             <AlertTriangle size={15} class="shrink-0 mt-0.5" />
             <span>
               {#if canManageStripeConnect}
-                Certains formulaires sont payants mais <strong>Stripe Connect n'est pas encore configuré</strong>.
-                Les paiements en ligne ne fonctionneront pas tant que vous n'aurez pas
+                Certains formulaires sont payants mais <strong
+                  >Stripe Connect n'est pas encore configuré</strong
+                >. Les paiements en ligne ne fonctionneront pas tant que vous n'aurez pas
                 <button
                   type="button"
                   class="underline font-semibold hover:no-underline"
                   onclick={() => {
                     editSection = 'payments';
-                  }}
-                >configuré Stripe dans l'onglet Paiements</button>.
+                  }}>configuré Stripe dans l'onglet Paiements</button
+                >.
               {:else}
-                Certains formulaires sont payants mais <strong>Stripe Connect n'est pas configuré</strong>.
-                Demandez à un responsable disposant de l'accès <em>Gérer Stripe Connect</em> de l'activer.
+                Certains formulaires sont payants mais <strong
+                  >Stripe Connect n'est pas configuré</strong
+                >. Demandez à un responsable disposant de l'accès <em>Gérer Stripe Connect</em> de l'activer.
               {/if}
             </span>
           </div>
@@ -1697,7 +1730,7 @@
                       {#if form.basePrice > 0 && !stripePaymentsReady}
                         <span
                           class="inline-flex items-center gap-1 text-amber-700 font-medium"
-                          title="Stripe Connect non configuré — les paiements en ligne sont inactifs"
+                          title="Stripe Connect non configuré - les paiements en ligne sont inactifs"
                         >
                           <AlertTriangle size={11} />
                           Stripe non configuré
@@ -1756,7 +1789,14 @@
                             <button
                               type="button"
                               onclick={async () => {
-                                if (!await showConfirm('Annuler ce paiement ?', { danger: true, confirmLabel: 'Annuler le paiement', cancelLabel: 'Non' })) return;
+                                if (
+                                  !(await showConfirm('Annuler ce paiement ?', {
+                                    danger: true,
+                                    confirmLabel: 'Annuler le paiement',
+                                    cancelLabel: 'Non',
+                                  }))
+                                )
+                                  return;
                                 try {
                                   await cancelCashSubmission(form.id, sub.id);
                                   pendingCash = {

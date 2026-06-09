@@ -103,7 +103,7 @@ export class TauriMlsService extends BaseMlsService {
       this.missedHeartbeats += 1;
       if (this.missedHeartbeats > TauriMlsService.MAX_MISSED_HEARTBEATS) {
         console.warn(
-          `[WS] ${this.missedHeartbeats} pings without server response — closing zombie connection`
+          `[WS] ${this.missedHeartbeats} pings without server response - closing zombie connection`
         );
         this.clearHeartbeat();
         // Unlisten before disconnecting to prevent the Close event from firing
@@ -196,7 +196,7 @@ export class TauriMlsService extends BaseMlsService {
     console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
-      // Any incoming frame proves the server is alive — reset heartbeat miss counter (parity WebMlsService).
+      // Any incoming frame proves the server is alive - reset heartbeat miss counter (parity WebMlsService).
       if (msg.type !== 'Close') {
         this.resetHeartbeatCounter();
       }
@@ -282,9 +282,12 @@ export class TauriMlsService extends BaseMlsService {
                 queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
               });
             }
-          } else {
-            console.warn(`[WS RCV] No proto or no messageCallback set. Message ignored.`);
+          } else if (parsed.proto && !this.messageCallback) {
+            console.warn(
+              `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
+            );
           }
+          // Pas de proto → event non-MLS (post, channel), ignoré silencieusement.
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
@@ -472,7 +475,7 @@ export class TauriMlsService extends BaseMlsService {
   async changePIN(newPin: string): Promise<void> {
     this._pin = newPin;
     await this.saveState(newPin);
-    console.log('[MLS][Tauri] PIN changed — state re-encrypted and persisted.');
+    console.log('[MLS][Tauri] PIN changed - state re-encrypted and persisted.');
   }
 
   /** Tauri-native `invoke` wrapper - calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
@@ -650,7 +653,7 @@ export class TauriMlsService extends BaseMlsService {
     }
     await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
     // Re-read the epoch after the server has accepted the commit: the epoch visible
-    // to other members is now confirmed. Best-effort — failure leaves the cache at
+    // to other members is now confirmed. Best-effort - failure leaves the cache at
     // the pre-send value which is off by one until the next message is processed.
     void this.refreshEpochCache(groupId);
   }

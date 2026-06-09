@@ -446,7 +446,7 @@ export function useMessaging() {
     }
     if (isMessageCatchupActive) {
       ctx.log('[SEND] Abort: synchronisation MLS en cours');
-      ctx.setSendError('Synchronisation en cours — réessayez dans un instant');
+      ctx.setSendError('Synchronisation en cours - réessayez dans un instant');
       return;
     }
     if (!ctx.selectedContact) {

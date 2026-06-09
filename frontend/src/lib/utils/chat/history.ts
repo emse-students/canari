@@ -165,7 +165,7 @@ export async function replayConversationHistory(params: {
 
     // Batch-collect decoded messages to flush in one UI update at the end.
     // Les champs reactions/readBy/isDeleted/isEdited sont optionnels et proviennent
-    // uniquement du chemin history_bundle (migration) — AddMessageToChatOptions ne
+    // uniquement du chemin history_bundle (migration) - AddMessageToChatOptions ne
     // les inclut pas car addMessageToChat n'en a pas besoin (les mutations arrivent
     // via des events MLS séparés pendant une session normale).
     const pendingMessages: Array<
@@ -357,7 +357,7 @@ export async function replayConversationHistory(params: {
                         typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
                       ingestSequence: historyIngestSeq++,
                       // Métadonnées transférées du device source : réactions, accusés,
-                      // suppressions et éditions — état complet au moment de la migration.
+                      // suppressions et éditions - état complet au moment de la migration.
                       ...(Array.isArray(m.reactions) && m.reactions.length > 0
                         ? { reactions: m.reactions }
                         : {}),

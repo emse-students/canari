@@ -51,7 +51,7 @@ function placeSeo(pathname: string): SeoMeta | null {
   if (!place) return null;
   return {
     title: place.label,
-    description: `${place.description} — ${SITE.name}, ${SITE.tagline}.`,
+    description: `${place.description} - ${SITE.name}, ${SITE.tagline}.`,
     path: place.href,
   };
 }

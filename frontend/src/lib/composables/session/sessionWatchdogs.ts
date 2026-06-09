@@ -65,7 +65,7 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
         rebootingGroups.delete(id); // Welcome arrivé pendant un reboot → nettoyer
         continue;
       }
-      // Channels utilisent AES-GCM, pas MLS — jamais en recovery MLS.
+      // Channels utilisent AES-GCM, pas MLS - jamais en recovery MLS.
       if (isChannelConversationId(id)) {
         notReadySince.delete(id);
         continue;
@@ -76,7 +76,7 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       } else if (now - since > RECOVERY_TIMEOUT_MS && !rebootingGroups.has(id)) {
         notReadySince.delete(id);
         rebootingGroups.add(id);
-        cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s — reboot`);
+        cb.log(`[SYNC_WATCHDOG] Groupe ${id.slice(0, 8)}… non-prêt depuis >30s - reboot`);
         reboot(id, recoveryDeps)
           .catch((e: unknown) => cb.log(`[SYNC_WATCHDOG] reboot échoué pour ${id}: ${String(e)}`))
           .finally(() => rebootingGroups.delete(id));

@@ -198,7 +198,7 @@ export async function handleSystemEvent(
     const updated = conversations.get(convoKey);
     if (updated) conversations.set(convoKey, { ...updated, deletedRemotely: true });
     await saveConversation(convoKey).catch(() => {});
-    log(`[INFO] Groupe supprimé par ${senderName} — conversation marquée deletedRemotely`);
+    log(`[INFO] Groupe supprimé par ${senderName} - conversation marquée deletedRemotely`);
     return true;
   }
 

@@ -4,7 +4,7 @@
  *
  * Do **not** use `navigator.storage.persisted()` for this: it reports whether the
  * site was granted durable storage, which is `false` by default in normal browsing
- * until `storage.persist()` succeeds — not whether the user is in incognito.
+ * until `storage.persist()` succeeds - not whether the user is in incognito.
  */
 export async function isLikelyPrivateBrowsing(): Promise<boolean> {
   if (typeof window === 'undefined') return false;

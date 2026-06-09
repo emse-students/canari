@@ -625,7 +625,7 @@ export function useConversations() {
           console.log(`[VERIFY] Direct conversation ${convo.id} recovered successfully`);
           return true;
         } catch {
-          // Recovery failed — fall through to show removal notice
+          // Recovery failed - fall through to show removal notice
         }
       }
       const notice =

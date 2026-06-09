@@ -1,7 +1,7 @@
 /**
  * Global imperative confirmation dialog store.
  *
- * Usage: `const ok = await showConfirm('Supprimer ?')` — resolves true if the
+ * Usage: `const ok = await showConfirm('Supprimer ?')` - resolves true if the
  * user clicks the confirm button, false if they cancel or close the dialog.
  * ConfirmDialog in +layout.svelte renders and handles the promise.
  */

@@ -131,7 +131,7 @@ export interface UpdatePostPayload {
   markdown: string;
   images?: PostImageRef[];
   polls?: Array<{
-    /** Existing poll ID — pass it to preserve vote history when options are unchanged. */
+    /** Existing poll ID - pass it to preserve vote history when options are unchanged. */
     id?: string;
     question: string;
     options: Array<{ label: string }>;

@@ -29,7 +29,7 @@ type PendingMsg = { sender: string; content: Uint8Array };
  * Invariants :
  * 1. Tout message est ACKé exactement une fois.
  * 2. `requestReAdd` remplace toute escalade (pas de Poison Pill, pas de compteurs).
- * 3. L'état recovery (timers) est en mémoire seulement — reset à chaque session.
+ * 3. L'état recovery (timers) est en mémoire seulement - reset à chaque session.
  */
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const { mlsService, pin, userId, log } = deps;
@@ -67,7 +67,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   // Callback partagé pour tout cas "hors-sync"
   const onOutOfSync = async (groupId: string) => {
-    log(`[PIPELINE] Hors-sync pour ${groupId.slice(0, 8)}… — requestReAdd`);
+    log(`[PIPELINE] Hors-sync pour ${groupId.slice(0, 8)}… - requestReAdd`);
     await requestReAdd(groupId, deps, recoveryTimers);
   };
 
@@ -104,7 +104,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         });
       }
 
-      if (!groupId) return true; // ACK sans groupe — frame de contrôle
+      if (!groupId) return true; // ACK sans groupe - frame de contrôle
 
       // ── Groupe inconnu (pas dans le WASM local) ───────────────────────────
       const inGroup = mlsService.getLocalGroups().includes(groupId);
@@ -148,7 +148,7 @@ interface WelcomeArgs {
 }
 
 /**
- * Traite un message Welcome — pour un groupe connu ou inconnu.
+ * Traite un message Welcome - pour un groupe connu ou inconnu.
  *
  * Toujours ACKé : un Welcome qui échoue ne peut pas être retraité
  * (key package consommé). On demande une ré-invitation si nécessaire.
@@ -175,15 +175,15 @@ async function handleWelcome({
   } = deps;
 
   // Résoudre le groupe terminal dans la chaîne de successeurs.
-  // Cas commun (aucun successeur) : 1 appel API — remplace fetchGroupMeta.
+  // Cas commun (aucun successeur) : 1 appel API - remplace fetchGroupMeta.
   // Chaîne de N reboots : N+1 appels, mais on atteint le terminal directement
   // sans jamais rejoindre un groupe mort intermédiaire.
   const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(mlsService, groupId ?? '');
 
-  // Toute la lignée de successeurs est supprimée — ne pas rejoindre un groupe mort.
+  // Toute la lignée de successeurs est supprimée - ne pas rejoindre un groupe mort.
   if (groupMeta?.deletedAt) {
     log(
-      `[WELCOME] Lignée ${(groupId ?? '').slice(0, 8)}…→${terminalId.slice(0, 8)}… supprimée — Welcome ignoré`
+      `[WELCOME] Lignée ${(groupId ?? '').slice(0, 8)}…→${terminalId.slice(0, 8)}… supprimée - Welcome ignoré`
     );
     cancelReAdd(groupId ?? '', recoveryTimers);
     deps.cancelGroupRecovery?.(groupId ?? '');
@@ -191,19 +191,19 @@ async function handleWelcome({
   }
 
   if (hasChain) {
-    // Le groupe de l'enveloppe est mort — cibler le terminal à la place.
+    // Le groupe de l'enveloppe est mort - cibler le terminal à la place.
     const from = (groupId ?? '').slice(0, 8);
     const to = terminalId.slice(0, 8);
     cancelReAdd(groupId ?? '', recoveryTimers);
     deps.cancelGroupRecovery?.(groupId ?? '');
     if (mlsService.getLocalGroups().includes(terminalId)) {
-      log(`[WELCOME] ${from}… → ${to}… déjà dans WASM — Welcome ignoré`);
+      log(`[WELCOME] ${from}… → ${to}… déjà dans WASM - Welcome ignoré`);
     } else {
-      log(`[WELCOME] ${from}… a successeur ${to}… — welcome_request vers groupe terminal`);
+      log(`[WELCOME] ${from}… a successeur ${to}… - welcome_request vers groupe terminal`);
       await mlsService.registerMember(terminalId, userId).catch(() => {});
       await requestReAdd(terminalId, deps, recoveryTimers);
     }
-    return true; // ACKé — Welcome pour groupe mort traité
+    return true; // ACKé - Welcome pour groupe mort traité
   }
 
   try {
@@ -250,13 +250,13 @@ async function handleWelcome({
     // avant que upsertConversation puisse les lire et les persister dans le successeur,
     // provoquant une perte visible jusqu'à réception du bundle historique.
 
-    // Enregistrement côté serveur (idempotent — safety net si l'invitant n'a pas encore
+    // Enregistrement côté serveur (idempotent - safety net si l'invitant n'a pas encore
     // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
-    // Note : updateInvitationStatus(active) supprimé — le serveur le fait déjà dans
+    // Note : updateInvitationStatus(active) supprimé - le serveur le fait déjà dans
     // sendWelcome (messaging.service.ts) avant même que le client reçoive le message.
 
-    // groupMeta déjà récupéré par resolveTerminalGroup — pas de second appel HTTP.
+    // groupMeta déjà récupéré par resolveTerminalGroup - pas de second appel HTTP.
     await upsertConversation(joinedGroupId, groupMeta, sender, userId, deps);
 
     // Replay des messages bufferisés (commits arrivés avant le Welcome)
@@ -301,7 +301,7 @@ async function handleWelcome({
   } catch (e) {
     const err = String(e);
     if (err.includes('GroupAlreadyExists')) {
-      // Idempotent — on a déjà ce groupe, marquer prêt si besoin
+      // Idempotent - on a déjà ce groupe, marquer prêt si besoin
       if (groupId) {
         const convo = deps.conversations.get(groupId);
         if (convo && !convo.isReady) {
@@ -310,14 +310,14 @@ async function handleWelcome({
         }
         onGroupReady?.(groupId);
       }
-      log(`[WELCOME] GroupAlreadyExists pour ${groupId?.slice(0, 8)}… — noop`);
+      log(`[WELCOME] GroupAlreadyExists pour ${groupId?.slice(0, 8)}… - noop`);
     } else if (err.includes('NoMatchingKeyPackage')) {
-      // Clé consommée — demander une nouvelle invitation
-      log(`[WELCOME] NoMatchingKeyPackage pour ${groupId?.slice(0, 8)}… — welcome_request`);
+      // Clé consommée - demander une nouvelle invitation
+      log(`[WELCOME] NoMatchingKeyPackage pour ${groupId?.slice(0, 8)}… - welcome_request`);
       if (groupId) await mlsService.sendWelcomeRequest(groupId).catch(() => {});
     } else if (err.includes('CannotDecryptOwnMessage')) {
-      // Welcome destiné à un autre device — ignorer
-      log(`[WELCOME] CannotDecryptOwnMessage pour ${groupId?.slice(0, 8)}… — ACK silencieux`);
+      // Welcome destiné à un autre device - ignorer
+      log(`[WELCOME] CannotDecryptOwnMessage pour ${groupId?.slice(0, 8)}… - ACK silencieux`);
     } else {
       log(`[WELCOME] Erreur traitement ${groupId?.slice(0, 8)}…: ${err.slice(0, 150)}`);
     }
@@ -352,7 +352,7 @@ async function handleUnknownGroup({
 }: UnknownGroupArgs): Promise<boolean> {
   const { mlsService, log } = deps;
 
-  // Guard : groupe mort dont on connaît le successeur — le message ne peut pas être
+  // Guard : groupe mort dont on connaît le successeur - le message ne peut pas être
   // déchiffré (mauvaise epoch). Évite un welcome_request inutile qui génère un doublon
   // de conversation sur les autres devices et déclenche une cascade de recovery erronée.
   let buf = pendingBuffer.get(groupId);
@@ -362,11 +362,11 @@ async function handleUnknownGroup({
       const localGroups = mlsService.getLocalGroups();
       if (localGroups.includes(meta.successorId)) {
         log(
-          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… — successeur ${meta.successorId.slice(0, 8)}… en WASM — ACK silencieux`
+          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… - successeur ${meta.successorId.slice(0, 8)}… en WASM - ACK silencieux`
         );
       } else {
         log(
-          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… — requestReAdd vers successeur ${meta.successorId.slice(0, 8)}…`
+          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… - requestReAdd vers successeur ${meta.successorId.slice(0, 8)}…`
         );
         await requestReAdd(meta.successorId, deps, recoveryTimers);
       }
@@ -377,7 +377,7 @@ async function handleUnknownGroup({
     const timer = setTimeout(async () => {
       pendingBuffer.delete(groupId);
       if (!mlsService.getLocalGroups().includes(groupId)) {
-        log(`[BUFFER] 10s écoulées pour ${groupId.slice(0, 8)}… — requestReAdd`);
+        log(`[BUFFER] 10s écoulées pour ${groupId.slice(0, 8)}… - requestReAdd`);
         await requestReAdd(groupId, deps, recoveryTimers);
       }
     }, 10_000);
@@ -431,7 +431,7 @@ async function handleKnownGroup({
 
   const convoKey = groupId;
   const convo = conversations.get(convoKey);
-  if (!convo) return true; // ACK — conversation inconnue
+  if (!convo) return true; // ACK - conversation inconnue
 
   try {
     resetWasmDuplicateDeliveryFlag();
@@ -447,9 +447,9 @@ async function handleKnownGroup({
     if (decrypted === null) {
       // null peut être un commit structurel (add/remove) ou un duplicate légitime
       if (consumeWasmDuplicateDeliveryFlag()) {
-        log(`[MLS] Duplicate pour ${convoKey.slice(0, 8)}… — ACK silencieux`);
+        log(`[MLS] Duplicate pour ${convoKey.slice(0, 8)}… - ACK silencieux`);
       }
-      // Commit structurel sans payload applicatif — ok
+      // Commit structurel sans payload applicatif - ok
       return true;
     }
 

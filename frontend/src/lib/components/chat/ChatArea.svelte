@@ -574,7 +574,6 @@
           />
         {/if}
       </div>
-
     </div>
 
     {#if sendError}
@@ -611,7 +610,9 @@
     {/if}
 
     {#if conversation?.deletedRemotely}
-      <div class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10">
+      <div
+        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
+      >
         <p class="text-sm text-[var(--color-text-muted)] text-center">
           Cette conversation a été supprimée.
         </p>
@@ -648,7 +649,7 @@
         aria-busy="true"
       >
         <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
-        Synchronisation MLS en cours — envoi temporairement indisponible
+        Synchronisation MLS en cours - envoi temporairement indisponible
       </div>
     {/if}
   {:else}

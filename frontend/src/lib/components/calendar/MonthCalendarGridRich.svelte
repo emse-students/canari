@@ -1,7 +1,9 @@
 <script lang="ts">
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
-  import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
+  import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
 
   let {
     focusDate,
@@ -108,6 +110,21 @@
     );
   }
 
+  /** Converts a feed event to the generic export shape expected by AddEventToCalendarButton. */
+  function buildCalendarEvent(ev: AssociationCalendarFeedEvent): AgendaExportEvent {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return {
+      id: ev.id,
+      title: `${ev.title} - ${ev.associationName}`,
+      description: ev.description,
+      startsAt: ev.startsAt,
+      endsAt: ev.endsAt,
+      sourceUrl: origin
+        ? `${origin}/associations/${encodeURIComponent(ev.associationSlug)}`
+        : undefined,
+    };
+  }
+
   const MAX_VISIBLE = 3;
 </script>
 
@@ -175,6 +192,7 @@
                 {#each visible as ev, ei (ev.id)}
                   {@const colors = eventColors(ev)}
                   {@const fg = contrastColor(colors[0])}
+                  {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
                   <div
                     class="relative flex-1 flex items-center justify-center overflow-hidden"
                     style="{eventBgStyle(ev)} color:{fg};"
@@ -188,9 +206,9 @@
                       >
                     {/if}
                     <!-- Circular logo watermark centred in the slot -->
-                    {#if ev.associationLogoUrl}
+                    {#if logoSrc}
                       <img
-                        src={ev.associationLogoUrl}
+                        src={logoSrc}
                         alt=""
                         aria-hidden="true"
                         class="absolute rounded-full object-cover"
@@ -277,14 +295,15 @@
               {@const primaryColor = eventColors(ev)[0]}
               {@const fg = contrastColor(primaryColor)}
               {@const coOwnerNames = (ev.coOwners ?? []).map((co) => co.name).filter(Boolean)}
+              {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
               <li class="flex items-center gap-3 px-4 py-3">
                 <span
                   class="h-8 w-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center"
                   style="background:{primaryColor};"
                 >
-                  {#if ev.associationLogoUrl}
+                  {#if logoSrc}
                     <img
-                      src={ev.associationLogoUrl}
+                      src={logoSrc}
                       alt=""
                       aria-hidden="true"
                       class="h-8 w-8 object-cover"
@@ -311,6 +330,7 @@
                     >
                   </p>
                 </div>
+                <AddEventToCalendarButton event={buildCalendarEvent(ev)} />
               </li>
             {/each}
           </ul>

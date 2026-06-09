@@ -23,5 +23,5 @@ export type MembershipStatus = 'pending' | 'active';
 export type ProcessResult =
   | { kind: 'ok'; content: Uint8Array }
   | { kind: 'duplicate' } // message déjà vu (WASM duplicate flag)
-  | { kind: 'own_message' } // CannotDecryptOwnMessage — ignorer
+  | { kind: 'own_message' } // CannotDecryptOwnMessage - ignorer
   | { kind: 'out_of_sync' }; // epoch décalée ou déchiffrement impossible

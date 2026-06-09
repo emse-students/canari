@@ -12,7 +12,7 @@
 >
   <TriangleAlert size={14} />
   <span>
-    Mode maintenance actif — seuls les administrateurs ont accès.
+    Mode maintenance actif - seuls les administrateurs ont accès.
     {#if message}
       {message}
     {/if}

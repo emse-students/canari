@@ -333,7 +333,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        // 1. Acquérir le verrou Redis add-lock (HTTP + retries) — hors MlsStateLock
+        // 1. Acquérir le verrou Redis add-lock (HTTP + retries) - hors MlsStateLock
         var lockAcquired = false
         for (attempt in 0..2) {
             lockAcquired = acquireAddLock(ctx, secret, groupId)
@@ -348,7 +348,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "processWelcomeRequestBackground: verrou Redis acquis pour group=$groupId")
 
         try {
-            // 2. Récupérer le key package du requester (HTTP) — hors MlsStateLock
+            // 2. Récupérer le key package du requester (HTTP) - hors MlsStateLock
             val keyPackage = fetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId)
             if (keyPackage == null) {
                 Log.e(TAG, "processWelcomeRequestBackground: keyPackage introuvable pour $requesterUserId:$requesterDeviceId → abandon")
@@ -356,7 +356,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
 
-            // 3. Créer le Welcome via Rust JNI — MlsStateLock uniquement ici
+            // 3. Créer le Welcome via Rust JNI - MlsStateLock uniquement ici
             //    (lecture mls.bin + Argon2 déchiffrement + add_member + écriture mls.bin ~5–8s).
             // tryLock peut lever InterruptedException si le thread FCM est interrompu par Android.
             val jniLockAcquired = try {
@@ -396,7 +396,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val commitPayload   = result.getString("commit")
             Log.d(TAG, "processWelcomeRequestBackground: Welcome créé, commit=${commitPayload.take(16)}…")
 
-            // 4. Envoyer Welcome + commit au backend (HTTP) — hors MlsStateLock
+            // 4. Envoyer Welcome + commit au backend (HTTP) - hors MlsStateLock
             val sent = sendWelcomeAndCommit(
                 ctx, secret, groupId,
                 requesterUserId, requesterDeviceId,
@@ -569,7 +569,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Tente de déchiffrer un message MLS en mode exclusif (MLS_LOCK).
-     * Le verrou est acquis UNIQUEMENT pour l'accès à mls.bin et le JNI Argon2 — jamais
+     * Le verrou est acquis UNIQUEMENT pour l'accès à mls.bin et le JNI Argon2 - jamais
      * pendant les appels HTTP (fetchProtoFromBackend), pour ne pas bloquer les autres
      * threads FCM pendant les 5–11s que peut prendre un fetch réseau lent.
      */
@@ -583,7 +583,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return null
         }
 
-        // Charger le contexte push (lecture fichier) avant le verrou — lecture seule, thread-safe.
+        // Charger le contexte push (lecture fichier) avant le verrou - lecture seule, thread-safe.
         val ctx = MlsContextLoader.loadPushContext(this)
         if (ctx == null) {
             Log.e(TAG, "tryDecrypt: push_context.json absent ou invalide → abandon")

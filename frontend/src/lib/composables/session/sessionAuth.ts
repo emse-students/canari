@@ -289,9 +289,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
               if (!health.ok && health.reason === 'no_secret') {
                 ctx.setMlsFatalError('keystore_lost');
                 cb.log(
-                  '[AVERT] Keystore push perdu — les notifications background sont dégradées. Reconnectez-vous pour les réactiver.'
+                  "[AVERT] Keystore push perdu - les notifications background sont dégradées. Redémarrez l'application pour les réactiver."
                 );
-                appendLog('⚠️ Notifications push dégradées — reconnectez-vous pour les réactiver.');
+                appendLog(
+                  "⚠️ Notifications push dégradées - redémarrez l'application pour les réactiver."
+                );
               }
             })
             .catch(() => {})
@@ -394,7 +396,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         if (kind === 'oom') {
           cb.log("[FATAL] Mémoire WASM insuffisante - rechargez l'application.");
           appendLog(
-            "⚠️ Mémoire insuffisante — rechargez l'application pour continuer à recevoir des messages."
+            "⚠️ Mémoire insuffisante - rechargez l'application pour continuer à recevoir des messages."
           );
         } else if (kind === 'private_mode') {
           cb.log(
@@ -404,8 +406,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             'ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture.'
           );
         } else if (kind === 'keystore_lost') {
-          cb.log('[AVERT] Keystore Android perdu — notifications push dégradées.');
-          appendLog('⚠️ Notifications push dégradées — reconnectez-vous pour les réactiver.');
+          cb.log('[AVERT] Keystore Android perdu - notifications push dégradées.');
+          appendLog(
+            "⚠️ Notifications push dégradées - redémarrez l'application pour les réactiver."
+          );
         }
       },
       cancelGroupRecovery: (groupId) => cancelReAdd(groupId, ctx.connectionRecoveryTimers),
@@ -468,7 +472,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
               const list = ctx.deferredWelcomeRequests.get(terminalGroupId) ?? [];
               list.push({ requesterUserId, requesterDeviceId });
               ctx.deferredWelcomeRequests.set(terminalGroupId, list);
-              cb.log(`[WELCOME_REQ] ${terminalGroupId.slice(0, 8)}… pas encore prêt — report`);
+              cb.log(`[WELCOME_REQ] ${terminalGroupId.slice(0, 8)}… pas encore prêt - report`);
             },
           });
         } catch (e) {
@@ -482,7 +486,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     const tabLeaderNow = await initTabLeadershipAsync(cb.log);
     ctx.setIsTabLeader(tabLeaderNow);
     if (!tabLeaderNow) {
-      cb.log('[TAB] Onglet follower — WebSocket actif dans un autre onglet Canari.');
+      cb.log('[TAB] Onglet follower - WebSocket actif dans un autre onglet Canari.');
     }
 
     await initializeConnection({
@@ -511,7 +515,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         );
       }
     } else if (isTauriRuntime()) {
-      // localStorage may be empty after Android process kill — try Tauri Store fallback.
+      // localStorage may be empty after Android process kill - try Tauri Store fallback.
       try {
         const { load } = await import('@tauri-apps/plugin-store');
         const store = await load('session-meta.json', { autoSave: true, defaults: {} });

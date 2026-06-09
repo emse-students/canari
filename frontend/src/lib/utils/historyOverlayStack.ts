@@ -1,5 +1,5 @@
 /**
- * History-based overlay stack — Android Back button support.
+ * History-based overlay stack - Android Back button support.
  *
  * How it works on Android (Tauri / WebView):
  *  1. When a modal/drawer opens, `pushHistoryOverlay(close)` adds a
@@ -8,7 +8,7 @@
  *     the event to the WebView. Since there is a history entry, the WebView
  *     fires a `popstate` event instead of exiting the app.
  *  3. `onPopState` pops the top of the stack and calls `close()`,
- *     dismissing the overlay — Back behaves like tapping the X button.
+ *     dismissing the overlay - Back behaves like tapping the X button.
  *  4. If the stack is empty, `popstate` propagates normally:
  *     - SvelteKit navigates back (if there is router history), OR
  *     - Android exits the app (correct behaviour at the root screen).
@@ -17,15 +17,15 @@
  *     `pushHistoryOverlay` on open (use `bindHistoryOverlay.svelte.ts`).
  *     Modals that skip this step will not be intercepted by the Back button.
  *
- * No native Kotlin or Tauri plugin is required — `TauriActivity` already
+ * No native Kotlin or Tauri plugin is required - `TauriActivity` already
  * delegates Back presses to the WebView by default.
  *
  * Ghost-entry problem & fix:
  *  When `drainHistoryOverlayStack` (called in `beforeNavigate`) clears the JS
- *  stack, the corresponding `history.pushState` entries are NOT removed — they
+ *  stack, the corresponding `history.pushState` entries are NOT removed - they
  *  become "ghost" entries in the browser history.  Calling `history.go(-n)`
  *  after SvelteKit has already pushed the new route would move the history
- *  pointer backwards and cause SvelteKit to navigate back — exactly the bug
+ *  pointer backwards and cause SvelteKit to navigate back - exactly the bug
  *  "la première action ramène à la page précédente".
  *
  *  Instead, `onPopState` detects ghost entries by their `{ canariOverlay: N }`
@@ -36,7 +36,7 @@
  *
  *  `skipPops` (a counter, formerly the boolean `ignoreNextPop`) is used when
  *  we deliberately call `history.back()` in `abandonHistoryOverlay` to remove
- *  an entry that was already spliced from the JS stack — we don't want
+ *  an entry that was already spliced from the JS stack - we don't want
  *  `onPopState` to misinterpret that event.
  */
 const STATE_KEY = 'canariOverlay';
@@ -163,12 +163,12 @@ export function abandonHistoryOverlay(close: () => void): void {
  *
  * Called by `beforeNavigate` in the root layout before every SvelteKit
  * navigation.  The corresponding `history.pushState` entries are NOT removed
- * here — they become ghost entries.  Ghost entries are handled transparently
+ * here - they become ghost entries.  Ghost entries are handled transparently
  * by `onPopState` (see module-level comment above).
  *
  * ⚠️  Do NOT call `history.go(-count)` here.  That call is asynchronous and
  * fires AFTER SvelteKit has already pushed the new route, which moves the
- * history pointer backwards and causes SvelteKit to navigate back — the bug
+ * history pointer backwards and causes SvelteKit to navigate back - the bug
  * known as "la première navigation ramène à la page précédente".
  */
 export function drainHistoryOverlayStack(): void {

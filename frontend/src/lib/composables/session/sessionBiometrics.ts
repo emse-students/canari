@@ -32,7 +32,7 @@ export async function isBiometricPromptDismissed(): Promise<boolean> {
         return true;
       }
     } catch {
-      /* native flag unavailable — treat as not dismissed */
+      /* native flag unavailable - treat as not dismissed */
     }
   }
   return false;

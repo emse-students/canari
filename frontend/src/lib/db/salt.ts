@@ -24,15 +24,15 @@ export function getOrCreateEncryptionSalt(storageId: string): Uint8Array {
     localStorage.setItem(lsKey, encoded);
     return salt;
   } catch {
-    // localStorage quota exceeded or blocked — try sessionStorage as a session-scoped fallback.
+    // localStorage quota exceeded or blocked - try sessionStorage as a session-scoped fallback.
     // Without a stable salt, PBKDF2 is re-derived on every message (~100× slower).
     console.warn(
-      "[salt] localStorage indisponible — tentative sessionStorage. Chiffrement plus lent en cas d'échec."
+      "[salt] localStorage indisponible - tentative sessionStorage. Chiffrement plus lent en cas d'échec."
     );
     try {
       sessionStorage.setItem(lsKey, encoded);
     } catch {
-      // sessionStorage also unavailable — the random salt is returned as-is (per-message derivation).
+      // sessionStorage also unavailable - the random salt is returned as-is (per-message derivation).
     }
     return salt;
   }

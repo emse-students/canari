@@ -831,11 +831,16 @@ fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
         }
         // keystore_ok.flag écrit par CanariApplication.checkKeystoreHealth() au démarrage.
         if data_dir.join("keystore_ok.flag").exists() {
-            serde_json::json!({"ok": true})
-        } else {
-            log::warn!("[PushHealth] keystore_ok.flag absent → Keystore perdu");
-            serde_json::json!({"ok": false, "reason": "no_secret"})
+            return serde_json::json!({"ok": true});
         }
+        // pending_push_secret.txt → migration en attente ; le service FCM peut déchiffrer
+        // en fallback et le Keystore sera restauré au prochain démarrage de l'app.
+        if data_dir.join("pending_push_secret.txt").exists() {
+            log::info!("[PushHealth] pending_push_secret.txt présent → migration en attente, push fonctionnel");
+            return serde_json::json!({"ok": true});
+        }
+        log::warn!("[PushHealth] keystore_ok.flag et pending_push_secret.txt absents → Keystore perdu");
+        serde_json::json!({"ok": false, "reason": "no_secret"})
     }
     #[cfg(not(target_os = "android"))]
     {
