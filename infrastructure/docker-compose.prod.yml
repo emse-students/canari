@@ -147,8 +147,8 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
-      AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
-      AVATAR_API_KEY: ${AVATAR_API_KEY:-}
+      MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
+      MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -250,8 +250,8 @@ services:
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      AVATAR_API_URL: ${AVATAR_API_URL:-https://gallery.mitv.fr}
-      AVATAR_API_KEY: ${AVATAR_API_KEY:-}
+      MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
+      MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
     depends_on:
       postgres:
         condition: service_started

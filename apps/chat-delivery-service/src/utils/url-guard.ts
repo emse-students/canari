@@ -185,7 +185,7 @@ const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
 /**
  * Fetches a link-preview payload for a MiGallery album URL.
  *
- * Uses `AVATAR_API_URL` / `AVATAR_API_KEY` from the environment to call the
+ * Uses `MIGALLERY_API_URL` / `MIGALLERY_API_KEY` from the environment to call the
  * authenticated `/api/albums/[id]/info` endpoint — works for all visibility
  * levels (unlisted, authenticated, private).
  *
@@ -208,9 +208,9 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
 
   const albumId = match[1];
   const galleryBaseUrl = (
-    process.env.AVATAR_API_URL || `https://${GALLERY_HOST}`
+    process.env.MIGALLERY_API_URL || `https://${GALLERY_HOST}`
   ).replace(/\/$/, '');
-  const apiKey = process.env.AVATAR_API_KEY || '';
+  const apiKey = process.env.MIGALLERY_API_KEY || '';
   const frontendUrl = (
     process.env.FRONTEND_URL || 'https://canari-emse.fr'
   ).replace(/\/$/, '');

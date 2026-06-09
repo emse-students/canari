@@ -10,14 +10,14 @@ export class AvatarService {
 
   constructor(private readonly configService: ConfigService) {
     this.avatarApiUrl = this.configService.get<string>(
-      'AVATAR_API_URL',
+      'MIGALLERY_API_URL',
       'https://gallery.mitv.fr',
     );
-    this.avatarApiKey = this.configService.get<string>('AVATAR_API_KEY', '');
+    this.avatarApiKey = this.configService.get<string>('MIGALLERY_API_KEY', '');
 
     if (!this.avatarApiKey) {
       this.logger.warn(
-        'AVATAR_API_KEY is not set — avatar proxy will not work.',
+        'MIGALLERY_API_KEY is not set — avatar proxy will not work.',
       );
     }
   }

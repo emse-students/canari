@@ -219,9 +219,9 @@ export class SecurityController {
     }
 
     const galleryBaseUrl = (
-      process.env.AVATAR_API_URL || 'https://gallery.mitv.fr'
+      process.env.MIGALLERY_API_URL || 'https://gallery.mitv.fr'
     ).replace(/\/$/, '');
-    const apiKey = process.env.AVATAR_API_KEY || '';
+    const apiKey = process.env.MIGALLERY_API_KEY || '';
 
     if (!apiKey) {
       res.status(503).end('Gallery API key not configured');

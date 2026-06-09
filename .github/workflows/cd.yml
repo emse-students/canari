@@ -467,7 +467,7 @@ jobs:
           CLOUDFLARE_TURN_KEY_ID: ${{ secrets.CLOUDFLARE_TURN_KEY_ID }}
           MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
           MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
-          AVATAR_API_KEY: ${{ secrets.AVATAR_API_KEY }}
+          MIGALLERY_API_KEY: ${{ secrets.MIGALLERY_API_KEY }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
           CALL_ROOM_SECRET: ${{ secrets.CALL_ROOM_SECRET }}
@@ -579,10 +579,10 @@ jobs:
           upsert_env_var "MINIO_ACCESS_KEY" "$MINIO_ROOT_USER"
           upsert_env_var "MINIO_SECRET_KEY" "$MINIO_ROOT_PASSWORD"
 
-          if [ -n "$AVATAR_API_KEY" ]; then
-            upsert_env_var "AVATAR_API_KEY" "$AVATAR_API_KEY"
+          if [ -n "$MIGALLERY_API_KEY" ]; then
+            upsert_env_var "MIGALLERY_API_KEY" "$MIGALLERY_API_KEY"
           else
-            echo "::warning::AVATAR_API_KEY is not set - avatar service will not work"
+            echo "::warning::MIGALLERY_API_KEY is not set - avatar service will not work"
           fi
 
           if [ -n "$CHANNELS_ENCRYPTION_SECRET" ]; then
