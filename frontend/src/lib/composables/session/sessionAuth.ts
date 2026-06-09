@@ -281,28 +281,28 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       await savePin(ctx.getPin());
     }
 
-    if (isTauriRuntime()) {
-      import('@tauri-apps/api/core')
-        .then(({ invoke }) =>
-          invoke<{ ok: boolean; reason?: string }>('check_push_secret_health')
-            .then((health) => {
-              if (!health.ok && health.reason === 'no_secret') {
-                ctx.setMlsFatalError('keystore_lost');
-                cb.log(
-                  "[AVERT] Keystore push perdu - les notifications background sont dégradées. Redémarrez l'application pour les réactiver."
-                );
-                appendLog(
-                  "⚠️ Notifications push dégradées - redémarrez l'application pour les réactiver."
-                );
-              }
-            })
-            .catch(() => {})
-        )
-        .catch(() => {});
-    }
-
+    // Check push health AFTER registration so pending_push_secret.txt is present
+    // (written by store_push_secret during startPushService) before the health check runs.
     void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
-      .then(() => cb.log('[PUSH] Enregistrement token push termine.'))
+      .then(async () => {
+        cb.log('[PUSH] Enregistrement token push termine.');
+        if (!isTauriRuntime()) return;
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const health = await invoke<{ ok: boolean; reason?: string }>('check_push_secret_health');
+          if (!health.ok && health.reason === 'no_secret') {
+            ctx.setMlsFatalError('keystore_lost');
+            cb.log(
+              "[AVERT] Keystore push perdu - les notifications background sont dégradées. Redémarrez l'application pour les réactiver."
+            );
+            appendLog(
+              "⚠️ Notifications push dégradées - redémarrez l'application pour les réactiver."
+            );
+          }
+        } catch {
+          /* non-bloquant */
+        }
+      })
       .catch((e) =>
         cb.log(`[WARN] Echec enregistrement push: ${e instanceof Error ? e.message : String(e)}`)
       );

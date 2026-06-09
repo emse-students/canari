@@ -59,7 +59,14 @@ object PushSecretKeystore {
 
     private fun getOrCreateKey(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
-        ks.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
+        // Try to use existing key. If it's present but unusable (e.g. TEE corruption after
+        // a factory-reset partial wipe), delete it so we can create a fresh one below.
+        try {
+            ks.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
+        } catch (e: Exception) {
+            Log.w(TAG, "getOrCreateKey: existing key unusable, recreating: ${e.message}")
+            try { ks.deleteEntry(KEY_ALIAS) } catch (_: Exception) {}
+        }
         val spec = KeyGenParameterSpec.Builder(
             KEY_ALIAS,
             KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,

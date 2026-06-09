@@ -43,7 +43,7 @@ class CanariApplication : Application() {
      * La commande Tauri `check_push_secret_health` lit ce flag pour signaler l'UI.
      * Appel silencieux : une erreur ici ne doit pas bloquer le démarrage.
      */
-    private fun checkKeystoreHealth() {
+    internal fun checkKeystoreHealth() {
         try {
             val dataDir = MlsContextLoader.tauriDataDir(this)
             val contextFile = File(dataDir, "push_context.json")
@@ -62,7 +62,7 @@ class CanariApplication : Application() {
         }
     }
 
-    private fun processPendingPushSecret() {
+    internal fun processPendingPushSecret() {
         try {
             val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
             if (!file.exists()) return

@@ -65,6 +65,14 @@ class MainActivity : TauriActivity() {
         isInForeground = true
         MlsBackgroundWorker.resetFailureFlag(this)
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
+        // Migrates pending_push_secret.txt → Keystore on first foreground resume after
+        // FCM registration (store_push_secret writes the file during the live session;
+        // no-op after migration since processPendingPushSecret deletes the file).
+        Thread {
+            val app = application as? CanariApplication ?: return@Thread
+            app.processPendingPushSecret()
+            app.checkKeystoreHealth()
+        }.start()
     }
 
     override fun onPause() {

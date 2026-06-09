@@ -54,8 +54,13 @@ export async function requestReAdd(
     hasChain,
   } = await resolveTerminalGroup(deps.mlsService, groupId);
 
-  // Un seul timer / welcome_request par groupe terminal (déduplique les convs locales obsolètes).
-  if (timers.has(terminalId)) return;
+  // Un seul timer armé par groupe terminal, mais on renvoie toujours la welcome_request
+  // si le timer tourne déjà : le peer peut être revenu en ligne depuis la dernière fois,
+  // et la requête stockée côté serveur peut avoir expiré (TTL 24 h Redis).
+  if (timers.has(terminalId)) {
+    await deps.mlsService.sendWelcomeRequest(terminalId).catch(() => {});
+    return;
+  }
 
   const localGroups = deps.mlsService.getLocalGroups();
 

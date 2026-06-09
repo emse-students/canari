@@ -467,11 +467,15 @@
     globalSession.initServices(appendLog);
     void startLoginFlow();
 
-    // Pause/resume WebSocket based on app visibility (fires on Android when backgrounded).
-    // Presence polling and other intervals self-manage via createPausableInterval.
+    // Pause/resume WebSocket based on app visibility.
+    // On mobile/Tauri, pause immediately when backgrounded (OS will kill the process soon).
+    // On desktop web, don't pause: browsers keep WebSocket connections alive in background
+    // tabs, and pausing breaks recovery timers (60s reboot) and causes unnecessary reconnects.
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && globalSession.isLoggedIn) {
-        globalSession.pauseConnection();
+        if (isTauriRuntime()) {
+          globalSession.pauseConnection();
+        }
         return;
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
