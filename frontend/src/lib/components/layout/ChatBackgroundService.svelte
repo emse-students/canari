@@ -429,7 +429,9 @@
       if (savedUser && savedPin) {
         globalSession.userId = savedUser;
         globalSession.pin = savedPin;
-        // loginImpl sets + clears isLoginInProgress itself; don't reset it here.
+        // loginImpl checks isLoginInProgress itself and will bail if it's true.
+        // Reset it here so loginImpl can set it and manage its own lifecycle.
+        globalSession.isLoginInProgress = false;
         void globalSession.login({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
       } else if (savedUser) {
         globalSession.userId = savedUser;
