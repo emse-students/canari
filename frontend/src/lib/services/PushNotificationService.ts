@@ -101,6 +101,13 @@ export async function startPushService(
     return; // web : pas de push
   }
 
+  // FCM is Android-only; the Rust command exists on all targets but returns null on desktop.
+  // Without this guard, getFcmToken polls for 30 s on every desktop start.
+  if (!/android/i.test(navigator.userAgent)) {
+    console.info('[Push] startPushService noop (not Android)');
+    return;
+  }
+
   if (pushAttempted) {
     console.info('[Push] startPushService already attempted - skipping to avoid spam');
     return;

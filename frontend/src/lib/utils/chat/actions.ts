@@ -712,29 +712,16 @@ export async function handleWelcomeRequest(params: {
     }
 
     // ── Vérifier si le leaf du device est déjà dans l'arbre MLS ────────
-    // Le device peut être dans l'arbre pour deux raisons :
-    //   A) Stale : il a perdu son état local → il faut le kicker puis le ré-ajouter.
-    //   B) Redondant : welcome_request périmée (ex. drain pending_welcome_notify)
-    //      alors que le device a déjà traité son Welcome (status='active') →
-    //      aucune action requise, on skip silencieusement.
+    // Ne pas tester status='active' ici : sendWelcome marque le device actif de façon
+    // optimiste avant que le téléphone traite le Welcome. Si le device perd son état
+    // WASM (redémarrage, fresh-install, NoMatchingKeyPackage), il renvoie une
+    // welcome_request alors qu'il est déjà marqué 'active' côté serveur.
+    // → toujours kicker + ré-ajouter quand le leaf est présent dans l'arbre.
     try {
       const currentMembers = await mlsService.getGroupMembers(groupId);
       if (currentMembers.some((m) => m.deviceId === requesterDeviceId)) {
-        // Distinguer A) de B) via le statut de membership serveur.
-        const memberships = await mlsService
-          .getDeviceMemberships(requesterUserId, requesterDeviceId)
-          .catch(() => [] as Awaited<ReturnType<typeof mlsService.getDeviceMemberships>>);
-        const membership = memberships.find((m) => m.groupId === groupId);
-        if (membership?.status === 'active') {
-          log(
-            `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… déjà actif dans ${groupId.slice(0, 8)}… - welcome_request redondante, skip`
-          );
-          return;
-        }
-
-        // Cas A : device stale - kick + ré-ajout.
         log(
-          `[WELCOME_REQ] ${requesterDeviceId} déjà dans l'arbre MLS - kick du leaf stale avant ré-ajout`
+          `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… leaf dans l'arbre MLS - kick + ré-ajout`
         );
         await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 

@@ -666,9 +666,9 @@ class TauriManagerApp:
 
     def clear_displays(self) -> None:
         self.text_combined.delete('1.0', tk.END)
-        self.text_dev1.delete('1.0', tk.END)
-        self.text_dev2.delete('1.0', tk.END)
         self.text_system.delete('1.0', tk.END)
+        for text_area in self.device_text_areas.values():
+            text_area.delete('1.0', tk.END)
         self.log("Système", "Affichages effacés.")
 
     def stop_all_processes(self) -> None:

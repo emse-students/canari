@@ -282,13 +282,13 @@ export async function isGroupActiveOnServer(
 
 /**
  * Traitement unifié d'une erreur `DuplicateSignature` levée par `addMember` :
- *  - Si le device est déjà `active` côté serveur → Welcome déjà livré, on skip.
- *  - Sinon (leaf stale - état local perdu) → `kickStaleLeaf` pour que le device
- *    puisse renvoyer un `welcome_request` avec un KeyPackage frais.
+ * l'ancien KeyPackage du device est encore dans l'arbre MLS (état local perdu).
+ * On kick le leaf stale et on reset le statut à pending pour que le device puisse
+ * renvoyer une `welcome_request` avec un KeyPackage frais.
  *
- * Factorisé ici car le même traitement est requis dans `handleWelcomeRequest`
- * et `processPendingInvitations`. En cas d'erreur réseau sur `getDeviceMemberships`,
- * on skip plutôt que de kicker un device potentiellement actif.
+ * Ne pas tester status='active' pour décider de skipper : `sendWelcome` marque
+ * le device actif de façon optimiste avant que celui-ci traite le Welcome. Un device
+ * qui a perdu son état sera toujours 'active' côté serveur.
  */
 export async function handleDuplicateLeafError(params: {
   mlsService: IMlsService;
@@ -301,22 +301,7 @@ export async function handleDuplicateLeafError(params: {
 }): Promise<void> {
   const { mlsService, groupId, targetUserId, targetDeviceId, userId, pin, log } = params;
 
-  let memberStatus: string | undefined;
-  try {
-    const memberships = await mlsService.getDeviceMemberships(targetUserId, targetDeviceId);
-    memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
-  } catch {
-    // Erreur réseau : impossible de vérifier le statut en toute sécurité → skip.
-    log(`[MLS] DuplicateSignature: statut inconnu pour ${targetDeviceId.slice(0, 12)}… - skip`);
-    return;
-  }
-
-  if (memberStatus === 'active') {
-    log(`[MLS] ${targetDeviceId.slice(0, 12)}… déjà actif (Welcome reçu) - skip`);
-    return;
-  }
-
-  // Leaf stale : état local perdu, ancien KP encore dans l'arbre.
+  log(`[MLS] DuplicateSignature: kick leaf stale pour ${targetDeviceId.slice(0, 12)}…`);
   await kickStaleLeaf(groupId, targetUserId, targetDeviceId, mlsService, log);
   await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 }
