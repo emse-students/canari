@@ -596,6 +596,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupMembers(groupId);
   }
 
+  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+    return this.delivery.getGroupUserMembers(groupId);
+  }
+
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     return this.delivery.getUserGroups(userId);
   }

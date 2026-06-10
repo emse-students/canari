@@ -327,29 +327,35 @@ async function joinSuccessor(
 
 /**
  * Remonte la chaîne de succession à rebours depuis `groupId` pour trouver
- * l'ancêtre le plus récent qui possède encore des membres dans dm_group_members.
+ * le groupe le plus récent possédant encore des entrées dans `dm_group_members`
+ * (user-level, stable entre changements de device).
  *
- * Nécessaire quand un groupe mort a été supprimé via `deleteGroupOnServer`
- * (qui efface dm_group_members) mais qu'un parent dans la chaîne conserve
- * ses membres (car `claimGroupSuccessor` ne touche pas dm_group_members).
- * Retourne `groupId` si aucun ancêtre meilleur n'est trouvé.
+ * La version la plus récente (`groupId`) est vérifiée en premier : c'est la source
+ * la plus à jour de la composition du groupe. On ne remonte vers un ancêtre que si
+ * `groupId` lui-même a été explicitement supprimé via `deleteGroupOnServer` (qui
+ * efface dm_group_members), ce qui est rare et distinct du flux de reboot normal.
+ * Retourne `groupId` si aucun ancêtre ne possède de membres non plus.
  */
 async function findAncestorWithMembers(
   groupId: string,
   chainGroups: UserGroupRow[],
   deps: RecoveryDeps
 ): Promise<string> {
-  const members = await deps.mlsService.getGroupMembers(groupId).catch(() => []);
-  if (members.length > 0) return groupId;
+  // Priorité au groupe courant : dm_group_members (user-level) est stable et reflète
+  // la composition la plus récente, indépendamment des changements de device.
+  const userMembers = await deps.mlsService.getGroupUserMembers(groupId).catch(() => []);
+  if (userMembers.length > 0) return groupId;
 
   let current = groupId;
   for (let depth = 0; depth < 10; depth++) {
     const parent = chainGroups.find((g) => g.successorId === current);
     if (!parent) break;
-    const parentMembers = await deps.mlsService.getGroupMembers(parent.groupId).catch(() => []);
-    if (parentMembers.length > 0) {
+    const parentUserMembers = await deps.mlsService
+      .getGroupUserMembers(parent.groupId)
+      .catch(() => []);
+    if (parentUserMembers.length > 0) {
       deps.log(
-        `[REBOOT] Groupe mort sans membres - fallback ancêtre ${parent.groupId.slice(0, 8)}…`
+        `[REBOOT] dm_group_members absent pour ${groupId.slice(0, 8)}… - fallback ancêtre ${parent.groupId.slice(0, 8)}…`
       );
       return parent.groupId;
     }
@@ -361,22 +367,16 @@ async function findAncestorWithMembers(
 /**
  * Invite tous les membres de `deadGroupId` dans le nouveau groupe successeur.
  *
- * Invite tous les membres du groupe source dans le successeur candidat.
+ * Sources pour déterminer qui inviter (par priorité) :
+ *  1. `getGroupMembers` (dm_device_group_memberships, active) — source primaire.
+ *  2. `getGroupUserMembers` (dm_group_members, user-level) — fallback si la source 1
+ *     est vide (cas typique : device créateur supprimé via fresh-start, ce qui efface
+ *     ses entrées device-level mais laisse dm_group_members intact).
  *
- * Récupère les devices de chaque userId membre, les ajoute en bulk à `successorId`
- * (WASM + server), puis envoie commit → Welcomes → enregistre les nouveaux membres.
- *
- * Cas limite : si ce device est le créateur du successeur mais n'avait jamais rejoint
- * le groupe source (ex. A2 nouveau device, G vide dans son IndexedDB), `sendFullHistoryBundle`
- * enverra un bundle vide. L'historique sera redistribué plus tard par `joinSuccessor`
- * quand un membre possédant les données rejoindra le successeur.
- *
- * Corrections appliquées :
- *  - R4 : le commit est envoyé via sendCommit (validation epoch)
- *  - R5 : retry du add-lock après 2s si l'acquisition échoue
- *  - Les Welcomes sont envoyés APRÈS le commit (ordre correct)
- *  - R6 : enregistrement des membres non-créateurs dans dm_group_members
- *        (sans ça, getUserGroups ne retourne pas le successeur pour eux)
+ * Pour chaque userId trouvé, récupère les devices courants via `fetchUserDevices`,
+ * les ajoute en bulk à `successorId` (WASM + serveur), puis envoie commit → Welcomes
+ * → enregistre les membres non-créateurs dans dm_group_members (sans ça,
+ * getUserGroups ne retourne pas le successeur pour eux).
  */
 async function inviteMembers(
   deadGroupId: string,
@@ -389,7 +389,18 @@ async function inviteMembers(
   // Inclure TOUS les userIds (y compris le créateur) pour inviter leurs autres devices.
   // On n'exclut que le device courant lui-même (déjà dans le groupe comme créateur).
   const myDeviceId = mlsService.getDeviceId();
-  const allUserIds = [...new Set(members.map((m) => m.userId))];
+  let allUserIds = [...new Set(members.map((m) => m.userId))];
+  if (allUserIds.length === 0) {
+    // dm_device_group_memberships vide (ex: device créateur supprimé via fresh-start).
+    // Fallback sur dm_group_members (user-level, stable) : source de vérité pour l'appartenance.
+    const userMembers = await mlsService.getGroupUserMembers(deadGroupId).catch(() => []);
+    allUserIds = [...new Set(userMembers.map((m) => m.userId))];
+    if (allUserIds.length > 0) {
+      log(
+        `[REBOOT] Fallback dm_group_members: ${allUserIds.map((u) => u.slice(0, 8)).join(', ')}…`
+      );
+    }
+  }
   if (allUserIds.length === 0) {
     log('[REBOOT] Aucun membre dans le groupe mort.');
     return;

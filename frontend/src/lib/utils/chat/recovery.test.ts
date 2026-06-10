@@ -34,6 +34,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     deleteGroupOnServer: vi.fn().mockResolvedValue(true),
     forgetGroup: vi.fn(),
     getGroupMembers: vi.fn().mockResolvedValue([]),
+    getGroupUserMembers: vi.fn().mockResolvedValue([]),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     addMembersBulk: vi
       .fn()
@@ -205,6 +206,103 @@ describe('reboot', () => {
 
     await expect(reboot('dead', deps)).resolves.not.toThrow();
     expect(mls.sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('getGroupMembers vide → fallback getGroupUserMembers → sendWelcome envoyé', async () => {
+    // Simule le cas device créateur supprimé via fresh-start :
+    // dm_device_group_memberships vide, mais dm_group_members peuplé.
+    const mls = makeMls({
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'other' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ keyPackage: new Uint8Array([9]), deviceId: 'dev2' }]),
+      addMembersBulk: vi.fn().mockResolvedValue({
+        commit: new Uint8Array([2]),
+        welcome: new Uint8Array([3]),
+        addedDeviceIds: ['dev2'],
+        ratchetTree: undefined,
+      }),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await reboot('dead', deps);
+
+    expect(mls.getGroupUserMembers).toHaveBeenCalled();
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      'other',
+      'new-id',
+      'dev2',
+      undefined
+    );
+  });
+
+  it('getGroupMembers et getGroupUserMembers vides → pas de sendWelcome', async () => {
+    const mls = makeMls({
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      getGroupUserMembers: vi.fn().mockResolvedValue([]),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await expect(reboot('dead', deps)).resolves.not.toThrow();
+    expect(mls.getGroupUserMembers).toHaveBeenCalled();
+    expect(mls.sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('findAncestorWithMembers : préfère le groupe courant (user-level) à un ancêtre (device-level)', async () => {
+    // Scénario : ancêtre A → dead. A a des device-level actifs (ancienne donnée),
+    // dead a des user-level (donnée à jour). Le reboot doit inviter depuis dead,
+    // pas depuis A.
+    const mls = makeMls({
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'ancestor', successorId: 'dead', isGroup: false }]),
+      getGroupMembers: vi
+        .fn()
+        .mockImplementation((id: string) =>
+          Promise.resolve(id === 'ancestor' ? [{ userId: 'old-user', deviceId: 'old-dev' }] : [])
+        ),
+      getGroupUserMembers: vi
+        .fn()
+        .mockImplementation((id: string) =>
+          Promise.resolve(id === 'dead' ? [{ userId: 'current-user' }] : [])
+        ),
+      fetchUserDevices: vi
+        .fn()
+        .mockImplementation((id: string) =>
+          Promise.resolve(
+            id === 'current-user'
+              ? [{ keyPackage: new Uint8Array([9]), deviceId: 'dev-current' }]
+              : []
+          )
+        ),
+      addMembersBulk: vi.fn().mockResolvedValue({
+        commit: new Uint8Array([2]),
+        welcome: new Uint8Array([3]),
+        addedDeviceIds: ['dev-current'],
+        ratchetTree: undefined,
+      }),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await reboot('dead', deps);
+
+    // Doit inviter current-user (dm_group_members de dead), pas old-user (ancêtre)
+    expect(mls.sendWelcome).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      'current-user',
+      'new-id',
+      'dev-current',
+      undefined
+    );
+    expect(mls.sendWelcome).not.toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      'old-user',
+      expect.any(String),
+      'old-dev',
+      undefined
+    );
   });
 });
 

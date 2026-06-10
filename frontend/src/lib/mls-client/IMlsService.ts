@@ -121,10 +121,10 @@ export interface IMlsService {
   sendCommit(commitBytes: Uint8Array, groupId: string, excludeDeviceIds?: string[]): Promise<void>;
   /** Registers a user as a member of a group on the delivery service (server-side membership tracking). */
   registerMember(groupId: string, userId: string): Promise<void>;
-  /** Acquiert un verrou distribué Redis pour éviter les commits MLS concurrents sur le même groupe.
-   *  Retourne true si le verrou a été acquis, false si un autre appareil le détient déjà. */
+  /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.
+   *  Returns true if acquired, false if another device already holds the lock. */
   acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
-  /** Libère le verrou acquis via acquireAddLock. */
+  /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /** Fetches the Redis Stream history for a group, optionally starting after a given stream entry ID. */
   fetchHistory(
@@ -142,14 +142,14 @@ export interface IMlsService {
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
   getLocalGroups(): string[];
-  /** Oublie l'état MLS local d'un groupe pour forcer une re-synchronisation via Welcome.
-   *  `minEpoch` : l'époch minimale que le nouveau Welcome doit atteindre (0 = pas de restriction). */
+  /** Drops the local MLS state for a group, forcing re-synchronisation via a new Welcome.
+   *  `minEpoch`: minimum epoch the new Welcome must reach (0 = no restriction). */
   forgetGroup(groupId: string, minEpoch?: number): void;
-  /** Purge définitive d'un groupe (Poison Pill) : mémoire, stockage OpenMLS et verrou d'epoch
-   *  à MAX. Aucun Welcome ne sera jamais accepté pour ce groupId après cet appel. */
+  /** Permanently purges a group (Poison Pill): clears memory and OpenMLS storage, then sets
+   *  the epoch lock to MAX so no Welcome will ever be accepted for this groupId again. */
   dropGroup(groupId: string): void;
-  /** Signale au serveur que ce device quitte un groupe de manière irrécupérable.
-   *  Supprime le DeviceGroupMembership et retire l'appareil du routage Redis. */
+  /** Notifies the server that this device is leaving a group unrecoverably.
+   *  Deletes the DeviceGroupMembership and removes the device from Redis routing. */
   forceLeaveGroup(groupId: string): Promise<void>;
   /** Updates the display name of a group on the delivery service. */
   renameGroup(groupId: string, name: string): Promise<void>;
@@ -163,6 +163,8 @@ export interface IMlsService {
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /** Returns the list of (userId, deviceId) pairs currently in a group according to the delivery service. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
+  /** Returns user-level membership (dm_group_members) for `groupId`, independent of device status. */
+  getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
   /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<UserGroupRow[]>;
   /** Fetches server metadata for one group (successor link, soft-delete). */

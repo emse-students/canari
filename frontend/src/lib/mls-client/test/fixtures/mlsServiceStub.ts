@@ -47,6 +47,7 @@ export function createMlsServiceStub(
     removeMember: vi.fn().mockResolvedValue(undefined),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
+    getGroupUserMembers: vi.fn().mockResolvedValue([]),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
     claimGroupSuccessor: vi.fn().mockResolvedValue({ claimed: true, successorId: 'succ' }),

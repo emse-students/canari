@@ -8,14 +8,25 @@ import {
 
 /**
  * Records the user-level membership of a person in an MLS group, independently
- * of which specific devices that user has enrolled. A user may have multiple
- * DeviceGroupMembership rows for the same group (one per device), but only a
- * single GroupMember row.
+ * of which devices that user currently has enrolled. A user has exactly one row
+ * here per group, while they may have many `DeviceGroupMembership` rows (one per device).
  *
- * Lifecycle : hard-delete. When a user leaves or is removed, the row is deleted
- * (not soft-deleted). This is consistent with `removeGroupMember` which calls
- * `groupMemberRepo.delete()`. A migration dropping the former `leftAt` column
- * should be run to keep the schema clean.
+ * This table is the authoritative source for three things:
+ *
+ * 1. **"Who belongs to this group?"** — used by reboot/recovery to determine which
+ *    users to invite into a successor group. Unlike `dm_device_group_memberships`,
+ *    this table is NOT affected by device lifecycle events (fresh-start, delete).
+ *    A user remains a member here until they explicitly leave or are removed.
+ *
+ * 2. **Group listing** — `getUserGroups` queries this table to enumerate all groups
+ *    a user belongs to, following successor chains to resolve the active terminal.
+ *
+ * 3. **Authorization** — `sendMessage` and history endpoints verify the requesting
+ *    user has a row here before allowing access to the group.
+ *
+ * Lifecycle: hard-delete. When a user leaves or is removed, the row is deleted
+ * (not soft-deleted). `removeGroupMember` deletes both this row and all the user's
+ * `DeviceGroupMembership` rows atomically.
  */
 @Entity('dm_group_members')
 @Unique(['groupId', 'userId'])

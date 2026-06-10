@@ -195,16 +195,34 @@ export class MembersController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Get('mls/groups/:groupId/user-members')
+  /** Returns user-level membership from dm_group_members (no device-status filter). */
+  async getGroupUserMembers(@Param('groupId') groupId: string) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const rows = await this.groupMemberRepo.find({
+      where: { groupId: safeGroupId },
+      select: ['userId'],
+    });
+    this.logger.log(
+      `[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}`,
+    );
+    return rows.map((r) => ({ userId: r.userId }));
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/members')
   /**
-   * Lists all active device memberships for a group.
-   * Returns one `{ userId, deviceId }` entry **per device** (not per user),
-   * sourced from `dm_device_group_memberships` where `status = 'active'`.
+   * Returns one `{ userId, deviceId }` entry per **active device** in `groupId`.
+   * Sourced from `dm_device_group_memberships WHERE status = 'active'`.
    *
-   * Callers that need a deduplicated user list should extract `userId` with `new Set`.
-   * This endpoint is the source of truth for MLS tree occupancy checks (stale-leaf
-   * detection). `dm_group_members` (user-level) is not used here because it carries
-   * no device identity, making device-level membership checks impossible.
+   * Use this endpoint for:
+   * - MLS tree occupancy / stale-leaf detection (device-level identity required)
+   * - Repopulating the Redis `group:members:` routing cache after a cache miss
+   *
+   * Do NOT use this to determine which users to invite into a successor group.
+   * A group can have zero active device entries even though users still belong to it
+   * (e.g. after a device fresh-start clears all DeviceGroupMembership rows). Use
+   * `GET mls/groups/:groupId/user-members` (dm_group_members) for that purpose.
    */
   async getGroupMembers(@Param('groupId') groupId: string) {
     const rows = await this.deviceGroupRepo.find({

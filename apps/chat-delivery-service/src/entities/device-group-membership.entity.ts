@@ -17,10 +17,29 @@ import {
 export type DeviceGroupStatus = 'pending' | 'active';
 
 /**
- * Tracks whether a specific device (identified by userId + deviceId) is a member
- * of a particular MLS group and how far along the onboarding handshake has progressed.
- * One row exists per (deviceId, groupId) pair; the status field drives the sync engine
- * state machine that delivers Welcome and Commit messages to newly added devices.
+ * Tracks one device's membership in one MLS group. One row per (deviceId, groupId) pair.
+ *
+ * This table has four distinct roles:
+ *
+ * 1. **Routing cache source** — `messaging.service` queries `status='active'` rows to
+ *    repopulate the Redis `group:members:{groupId}` set when the cache is empty (service
+ *    restart, TTL expiry). The gateway reads that Redis set to forward messages and
+ *    `welcome_request` frames to online devices.
+ *
+ * 2. **Invitation state machine** — A row is created as `pending` by `addGroupMember`
+ *    for every active device of a user. It transitions to `active` when `sendWelcome`
+ *    confirms the device processed its Welcome packet. `invitations.controller` exposes
+ *    the pending list to clients and drives the pending→active transition.
+ *
+ * 3. **Stale-device detection** — `lastEpochSeen` records the highest MLS epoch this
+ *    device has acknowledged. Devices whose `lastEpochSeen` lags the group's current epoch
+ *    can be kicked from the MLS tree to recover forward secrecy.
+ *
+ * 4. **Device lifecycle cleanup** — When a device is deleted, ALL its rows here are
+ *    removed, which removes it from every group's routing set. This is intentional, but
+ *    it means a group can end up with zero `active` entries even though users still
+ *    belong to it via `dm_group_members` (user-level). Do NOT use this table as the
+ *    authoritative source for "who is a member" — use `dm_group_members` for that.
  */
 @Entity('dm_device_group_memberships')
 @Unique(['deviceId', 'groupId'])

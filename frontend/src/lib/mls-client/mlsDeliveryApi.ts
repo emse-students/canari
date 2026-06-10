@@ -488,6 +488,19 @@ export class MlsDeliveryApi {
     }
   }
 
+  /** Returns user-level members from dm_group_members for `groupId`. Returns `[]` on error. */
+  async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
+    try {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
   /** Returns all groups `userId` belongs to, including tombstones with successor/deleted metadata. */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
