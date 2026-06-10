@@ -70,6 +70,11 @@ export class FormOptionDto {
   @IsNumber()
   priceModifier: number;
 
+  /** Price modifier in cents when submitter has `pricingTagName` (defaults to priceModifier). */
+  @IsNumber()
+  @IsOptional()
+  priceModifierMember?: number;
+
   @IsString()
   @IsOptional()
   id?: string;
@@ -187,6 +192,18 @@ export class CreateFormDto {
   @IsString()
   @IsOptional()
   associationId?: string;
+
+  /** Tag checked at submit for member pricing (e.g. cotisation from the boutique). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  pricingTagName?: string;
+
+  /** Base price in cents when submitter has `pricingTagName` (null = same as basePrice). */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  basePriceMember?: number | null;
 
   /** When set, grants or renews this tag to the user after a successful payment. */
   @IsString()

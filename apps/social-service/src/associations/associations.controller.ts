@@ -32,6 +32,7 @@ import {
   CreateAssociationDocumentDto,
   CreateAssociationCalendarEventDto,
   CreateProductDto,
+  GrantProductPurchaseDto,
   GrantTagDto,
   RejectCalendarEventDto,
   ReorderMembersDto,
@@ -650,6 +651,46 @@ export class AssociationsController {
   @Get(':id/products')
   listAssociationProducts(@Param('id') id: string) {
     return this.productsService.listByAssoc(id);
+  }
+
+  /** Returns all products including inactive ones. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/products/manage')
+  listAssociationProductsForManage(@Param('id') id: string) {
+    return this.productsService.listAllByAssoc(id);
+  }
+
+  /** Lists all paid purchases for this association. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/purchases')
+  listAssociationPurchases(@Param('id') id: string) {
+    return this.productsService.listAssociationPurchases(id);
+  }
+
+  /** Lists buyers for a boutique product. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/products/:productId/purchases')
+  listProductPurchases(@Param('id') id: string, @Param('productId') productId: string) {
+    return this.productsService.listProductPurchases(id, productId);
+  }
+
+  /**
+   * Manually grants a product to a user as if they had purchased it (cash, retroactive).
+   * Requires MANAGE_PRODUCTS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/products/:productId/grant')
+  grantProductPurchase(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Headers('x-user-id') grantedBy: string,
+    @Body() dto: GrantProductPurchaseDto
+  ) {
+    return this.productsService.grantProductPurchase(id, productId, grantedBy, dto);
   }
 
   /**

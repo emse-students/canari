@@ -12,14 +12,15 @@
     updateMemberRole,
     startStripeOnboarding,
     fetchStripeConnectStatus,
+    openStripeConnectDashboard,
+    formatStripeConnectAmount,
     isStripeConnectReady,
     type StripeConnectStatusResult,
     uploadAssociationLogo,
     deleteAssociationLogo,
-    listAssociationTags,
-    grantAssociationTag,
-    revokeAssociationTag,
-    listAssociationProducts,
+    listAssociationProductsForManage,
+    listAssociationPurchases,
+    grantProductPurchase,
     createProduct,
     updateProduct,
     deleteProduct,
@@ -30,7 +31,7 @@
     type Association,
     type AssociationMember,
     type AssociationProduct,
-    type UserTag,
+    type AssociationPurchase,
     type WebhookDelivery,
     type AssociationForm,
   } from '$lib/associations/api';
@@ -52,7 +53,6 @@
     Building2,
     AlertTriangle,
     FolderLock,
-    Tags,
     ShoppingBag,
     Plus,
     RefreshCw,
@@ -61,6 +61,11 @@
     Download,
     ClipboardList,
     GripVertical,
+    Wallet,
+    ArrowUpRight,
+    Users as UsersIcon,
+    ChevronDown,
+    Gift,
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -122,6 +127,7 @@
   let memberError = $state('');
 
   let stripeLoading = $state(false);
+  let stripeDashboardLoading = $state(false);
   let stripeConnectStatus = $state<StripeConnectStatusResult | null>(null);
   let stripeStatusLoading = $state(false);
 
@@ -132,7 +138,13 @@
   let showCropper = $state(false);
 
   let editSection = $state<
-    'profile' | 'members' | 'documents' | 'cotisants' | 'payments' | 'formulaires' | 'danger'
+    | 'profile'
+    | 'members'
+    | 'documents'
+    | 'achats'
+    | 'payments'
+    | 'formulaires'
+    | 'danger'
   >('profile');
 
   let canManageDocuments = $derived(
@@ -194,15 +206,29 @@
   let newProductMaxCents = $state<number | ''>('');
   let newProductWebhookUrl = $state('');
   let newProductWebhookSecret = $state('');
+  let newProductAllowRepeat = $state(false);
+  let newProductMaxPerUser = $state<number | ''>('');
+  let newProductMaxTotal = $state<number | ''>('');
+  let expandedProductSettingsId = $state<string | null>(null);
+  let savingProductSettings = $state<string | null>(null);
 
-  let tags = $state<UserTag[]>([]);
-  let tagsLoading = $state(false);
-  let tagsError = $state('');
-  let newTagUserId = $state('');
-  let newTagName = $state('');
-  let newTagExpires = $state('');
-  let grantingTag = $state(false);
-  let tagUserNames = $state<Record<string, string>>({});
+  let purchases = $state<AssociationPurchase[]>([]);
+  let purchasesLoading = $state(false);
+  let purchasesError = $state('');
+  let purchaseFilterProductId = $state('');
+  let grantUserId = $state('');
+  let grantProductId = $state('');
+  let grantAmountEuros = $state<number | ''>('');
+  let grantingProduct = $state(false);
+  const grantSelectedProduct = $derived(products.find((p) => p.id === grantProductId));
+  const grantNeedsAmount = $derived(
+    grantSelectedProduct != null && grantSelectedProduct.amountCents == null
+  );
+  const filteredPurchases = $derived(
+    purchaseFilterProductId
+      ? purchases.filter((p) => p.productId === purchaseFilterProductId)
+      : purchases
+  );
 
   // ── Formulaires state ────────────────────────────────────────────────────
   let forms = $state<AssociationForm[]>([]);
@@ -393,6 +419,22 @@
     }
   }
 
+  /** Opens the association Stripe Dashboard (payouts / bank account) in the system browser. */
+  async function handleOpenStripeDashboard() {
+    if (!asso) return;
+    stripeDashboardLoading = true;
+    try {
+      const url = await openStripeConnectDashboard(asso.id);
+      const { navigateExternal } = await import('$lib/utils/openExternal');
+      await navigateExternal(url);
+    } catch (err) {
+      console.error('[Stripe] Impossible d’ouvrir le tableau de bord:', err);
+      error = err instanceof Error ? err.message : 'Impossible d’ouvrir Stripe';
+    } finally {
+      stripeDashboardLoading = false;
+    }
+  }
+
   async function handleStripeOnboarding() {
     if (!asso) return;
     stripeLoading = true;
@@ -487,65 +529,60 @@
     }
   }
 
-  async function loadTags() {
+  async function loadPurchases() {
     if (!asso) return;
-    tagsLoading = true;
-    tagsError = '';
+    purchasesLoading = true;
+    purchasesError = '';
     try {
-      tags = await listAssociationTags(asso.id);
-      // Seed sync cache first, then resolve async
-      const names: Record<string, string> = {};
-      for (const t of tags) {
-        names[t.userId] = getUserDisplayNameSync(t.userId, t.userId);
-      }
-      tagUserNames = names;
-      for (const t of tags) {
-        void resolveUserDisplayName(t.userId).then((n) => {
-          if (n) tagUserNames = { ...tagUserNames, [t.userId]: n };
-        });
-      }
+      const [prods, rows] = await Promise.all([
+        listAssociationProductsForManage(asso.id),
+        listAssociationPurchases(asso.id),
+      ]);
+      products = prods;
+      purchases = rows;
     } catch (e) {
-      tagsError = e instanceof Error ? e.message : 'Erreur';
+      purchasesError = e instanceof Error ? e.message : 'Erreur';
     } finally {
-      tagsLoading = false;
+      purchasesLoading = false;
     }
   }
 
-  async function handleGrantTag() {
-    if (!asso || !newTagUserId.trim() || !newTagName.trim()) return;
-    grantingTag = true;
-    tagsError = '';
-    try {
-      await grantAssociationTag(asso.id, {
-        userId: newTagUserId.trim(),
-        tagName: newTagName.trim(),
-        expiresAt: newTagExpires.trim() || undefined,
-      });
-      newTagUserId = '';
-      newTagName = '';
-      newTagExpires = '';
-      await loadTags();
-    } catch (e) {
-      tagsError = e instanceof Error ? e.message : 'Erreur';
-    } finally {
-      grantingTag = false;
+  function purchaseBuyerName(purchase: AssociationPurchase): string {
+    if (purchase.firstName || purchase.lastName) {
+      return `${purchase.firstName ?? ''} ${purchase.lastName ?? ''}`.trim();
     }
+    return purchase.userId.slice(0, 8) + '…';
   }
 
-  async function handleRevokeTag(tag: UserTag) {
-    if (
-      !asso ||
-      !(await showConfirm(`Révoquer le tag « ${tag.tagName} » pour cet utilisateur ?`, {
-        danger: true,
-        confirmLabel: 'Révoquer',
-      }))
-    )
+  function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
+    if (method === 'cash') return 'Espèces / manuel';
+    if (method === 'stripe') return 'Stripe';
+    return method;
+  }
+
+  async function handleGrantProduct() {
+    if (!asso || !grantUserId.trim() || !grantProductId) return;
+    if (grantNeedsAmount && grantAmountEuros === '') {
+      purchasesError = 'Indiquez le montant payé pour ce produit.';
       return;
+    }
+    grantingProduct = true;
+    purchasesError = '';
     try {
-      await revokeAssociationTag(asso.id, tag.id);
-      tags = tags.filter((t) => t.id !== tag.id);
+      await grantProductPurchase(asso.id, grantProductId, {
+        userId: grantUserId.trim(),
+        ...(grantNeedsAmount && grantAmountEuros !== ''
+          ? { amountCents: Math.round(Number(grantAmountEuros) * 100) }
+          : {}),
+      });
+      grantUserId = '';
+      grantProductId = '';
+      grantAmountEuros = '';
+      await loadPurchases();
     } catch (e) {
-      tagsError = e instanceof Error ? e.message : 'Erreur';
+      purchasesError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      grantingProduct = false;
     }
   }
 
@@ -555,7 +592,7 @@
     productsError = '';
     try {
       const [prods, failures] = await Promise.all([
-        listAssociationProducts(asso.id),
+        listAssociationProductsForManage(asso.id),
         listWebhookFailures(asso.id),
       ]);
       products = prods;
@@ -605,6 +642,9 @@
     newProductMaxCents = '';
     newProductWebhookUrl = '';
     newProductWebhookSecret = '';
+    newProductAllowRepeat = false;
+    newProductMaxPerUser = '';
+    newProductMaxTotal = '';
     showProductForm = false;
   }
 
@@ -627,6 +667,10 @@
           newProductMaxCents !== '' ? Number(newProductMaxCents) * 100 : undefined,
         webhookUrl: newProductWebhookUrl.trim() || undefined,
         webhookSecret: newProductWebhookSecret.trim() || undefined,
+        allowRepeatPurchase: newProductAllowRepeat,
+        maxPurchasesPerUser:
+          newProductMaxPerUser !== '' ? Number(newProductMaxPerUser) : undefined,
+        maxPurchasesTotal: newProductMaxTotal !== '' ? Number(newProductMaxTotal) : undefined,
       });
       resetProductForm();
       await loadProducts();
@@ -646,6 +690,33 @@
       );
     } catch (e) {
       productsError = e instanceof Error ? e.message : 'Erreur';
+    }
+  }
+
+  function toggleProductSettings(product: AssociationProduct) {
+    expandedProductSettingsId =
+      expandedProductSettingsId === product.id ? null : product.id;
+  }
+
+  async function handleSaveProductSettings(product: AssociationProduct, form: HTMLFormElement) {
+    if (!asso) return;
+    const fd = new FormData(form);
+    savingProductSettings = product.id;
+    productsError = '';
+    try {
+      const allowRepeat = fd.get('allowRepeat') === 'on';
+      const maxPerUserRaw = String(fd.get('maxPerUser') ?? '').trim();
+      const maxTotalRaw = String(fd.get('maxTotal') ?? '').trim();
+      const updated = await updateProduct(asso.id, product.id, {
+        allowRepeatPurchase: allowRepeat,
+        maxPurchasesPerUser: maxPerUserRaw ? Number(maxPerUserRaw) : null,
+        maxPurchasesTotal: maxTotalRaw ? Number(maxTotalRaw) : null,
+      });
+      products = products.map((p) => (p.id === product.id ? updated : p));
+    } catch (e) {
+      productsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      savingProductSettings = null;
     }
   }
 
@@ -816,20 +887,20 @@
             Documents
           </button>
         {/if}
-        {#if canManageMembers}
+        {#if canManageProducts}
           <button
             type="button"
             onclick={() => {
-              editSection = 'cotisants';
-              void loadTags();
+              editSection = 'achats';
+              void loadPurchases();
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'cotisants'
+            {editSection === 'achats'
               ? 'bg-cn-yellow text-cn-dark shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
-            <Tags size={17} />
-            Cotisants
+            <UsersIcon size={17} />
+            Achats
           </button>
         {/if}
         {#if canManageForms}
@@ -1025,15 +1096,63 @@
               <p class="text-xs text-text-muted">
                 Les paiements en ligne (formulaires, boutique) sont disponibles.
               </p>
-              {#if asso.stripeAccountId}
-                <a
-                  href="https://dashboard.stripe.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+              {#if stripeConnectStatus?.balance}
+                <div
+                  class="rounded-xl border border-cn-border bg-cn-bg/50 p-4 space-y-3"
                 >
-                  Accéder au tableau de bord Stripe →
-                </a>
+                  <p class="text-sm font-bold text-text-main flex items-center gap-2">
+                    <Wallet size={18} class="text-cn-dark" />
+                    Solde
+                  </p>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <p class="text-xs text-text-muted">Disponible</p>
+                      <p class="text-lg font-extrabold text-text-main tabular-nums">
+                        {formatStripeConnectAmount(
+                          stripeConnectStatus.balance.availableCents,
+                          stripeConnectStatus.balance.currency
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p class="text-xs text-text-muted">En attente</p>
+                      <p class="text-lg font-extrabold text-text-muted tabular-nums">
+                        {formatStripeConnectAmount(
+                          stripeConnectStatus.balance.pendingCents,
+                          stripeConnectStatus.balance.currency
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <p class="text-xs text-text-muted leading-relaxed">
+                    Les fonds « en attente » seront disponibles après le délai de traitement Stripe.
+                  </p>
+                  {#if stripeConnectStatus.payoutsEnabled !== false}
+                    <button
+                      type="button"
+                      onclick={() => void handleOpenStripeDashboard()}
+                      disabled={stripeDashboardLoading}
+                      class="inline-flex items-center justify-center gap-2 w-full sm:w-auto rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+                    >
+                      {#if stripeDashboardLoading}
+                        <RefreshCw size={16} class="animate-spin" />
+                        Ouverture…
+                      {:else}
+                        <ArrowUpRight size={16} />
+                        Virer vers ma banque
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
+              {:else if asso.stripeAccountId}
+                <button
+                  type="button"
+                  onclick={() => void handleOpenStripeDashboard()}
+                  disabled={stripeDashboardLoading}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
+                >
+                  Gérer les virements sur Stripe →
+                </button>
               {/if}
             {:else if stripeConnectStatus?.status === 'pending'}
               <div
@@ -1226,96 +1345,177 @@
       </div>
     {/if}
 
-    {#if editSection === 'cotisants' && canManageMembers && asso}
+    {#if editSection === 'achats' && canManageProducts && asso}
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
       >
-        <div>
-          <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
-            <Tags size={20} />
-            Cotisants
-          </h2>
-          <p class="text-sm text-text-muted mt-1">
-            Tags de cotisation actifs émis par cette association. Attribuez ou révoquez des tags
-            manuellement.
-          </p>
+        <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+              <UsersIcon size={20} />
+              Achats et acheteurs
+            </h2>
+            <p class="text-sm text-text-muted mt-1">
+              Historique des paiements boutique et formulaires payants. Attribuez un produit
+              manuellement (espèces, paiement antérieur à Canari).
+            </p>
+          </div>
+          <div class="w-full sm:w-64 space-y-1">
+            <label for="purchase-filter" class="text-xs font-semibold text-text-muted"
+              >Filtrer par produit</label
+            >
+            <select
+              id="purchase-filter"
+              bind:value={purchaseFilterProductId}
+              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+            >
+              <option value="">Tous les achats</option>
+              {#each products as product (product.id)}
+                <option value={product.id}>{product.name}</option>
+              {/each}
+            </select>
+          </div>
         </div>
 
-        <!-- Grant form -->
         <form
-          class="flex flex-col sm:flex-row gap-3"
+          class="rounded-xl border border-cn-border bg-cn-bg/40 p-4 space-y-4"
           onsubmit={(e) => {
             e.preventDefault();
-            void handleGrantTag();
+            void handleGrantProduct();
           }}
         >
-          <input
-            type="text"
-            bind:value={newTagUserId}
-            placeholder="ID utilisateur"
-            class="flex-1 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
-          />
-          <input
-            type="text"
-            bind:value={newTagName}
-            placeholder="Tag (ex: cotisant:bde-2026-2027)"
-            class="flex-1 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
-          />
-          <input
-            type="date"
-            bind:value={newTagExpires}
-            title="Date d'expiration (optionnel)"
-            class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-auto"
-          />
+          <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
+            <Gift size={16} />
+            Attribuer un produit
+          </h3>
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="sm:col-span-2">
+              <label for="grant-user" class="text-xs font-semibold text-text-muted block mb-1"
+                >Utilisateur</label
+              >
+              <UserAutocomplete
+                value={grantUserId}
+                onValueChange={(v) => (grantUserId = v)}
+                placeholder="Rechercher un utilisateur…"
+                inputId="grant-user"
+                onSubmit={handleGrantProduct}
+              />
+            </div>
+            <div>
+              <label for="grant-product" class="text-xs font-semibold text-text-muted block mb-1"
+                >Produit</label
+              >
+              <select
+                id="grant-product"
+                bind:value={grantProductId}
+                class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+                required
+              >
+                <option value="">Choisir…</option>
+                {#each products as product (product.id)}
+                  <option value={product.id}>{product.name}</option>
+                {/each}
+              </select>
+            </div>
+            {#if grantNeedsAmount}
+              <div>
+                <label for="grant-amount" class="text-xs font-semibold text-text-muted block mb-1"
+                  >Montant payé (€)</label
+                >
+                <input
+                  id="grant-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  bind:value={grantAmountEuros}
+                  placeholder="0.00"
+                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2.5 text-sm"
+                  required
+                />
+              </div>
+            {/if}
+          </div>
+          <p class="text-xs text-text-muted">
+            {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
+              Le tag <span class="font-mono">{grantSelectedProduct.grantedTagName}</span> sera
+              accordé automatiquement.
+            {:else if grantSelectedProduct?.type === 'balance_topup'}
+              Les recharges Cercle ne sont pas créditées automatiquement — utilisez l’interface
+              Cercle si nécessaire.
+            {:else}
+              L’achat apparaîtra dans l’historique comme un paiement manuel.
+            {/if}
+          </p>
           <button
             type="submit"
-            disabled={grantingTag || !newTagUserId.trim() || !newTagName.trim()}
+            disabled={grantingProduct || !grantUserId.trim() || !grantProductId}
             class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
           >
-            {grantingTag ? '…' : 'Attribuer'}
+            {grantingProduct ? 'Attribution…' : 'Attribuer comme acheté'}
           </button>
         </form>
 
-        {#if tagsError}
+        {#if purchasesError}
           <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
-            {tagsError}
+            {purchasesError}
           </div>
         {/if}
 
-        {#if tagsLoading}
-          <div class="flex justify-center py-6">
+        {#if purchasesLoading}
+          <div class="flex justify-center py-8">
             <div
               class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
             ></div>
           </div>
-        {:else if tags.length === 0}
-          <p class="text-sm text-text-muted text-center py-6">Aucun tag actif.</p>
+        {:else if filteredPurchases.length === 0}
+          <p class="text-sm text-text-muted text-center py-8">Aucun achat enregistré.</p>
         {:else}
-          <ul class="space-y-2">
-            {#each tags as tag (tag.id)}
-              <li
-                class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3"
-              >
-                <div class="min-w-0 flex-1">
-                  <p class="font-semibold text-sm text-text-main truncate">{tag.tagName}</p>
-                  <p class="text-xs text-text-muted">
-                    {tagUserNames[tag.userId] ?? tag.userId}
-                    {#if tag.expiresAt}
-                      · Expire: {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
-                    {/if}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onclick={() => handleRevokeTag(tag)}
-                  title="Révoquer"
-                  class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </li>
-            {/each}
-          </ul>
+          <div class="overflow-x-auto rounded-xl border border-cn-border/70">
+            <table class="w-full text-sm">
+              <thead class="bg-cn-bg/60 text-left text-xs font-bold uppercase tracking-wide text-text-muted">
+                <tr>
+                  <th class="px-4 py-3">Date</th>
+                  <th class="px-4 py-3">Acheteur</th>
+                  <th class="px-4 py-3">Article</th>
+                  <th class="px-4 py-3">Type</th>
+                  <th class="px-4 py-3">Paiement</th>
+                  <th class="px-4 py-3 text-right">Montant</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-cn-border/50">
+                {#each filteredPurchases as purchase (purchase.id)}
+                  <tr class="bg-cn-bg/20 hover:bg-cn-bg/40">
+                    <td class="px-4 py-3 text-text-muted whitespace-nowrap">
+                      {new Date(purchase.paidAt).toLocaleString('fr-FR')}
+                    </td>
+                    <td class="px-4 py-3 font-medium text-text-main">
+                      {purchaseBuyerName(purchase)}
+                    </td>
+                    <td class="px-4 py-3 text-text-main">{purchase.productName}</td>
+                    <td class="px-4 py-3">
+                      <span
+                        class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
+                        'product'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-sky-100 text-sky-700'}"
+                      >
+                        {purchase.source === 'product' ? 'Boutique' : 'Formulaire'}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-text-muted">
+                      {paymentMethodLabel(purchase.paymentMethod)}
+                    </td>
+                    <td class="px-4 py-3 text-right font-semibold tabular-nums">
+                      {(purchase.amountCents / 100).toFixed(2)} €
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <p class="text-xs text-text-muted text-right">
+            {filteredPurchases.length} achat{filteredPurchases.length > 1 ? 's' : ''}
+          </p>
         {/if}
       </div>
     {/if}
@@ -1536,6 +1736,51 @@
               </div>
             {/if}
 
+            <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
+              <p class="text-xs font-bold text-text-main uppercase tracking-wide">Limites d'achat</p>
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" bind:checked={newProductAllowRepeat} class="rounded" />
+                Autoriser les achats multiples
+              </label>
+              {#if newProductAllowRepeat}
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <div class="space-y-1">
+                    <label for="new-product-max-user" class="text-xs font-semibold text-text-muted"
+                      >Max par utilisateur (vide = illimité)</label
+                    >
+                    <input
+                      id="new-product-max-user"
+                      type="number"
+                      min="1"
+                      step="1"
+                      bind:value={newProductMaxPerUser}
+                      placeholder="Illimité"
+                      class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label for="new-product-max-total" class="text-xs font-semibold text-text-muted"
+                      >Stock global (vide = illimité)</label
+                    >
+                    <input
+                      id="new-product-max-total"
+                      type="number"
+                      min="1"
+                      step="1"
+                      bind:value={newProductMaxTotal}
+                      placeholder="Illimité"
+                      class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              {:else}
+                <p class="text-xs text-text-muted">
+                  Sans achats multiples, un utilisateur ne peut acheter qu'une fois (renouvellement
+                  possible si le tag membership a expiré).
+                </p>
+              {/if}
+            </div>
+
             <div class="flex items-center gap-3 pt-2">
               <button
                 type="submit"
@@ -1565,45 +1810,127 @@
         {:else}
           <ul class="space-y-3">
             {#each products as product (product.id)}
-              <li
-                class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3"
-              >
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <p class="font-semibold text-sm text-text-main">{product.name}</p>
-                    <span
-                      class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-cn-surface-alt text-text-muted'}"
-                    >
-                      {product.isActive ? 'Actif' : 'Inactif'}
-                    </span>
-                    <span class="text-xs text-text-muted">{product.type}</span>
+              <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 overflow-hidden">
+                <div class="flex items-center gap-3 px-4 py-3">
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <p class="font-semibold text-sm text-text-main">{product.name}</p>
+                      <span
+                        class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-cn-surface-alt text-text-muted'}"
+                      >
+                        {product.isActive ? 'Actif' : 'Inactif'}
+                      </span>
+                      <span class="text-xs text-text-muted">{product.type}</span>
+                    </div>
+                    <p class="text-xs text-text-muted mt-0.5">
+                      {product.amountCents != null
+                        ? `${(product.amountCents / 100).toFixed(2)} €`
+                        : 'Montant libre'}
+                      {product.grantedTagName ? ` · Tag: ${product.grantedTagName}` : ''}
+                      {#if product.allowRepeatPurchase}
+                        · Achats multiples
+                      {/if}
+                      {#if product.maxPurchasesTotal != null}
+                        · Stock max {product.maxPurchasesTotal}
+                      {/if}
+                    </p>
                   </div>
-                  <p class="text-xs text-text-muted mt-0.5">
-                    {product.amountCents != null
-                      ? `${(product.amountCents / 100).toFixed(2)} €`
-                      : 'Montant libre'}
-                    {product.grantedTagName ? ` · Tag: ${product.grantedTagName}` : ''}
-                  </p>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onclick={() => toggleProductSettings(product)}
+                      class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                    >
+                      Limites
+                      <ChevronDown
+                        size={12}
+                        class="transition-transform {expandedProductSettingsId === product.id
+                          ? 'rotate-180'
+                          : ''}"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => handleToggleProduct(product)}
+                      class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                    >
+                      {product.isActive ? 'Désactiver' : 'Activer'}
+                    </button>
+                    <button
+                      type="button"
+                      onclick={() => handleDeleteProduct(product)}
+                      title="Supprimer"
+                      class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
-                <div class="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onclick={() => handleToggleProduct(product)}
-                    class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
-                  >
-                    {product.isActive ? 'Désactiver' : 'Activer'}
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => handleDeleteProduct(product)}
-                    title="Supprimer"
-                    class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+
+                {#if expandedProductSettingsId === product.id}
+                  <div class="border-t border-cn-border/60 px-4 py-3 bg-cn-bg/20">
+                    <form
+                      class="grid gap-3 sm:grid-cols-2"
+                      onsubmit={(e) => {
+                        e.preventDefault();
+                        void handleSaveProductSettings(product, e.currentTarget);
+                      }}
+                    >
+                      <label class="flex items-center gap-2 text-sm cursor-pointer sm:col-span-2">
+                        <input
+                          type="checkbox"
+                          name="allowRepeat"
+                          checked={product.allowRepeatPurchase}
+                          class="rounded"
+                        />
+                        Autoriser les achats multiples
+                      </label>
+                      <div class="space-y-1">
+                        <label
+                          for="max-user-{product.id}"
+                          class="text-xs font-semibold text-text-muted"
+                          >Max par utilisateur</label
+                        >
+                        <input
+                          id="max-user-{product.id}"
+                          name="maxPerUser"
+                          type="number"
+                          min="1"
+                          value={product.maxPurchasesPerUser ?? ''}
+                          placeholder="Illimité"
+                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div class="space-y-1">
+                        <label
+                          for="max-total-{product.id}"
+                          class="text-xs font-semibold text-text-muted"
+                          >Stock global</label
+                        >
+                        <input
+                          id="max-total-{product.id}"
+                          name="maxTotal"
+                          type="number"
+                          min="1"
+                          value={product.maxPurchasesTotal ?? ''}
+                          placeholder="Illimité"
+                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={savingProductSettings === product.id}
+                        class="sm:col-span-2 text-xs rounded-lg bg-cn-yellow px-4 py-2 font-bold text-cn-dark disabled:opacity-50 w-fit"
+                      >
+                        {savingProductSettings === product.id
+                          ? 'Enregistrement…'
+                          : 'Enregistrer les limites'}
+                      </button>
+                    </form>
+                  </div>
+                {/if}
               </li>
             {/each}
           </ul>

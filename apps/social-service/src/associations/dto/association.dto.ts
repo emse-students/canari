@@ -305,6 +305,20 @@ export class CreateProductDto {
   @Min(0)
   @IsOptional()
   sortOrder?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  allowRepeatPurchase?: boolean;
+
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  maxPurchasesPerUser?: number;
+
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  maxPurchasesTotal?: number;
 }
 
 /** DTO for partial updates to a boutique product. All fields optional. */
@@ -369,6 +383,33 @@ export class UpdateProductDto {
   @Min(0)
   @IsOptional()
   sortOrder?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  allowRepeatPurchase?: boolean;
+
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  maxPurchasesPerUser?: number | null;
+
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  maxPurchasesTotal?: number | null;
+}
+
+/** DTO for manually recording a product purchase (cash, retroactive, etc.). */
+export class GrantProductPurchaseDto {
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
+
+  /** Amount in cents; required when the product has no fixed price. */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  amountCents?: number;
 }
 
 /** DTO for manually granting a cotisation tag to a user. */

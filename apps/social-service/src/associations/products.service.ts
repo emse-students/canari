@@ -10,8 +10,9 @@ import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { Association } from './entities/association.entity';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
+import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
-import { CreateProductDto, UpdateProductDto } from './dto/association.dto';
+import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 
 /** Delays used between Cercle webhook delivery attempts (ms). */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
@@ -48,6 +49,14 @@ export class ProductsService {
   async listByAssoc(associationId: string): Promise<AssociationProduct[]> {
     return this.productRepo.find({
       where: { associationId, isActive: true },
+      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+    });
+  }
+
+  /** Returns all products for admin (including inactive), ordered by sortOrder. */
+  async listAllByAssoc(associationId: string): Promise<AssociationProduct[]> {
+    return this.productRepo.find({
+      where: { associationId },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
   }
@@ -141,11 +150,7 @@ export class ProductsService {
       throw new BadRequestException('Association has not completed Stripe Connect onboarding');
     }
 
-    // Prevent duplicate purchases: check if user already has a completed purchase record.
-    const existing = await this.purchaseRecordService.findByUserAndProduct(userId, productId);
-    if (existing) {
-      throw new BadRequestException('You have already purchased this product');
-    }
+    await this.assertCanPurchase(product, userId);
 
     // Determine the final amount in cents
     let amountCents: number;
@@ -227,6 +232,191 @@ export class ProductsService {
     return { checkoutUrl: resp.data.url };
   }
 
+  /**
+   * Lists all completed purchases for an association (boutique + paid forms).
+   * Requires MANAGE_PRODUCTS on the association (enforced by controller).
+   */
+  async listAssociationPurchases(associationId: string): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      source: 'form' | 'product';
+      productId: string | null;
+      formId: string | null;
+      productName: string;
+      amountCents: number;
+      paymentMethod: 'stripe' | 'cash';
+      paidAt: string;
+      firstName: string | null;
+      lastName: string | null;
+    }>
+  > {
+    const records = await this.purchaseRecordService.listPaidByAssociation(associationId);
+    return this.enrichPurchaseRecords(records);
+  }
+
+  /**
+   * Lists completed purchases for a boutique product with buyer display names.
+   * Requires MANAGE_PRODUCTS on the association (enforced by controller).
+   */
+  async listProductPurchases(
+    associationId: string,
+    productId: string
+  ): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      amountCents: number;
+      paidAt: string;
+      firstName: string | null;
+      lastName: string | null;
+    }>
+  > {
+    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const records = await this.purchaseRecordService.listPaidByProduct(productId);
+    return this.enrichPurchaseRecords(records);
+  }
+
+  /** Attaches buyer display names to purchase records. */
+  private async enrichPurchaseRecords(records: PurchaseRecord[]): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      source: 'form' | 'product';
+      productId: string | null;
+      formId: string | null;
+      productName: string;
+      amountCents: number;
+      paymentMethod: 'stripe' | 'cash';
+      paidAt: string;
+      firstName: string | null;
+      lastName: string | null;
+    }>
+  > {
+    const userIds = [...new Set(records.map((r) => r.userId))];
+    const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
+    if (userIds.length > 0) {
+      const rows: { id: string; firstName: string | null; lastName: string | null }[] =
+        await this.productRepo.manager.query(
+          `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+          [userIds]
+        );
+      rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
+    }
+
+    return records.map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      source: r.source,
+      productId: r.productId,
+      formId: r.formId,
+      productName: r.productName,
+      amountCents: r.amountCents,
+      paymentMethod: r.paymentMethod,
+      paidAt: r.paidAt.toISOString(),
+      firstName: nameMap.get(r.userId)?.firstName ?? null,
+      lastName: nameMap.get(r.userId)?.lastName ?? null,
+    }));
+  }
+
+  /** Enforces per-user and global purchase limits and membership renewal rules. */
+  private async assertCanPurchase(product: AssociationProduct, userId: string): Promise<void> {
+    const paidCount = await this.purchaseRecordService.countPaidByUserAndProduct(
+      userId,
+      product.id
+    );
+
+    if (product.maxPurchasesTotal != null) {
+      const totalPaid = await this.purchaseRecordService.countPaidByProduct(product.id);
+      if (totalPaid >= product.maxPurchasesTotal) {
+        throw new BadRequestException('Ce produit est en rupture de stock');
+      }
+    }
+
+    if (product.allowRepeatPurchase) {
+      if (product.maxPurchasesPerUser != null && paidCount >= product.maxPurchasesPerUser) {
+        throw new BadRequestException("Limite d'achats atteinte pour ce produit");
+      }
+      return;
+    }
+
+    if (paidCount === 0) return;
+
+    if (product.type === 'membership' && product.grantedTagName) {
+      const hasTag = await this.userTagService.hasActiveTag(userId, product.grantedTagName);
+      if (!hasTag) return;
+    }
+
+    throw new BadRequestException('You have already purchased this product');
+  }
+
+  /**
+   * Manually records a product purchase for a user (cash payment, retroactive grant).
+   * Grants membership tags like a real purchase but does not dispatch Cercle webhooks.
+   */
+  async grantProductPurchase(
+    associationId: string,
+    productId: string,
+    grantedBy: string,
+    dto: GrantProductPurchaseDto
+  ): Promise<{
+    id: string;
+    userId: string;
+    source: 'form' | 'product';
+    productId: string | null;
+    formId: string | null;
+    productName: string;
+    amountCents: number;
+    paymentMethod: 'stripe' | 'cash';
+    paidAt: string;
+    firstName: string | null;
+    lastName: string | null;
+  }> {
+    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
+    if (!product) throw new NotFoundException('Product not found');
+
+    const userRows: { id: string }[] = await this.productRepo.manager.query(
+      `SELECT id FROM users WHERE id = $1`,
+      [dto.userId]
+    );
+    if (userRows.length === 0) throw new NotFoundException('User not found');
+
+    let amountCents: number;
+    if (dto.amountCents != null) {
+      amountCents = dto.amountCents;
+    } else if (product.amountCents != null) {
+      amountCents = product.amountCents;
+    } else {
+      throw new BadRequestException('amountCents is required for this product');
+    }
+
+    if (product.allowCustomAmount && product.customAmountMinCents != null) {
+      const min = product.customAmountMinCents;
+      const max = product.customAmountMaxCents ?? Infinity;
+      if (amountCents < min || amountCents > max) {
+        throw new BadRequestException(`amountCents must be between ${min} and ${max}`);
+      }
+    }
+
+    this.logger.log(
+      `[SHOP] manual grant: product=${productId.slice(0, 8)} user=${dto.userId.slice(0, 8)} by=${grantedBy.slice(0, 8)}`
+    );
+
+    const record = await this.fulfillProductPurchase({
+      product,
+      userId: dto.userId,
+      amountCents,
+      paymentMethod: 'cash',
+      stripePaymentIntentId: null,
+      grantedBy,
+      dispatchWebhook: false,
+    });
+    const [enriched] = await this.enrichPurchaseRecords([record]);
+    return enriched;
+  }
+
   // ── Post-purchase ─────────────────────────────────────────────────────────
 
   /**
@@ -240,7 +430,6 @@ export class ProductsService {
     amountCents: number,
     paymentIntentId: string
   ): Promise<void> {
-    // Idempotency guard
     const existing = await this.purchaseRecordService.findByPaymentIntent(paymentIntentId);
     if (existing) {
       this.logger.log(`[SHOP] purchase ${paymentIntentId} already processed - skipping`);
@@ -253,39 +442,80 @@ export class ProductsService {
       return;
     }
 
+    await this.fulfillProductPurchase({
+      product,
+      userId,
+      amountCents,
+      paymentMethod: 'stripe',
+      stripePaymentIntentId: paymentIntentId,
+      grantedBy: 'system',
+      dispatchWebhook: true,
+    });
+
+    this.logger.log(
+      `[SHOP] purchase completed: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}`
+    );
+  }
+
+  /** Grants tags, optionally dispatches webhooks, and persists the purchase record. */
+  private async fulfillProductPurchase(params: {
+    product: AssociationProduct;
+    userId: string;
+    amountCents: number;
+    paymentMethod: 'stripe' | 'cash';
+    stripePaymentIntentId: string | null;
+    grantedBy: string;
+    dispatchWebhook: boolean;
+  }): Promise<PurchaseRecord> {
+    const {
+      product,
+      userId,
+      amountCents,
+      paymentMethod,
+      stripePaymentIntentId,
+      grantedBy,
+      dispatchWebhook,
+    } = params;
+
     if (product.type === 'membership' && product.grantedTagName) {
       await this.userTagService.grantOrRenew({
         userId,
         tagName: product.grantedTagName,
         issuingAssocId: product.associationId,
-        grantedBy: 'system',
+        grantedBy,
         expiresAt: product.tagExpiresAt ?? null,
-        metadata: { productId, paymentIntentId },
+        metadata: {
+          productId: product.id,
+          paymentIntentId: stripePaymentIntentId,
+          manualGrant: paymentMethod === 'cash',
+        },
       });
       this.logger.log(
         `[SHOP] tag "${product.grantedTagName}" granted to user=${userId.slice(0, 8)}`
       );
     }
 
-    if (product.type === 'balance_topup' && product.webhookUrl && product.webhookSecret) {
-      await this.dispatchCercleWebhook(product, userId, amountCents, paymentIntentId);
+    if (
+      dispatchWebhook &&
+      product.type === 'balance_topup' &&
+      product.webhookUrl &&
+      product.webhookSecret &&
+      stripePaymentIntentId
+    ) {
+      await this.dispatchCercleWebhook(product, userId, amountCents, stripePaymentIntentId);
     }
 
-    await this.purchaseRecordService.create({
+    return this.purchaseRecordService.create({
       userId,
       source: 'product',
-      productId,
+      productId: product.id,
       amountCents,
-      paymentMethod: 'stripe',
+      paymentMethod,
       status: 'paid',
-      stripePaymentIntentId: paymentIntentId,
+      stripePaymentIntentId,
       associationId: product.associationId,
       productName: product.name,
     });
-
-    this.logger.log(
-      `[SHOP] purchase completed: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}`
-    );
   }
 
   // ── Cercle webhook ────────────────────────────────────────────────────────

@@ -53,6 +53,7 @@
   let submitted = $state(false);
   let paymentPending = $state(false);
   let formFull = $state(false);
+  let memberPricing = $state(false);
   let submitting = $state(false);
   let savingCard = $state(false);
   let loading = $state(true);
@@ -133,9 +134,15 @@
         linkedAgendaEvent = null;
       }
 
-      const { hasSubmitted, paymentStatus, formFull: full } = await checkSubmission(f.id);
+      const {
+        hasSubmitted,
+        paymentStatus,
+        formFull: full,
+        memberPricing: isMember,
+      } = await checkSubmission(f.id);
       submitted = hasSubmitted;
       formFull = full;
+      memberPricing = isMember;
       paymentPending = hasSubmitted && paymentStatus === 'pending';
 
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
@@ -205,19 +212,29 @@
     });
   });
 
+  function effectiveBasePrice(f: Form): number {
+    if (memberPricing && f.basePriceMember != null) return f.basePriceMember;
+    return f.basePrice ?? 0;
+  }
+
+  function optionModifier(opt: { priceModifier: number; priceModifierMember?: number }): number {
+    if (memberPricing && opt.priceModifierMember != null) return opt.priceModifierMember;
+    return opt.priceModifier;
+  }
+
   function calculateTotal(): number {
     if (!form) return 0;
-    let total = form.basePrice ?? 0;
+    let total = effectiveBasePrice(form);
     for (const item of visibleItems) {
       const val = selections[item.id];
       if (!val) continue;
       if (['single_choice', 'dropdown'].includes(item.type)) {
         const opt = item.options?.find((o) => o.id === val);
-        if (opt) total += opt.priceModifier;
+        if (opt) total += optionModifier(opt);
       } else if (item.type === 'multiple_choice' && Array.isArray(val)) {
         for (const id of val) {
           const opt = item.options?.find((o) => o.id === id);
-          if (opt) total += opt.priceModifier;
+          if (opt) total += optionModifier(opt);
         }
       }
     }
@@ -435,11 +452,12 @@
           <div class="absolute bottom-0 inset-x-0 p-5 flex items-end gap-3">
             <div class="flex-1 min-w-0">
               <h1 class="text-2xl font-extrabold text-white leading-tight">{form.title}</h1>
-              {#if form.basePrice > 0}
+              {#if effectiveBasePrice(form) > 0}
                 <span
                   class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full"
                 >
-                  À partir de {formatCurrency(form.basePrice, form.currency)}
+                  À partir de {formatCurrency(effectiveBasePrice(form), form.currency)}
+                  {#if memberPricing}(cotisant){/if}
                 </span>
               {/if}
             </div>
@@ -459,11 +477,12 @@
           </div>
           <div class="flex-1 min-w-0">
             <h1 class="text-2xl font-extrabold text-text-main leading-tight">{form.title}</h1>
-            {#if form.basePrice > 0}
+            {#if effectiveBasePrice(form) > 0}
               <span
                 class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full"
               >
-                À partir de {formatCurrency(form.basePrice, form.currency)}
+                À partir de {formatCurrency(effectiveBasePrice(form), form.currency)}
+                {#if memberPricing}(cotisant){/if}
               </span>
             {/if}
           </div>
@@ -611,10 +630,10 @@
               <option value="" disabled>Choisir une option…</option>
               {#each item.options ?? [] as opt (opt.id)}
                 <option value={opt.id}>
-                  {opt.label}{opt.priceModifier > 0
-                    ? ` (+${formatCurrency(opt.priceModifier, form.currency)})`
-                    : opt.priceModifier < 0
-                      ? ` (${formatCurrency(opt.priceModifier, form.currency)})`
+                  {opt.label}{optionModifier(opt) > 0
+                    ? ` (+${formatCurrency(optionModifier(opt), form.currency)})`
+                    : optionModifier(opt) < 0
+                      ? ` (${formatCurrency(optionModifier(opt), form.currency)})`
                       : ''}
                 </option>
               {/each}
@@ -638,12 +657,12 @@
                     disabled={submitted || isNotOpenYet}
                   />
                   <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
-                  {#if opt.priceModifier !== 0}
+                  {#if optionModifier(opt) !== 0}
                     <span
                       class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0"
                     >
-                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
-                        opt.priceModifier,
+                      {optionModifier(opt) > 0 ? '+' : ''}{formatCurrency(
+                        optionModifier(opt),
                         form.currency
                       )}
                     </span>
@@ -669,12 +688,12 @@
                     disabled={submitted || isNotOpenYet}
                   />
                   <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
-                  {#if opt.priceModifier !== 0}
+                  {#if optionModifier(opt) !== 0}
                     <span
                       class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0"
                     >
-                      {opt.priceModifier > 0 ? '+' : ''}{formatCurrency(
-                        opt.priceModifier,
+                      {optionModifier(opt) > 0 ? '+' : ''}{formatCurrency(
+                        optionModifier(opt),
                         form.currency
                       )}
                     </span>

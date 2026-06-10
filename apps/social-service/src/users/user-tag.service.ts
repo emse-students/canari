@@ -54,6 +54,14 @@ export class UserTagService {
     return saved;
   }
 
+  /** Returns true when the user has an active (non-expired) tag with the given name. */
+  async hasActiveTag(userId: string, tagName: string): Promise<boolean> {
+    const tag = await this.repo.findOne({ where: { userId, tagName } });
+    if (!tag) return false;
+    if (!tag.expiresAt) return true;
+    return tag.expiresAt > new Date();
+  }
+
   /** Revokes (deletes) a tag by its primary key. Throws 404 if not found. */
   async revoke(tagId: string): Promise<void> {
     const res = await this.repo.delete({ id: tagId });

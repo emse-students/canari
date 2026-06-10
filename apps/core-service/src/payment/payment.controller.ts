@@ -251,11 +251,65 @@ export class PaymentController {
       }
     }
 
+    let balance: Awaited<
+      ReturnType<PaymentService['getConnectBalance']>
+    > | null = null;
+    if (live.chargesEnabled && stripeAccountId) {
+      try {
+        balance = await this.paymentService.getConnectBalance(stripeAccountId);
+      } catch (err: unknown) {
+        this.logger.warn(
+          `connect-status: failed to load balance for ${associationId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     return {
       ...live,
       stripeAccountId,
       dbOnboardingComplete,
+      balance,
     };
+  }
+
+  /**
+   * Returns a single-use Stripe Dashboard login URL for the association's Connect account.
+   * Treasurers use it to initiate payouts and manage the linked bank account.
+   */
+  @Post('connect-dashboard-link/:associationId')
+  @HttpCode(200)
+  async createConnectDashboardLink(
+    @Param('associationId') associationId: string,
+    @Req() req: Request,
+  ) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    await this.assertCanManageAssociation(req, associationId);
+
+    if (!this.paymentService.isConfigured()) {
+      throw new BadRequestException('Stripe not configured');
+    }
+
+    const socialBase = this.socialBase;
+    const assoRes = await axios.get<{ stripeAccountId?: string | null }>(
+      `${socialBase}/api/associations/${encodeURIComponent(associationId)}`,
+      { validateStatus: () => true },
+    );
+    if (assoRes.status >= 400) {
+      throw new BadRequestException('Association not found');
+    }
+
+    const stripeAccountId = assoRes.data.stripeAccountId?.trim();
+    if (!stripeAccountId) {
+      throw new BadRequestException(
+        'Stripe Connect is not configured for this association',
+      );
+    }
+
+    const url =
+      await this.paymentService.createConnectDashboardLink(stripeAccountId);
+    return { url };
   }
 
   /** Creates a Stripe Checkout session for the given line items and returns the session URL. */

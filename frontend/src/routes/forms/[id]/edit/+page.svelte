@@ -46,6 +46,8 @@
   let title = $state('');
   let description = $state('');
   let basePrice = $state(0);
+  let basePriceMember = $state<number | ''>('');
+  let pricingTagName = $state('');
   let currency = $state('eur');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
@@ -109,6 +111,9 @@
       description = f.description ?? '';
       requiresPayment = f.requiresPayment ?? false;
       basePrice = requiresPayment ? (f.basePrice ?? 0) / 100 : 0;
+      basePriceMember =
+        requiresPayment && f.basePriceMember != null ? f.basePriceMember / 100 : '';
+      pricingTagName = f.pricingTagName ?? '';
       currency = f.currency ?? 'eur';
       maxSubmissions = f.maxSubmissions;
       opensAt = isoToDatetimeLocal(f.opensAt);
@@ -132,6 +137,10 @@
           item.options?.map((opt: any) => ({
             ...opt,
             priceModifier: requiresPayment ? (opt.priceModifier ?? 0) / 100 : 0,
+            priceModifierMember:
+              requiresPayment && opt.priceModifierMember != null
+                ? opt.priceModifierMember / 100
+                : undefined,
           })) || [],
         rows: item.rows || [],
       }));
@@ -141,6 +150,7 @@
   });
 
   let titleMissing = $derived(!title.trim());
+  const showMemberPricing = $derived(requiresPayment && !!pricingTagName.trim());
 
   async function handleSave() {
     if (titleMissing) {
@@ -158,6 +168,12 @@
         title,
         description,
         basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
+        ...(requiresPayment && pricingTagName.trim()
+          ? { pricingTagName: pricingTagName.trim() }
+          : { pricingTagName: null }),
+        ...(requiresPayment && basePriceMember !== ''
+          ? { basePriceMember: Math.round(Number(basePriceMember) * 100) }
+          : { basePriceMember: null }),
         currency: requiresPayment ? currency : 'eur',
         submitLabel: requiresPayment ? 'Envoyer et payer' : 'Envoyer',
         items: items.map((item) => {
@@ -171,6 +187,11 @@
                     ...opt,
                     priceModifier:
                       opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
+                    ...(opt.priceModifierMember != null && opt.priceModifierMember !== ''
+                      ? {
+                          priceModifierMember: Math.round(Number(opt.priceModifierMember) * 100),
+                        }
+                      : {}),
                   }))
               : [],
             rows: (item.rows ?? [])
@@ -478,7 +499,7 @@
       {#if requiresPayment}
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-5 border-t-2 border-cn-border">
           <Input
-            label="Prix de base (€)"
+            label="Prix de base public (€)"
             type="number"
             bind:value={basePrice}
             min="0"
@@ -499,6 +520,26 @@
             </select>
           </div>
         </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <Input
+            label="Tag cotisant (optionnel)"
+            type="text"
+            bind:value={pricingTagName}
+            placeholder="cotisant:bde-2026-2027"
+          />
+          <Input
+            label="Prix de base cotisant (€)"
+            type="number"
+            bind:value={basePriceMember}
+            min="0"
+            step="0.01"
+            placeholder="Même que public si vide"
+            disabled={!showMemberPricing}
+          />
+        </div>
+        <p class="text-xs text-text-muted mt-1 ml-1">
+          Les utilisateurs possédant ce tag paient le tarif cotisant (base et options).
+        </p>
         <div class="mt-4">
           <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
             >Association bénéficiaire</label
@@ -632,6 +673,7 @@
               bind:item={items[i]}
               onRemove={() => removeItem(i)}
               showPriceModifier={requiresPayment}
+              showMemberPriceModifier={showMemberPricing}
               questionIndex={i + 1}
               onMoveUp={() => moveItem(i, 'up')}
               onMoveDown={() => moveItem(i, 'down')}

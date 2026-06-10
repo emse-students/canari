@@ -73,6 +73,18 @@ export class AssociationProduct {
   @Column({ type: 'int', default: 0 })
   sortOrder: number;
 
+  /** When false, a user may only purchase once (membership: until tag expires). */
+  @Column({ default: false })
+  allowRepeatPurchase: boolean;
+
+  /** Max paid purchases per user when repeat is allowed (null = unlimited). */
+  @Column({ type: 'int', nullable: true })
+  maxPurchasesPerUser: number | null;
+
+  /** Global cap on paid purchases across all users (null = unlimited). */
+  @Column({ type: 'int', nullable: true })
+  maxPurchasesTotal: number | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

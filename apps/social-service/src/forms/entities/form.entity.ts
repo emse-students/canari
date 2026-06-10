@@ -57,8 +57,19 @@ export class Form {
   items: any[];
 
   /**
-   * When set, a paid submission grants (or renews) this tag to the submitter.
+   * Tag checked at submit time for member pricing (e.g. cotisation bought in the boutique).
    * Format: `"<category>:<issuer-slug>-<year>"`, e.g. `"cotisant:bde-2026-2027"`.
+   */
+  @Column({ length: 100, nullable: true })
+  pricingTagName: string | null;
+
+  /** Base price in cents when the submitter has `pricingTagName` (null = same as basePrice). */
+  @Column({ type: 'int', nullable: true })
+  basePriceMember: number | null;
+
+  /**
+   * When set, a paid submission grants (or renews) this tag to the submitter.
+   * Prefer granting tags via boutique membership products instead.
    */
   @Column({ length: 100, nullable: true })
   grantedTagName: string | null;

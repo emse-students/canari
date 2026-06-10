@@ -58,4 +58,34 @@ export class PurchaseRecordService {
   async findByUserAndProduct(userId: string, productId: string): Promise<PurchaseRecord | null> {
     return this.repo.findOne({ where: { userId, productId } });
   }
+
+  /** Counts completed product purchases for a user + product. */
+  async countPaidByUserAndProduct(userId: string, productId: string): Promise<number> {
+    return this.repo.count({
+      where: { userId, productId, source: 'product', status: 'paid' },
+    });
+  }
+
+  /** Counts all completed purchases for a product. */
+  async countPaidByProduct(productId: string): Promise<number> {
+    return this.repo.count({
+      where: { productId, source: 'product', status: 'paid' },
+    });
+  }
+
+  /** Lists completed purchases for a boutique product, newest first. */
+  async listPaidByProduct(productId: string): Promise<PurchaseRecord[]> {
+    return this.repo.find({
+      where: { productId, source: 'product', status: 'paid' },
+      order: { paidAt: 'DESC' },
+    });
+  }
+
+  /** Lists all completed purchases for an association (boutique + formulaires), newest first. */
+  async listPaidByAssociation(associationId: string): Promise<PurchaseRecord[]> {
+    return this.repo.find({
+      where: { associationId, status: 'paid' },
+      order: { paidAt: 'DESC' },
+    });
+  }
 }

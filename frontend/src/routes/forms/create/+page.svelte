@@ -19,6 +19,8 @@
   let title = $state('');
   let description = $state('');
   let basePrice = $state(0);
+  let basePriceMember = $state<number | ''>('');
+  let pricingTagName = $state('');
   let currency = $state('eur');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
@@ -72,6 +74,7 @@
   let showTypePicker = $state(false);
 
   let titleMissing = $derived(!title.trim());
+  const showMemberPricing = $derived(requiresPayment && !!pricingTagName.trim());
 
   async function handleSave() {
     if (titleMissing) {
@@ -89,6 +92,12 @@
         title,
         description,
         basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
+        ...(requiresPayment && pricingTagName.trim()
+          ? { pricingTagName: pricingTagName.trim() }
+          : {}),
+        ...(requiresPayment && basePriceMember !== ''
+          ? { basePriceMember: Math.round(Number(basePriceMember) * 100) }
+          : {}),
         currency: requiresPayment ? currency : 'eur',
         submitLabel: requiresPayment ? 'Envoyer et payer' : 'Envoyer',
         items: items.map((item) => {
@@ -102,6 +111,11 @@
                     ...opt,
                     priceModifier:
                       opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
+                    ...(opt.priceModifierMember != null && opt.priceModifierMember !== ''
+                      ? {
+                          priceModifierMember: Math.round(Number(opt.priceModifierMember) * 100),
+                        }
+                      : {}),
                   }))
               : [],
             rows: (item.rows ?? [])
@@ -324,7 +338,7 @@
     {#if requiresPayment}
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-5 border-t-2 border-cn-border">
         <Input
-          label="Prix de base (€)"
+          label="Prix de base public (€)"
           type="number"
           bind:value={basePrice}
           min="0"
@@ -345,6 +359,28 @@
           </select>
         </div>
       </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+        <Input
+          label="Tag cotisant (optionnel)"
+          type="text"
+          bind:value={pricingTagName}
+          placeholder="cotisant:bde-2026-2027"
+        />
+        <Input
+          label="Prix de base cotisant (€)"
+          type="number"
+          bind:value={basePriceMember}
+          min="0"
+          step="0.01"
+          placeholder="Même que public si vide"
+          disabled={!showMemberPricing}
+        />
+      </div>
+      <p class="text-xs text-text-muted mt-1 ml-1">
+        Si renseigné, les utilisateurs possédant ce tag (ex. cotisation achetée en boutique) paient
+        le tarif cotisant.
+      </p>
 
       <!-- Recipient Association -->
       <div class="mt-4">
@@ -498,6 +534,7 @@
             bind:item={items[i]}
             onRemove={() => removeItem(i)}
             showPriceModifier={requiresPayment}
+            showMemberPriceModifier={showMemberPricing}
             questionIndex={i + 1}
             onMoveUp={() => moveItem(i, 'up')}
             onMoveDown={() => moveItem(i, 'down')}

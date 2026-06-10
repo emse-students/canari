@@ -1,6 +1,8 @@
 export interface FormOption {
   label: string;
   priceModifier: number;
+  /** Price modifier in cents when submitter has `pricingTagName`. */
+  priceModifierMember?: number;
   id?: string;
 }
 
@@ -46,6 +48,10 @@ export interface CreateFormPayload {
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
+  /** Tag checked at submit for member pricing (e.g. cotisation from the boutique). */
+  pricingTagName?: string | null;
+  /** Base price in cents when submitter has `pricingTagName`. */
+  basePriceMember?: number | null;
   /** Tag name automatically granted upon successful payment (e.g. "cotisant:bde-2026"). */
   grantedTagName?: string;
   /** ISO 8601 - when the granted tag expires (omit for permanent). */
@@ -180,9 +186,12 @@ export async function getSubmission(formId: string): Promise<any> {
   return res.json();
 }
 
-export async function checkSubmission(
-  formId: string
-): Promise<{ hasSubmitted: boolean; paymentStatus?: string; formFull: boolean }> {
+export async function checkSubmission(formId: string): Promise<{
+  hasSubmitted: boolean;
+  paymentStatus?: string;
+  formFull: boolean;
+  memberPricing: boolean;
+}> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
   return res.json();

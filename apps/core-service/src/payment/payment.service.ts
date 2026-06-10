@@ -12,6 +12,13 @@ export interface ChargeResult {
   error?: string;
 }
 
+/** Stripe Connect balance snapshot for a connected account (single currency). */
+export interface ConnectBalanceSummary {
+  availableCents: number;
+  pendingCents: number;
+  currency: string;
+}
+
 /** Service wrapping Stripe SDK calls for Connect onboarding, checkout, and payment method management. */
 @Injectable()
 export class PaymentService {
@@ -136,6 +143,52 @@ export class PaymentService {
       `[Stripe] Connect status account=${accountId.slice(0, 8)} charges=${account.charges_enabled} details=${account.details_submitted}`,
     );
     return buildStripeConnectStatusResponse(account);
+  }
+
+  /**
+   * Returns available and pending balances for a Connect Standard account.
+   * Prefers EUR when present; otherwise uses the first currency in the response.
+   */
+  async getConnectBalance(
+    stripeAccountId: string,
+  ): Promise<ConnectBalanceSummary> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+
+    const balance = await this.stripe.balance.retrieve({
+      stripeAccount: stripeAccountId,
+    });
+    const currency =
+      balance.available.find((b) => b.currency === 'eur')?.currency ??
+      balance.available[0]?.currency ??
+      balance.pending[0]?.currency ??
+      'eur';
+    const available =
+      balance.available.find((b) => b.currency === currency)?.amount ?? 0;
+    const pending =
+      balance.pending.find((b) => b.currency === currency)?.amount ?? 0;
+
+    this.logger.debug(
+      `[Stripe] Connect balance account=${stripeAccountId.slice(0, 8)} available=${available} pending=${pending} ${currency}`,
+    );
+
+    return {
+      availableCents: available,
+      pendingCents: pending,
+      currency,
+    };
+  }
+
+  /**
+   * Creates a single-use login link to the connected account's Stripe Dashboard
+   * (payouts, bank account, settings). Standard Connect accounts manage payouts there.
+   */
+  async createConnectDashboardLink(stripeAccountId: string): Promise<string> {
+    if (!this.stripe) throw new BadRequestException('Stripe not configured');
+    const link = await this.stripe.accounts.createLoginLink(stripeAccountId);
+    this.logger.debug(
+      `[Stripe] Dashboard login link created for account=${stripeAccountId.slice(0, 8)}`,
+    );
+    return link.url;
   }
 
   // ── Customer & Payment Methods ────────────────────────────────────────────

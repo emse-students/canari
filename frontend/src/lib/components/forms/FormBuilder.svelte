@@ -8,6 +8,7 @@
     item = $bindable(),
     onRemove,
     showPriceModifier = false,
+    showMemberPriceModifier = false,
     questionIndex,
     onMoveUp,
     onMoveDown,
@@ -19,6 +20,8 @@
     item: any;
     onRemove: () => void;
     showPriceModifier?: boolean;
+    /** Second price column for cotisant pricing when `pricingTagName` is set on the form. */
+    showMemberPriceModifier?: boolean;
     questionIndex?: number;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
@@ -42,7 +45,7 @@
     if (!item.options) item.options = [];
     item.options = [
       ...item.options,
-      { id: crypto.randomUUID(), label: '', priceModifier: undefined },
+      { id: crypto.randomUUID(), label: '', priceModifier: undefined, priceModifierMember: undefined },
     ];
   }
 
@@ -385,8 +388,12 @@
           {isMatrix ? 'Colonnes (choix possibles)' : 'Options de réponse'}
         </h4>
         {#if !isMatrix && showPriceModifier}
-          <span class="text-[0.65rem] sm:text-xs text-text-muted font-semibold">Supplément (€)</span
-          >
+          <div class="flex gap-2 text-[0.65rem] sm:text-xs text-text-muted font-semibold">
+            <span class="w-20 text-right">Public (€)</span>
+            {#if showMemberPriceModifier}
+              <span class="w-20 text-right">Cotisant (€)</span>
+            {/if}
+          </div>
         {/if}
       </div>
 
@@ -431,6 +438,16 @@
                     step="0.01"
                   />
                 </div>
+                {#if showMemberPriceModifier}
+                  <div class="w-20 shrink-0">
+                    <Input
+                      type="number"
+                      placeholder="0.00"
+                      bind:value={opt.priceModifierMember}
+                      step="0.01"
+                    />
+                  </div>
+                {/if}
               {/if}
               <button
                 class="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-colors shrink-0"
@@ -455,7 +472,7 @@
                   <label
                     for="opt-price-{opt.id}"
                     class="block text-[0.65rem] font-bold text-text-muted mb-1"
-                    >Supplément (€)</label
+                    >Supplément public (€)</label
                   >
                   <input
                     id="opt-price-{opt.id}"
@@ -466,6 +483,23 @@
                     class={fieldClass}
                   />
                 </div>
+                {#if showMemberPriceModifier}
+                  <div>
+                    <label
+                      for="opt-price-member-{opt.id}"
+                      class="block text-[0.65rem] font-bold text-text-muted mb-1"
+                      >Supplément cotisant (€)</label
+                    >
+                    <input
+                      id="opt-price-member-{opt.id}"
+                      type="number"
+                      bind:value={opt.priceModifierMember}
+                      step="0.01"
+                      placeholder="0.00"
+                      class={fieldClass}
+                    />
+                  </div>
+                {/if}
               {/if}
             </div>
           </div>

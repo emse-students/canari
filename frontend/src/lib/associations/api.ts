@@ -714,9 +714,30 @@ export interface AssociationProduct {
   /** webhookUrl and webhookSecret are never returned by the API. */
   isActive: boolean;
   sortOrder: number;
+  allowRepeatPurchase: boolean;
+  maxPurchasesPerUser: number | null;
+  maxPurchasesTotal: number | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/** A completed purchase with buyer display name. */
+export interface AssociationPurchase {
+  id: string;
+  userId: string;
+  source: 'form' | 'product';
+  productId: string | null;
+  formId: string | null;
+  productName: string;
+  amountCents: number;
+  paymentMethod: 'stripe' | 'cash';
+  paidAt: string;
+  firstName: string | null;
+  lastName: string | null;
+}
+
+/** @deprecated Use AssociationPurchase — kept for per-product endpoint compatibility. */
+export type ProductPurchase = AssociationPurchase;
 
 export interface CreateProductPayload {
   name: string;
@@ -733,9 +754,15 @@ export interface CreateProductPayload {
   webhookSecret?: string;
   isActive?: boolean;
   sortOrder?: number;
+  allowRepeatPurchase?: boolean;
+  maxPurchasesPerUser?: number | null;
+  maxPurchasesTotal?: number | null;
 }
 
-export type UpdateProductPayload = Partial<CreateProductPayload>;
+export type UpdateProductPayload = Partial<CreateProductPayload> & {
+  maxPurchasesPerUser?: number | null;
+  maxPurchasesTotal?: number | null;
+};
 
 /** Returns all active products across all associations (login required). */
 export async function listAllProducts(): Promise<AssociationProduct[]> {
@@ -748,6 +775,56 @@ export async function listAssociationProducts(
 ): Promise<AssociationProduct[]> {
   return request<AssociationProduct[]>(
     `/api/associations/${encodeURIComponent(associationId)}/products`
+  );
+}
+
+/** Returns all products including inactive (requires MANAGE_PRODUCTS). */
+export async function listAssociationProductsForManage(
+  associationId: string
+): Promise<AssociationProduct[]> {
+  return request<AssociationProduct[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/manage`
+  );
+}
+
+export interface GrantProductPurchasePayload {
+  userId: string;
+  /** Amount in cents; required when the product has no fixed price. */
+  amountCents?: number;
+}
+
+/**
+ * Manually records a product purchase for a user (cash, retroactive grant).
+ * Requires MANAGE_PRODUCTS.
+ */
+export async function grantProductPurchase(
+  associationId: string,
+  productId: string,
+  payload: GrantProductPurchasePayload
+): Promise<AssociationPurchase> {
+  const row = await request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/grant`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+  return row;
+}
+
+/** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */
+export async function listAssociationPurchases(
+  associationId: string
+): Promise<AssociationPurchase[]> {
+  return request<AssociationPurchase[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases`
+  );
+}
+
+/** Lists buyers for a boutique product (requires MANAGE_PRODUCTS). */
+export async function listProductPurchases(
+  associationId: string,
+  productId: string
+): Promise<AssociationPurchase[]> {
+  return request<AssociationPurchase[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/purchases`
   );
 }
 
@@ -865,6 +942,13 @@ export type StripeConnectStatus =
   | 'restricted'
   | 'unavailable';
 
+/** Stripe Connect balance for a connected association account. */
+export interface StripeConnectBalance {
+  availableCents: number;
+  pendingCents: number;
+  currency: string;
+}
+
 export interface StripeConnectStatusResult {
   status: StripeConnectStatus;
   chargesEnabled?: boolean;
@@ -875,7 +959,16 @@ export interface StripeConnectStatusResult {
   disabledReason?: string | null;
   stripeAccountId?: string | null;
   dbOnboardingComplete?: boolean;
+  balance?: StripeConnectBalance | null;
   message?: string;
+}
+
+/** Formats a Connect balance amount for display. */
+export function formatStripeConnectAmount(cents: number, currency: string): string {
+  return new Intl.NumberFormat('fr-FR', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+  }).format(cents / 100);
 }
 
 /** True when the association can accept online payments (live or DB flag). */
@@ -907,6 +1000,27 @@ export async function fetchStripeConnectStatus(
     throw new Error(`connect-status ${res.status}: ${details || res.statusText}`);
   }
   return (await res.json()) as StripeConnectStatusResult;
+}
+
+/**
+ * Opens the association's Stripe Connect dashboard (payouts, bank account).
+ * Requires MANAGE_STRIPE_CONNECT.
+ */
+export async function openStripeConnectDashboard(associationId: string): Promise<string> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/connect-dashboard-link/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { message?: string })?.message || `Dashboard link failed (${res.status})`
+    );
+  }
+  const data = (await res.json()) as { url: string };
+  if (!data.url) throw new Error('Stripe did not return a dashboard URL');
+  return data.url;
 }
 
 // ── Stripe onboarding ───────────────────────────────────────────────────────

@@ -24,10 +24,15 @@ function makeId(prefix: string): string {
 function formRequiresStripeReadyAssociation(input: {
   associationId?: string;
   basePrice?: number;
+  basePriceMember?: number | null;
   requiresPayment?: boolean;
 }): boolean {
   if (!input.associationId?.trim()) return false;
-  return (input.basePrice ?? 0) > 0 || !!input.requiresPayment;
+  return (
+    (input.basePrice ?? 0) > 0 ||
+    (input.basePriceMember ?? 0) > 0 ||
+    !!input.requiresPayment
+  );
 }
 
 /** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
@@ -236,9 +241,14 @@ export class FormsService {
   async hasSubmission(
     formId: string,
     userId: string,
-  ): Promise<{ hasSubmitted: boolean; paymentStatus?: string; formFull: boolean }> {
+  ): Promise<{
+    hasSubmitted: boolean;
+    paymentStatus?: string;
+    formFull: boolean;
+    memberPricing: boolean;
+  }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
-    if (!form) return { hasSubmitted: false, formFull: false };
+    if (!form) return { hasSubmitted: false, formFull: false, memberPricing: false };
 
     // Check global capacity independently of per-user state
     let formFull = false;
@@ -254,7 +264,12 @@ export class FormsService {
       formFull = count >= form.maxSubmissions;
     }
 
-    if (form.allowMultipleSubmissions) return { hasSubmitted: false, formFull };
+    const memberPricing =
+      !!userId &&
+      !!form.pricingTagName &&
+      (await this.userTagService.hasActiveTag(userId, form.pricingTagName));
+
+    if (form.allowMultipleSubmissions) return { hasSubmitted: false, formFull, memberPricing };
 
     const submission = await this.submissionRepo.findOne({
       where: [
@@ -265,7 +280,12 @@ export class FormsService {
       ],
       order: { createdAt: 'DESC' },
     });
-    return { hasSubmitted: !!submission, paymentStatus: submission?.paymentStatus, formFull };
+    return {
+      hasSubmitted: !!submission,
+      paymentStatus: submission?.paymentStatus,
+      formFull,
+      memberPricing,
+    };
   }
 
   /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a Stripe Checkout URL. */
@@ -291,17 +311,25 @@ export class FormsService {
       }
     }
 
+    const memberPricing =
+      !!input.userId &&
+      !!form.pricingTagName &&
+      (await this.userTagService.hasActiveTag(input.userId, form.pricingTagName));
+
+    const baseCents =
+      memberPricing && form.basePriceMember != null ? form.basePriceMember : form.basePrice;
+
     // Validation & Price Calculation
-    let totalCents = form.basePrice;
+    let totalCents = baseCents;
     const lineItems: any[] = [];
     const currency = form.currency.toLowerCase();
 
-    if (form.basePrice > 0) {
+    if (baseCents > 0) {
       lineItems.push({
         price_data: {
           currency,
           product_data: { name: `${form.title} (Registration)` },
-          unit_amount: form.basePrice,
+          unit_amount: baseCents,
         },
         quantity: 1,
       });
@@ -315,7 +343,14 @@ export class FormsService {
 
       // Calculate modifiers
       if (answer && item.options?.length) {
-        totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
+        totalCents = this.calculateModifiers(
+          item,
+          answer,
+          totalCents,
+          lineItems,
+          currency,
+          memberPricing
+        );
       }
     }
 
@@ -695,18 +730,21 @@ export class FormsService {
     answer: any,
     total: number,
     lines: any[],
-    currency: string
+    currency: string,
+    memberPricing = false
   ): number {
     let currentTotal = total;
     const process = (optId: string) => {
       const opt = item.options?.find((o: any) => o.id === optId);
-      if (opt && opt.priceModifier > 0) {
-        currentTotal += opt.priceModifier;
+      if (!opt) return;
+      const modifier = memberPricing ? (opt.priceModifierMember ?? opt.priceModifier) : opt.priceModifier;
+      if (modifier > 0) {
+        currentTotal += modifier;
         lines.push({
           price_data: {
             currency,
             product_data: { name: `${item.label}: ${opt.label}` },
-            unit_amount: opt.priceModifier,
+            unit_amount: modifier,
           },
           quantity: 1,
         });
