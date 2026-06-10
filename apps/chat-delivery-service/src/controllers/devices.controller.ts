@@ -29,6 +29,7 @@ import {
   sanitizeOptionalDeviceOs,
   sanitizeOptionalDeviceAppVersion,
 } from '../utils/sanitize';
+import { RETENTION_WINDOW_MS } from '../retention.constants';
 
 /** Device registration, key packages, device metadata, and device deletion. */
 @Controller()
@@ -319,10 +320,13 @@ export class DevicesController {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId')
-  /** Lists all registered devices for a user, including their key packages (last 30 days). */
+  /** Lists all registered devices for a user, including their key packages (within the retention window). */
   async getUserDevices(@Param('userId') userId: string) {
-    // Only return devices active in the last 30 days (avoids stale key packages)
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // Only return devices seen within the retention window. Aligned with the
+    // staleness / key-package retention so a still-recoverable device stays a valid
+    // invite target (a device reset to stale only past the same window is otherwise
+    // visible here but missing from new-group invites).
+    const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);
     const registeredDevices = await this.keyPackageRepo.find({
       where: { userId, createdAt: MoreThanOrEqual(cutoff) },
       order: { createdAt: 'DESC' },

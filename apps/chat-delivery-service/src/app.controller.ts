@@ -16,6 +16,7 @@ import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
 import * as admin from 'firebase-admin';
+import { RETENTION_WINDOW_MS } from './retention.constants';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -32,13 +33,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
 
   /**
-   * Single source of truth for message retention / stale device TTL.
-   * A device is "stale" when its queued messages have expired (90 days),
-   * meaning it can no longer catch up by processing missed commits.
-   * 90 days is the standard offline window for a social network: a device that
-   * has not connected for that long is treated as gone and re-invited from scratch.
+   * Message retention / stale device TTL. A device is "stale" once its queued
+   * messages have expired, meaning it can no longer catch up by processing missed
+   * commits. Sourced from the shared {@link RETENTION_WINDOW_MS} so this threshold
+   * stays aligned with the device-list cutoff and key-package retention.
    */
-  private static readonly MESSAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+  private static readonly MESSAGE_RETENTION_MS = RETENTION_WINDOW_MS;
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -259,13 +259,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Delete KeyPackages older than 30 days whose device has no active
-   * group membership. These are leftover packages published by devices
-   * that went offline permanently.
+   * Delete KeyPackages older than the retention window whose device has no active
+   * group membership. These are leftover packages published by devices that went
+   * offline permanently. Using the same window as the device-list cutoff guarantees
+   * a still-recoverable device keeps a usable KeyPackage for as long as it stays visible.
    */
   private async cleanupExpiredKeyPackages() {
-    const KEY_PACKAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-    const expiry = new Date(Date.now() - KEY_PACKAGE_MAX_AGE_MS);
+    const expiry = new Date(Date.now() - RETENTION_WINDOW_MS);
 
     const expiredPackages = await this.keyPackageRepo.find({
       where: { createdAt: LessThan(expiry) },

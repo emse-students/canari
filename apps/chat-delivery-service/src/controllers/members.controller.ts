@@ -20,6 +20,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
+import { RETENTION_WINDOW_MS } from '../retention.constants';
 
 /** Group membership management: add/remove members, list members, list user groups. */
 @Controller()
@@ -150,7 +151,9 @@ export class MembersController {
     );
 
     // Upsert atomique : INSERT ... ON CONFLICT DO UPDATE évite la race findOne+save.
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // Fenêtre alignée sur la rétention : un device encore récupérable (vu < 90 j) doit
+    // recevoir un membership pending, même s'il dort depuis > 30 j.
+    const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);
     const userDevices = await this.keyPackageRepo.find({
       where: { userId: safeUserId, createdAt: MoreThanOrEqual(cutoff) },
     });

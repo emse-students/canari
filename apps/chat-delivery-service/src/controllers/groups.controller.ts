@@ -244,6 +244,15 @@ export class GroupsController {
       where: { groupId: safeGroupId },
     });
     if (deviceMemberships.length > 0) {
+      // Migrate device memberships as `pending`, NOT preserving their old status,
+      // and do NOT seed the successor's Redis routing set. The successor was just
+      // created, so no device (except its creator, already marked active by
+      // createGroup) has processed a Welcome for it - none of these devices have MLS
+      // state yet. Copying them as `active` + adding them to routing would deliver
+      // ciphertext they cannot decrypt (wasted FCM, spurious welcome_request churn)
+      // and would violate the invariant that `active` must mean "has valid MLS state".
+      // The reboot winner's inviteMembers (and each device's own welcome_request)
+      // promotes them to active + adds them to Redis when they are actually welcomed.
       await this.deviceGroupRepo
         .createQueryBuilder()
         .insert()
@@ -253,20 +262,12 @@ export class GroupsController {
             userId: dm.userId,
             deviceId: dm.deviceId,
             groupId: successorId,
-            status: dm.status,
+            status: 'pending' as const,
           })),
         )
         .orIgnore()
         .execute();
       await this.deviceGroupRepo.delete({ groupId: safeGroupId });
-
-      // Propagate active members to the successor group in Redis
-      const activeMembers = deviceMemberships
-        .filter((dm) => dm.status === 'active')
-        .map((dm) => `${dm.userId}:${dm.deviceId}`);
-      if (activeMembers.length > 0) {
-        await this.redis.sadd(`group:members:${successorId}`, ...activeMembers);
-      }
     }
     await this.redis.del(`group:members:${safeGroupId}`);
 
