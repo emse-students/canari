@@ -75,7 +75,6 @@ export class GroupsController {
         deviceId: body.creatorDeviceId,
         groupId,
         status: 'active' as const,
-        lastEpochSeen: 0,
       });
       await this.deviceGroupRepo.save(creatorMembership);
       this.logger.log(
@@ -247,7 +246,6 @@ export class GroupsController {
             deviceId: dm.deviceId,
             groupId: successorId,
             status: dm.status,
-            lastEpochSeen: dm.lastEpochSeen,
           })),
         )
         .orIgnore()

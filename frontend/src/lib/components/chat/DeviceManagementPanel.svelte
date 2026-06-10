@@ -22,7 +22,6 @@
     deviceId: string;
     groupId: string;
     status: string;
-    lastEpochSeen: number;
   }
 
   interface DeviceInfo {

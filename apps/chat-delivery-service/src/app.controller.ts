@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, LessThan } from 'typeorm';
+import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { Group } from './entities/group.entity';
@@ -33,10 +33,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Single source of truth for message retention / stale device TTL.
-   * A device is "stale" when its queued messages have expired (7 days),
+   * A device is "stale" when its queued messages have expired (90 days),
    * meaning it can no longer catch up by processing missed commits.
+   * 90 days is the standard offline window for a social network: a device that
+   * has not connected for that long is treated as gone and re-invited from scratch.
    */
-  private static readonly MESSAGE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+  private static readonly MESSAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -175,41 +177,68 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Detect devices whose membership hasn't been touched within the message
-   * retention window.  Once their queued messages have been garbage-collected,
-   * they can no longer catch up by processing missed commits - the only
-   * recovery path is a full re-invite (reset to "pending").
+   * Detect devices that have gone offline longer than the message retention
+   * window and reset their membership to `pending` for a full re-invite.  Once
+   * a device's queued messages have been garbage-collected it can no longer
+   * catch up by processing missed commits, so the only recovery is a new Welcome.
    *
-   * Only devices in `active` state are candidates: they were once
-   * active but have gone silent for longer than the retention TTL.
+   * Liveness is measured by `KeyPackage.createdAt`, NOT `DeviceGroupMembership.updatedAt`.
+   * Every WebSocket (re)connection republishes the device KeyPackage (see
+   * `registerDeviceKeyPackage`), refreshing `createdAt`, whereas `updatedAt` on the
+   * membership row is only bumped by `sendWelcome` / kick operations - the client no
+   * longer calls `updateInvitationStatus` on normal message receipt. Keying on
+   * `updatedAt` would therefore reset perfectly healthy long-lived devices in quiet
+   * groups every retention window, triggering a needless kick + re-invite epoch churn
+   * for the whole group.
+   *
+   * The `updatedAt` filter is kept only as a cheap pre-filter: a row touched within
+   * the window is certainly not stale, so it can be skipped without a KeyPackage lookup.
    */
   private async detectStaleDevices() {
     const staleDate = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
 
-    const staleMembers = await this.deviceGroupRepo
+    const candidates = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
       .where('dgm.status = :status', { status: 'active' })
       .andWhere('dgm.updatedAt < :staleDate', { staleDate })
       .getMany();
 
-    for (const member of staleMembers) {
+    if (candidates.length === 0) return;
+
+    // Keep only devices whose KeyPackage is ALSO older than the window, i.e. devices
+    // that have not reconnected (republished a KeyPackage) within the retention TTL.
+    const deviceIds = [...new Set(candidates.map((m) => m.deviceId))];
+    const liveKeyPackages = await this.keyPackageRepo.find({
+      where: { deviceId: In(deviceIds), createdAt: MoreThanOrEqual(staleDate) },
+      select: ['userId', 'deviceId'],
+    });
+    const liveDeviceKeys = new Set(
+      liveKeyPackages.map((kp) => `${kp.userId}:${kp.deviceId}`),
+    );
+
+    let reset = 0;
+    for (const member of candidates) {
+      if (liveDeviceKeys.has(`${member.userId}:${member.deviceId}`)) {
+        // Device reconnected within the retention window - alive, leave it active.
+        continue;
+      }
       // Remettre en pending - le device devra recevoir un nouveau Welcome.
       member.status = 'pending';
-      member.lastEpochSeen = 0;
       await this.deviceGroupRepo.save(member);
       await this.redis.srem(
         `group:members:${member.groupId}`,
         `${member.userId}:${member.deviceId}`,
       );
+      reset++;
       this.logger.log(
         `[CRON] Stale device reset: device=${member.deviceId} group=${member.groupId} ` +
           `(lastUpdate=${member.updatedAt.toISOString()})`,
       );
     }
 
-    if (staleMembers.length > 0) {
+    if (reset > 0) {
       this.logger.log(
-        `[CRON] detectStaleDevices: ${staleMembers.length} device(s) reset to pending`,
+        `[CRON] detectStaleDevices: ${reset}/${candidates.length} device(s) reset to pending`,
       );
     }
   }

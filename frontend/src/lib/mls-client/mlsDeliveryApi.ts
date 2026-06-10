@@ -598,7 +598,7 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Returns device-level membership rows for a device, including status (`pending`/`active`) and `lastEpochSeen`. */
+  /** Returns device-level membership rows for a device, including status (`pending`/`active`). */
   async getDeviceMemberships(
     userId: string,
     deviceId: string
@@ -609,7 +609,6 @@ export class MlsDeliveryApi {
       deviceId: string;
       groupId: string;
       status: string;
-      lastEpochSeen: number;
     }>
   > {
     try {
@@ -631,14 +630,13 @@ export class MlsDeliveryApi {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'active',
-    lastEpochSeen?: number
+    status: 'pending' | 'active'
   ): Promise<void> {
     try {
       await this.f(`${this.historyUrl}/api/mls/invitations/status`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ deviceId, userId, groupId, status, lastEpochSeen }),
+        body: JSON.stringify({ deviceId, userId, groupId, status }),
       });
     } catch (e) {
       console.error('Failed to update invitation status', e);

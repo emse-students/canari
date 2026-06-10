@@ -63,14 +63,18 @@ export class PushController {
     const pt = await this.pushTokenRepo.findOne({
       where: { userId, deviceId },
     });
+    const stored = pt?.pushSecret;
+    if (!stored) throw new ForbiddenException('Invalid push secret');
+
+    // Reject outright on length mismatch rather than truncating/padding the supplied
+    // value to the stored length: padding let any secret sharing the stored prefix
+    // authenticate, and truncation let a longer value with the right prefix pass.
+    // pushSecret is a fixed-length opaque token, so comparing lengths leaks nothing.
+    const expected = Buffer.from(stored, 'utf8');
+    const received = Buffer.from(secret, 'utf8');
     if (
-      !pt?.pushSecret ||
-      !crypto.timingSafeEqual(
-        Buffer.from(pt.pushSecret),
-        Buffer.from(
-          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
-        ),
-      )
+      expected.length !== received.length ||
+      !crypto.timingSafeEqual(expected, received)
     ) {
       throw new ForbiddenException('Invalid push secret');
     }
@@ -141,33 +145,11 @@ export class PushController {
     @Query('userId') userIdRaw: string,
     @Query('deviceId') deviceIdRaw: string,
   ) {
-    // ── Auth : PushSecret ─────────────────────────────────────────────────
-    const secret = authHeader?.startsWith('PushSecret ')
-      ? authHeader.slice('PushSecret '.length).trim()
-      : null;
-    if (!secret) {
-      throw new ForbiddenException('PushSecret header required');
-    }
-
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
     const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
 
-    // Lookup en temps constant - on ne révèle pas si l'entrée existe.
-    const pt = await this.pushTokenRepo.findOne({
-      where: { userId, deviceId },
-    });
-    if (
-      !pt?.pushSecret ||
-      !crypto.timingSafeEqual(
-        Buffer.from(pt.pushSecret),
-        Buffer.from(
-          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
-        ),
-      )
-    ) {
-      throw new ForbiddenException('Invalid push secret');
-    }
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
     const queued = await this.queuedMessageRepo.findOne({
       where: { id: messageId, recipientId: userId, deviceId },
@@ -193,29 +175,11 @@ export class PushController {
     @Param('targetUserId') targetUserIdRaw: string,
     @Res() res: Response,
   ) {
-    const secret = authHeader?.startsWith('PushSecret ')
-      ? authHeader.slice('PushSecret '.length).trim()
-      : null;
-    if (!secret) throw new ForbiddenException('PushSecret header required');
-
     const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
     const targetUserId = sanitizeQueryValue(targetUserIdRaw, 'targetUserId');
 
-    const pt = await this.pushTokenRepo.findOne({
-      where: { userId: requesterId, deviceId },
-    });
-    if (
-      !pt?.pushSecret ||
-      !crypto.timingSafeEqual(
-        Buffer.from(pt.pushSecret),
-        Buffer.from(
-          secret.slice(0, pt.pushSecret.length).padEnd(pt.pushSecret.length),
-        ),
-      )
-    ) {
-      throw new ForbiddenException('Invalid push secret');
-    }
+    await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
 
     const coreUrl =
       process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012';

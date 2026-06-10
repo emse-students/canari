@@ -32,7 +32,7 @@ export class Group {
   keyVersion: number;
 
   /** Current MLS epoch number for this group; incremented by every Commit message.
-   *  Devices with a lower `lastEpochSeen` need to catch up before they can decrypt. */
+   *  Used by `validateCommit` to gate commits against the expected base epoch. */
   @Column({ default: 0 })
   activeEpoch: number;
 

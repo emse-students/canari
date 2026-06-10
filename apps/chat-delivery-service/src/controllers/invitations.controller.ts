@@ -168,7 +168,6 @@ export class InvitationsController {
       userId: string;
       groupId: string;
       status: 'pending' | 'active';
-      lastEpochSeen?: number;
     },
   ) {
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -197,16 +196,9 @@ export class InvitationsController {
       membership.status = body.status;
     }
 
-    if (
-      typeof body.lastEpochSeen === 'number' &&
-      Number.isFinite(body.lastEpochSeen)
-    ) {
-      membership.lastEpochSeen = Math.floor(body.lastEpochSeen);
-    }
-
     await this.deviceGroupRepo.save(membership);
     this.logger.log(
-      `[INVITATION_STATUS] device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} newStatus=${body.status} epoch=${membership.lastEpochSeen ?? 'n/a'}`,
+      `[INVITATION_STATUS] device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} newStatus=${body.status}`,
     );
     return { status: membership.status };
   }
@@ -228,7 +220,6 @@ export class InvitationsController {
 
     for (const m of memberships) {
       m.status = 'pending';
-      m.lastEpochSeen = 0;
     }
 
     if (memberships.length > 0) {
@@ -271,7 +262,6 @@ export class InvitationsController {
     }
 
     membership.status = 'pending';
-    membership.lastEpochSeen = 0;
     await this.deviceGroupRepo.save(membership);
 
     await this.redis.srem(

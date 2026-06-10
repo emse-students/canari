@@ -4,9 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   Inject,
-  OnModuleInit,
 } from '@nestjs/common';
-import { LessThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import * as crypto from 'crypto';
@@ -82,11 +80,8 @@ export interface AckMessagesBody {
   messageIds: string[];
 }
 
-/** QueuedMessages older than this are deleted (devices that never reconnected). */
-const QUEUED_MESSAGE_TTL_DAYS = 90;
-
 @Injectable()
-export class MessagingService implements OnModuleInit {
+export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
 
   constructor(
@@ -103,38 +98,6 @@ export class MessagingService implements OnModuleInit {
     private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
-
-  onModuleInit(): void {
-    // Run immediately at startup, then every 6 hours.
-    void this.purgeExpiredQueuedMessages();
-    const timer = setInterval(
-      () => void this.purgeExpiredQueuedMessages(),
-      6 * 60 * 60 * 1000,
-    );
-    timer.unref();
-  }
-
-  /** Deletes QueuedMessages that have been waiting for more than 7 days (device never reconnected). */
-  private async purgeExpiredQueuedMessages(): Promise<void> {
-    const cutoff = new Date(
-      Date.now() - QUEUED_MESSAGE_TTL_DAYS * 24 * 60 * 60 * 1000,
-    );
-    try {
-      const result = await this.queuedMessageRepo.delete({
-        createdAt: LessThan(cutoff),
-      });
-      const count = result.affected ?? 0;
-      if (count > 0) {
-        this.logger.log(
-          `[cleanup] Deleted ${count} expired QueuedMessage(s) (>${QUEUED_MESSAGE_TTL_DAYS}d)`,
-        );
-      }
-    } catch (e) {
-      this.logger.warn(
-        `[cleanup] QueuedMessage purge failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
 
   private makeTraceId(scope: string): string {
     const { randomUUID } = crypto;
@@ -507,13 +470,19 @@ export class MessagingService implements OnModuleInit {
     }
 
     // 1b. Append to history stream so late-joining devices can replay.
-    // Only for regular application messages (proto path, not Welcome/Commit).
-    // Welcome and Commit messages are MLS epoch-transition frames that cannot
-    // be replayed out of order - only app-level payloads belong in history.
+    // Only for regular, user-visible application messages (proto path).
+    // Excluded:
+    //  - Welcome / Commit: MLS epoch-transition frames that cannot be replayed out of order.
+    //  - silent messages: control / state-sync payloads (read receipts, edits, deletes,
+    //    reactions, and especially history_bundle replays). These are delivered reliably
+    //    per-device via the QueuedMessage queue; replaying them through the capped history
+    //    stream (MAXLEN ~1000) is redundant and, for history_bundle chunks of up to 200
+    //    messages, would evict genuine recent messages from the stream.
     if (
       body.proto &&
       !body.isWelcome &&
       !body.isCommit &&
+      !body.silent &&
       body.groupId &&
       body.senderId
     ) {

@@ -634,7 +634,6 @@ export abstract class BaseMlsService implements IMlsService {
       deviceId: string;
       groupId: string;
       status: string;
-      lastEpochSeen: number;
     }>
   > {
     return this.delivery.getDeviceMemberships(userId, deviceId);
@@ -644,10 +643,9 @@ export abstract class BaseMlsService implements IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'active',
-    lastEpochSeen?: number
+    status: 'pending' | 'active'
   ): Promise<void> {
-    return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status, lastEpochSeen);
+    return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status);
   }
 
   async kickStaleDevice(deviceId: string, userId: string, groupId: string): Promise<void> {

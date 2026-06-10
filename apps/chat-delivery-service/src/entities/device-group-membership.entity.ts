@@ -19,7 +19,7 @@ export type DeviceGroupStatus = 'pending' | 'active';
 /**
  * Tracks one device's membership in one MLS group. One row per (deviceId, groupId) pair.
  *
- * This table has four distinct roles:
+ * This table has three distinct roles:
  *
  * 1. **Routing cache source** — `messaging.service` queries `status='active'` rows to
  *    repopulate the Redis `group:members:{groupId}` set when the cache is empty (service
@@ -31,11 +31,7 @@ export type DeviceGroupStatus = 'pending' | 'active';
  *    confirms the device processed its Welcome packet. `invitations.controller` exposes
  *    the pending list to clients and drives the pending→active transition.
  *
- * 3. **Stale-device detection** — `lastEpochSeen` records the highest MLS epoch this
- *    device has acknowledged. Devices whose `lastEpochSeen` lags the group's current epoch
- *    can be kicked from the MLS tree to recover forward secrecy.
- *
- * 4. **Device lifecycle cleanup** — When a device is deleted, ALL its rows here are
+ * 3. **Device lifecycle cleanup** — When a device is deleted, ALL its rows here are
  *    removed, which removes it from every group's routing set. This is intentional, but
  *    it means a group can end up with zero `active` entries even though users still
  *    belong to it via `dm_group_members` (user-level). Do NOT use this table as the
@@ -68,11 +64,6 @@ export class DeviceGroupMembership {
     default: 'pending',
   })
   status: DeviceGroupStatus;
-
-  /** The highest MLS epoch number this device has successfully processed; used to
-   *  detect devices that have fallen behind and need a re-sync. */
-  @Column({ type: 'int', default: 0 })
-  lastEpochSeen: number;
 
   @CreateDateColumn()
   createdAt: Date;

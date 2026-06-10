@@ -135,12 +135,12 @@ export class DevicesController {
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}`,
     );
-    let keyPackage = await this.keyPackageRepo.findOne({
+    const existing = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
     });
-    const isNew = !keyPackage;
-    if (!keyPackage) {
-      keyPackage = this.keyPackageRepo.create({
+    const isNew = !existing;
+    if (!existing) {
+      const keyPackage = this.keyPackageRepo.create({
         userId,
         deviceId,
         keyPackage: keyPackagePayload,
@@ -149,16 +149,23 @@ export class DevicesController {
         deviceAppVersion,
         createdAt: new Date(),
       });
+      await this.keyPackageRepo.save(keyPackage);
     } else {
-      keyPackage.keyPackage = keyPackagePayload;
-      if (deviceName !== undefined) keyPackage.deviceName = deviceName;
-      if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
-      if (deviceAppVersion !== undefined) {
-        keyPackage.deviceAppVersion = deviceAppVersion;
-      }
-      keyPackage.createdAt = new Date();
+      // Use update() instead of save() : TypeORM's SubjectChangedColumnsComputer
+      // skips @CreateDateColumn fields in UPDATE queries (isCreateDate = true),
+      // so save() would leave createdAt unchanged. Devices re-registering after
+      // > 30 days would stay invisible to getUserDevices (30-day cutoff on createdAt).
+      await this.keyPackageRepo.update(
+        { userId, deviceId },
+        {
+          keyPackage: keyPackagePayload,
+          ...(deviceName !== undefined && { deviceName }),
+          ...(deviceOs !== undefined && { deviceOs }),
+          ...(deviceAppVersion !== undefined && { deviceAppVersion }),
+          createdAt: new Date(),
+        },
+      );
     }
-    await this.keyPackageRepo.save(keyPackage);
 
     // Create pending DeviceGroupMembership entries for all groups this user
     // already belongs to.  Without this, getPendingInvitations on other

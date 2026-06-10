@@ -203,7 +203,6 @@ export interface IMlsService {
       deviceId: string;
       groupId: string;
       status: string;
-      lastEpochSeen: number;
     }>
   >;
   /** Update the status of a device-group membership on the server */
@@ -211,8 +210,7 @@ export interface IMlsService {
     deviceId: string,
     userId: string,
     groupId: string,
-    status: 'pending' | 'active',
-    lastEpochSeen?: number
+    status: 'pending' | 'active'
   ): Promise<void>;
 
   /** Reset a specific device in a group to pending (after MLS remove commit for that device). */
