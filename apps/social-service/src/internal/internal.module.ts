@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InternalController } from './internal.controller';
 import { InternalFormsController } from './internal-forms.controller';
+import { InternalProductsController } from './internal-products.controller';
 import { FormsModule } from '../forms/forms.module';
+import { AssociationsModule } from '../associations/associations.module';
 import { Post } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
@@ -18,6 +20,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
 @Module({
   imports: [
     FormsModule,
+    AssociationsModule,
     TypeOrmModule.forFeature([
       Post,
       ChannelMember,
@@ -31,6 +34,6 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
       ContentReport,
     ]),
   ],
-  controllers: [InternalController, InternalFormsController],
+  controllers: [InternalController, InternalFormsController, InternalProductsController],
 })
 export class InternalModule {}

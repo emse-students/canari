@@ -26,7 +26,9 @@ import { resolveStripeCallbackUrl } from './stripe-callback-url';
 import {
   getSocialServiceBase,
   internalSocialRequestConfig,
+  internalProductChargeContextPath,
   internalSubmissionPath,
+  productPurchaseCompletedPath,
 } from './social-internal-client';
 
 const UUID_RE =
@@ -66,6 +68,20 @@ export class PaymentController {
     await axios.post(
       `${this.socialBase}${internalSubmissionPath(submissionId, 'cancel-pending')}`,
       {},
+      internalSocialRequestConfig(),
+    );
+  }
+
+  /** Fulfills a boutique purchase after a saved-card PaymentIntent succeeds. */
+  private async markProductPurchaseCompletedInternal(
+    productId: string,
+    userId: string,
+    amountCents: number,
+    paymentIntentId: string,
+  ): Promise<void> {
+    await axios.post(
+      `${this.socialBase}${productPurchaseCompletedPath(productId)}`,
+      { userId, amountCents, paymentIntentId },
       internalSocialRequestConfig(),
     );
   }
@@ -677,6 +693,123 @@ export class PaymentController {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to cancel submission after charge failure',
+          error?.response?.data || error?.message,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  /** Charges a saved payment method for a boutique product purchase. */
+  @UseGuards(NginxAuthGuard)
+  @Post('charge-product-saved-method')
+  @HttpCode(200)
+  async chargeProductWithSavedMethod(
+    @Headers('x-user-id') userId: string,
+    @Body()
+    body: {
+      associationId: string;
+      productId: string;
+      paymentMethodId: string;
+      customAmountCents?: number;
+    },
+  ) {
+    if (!this.paymentService.isConfigured()) {
+      return { ok: false, message: 'Stripe not configured' };
+    }
+
+    const { associationId, productId, paymentMethodId, customAmountCents } =
+      body;
+    if (!associationId || !productId || !paymentMethodId) {
+      throw new BadRequestException(
+        'associationId, productId and paymentMethodId are required',
+      );
+    }
+    if (!UUID_RE.test(associationId) || !UUID_RE.test(productId)) {
+      throw new BadRequestException('Invalid associationId or productId');
+    }
+
+    const user = await this.usersService.findOne(userId);
+    const customerId = await this.paymentService.getOrCreateCustomer(
+      user.stripeCustomerId,
+      { userId: user.id, displayName: user.displayName },
+    );
+    if (customerId !== user.stripeCustomerId) {
+      await this.usersService.update(userId, { stripeCustomerId: customerId });
+    }
+
+    const methods = await this.paymentService.listPaymentMethods(customerId);
+    if (!methods.some((m) => m.id === paymentMethodId)) {
+      throw new BadRequestException(
+        'Payment method not found or does not belong to this account',
+      );
+    }
+
+    interface ProductChargeContext {
+      userId: string;
+      amountCents: number;
+      currency: string;
+      stripeAccountId: string;
+      productId: string;
+    }
+
+    let chargeContext: ProductChargeContext;
+    try {
+      const resp = await axios.post<ProductChargeContext>(
+        `${this.socialBase}${internalProductChargeContextPath()}`,
+        { associationId, productId, userId, customAmountCents },
+        internalSocialRequestConfig(),
+      );
+      chargeContext = resp.data;
+    } catch (err: unknown) {
+      const error = err as Error & {
+        response?: { data?: { message?: string } };
+      };
+      this.logger.error(
+        'Failed to fetch product charge context',
+        error?.response?.data || error?.message,
+      );
+      const msg =
+        error?.response?.data?.message ??
+        'Could not retrieve product purchase details';
+      throw new BadRequestException(msg);
+    }
+
+    if (chargeContext.userId.toLowerCase() !== userId.toLowerCase()) {
+      throw new BadRequestException(
+        'Product purchase does not belong to this user',
+      );
+    }
+
+    if (!chargeContext.amountCents || chargeContext.amountCents <= 0) {
+      return { ok: true, noPaymentRequired: true };
+    }
+
+    const idempotencyKey = `${productId}:${userId}:${chargeContext.amountCents}:${paymentMethodId}`;
+    const result: ChargeResult =
+      await this.paymentService.chargeWithSavedMethod({
+        customerId,
+        paymentMethodId,
+        amountCents: chargeContext.amountCents,
+        currency: chargeContext.currency ?? 'eur',
+        metadata: { productId, userId },
+        stripeConnectAccountId: chargeContext.stripeAccountId,
+        idempotencyKey,
+      });
+
+    if (result.ok && result.paymentIntentId) {
+      try {
+        await this.markProductPurchaseCompletedInternal(
+          productId,
+          userId,
+          chargeContext.amountCents,
+          result.paymentIntentId,
+        );
+      } catch (err: unknown) {
+        const error = err as Error & { response?: { data?: unknown } };
+        this.logger.error(
+          'Failed to fulfill product purchase after charge',
           error?.response?.data || error?.message,
         );
       }

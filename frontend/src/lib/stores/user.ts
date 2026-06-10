@@ -225,3 +225,34 @@ export async function chargeWithSavedMethod(
     error?: string;
   };
 }
+
+/**
+ * Charges a boutique product using a previously saved Stripe payment method.
+ * May return `requiresAction: true` with a `clientSecret` if 3D Secure is needed.
+ */
+export async function chargeProductWithSavedMethod(
+  associationId: string,
+  productId: string,
+  paymentMethodId: string,
+  customAmountCents?: number
+): Promise<{ ok: boolean; requiresAction?: boolean; clientSecret?: string; error?: string }> {
+  const res = await apiFetch(`${coreUrl()}/api/payments/charge-product-saved-method`, {
+    method: 'POST',
+    body: JSON.stringify({
+      associationId,
+      productId,
+      paymentMethodId,
+      ...(customAmountCents !== undefined ? { customAmountCents } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.message || `Payment failed (${res.status})`);
+  }
+  return (await res.json()) as {
+    ok: boolean;
+    requiresAction?: boolean;
+    clientSecret?: string;
+    error?: string;
+  };
+}

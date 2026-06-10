@@ -15,12 +15,13 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Bell, BellOff, Pencil, Building2, CalendarDays, Users, ShoppingBag, Download } from '@lucide/svelte';
+  import { Bell, BellOff, Settings, Building2, CalendarDays, Users, ShoppingBag, Download } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { listAssociationProducts, type AssociationProduct } from '$lib/associations/api';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
+  import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -42,6 +43,7 @@
   let followLoading = $state(false);
   let activeSection = $state<'about' | 'calendar' | 'members' | 'shop'>('about');
   let products = $state<AssociationProduct[]>([]);
+  let shopCustomAmounts = $state<Record<string, number>>({});
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -164,8 +166,8 @@
               href="/associations/{encodeURIComponent(slug)}/edit"
               class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
             >
-              <Pencil size={16} />
-              Modifier
+              <Settings size={16} />
+              Gestion de l'asso
             </a>
           {/if}
         </div>
@@ -330,13 +332,30 @@
                     {product.type === 'membership' ? 'Cotisation' : product.type === 'balance_topup' ? 'Recharge' : 'Autre'}
                   </span>
                 </p>
+                {#if product.allowCustomAmount && product.amountCents === null}
+                  <div class="flex items-center gap-2 mt-2 max-w-xs">
+                    <input
+                      type="number"
+                      min={product.customAmountMinCents != null
+                        ? product.customAmountMinCents / 100
+                        : 0}
+                      max={product.customAmountMaxCents != null
+                        ? product.customAmountMaxCents / 100
+                        : undefined}
+                      step="0.01"
+                      placeholder="Montant (€)"
+                      class="flex-1 rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-accent"
+                      bind:value={shopCustomAmounts[product.id]}
+                    />
+                  </div>
+                {/if}
               </div>
-              <a
-                href="/shop"
-                class="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
-              >
-                {product.type === 'membership' ? 'Cotiser' : product.type === 'balance_topup' ? 'Recharger' : 'Acheter'}
-              </a>
+              <ProductPurchaseButton
+                {product}
+                customAmountEuros={shopCustomAmounts[product.id]}
+                variant="yellow"
+                class="shrink-0 text-xs px-3 py-2"
+              />
             </div>
           {/each}
         </div>

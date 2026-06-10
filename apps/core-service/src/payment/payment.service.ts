@@ -10,6 +10,8 @@ export interface ChargeResult {
   requiresAction?: boolean;
   clientSecret?: string;
   error?: string;
+  /** Set when the PaymentIntent succeeded (used to fulfill boutique purchases). */
+  paymentIntentId?: string;
 }
 
 /** Stripe Connect balance snapshot for a connected account (single currency). */
@@ -179,16 +181,24 @@ export class PaymentService {
   }
 
   /**
-   * Creates a single-use login link to the connected account's Stripe Dashboard
-   * (payouts, bank account, settings). Standard Connect accounts manage payouts there.
+   * Returns a URL to manage payouts for a Connect account.
+   * Express accounts get a single-use login link; Standard accounts use dashboard.stripe.com
+   * (createLoginLink is Express-only and fails on Standard accounts).
    */
   async createConnectDashboardLink(stripeAccountId: string): Promise<string> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
-    const link = await this.stripe.accounts.createLoginLink(stripeAccountId);
+
+    const account = await this.stripe.accounts.retrieve(stripeAccountId);
     this.logger.debug(
-      `[Stripe] Dashboard login link created for account=${stripeAccountId.slice(0, 8)}`,
+      `[Stripe] Dashboard link account=${stripeAccountId.slice(0, 8)} type=${account.type}`,
     );
-    return link.url;
+
+    if (account.type === 'express') {
+      const link = await this.stripe.accounts.createLoginLink(stripeAccountId);
+      return link.url;
+    }
+
+    return 'https://dashboard.stripe.com';
   }
 
   // ── Customer & Payment Methods ────────────────────────────────────────────
@@ -316,7 +326,7 @@ export class PaymentService {
         requestOptions,
       );
       if (intent.status === 'succeeded') {
-        return { ok: true };
+        return { ok: true, paymentIntentId: intent.id };
       }
       if (intent.status === 'requires_action' && intent.client_secret) {
         return {

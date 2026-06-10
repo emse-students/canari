@@ -33,6 +33,9 @@
     Camera,
     Vibrate,
     VibrateOff,
+    Tag,
+    ShoppingBag,
+    ChevronRight,
   } from '@lucide/svelte';
 
   async function changeProfilePhoto() {
@@ -45,6 +48,9 @@
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { apiFetch } from '$lib/utils/apiFetch';
+  import { socialUrl } from '$lib/utils/apiUrl';
+  import type { UserTag } from '$lib/associations/api';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -85,6 +91,10 @@
   let paymentError = $state('');
   let paymentSuccess = $state('');
 
+  // Cotisations / achats
+  let activeTags = $state<UserTag[]>([]);
+  let purchasesLoading = $state(false);
+
   // Auto-clear success message
   $effect(() => {
     if (paymentSuccess) {
@@ -119,7 +129,22 @@
     }
 
     loadPaymentMethods();
+    void loadPurchasesSummary();
   });
+
+  async function loadPurchasesSummary() {
+    purchasesLoading = true;
+    try {
+      const res = await apiFetch(`${socialUrl()}/api/forms/me/purchases`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { activeTags?: UserTag[] };
+      activeTags = data.activeTags ?? [];
+    } catch {
+      // Non-blocking — section stays empty
+    } finally {
+      purchasesLoading = false;
+    }
+  }
 
   async function loadPaymentMethods() {
     paymentLoading = true;
@@ -626,6 +651,78 @@
           {/if}
         </button>
       {/if}
+    </div>
+
+    <!-- Section Cotisations et achats -->
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-250"
+      style="animation-fill-mode: backwards;"
+    >
+      <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <Tag size={22} strokeWidth={2.5} />
+          </div>
+          <div>
+            <h2 class="text-lg font-extrabold text-text-main">Cotisations et achats</h2>
+            <p class="text-xs font-medium text-text-muted mt-0.5">
+              Statuts actifs et historique de paiements
+            </p>
+          </div>
+        </div>
+        <a
+          href="/account/purchases"
+          class="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all"
+        >
+          <ShoppingBag size={16} />
+          Voir tout
+          <ChevronRight size={16} />
+        </a>
+      </div>
+
+      {#if purchasesLoading}
+        <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-2">
+          <Loader2 size={18} class="animate-spin" />
+          Chargement…
+        </div>
+      {:else if activeTags.length === 0}
+        <p class="text-sm text-text-muted mb-4">
+          Aucune cotisation active pour le moment.
+        </p>
+      {:else}
+        <ul class="space-y-2 mb-4">
+          {#each activeTags as tag (tag.id)}
+            <li
+              class="flex items-center gap-3 rounded-xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 px-4 py-3"
+            >
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-bold text-text-main">{tag.tagName}</p>
+                <p class="text-xs text-text-muted mt-0.5">
+                  {#if tag.expiresAt}
+                    Expire le {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
+                  {:else}
+                    Sans expiration
+                  {/if}
+                </p>
+              </div>
+              <span
+                class="shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 text-xs font-bold"
+              >
+                Actif
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <a
+        href="/account/purchases"
+        class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all"
+      >
+        <ShoppingBag size={18} />
+        Mes achats et cotisations
+        <ChevronRight size={16} />
+      </a>
     </div>
 
     <!-- Section Suppression de compte -->

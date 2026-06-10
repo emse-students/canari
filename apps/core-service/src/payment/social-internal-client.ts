@@ -37,3 +37,13 @@ export function internalSubmissionPath(
   const base = `/api/internal/forms/submissions/${encodeURIComponent(submissionId)}`;
   return suffix ? `${base}/${suffix}` : base;
 }
+
+/** Internal route to resolve boutique product charge details for saved-card PaymentIntents. */
+export function internalProductChargeContextPath(): string {
+  return '/api/internal/products/charge-context';
+}
+
+/** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */
+export function productPurchaseCompletedPath(productId: string): string {
+  return `/api/associations/products/${encodeURIComponent(productId)}/purchase-completed`;
+}

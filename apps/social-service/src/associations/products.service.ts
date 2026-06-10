@@ -138,34 +138,13 @@ export class ProductsService {
     userId: string,
     customAmountCents?: number,
     callbackUrls?: { successUrl?: string; cancelUrl?: string }
-  ): Promise<{ checkoutUrl: string }> {
-    const [asso, product] = await Promise.all([
-      this.assoRepo.findOne({ where: { id: associationId } }),
-      this.productRepo.findOne({ where: { id: productId, associationId } }),
-    ]);
-
-    if (!asso) throw new NotFoundException('Association not found');
-    if (!product || !product.isActive) throw new NotFoundException('Product not found or inactive');
-    if (!asso.stripeOnboardingComplete || !asso.stripeAccountId) {
-      throw new BadRequestException('Association has not completed Stripe Connect onboarding');
-    }
-
-    await this.assertCanPurchase(product, userId);
-
-    // Determine the final amount in cents
-    let amountCents: number;
-    if (product.amountCents !== null) {
-      amountCents = product.amountCents;
-    } else if (product.allowCustomAmount && customAmountCents !== undefined) {
-      const min = product.customAmountMinCents ?? 0;
-      const max = product.customAmountMaxCents ?? Infinity;
-      if (customAmountCents < min || customAmountCents > max) {
-        throw new BadRequestException(`Custom amount must be between ${min} and ${max} cents`);
-      }
-      amountCents = customAmountCents;
-    } else {
-      throw new BadRequestException('No amount provided for this product');
-    }
+  ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
+    const { asso, product, amountCents } = await this.resolvePurchase(
+      associationId,
+      productId,
+      userId,
+      customAmountCents
+    );
 
     const paymentBase = (
       this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://core-service:3012'
@@ -229,7 +208,78 @@ export class ProductsService {
     this.logger.log(
       `[SHOP] Checkout session created: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`
     );
-    return { checkoutUrl: resp.data.url };
+    return { checkoutUrl: resp.data.url, amountCents, currency: product.currency };
+  }
+
+  /**
+   * Returns charge details for a saved-card PaymentIntent (core-service charge-product-saved-method).
+   * Re-validates purchase limits at charge time.
+   */
+  async getChargeContext(
+    associationId: string,
+    productId: string,
+    userId: string,
+    customAmountCents?: number
+  ): Promise<{
+    productId: string;
+    userId: string;
+    amountCents: number;
+    currency: string;
+    stripeAccountId: string;
+  }> {
+    const { asso, product, amountCents } = await this.resolvePurchase(
+      associationId,
+      productId,
+      userId,
+      customAmountCents
+    );
+    this.logger.debug(
+      `[SHOP] charge context: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+    );
+    return {
+      productId: product.id,
+      userId,
+      amountCents,
+      currency: product.currency,
+      stripeAccountId: asso.stripeAccountId,
+    };
+  }
+
+  /** Loads product/association, validates purchase rules, and resolves the amount in cents. */
+  private async resolvePurchase(
+    associationId: string,
+    productId: string,
+    userId: string,
+    customAmountCents?: number
+  ): Promise<{ asso: Association; product: AssociationProduct; amountCents: number }> {
+    const [asso, product] = await Promise.all([
+      this.assoRepo.findOne({ where: { id: associationId } }),
+      this.productRepo.findOne({ where: { id: productId, associationId } }),
+    ]);
+
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!product || !product.isActive) throw new NotFoundException('Product not found or inactive');
+    if (!asso.stripeOnboardingComplete || !asso.stripeAccountId) {
+      throw new BadRequestException('Association has not completed Stripe Connect onboarding');
+    }
+
+    await this.assertCanPurchase(product, userId);
+
+    let amountCents: number;
+    if (product.amountCents !== null) {
+      amountCents = product.amountCents;
+    } else if (product.allowCustomAmount && customAmountCents !== undefined) {
+      const min = product.customAmountMinCents ?? 0;
+      const max = product.customAmountMaxCents ?? Infinity;
+      if (customAmountCents < min || customAmountCents > max) {
+        throw new BadRequestException(`Custom amount must be between ${min} and ${max} cents`);
+      }
+      amountCents = customAmountCents;
+    } else {
+      throw new BadRequestException('No amount provided for this product');
+    }
+
+    return { asso, product, amountCents };
   }
 
   /**

@@ -868,8 +868,8 @@ export async function createProductCheckout(
   productId: string,
   customAmountCents?: number,
   callbacks?: { successUrl?: string; cancelUrl?: string }
-): Promise<{ checkoutUrl: string }> {
-  return request<{ checkoutUrl: string }>(
+): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
+  return request<{ checkoutUrl: string; amountCents: number; currency: string }>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
     {
       method: 'POST',

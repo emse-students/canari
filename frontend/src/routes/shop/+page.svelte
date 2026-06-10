@@ -5,20 +5,18 @@
   import {
     listAllProducts,
     listAssociations,
-    createProductCheckout,
     type AssociationProduct,
     type Association,
   } from '$lib/associations/api';
-  import { shopCheckoutCallbacks } from '$lib/utils/stripeCallbacks';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
   import { ShoppingBag } from '@lucide/svelte';
 
   let products = $state<AssociationProduct[]>([]);
   let associations = new SvelteMap<string, Association>();
   let loading = $state(true);
   let error = $state('');
-  let checkingOut = $state<string | null>(null);
   let customAmounts = $state<Record<string, number>>({});
 
   const isLoggedIn = $derived(!!currentUserId());
@@ -48,6 +46,14 @@
     } finally {
       loading = false;
     }
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('purchase_success') === '1') {
+      showToast('Achat effectué avec succès !');
+      history.replaceState(null, '', '/shop');
+    } else if (params.get('purchase_cancel') === '1') {
+      history.replaceState(null, '', '/shop');
+    }
   });
 
   /** Returns a human-readable price label for a product. */
@@ -66,31 +72,6 @@
   /** Returns a badge label for the product type. */
   function typeLabel(type: AssociationProduct['type']): string {
     return type === 'membership' ? 'Cotisation' : type === 'balance_topup' ? 'Recharge' : 'Autre';
-  }
-
-  async function handleCheckout(product: AssociationProduct) {
-    const asso = associations.get(product.associationId);
-    if (!asso) return;
-
-    checkingOut = product.id;
-    try {
-      const customCents =
-        product.allowCustomAmount && product.amountCents === null
-          ? Math.round((customAmounts[product.id] ?? 0) * 100)
-          : undefined;
-      const { checkoutUrl } = await createProductCheckout(
-        product.associationId,
-        product.id,
-        customCents,
-        shopCheckoutCallbacks(product.id)
-      );
-      const { navigateExternal } = await import('$lib/utils/openExternal');
-      await navigateExternal(checkoutUrl);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erreur lors de la création du paiement');
-    } finally {
-      checkingOut = null;
-    }
   }
 </script>
 
@@ -197,24 +178,11 @@
                   </div>
                 {/if}
 
-                <button
-                  onclick={() => handleCheckout(product)}
-                  disabled={checkingOut === product.id ||
-                    (product.allowCustomAmount &&
-                      product.amountCents === null &&
-                      !customAmounts[product.id])}
-                  class="w-full rounded-xl bg-cn-accent px-4 py-2.5 text-sm font-bold text-white hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {#if checkingOut === product.id}
-                    <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                  {:else if product.type === 'membership'}
-                    Cotiser
-                  {:else if product.type === 'balance_topup'}
-                    Recharger
-                  {:else}
-                    Acheter
-                  {/if}
-                </button>
+                <ProductPurchaseButton
+                  {product}
+                  customAmountEuros={customAmounts[product.id]}
+                  class="w-full"
+                />
               </div>
             {/each}
           </div>

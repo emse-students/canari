@@ -27,6 +27,7 @@
     listWebhookFailures,
     retryWebhookDelivery,
     listAssociationForms,
+    listAssociationTags,
     reorderMembers,
     type Association,
     type AssociationMember,
@@ -34,6 +35,7 @@
     type AssociationPurchase,
     type WebhookDelivery,
     type AssociationForm,
+    type UserTag,
   } from '$lib/associations/api';
   import {
     listPendingCashSubmissions,
@@ -66,6 +68,7 @@
     Users as UsersIcon,
     ChevronDown,
     Gift,
+    Tag,
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -230,6 +233,10 @@
       : purchases
   );
 
+  let assoTags = $state<UserTag[]>([]);
+  let assoTagsLoading = $state(false);
+  let assoTagsError = $state('');
+
   // ── Formulaires state ────────────────────────────────────────────────────
   let forms = $state<AssociationForm[]>([]);
   let formsLoading = $state(false);
@@ -257,13 +264,6 @@
         console.log('[Stripe] Retour Stripe - onboarding déjà marqué complet en DB.');
       }
     }
-  });
-
-  $effect(() => {
-    if (editSection !== 'payments' || !canManageStripeConnect) return;
-    const assoId = asso?.id;
-    if (!assoId) return;
-    void refreshStripeConnectStatus();
   });
 
   async function loadData() {
@@ -407,7 +407,7 @@
       console.log(
         `[Stripe] Statut Connect - status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`
       );
-      if (isStripeConnectReady(live)) {
+      if (isStripeConnectReady(live) && !asso.stripeOnboardingComplete) {
         const refreshed = await getAssociationBySlug(slug);
         asso = refreshed;
         stripeConnectStatus = { ...live, dbOnboardingComplete: refreshed.stripeOnboardingComplete };
@@ -545,6 +545,27 @@
     } finally {
       purchasesLoading = false;
     }
+  }
+
+  /** Loads active cotisation tags issued by this association. */
+  async function loadAssociationTags() {
+    if (!asso) return;
+    assoTagsLoading = true;
+    assoTagsError = '';
+    try {
+      assoTags = await listAssociationTags(asso.id);
+    } catch (e) {
+      assoTagsError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      assoTagsLoading = false;
+    }
+  }
+
+  function tagHolderName(tag: UserTag): string {
+    return (
+      resolvedMemberNames[tag.userId]?.trim() ||
+      getUserDisplayNameSync(tag.userId, tag.userId.slice(0, 8) + '…')
+    );
   }
 
   function purchaseBuyerName(purchase: AssociationPurchase): string {
@@ -819,7 +840,7 @@
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {:else if asso}
     <header class="space-y-1">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Modifier l’association</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Gestion de l'association</h1>
       <p class="text-sm text-text-muted">@{asso.slug}</p>
     </header>
 
@@ -848,7 +869,10 @@
         {#if canManageMembers}
           <button
             type="button"
-            onclick={() => (editSection = 'members')}
+            onclick={() => {
+              editSection = 'members';
+              void loadAssociationTags();
+            }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'members'
               ? 'bg-cn-yellow text-cn-dark shadow-sm'
@@ -864,6 +888,7 @@
             onclick={() => {
               editSection = 'payments';
               if (canManageProducts) void loadProducts();
+              if (canManageStripeConnect) void refreshStripeConnectStatus();
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
@@ -1126,6 +1151,8 @@
                   </div>
                   <p class="text-xs text-text-muted leading-relaxed">
                     Les fonds « en attente » seront disponibles après le délai de traitement Stripe.
+                    Les virements se gèrent sur le tableau de bord Stripe de l'association (compte
+                    Standard).
                   </p>
                   {#if stripeConnectStatus.payoutsEnabled !== false}
                     <button
@@ -1139,7 +1166,7 @@
                         Ouverture…
                       {:else}
                         <ArrowUpRight size={16} />
-                        Virer vers ma banque
+                        Gérer les virements sur Stripe
                       {/if}
                     </button>
                   {/if}
@@ -1276,6 +1303,49 @@
               </div>
             </div>
           {/each}
+        </div>
+
+        <div class="border-t border-cn-border pt-5 space-y-3">
+          <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
+            <Tag size={16} />
+            Statuts cotisants actifs
+          </h3>
+          <p class="text-xs text-text-muted">
+            Tags accordés via la boutique ou attribution manuelle. Les achats passent aussi par
+            l'onglet Achats.
+          </p>
+          {#if assoTagsLoading}
+            <p class="text-sm text-text-muted">Chargement…</p>
+          {:else if assoTagsError}
+            <p class="text-sm text-red-600">{assoTagsError}</p>
+          {:else if assoTags.length === 0}
+            <p class="text-sm text-text-muted">Aucun statut actif pour le moment.</p>
+          {:else}
+            <ul class="space-y-2">
+              {#each assoTags as tag (tag.id)}
+                <li
+                  class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3"
+                >
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-semibold text-text-main">{tag.tagName}</p>
+                    <p class="text-xs text-text-muted mt-0.5">
+                      {tagHolderName(tag)}
+                      {#if tag.expiresAt}
+                        · expire le {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
+                      {:else}
+                        · sans expiration
+                      {/if}
+                    </p>
+                  </div>
+                  <span
+                    class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-2.5 py-0.5 text-xs font-bold"
+                  >
+                    Actif
+                  </span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </div>
 
         <div class="border-t border-cn-border pt-5">
