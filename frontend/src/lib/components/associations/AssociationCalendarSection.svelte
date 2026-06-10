@@ -12,19 +12,20 @@
     uploadCalendarEventImage,
     deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
-    associationLogoSrc,
     type AssociationCalendarEvent,
+    type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
     type Association,
   } from '$lib/associations/api';
-  import { generateAvatarColor } from '$lib/utils/avatar';
-  import { toHex } from '$lib/utils/color';
   import {
     buildIcsCalendar,
     downloadTextFile,
     type AgendaExportEvent,
   } from '$lib/calendar/agendaExport';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
+  import CalendarDayEventsPanel from '$lib/components/calendar/CalendarDayEventsPanel.svelte';
+  import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { portal } from '$lib/actions/portal';
   import {
@@ -33,9 +34,7 @@
     CalendarPlus,
     Pencil,
     Trash2,
-    Clock,
     Link2,
-    ClipboardList,
     CalendarSync,
     Download,
     Check,
@@ -45,7 +44,6 @@
   } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
-  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
 
@@ -53,6 +51,8 @@
     associationId: string;
     /** Used in exported / subscribed ICS (`URL` field). */
     associationSlug?: string;
+    associationName?: string;
+    associationLogoUrl?: string | null;
     canEdit?: boolean;
     /** Hex color of this association for calendar cell gradient (e.g. "#e83e8c"). */
     associationColor?: string | null;
@@ -61,6 +61,8 @@
   let {
     associationId,
     associationSlug,
+    associationName = '',
+    associationLogoUrl = null,
     canEdit = false,
     associationColor = null,
   }: Props = $props();
@@ -69,6 +71,9 @@
   let loading = $state(true);
   let loadError = $state('');
   let focusDate = $state(new Date());
+  let selectedDay = $state<number | null>(null);
+  let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
+  let detailModalOpen = $state(false);
 
   /** Visible month / year */
   const titleMonth = $derived(
@@ -206,11 +211,13 @@
   onMount(loadMonth);
 
   function prevMonth() {
+    selectedDay = null;
     focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() - 1, 1);
     loadMonth();
   }
 
   function nextMonth() {
+    selectedDay = null;
     focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 1);
     loadMonth();
   }
@@ -219,49 +226,18 @@
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
   const rejectedEvents = $derived(events.filter((e) => e.status === 'rejected'));
 
-  function eventCoversDay(ev: { startsAt: string; endsAt: string | null }, d: Date): boolean {
-    const start = new Date(ev.startsAt);
-    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-    if (!ev.endsAt) return d.getTime() === startDay.getTime();
-    const end = new Date(ev.endsAt);
-    const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-    return d >= startDay && d <= endDay;
+  /** Maps association events to the feed shape expected by the rich calendar grid. */
+  function toFeedEvent(ev: AssociationCalendarEvent): AssociationCalendarFeedEvent {
+    return {
+      ...ev,
+      associationName,
+      associationSlug: associationSlug ?? '',
+      associationColor: associationColor ?? null,
+      associationLogoUrl: associationLogoUrl ?? null,
+    };
   }
 
-  function hasValidatedEventOnDay(day: number): boolean {
-    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return validatedEvents.some((ev) => eventCoversDay(ev, d));
-  }
-
-  function hasPendingEventOnDay(day: number): boolean {
-    if (!canEdit) return false;
-    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return pendingEvents.some((ev) => eventCoversDay(ev, d));
-  }
-
-  /** Monday-first calendar cells for the visible month */
-  const calendarCells = $derived.by(() => {
-    const y = focusDate.getFullYear();
-    const m = focusDate.getMonth();
-    const first = new Date(y, m, 1);
-    const lastDay = new Date(y, m + 1, 0).getDate();
-    const mondayIndex = (first.getDay() + 6) % 7; // 0 = Monday column
-    const cells: { day: number | null; inMonth: boolean }[] = [];
-    for (let i = 0; i < mondayIndex; i++) cells.push({ day: null, inMonth: false });
-    for (let day = 1; day <= lastDay; day++) cells.push({ day, inMonth: true });
-    while (cells.length % 7 !== 0 || cells.length < 42) {
-      cells.push({ day: null, inMonth: false });
-    }
-    return cells;
-  });
-
-  const weekdayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-
-  const sortedValidatedEvents = $derived(
-    [...validatedEvents].sort(
-      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
-    )
-  );
+  const feedEvents = $derived(validatedEvents.map(toFeedEvent));
 
   const sortedPendingEvents = $derived(
     [...pendingEvents].sort(
@@ -316,55 +292,23 @@
     formCoOwnerIds = formCoOwnerIds.filter((x) => x !== id);
   }
 
-  // ── Calendar gradient helpers ─────────────────────────────────────────────
-
-  function hexToRgba(hex: string, alpha: number): string {
-    const h = hex.replace('#', '');
-    const r = parseInt(h.slice(0, 2), 16);
-    const g = parseInt(h.slice(2, 4), 16);
-    const b = parseInt(h.slice(4, 6), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
+  function openEventDetail(ev: AssociationCalendarFeedEvent) {
+    detailEvent = ev;
+    detailModalOpen = true;
   }
 
-  /** Inline style string for a calendar day cell (transparent gradient, or empty). */
-  function dayCellStyle(day: number): string {
-    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    const dayEvents = validatedEvents.filter((ev) => eventCoversDay(ev, d));
-    if (dayEvents.length === 0) return '';
-
-    const seenIds: string[] = [];
-    const hexColors: string[] = [];
-
-    for (const ev of dayEvents) {
-      if (!seenIds.includes(ev.associationId)) {
-        seenIds.push(ev.associationId);
-        const raw =
-          ev.associationId === associationId
-            ? (associationColor ?? generateAvatarColor(associationId))
-            : generateAvatarColor(ev.associationId);
-        hexColors.push(toHex(raw));
-      }
-      for (const co of ev.coOwners ?? []) {
-        if (!seenIds.includes(co.associationId)) {
-          seenIds.push(co.associationId);
-          hexColors.push(toHex(co.color ?? generateAvatarColor(co.associationId)));
-        }
-      }
+  async function handleDetailDelete(id: string) {
+    if (!await showConfirm('Supprimer cet événement ?', { danger: true, confirmLabel: 'Supprimer' })) {
+      return;
     }
+    detailModalOpen = false;
+    detailEvent = null;
+    await removeEvent(id);
+  }
 
-    if (hexColors.length === 1) {
-      return `background-color:${hexToRgba(hexColors[0], 0.18)};`;
-    }
-    const step = 100 / hexColors.length;
-    const stops = hexColors
-      .map((c, i) => {
-        const rgba = hexToRgba(c, 0.18);
-        const from = Math.round(i * step);
-        const to = Math.round((i + 1) * step);
-        return i === 0 ? `${rgba} ${to}%` : `${rgba} ${from}% ${to}%`;
-      })
-      .join(', ');
-    return `background:linear-gradient(to right,${stops});`;
+  function handleDetailEdit(ev: AssociationCalendarFeedEvent) {
+    const raw = events.find((e) => e.id === ev.id);
+    if (raw) void openEdit(raw);
   }
 
   async function openCreate() {
@@ -529,7 +473,7 @@
     <div>
       <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
       <p class="text-sm text-text-muted">
-        Calendrier mensuel et liste des événements validés.
+        Calendrier mensuel — cliquez sur un jour pour voir le détail.
         {#if canEdit}
           Les nouveaux événements sont en attente de validation avant publication.
         {/if}
@@ -592,49 +536,33 @@
     </div>
   {/if}
 
-  <!-- Mini month grid (orientation) + list detail below - meilleur compromis mobile -->
-  <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-4 shadow-sm">
-    {#if loading}
-      <div class="flex justify-center py-10">
-        <div
-          class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
-        ></div>
-      </div>
-    {:else}
-      <div
-        class="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-2"
-      >
-        {#each weekdayLabels as w (w)}
-          <span>{w}</span>
-        {/each}
-      </div>
-      <div class="grid grid-cols-7 gap-1">
-        {#each calendarCells as cell (cell)}
-          {#if cell.day === null}
-            <div class="aspect-square rounded-xl bg-transparent"></div>
-          {:else}
-            {@const gradStyle = dayCellStyle(cell.day)}
-            <div
-              class="aspect-square rounded-xl flex flex-col items-center justify-center text-sm relative border transition-colors
-              {hasValidatedEventOnDay(cell.day)
-                ? 'border-cn-yellow/50 font-semibold text-text-main'
-                : hasPendingEventOnDay(cell.day)
-                  ? 'border-amber-300/50 bg-amber-50/80 font-semibold text-text-main'
-                  : 'border-cn-border/40 bg-cn-bg/30 text-text-muted'}"
-              style={gradStyle || undefined}
-            >
-              <span>{cell.day}</span>
-              {#if hasValidatedEventOnDay(cell.day)}
-                <span class="absolute bottom-1 h-1 w-1 rounded-full bg-cn-yellow"></span>
-              {:else if hasPendingEventOnDay(cell.day)}
-                <span class="absolute bottom-1 h-1 w-1 rounded-full bg-amber-500"></span>
-              {/if}
-            </div>
-          {/if}
-        {/each}
-      </div>
-    {/if}
-  </div>
+  <MonthCalendarGridRich
+    {focusDate}
+    events={feedEvents}
+    {loading}
+    bind:selectedDay
+  />
+
+  <CalendarDayEventsPanel
+    {focusDate}
+    {selectedDay}
+    events={feedEvents}
+    hideAssociationName={true}
+    onEventClick={openEventDetail}
+    onClearSelection={() => (selectedDay = null)}
+  />
+
+  <CalendarEventDetailModal
+    open={detailModalOpen}
+    event={detailEvent}
+    {canEdit}
+    onClose={() => {
+      detailModalOpen = false;
+      detailEvent = null;
+    }}
+    onEdit={handleDetailEdit}
+    onDelete={handleDetailDelete}
+  />
 
   {#if canEdit && !loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
@@ -725,88 +653,6 @@
       {/each}
     </div>
   {/if}
-
-  <div class="space-y-3">
-    <h3 class="text-sm font-bold text-text-muted uppercase tracking-wide">Événements publiés</h3>
-    {#if !loading && sortedValidatedEvents.length === 0}
-      <p
-        class="text-sm text-text-muted rounded-2xl border border-dashed border-cn-border px-4 py-8 text-center"
-      >
-        Aucun événement ce mois-ci.
-        {#if canEdit}
-          <button
-            type="button"
-            onclick={openCreate}
-            class="text-cn-dark font-semibold underline ml-1"
-          >
-            En ajouter un
-          </button>
-        {/if}
-      </p>
-    {:else}
-      {#each sortedValidatedEvents as ev (ev.id)}
-        <div
-          class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3 shadow-sm"
-        >
-          <div
-            class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-cn-yellow/20 text-cn-dark font-bold text-xs leading-tight"
-          >
-            <Clock size={14} class="mb-0.5 opacity-70" />
-            {new Date(ev.startsAt).getDate()}
-          </div>
-          <div class="min-w-0 flex-1">
-            {#if associationLogoSrc(ev.imageUrl)}
-              <img
-                src={associationLogoSrc(ev.imageUrl) ?? ''}
-                alt=""
-                class="w-full rounded-xl object-cover max-h-40 mb-2 border border-cn-border/40"
-              />
-            {/if}
-            <p class="font-bold text-text-main">{ev.title}</p>
-            <p class="text-xs text-text-muted mt-0.5 flex items-center gap-1">
-              {formatEventRange(ev)}
-            </p>
-            {#if ev.description?.trim()}
-              <div class="mt-2">
-                <ProfileBioMarkdown source={ev.description} />
-              </div>
-            {/if}
-            {#if ev.linkedFormId}
-              <div class="mt-3">
-                <a
-                  href="/forms/{encodeURIComponent(ev.linkedFormId)}"
-                  class="inline-flex items-center gap-1 rounded-lg border border-cn-border bg-cn-bg/50 px-2 py-1 text-xs font-medium text-text-main hover:border-cn-yellow/50"
-                >
-                  <ClipboardList size={13} />
-                  Formulaire lié
-                </a>
-              </div>
-            {/if}
-          </div>
-          {#if canEdit}
-            <div class="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onclick={() => openEdit(ev)}
-                class="rounded-xl border border-cn-border p-2 hover:bg-cn-bg text-text-main"
-                title="Modifier"
-              >
-                <Pencil size={16} />
-              </button>
-              <button
-                type="button"
-                onclick={() => removeEvent(ev.id)}
-                class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                title="Supprimer"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    {/if}
-  </div>
 </div>
 
 {#if modalOpen}

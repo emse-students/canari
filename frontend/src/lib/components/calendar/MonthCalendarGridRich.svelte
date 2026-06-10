@@ -2,8 +2,6 @@
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
-  import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
-  import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
 
   let {
     focusDate,
@@ -86,45 +84,6 @@
     return `background:linear-gradient(to right,${stops.join(',')});`;
   }
 
-  const daysWithEvents = $derived.by(() => {
-    const lastDay = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 0).getDate();
-    const result: { day: number; events: AssociationCalendarFeedEvent[] }[] = [];
-    for (let day = 1; day <= lastDay; day++) {
-      const dayEvs = eventsOnDay(day);
-      if (dayEvs.length > 0) result.push({ day, events: dayEvs });
-    }
-    return result;
-  });
-
-  function formatDayHeader(day: number): string {
-    return new Intl.DateTimeFormat('fr-FR', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-    }).format(new Date(focusDate.getFullYear(), focusDate.getMonth(), day));
-  }
-
-  function formatTime(iso: string): string {
-    return new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(
-      new Date(iso)
-    );
-  }
-
-  /** Converts a feed event to the generic export shape expected by AddEventToCalendarButton. */
-  function buildCalendarEvent(ev: AssociationCalendarFeedEvent): AgendaExportEvent {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return {
-      id: ev.id,
-      title: `${ev.title} - ${ev.associationName}`,
-      description: ev.description,
-      startsAt: ev.startsAt,
-      endsAt: ev.endsAt,
-      sourceUrl: origin
-        ? `${origin}/associations/${encodeURIComponent(ev.associationSlug)}`
-        : undefined,
-    };
-  }
-
   const MAX_VISIBLE = 3;
 </script>
 
@@ -135,8 +94,7 @@
     ></div>
   </div>
 {:else}
-  <!-- ── Desktop grid ───────────────────────────────────────────────────── -->
-  <div class="hidden sm:block rounded-2xl overflow-hidden shadow-sm border border-cn-border/60">
+  <div class="rounded-2xl overflow-hidden shadow-sm border border-cn-border/60">
     <!-- Weekday header -->
     <div class="grid grid-cols-7 bg-[var(--cn-surface)]">
       {#each weekdayLabels as w, wi (w)}
@@ -154,7 +112,7 @@
       {#each calendarCells as cell, i (i)}
         {#if cell.day === null}
           <div
-            class="min-h-[100px] border-r border-b border-cn-border/40
+            class="min-h-[72px] sm:min-h-[100px] border-r border-b border-cn-border/40
                    {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/30'}"
             role="gridcell"
             aria-hidden="true"
@@ -176,7 +134,7 @@
             onclick={() => {
               selectedDay = selectedDay === cell.day ? null : cell.day;
             }}
-            class="relative min-h-[100px] text-left transition-all border-r border-b border-cn-border/40 overflow-hidden
+            class="relative min-h-[72px] sm:min-h-[100px] text-left transition-all border-r border-b border-cn-border/40 overflow-hidden
               {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/60'}
               {selected ? '' : 'hover:brightness-95'}"
           >
@@ -250,92 +208,5 @@
         {/if}
       {/each}
     </div>
-  </div>
-
-  <!-- ── Mobile list ───────────────────────────────────────────────────── -->
-  <div class="sm:hidden space-y-3">
-    {#if daysWithEvents.length === 0}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-8 text-center text-sm text-text-muted"
-      >
-        Aucun événement ce mois-ci.
-      </div>
-    {:else}
-      {#each daysWithEvents as { day, events: dayEvs } (day)}
-        {@const selected = selectedDay === day}
-        {@const today = isToday(day)}
-        {@const firstBg = eventColors(dayEvs[0])[0]}
-        <div
-          class="rounded-2xl border overflow-hidden shadow-sm transition-all
-                 {selected ? 'border-cn-yellow/70' : 'border-cn-border'}"
-        >
-          <!-- Day header with colored left accent -->
-          <button
-            type="button"
-            onclick={() => {
-              selectedDay = selected ? null : day;
-            }}
-            class="w-full flex items-center gap-3 px-4 py-3 border-b transition-colors
-                   {selected
-              ? 'bg-cn-yellow/10 border-cn-yellow/30'
-              : 'bg-[var(--cn-surface)]/90 border-cn-border/50 hover:bg-cn-bg/50'}"
-          >
-            <span class="h-8 w-1 rounded-full shrink-0" style="background:{firstBg};"></span>
-            <span class="flex-1 text-sm font-bold text-text-main capitalize text-left">
-              {today ? '⭐ ' : ''}{formatDayHeader(day)}
-            </span>
-            <span class="text-xs font-semibold text-text-muted shrink-0">
-              {dayEvs.length} év.
-            </span>
-          </button>
-
-          <!-- Event list -->
-          <ul class="divide-y divide-cn-border/30 bg-[var(--cn-surface)]/60">
-            {#each dayEvs as ev (ev.id)}
-              {@const primaryColor = eventColors(ev)[0]}
-              {@const fg = contrastColor(primaryColor)}
-              {@const coOwnerNames = (ev.coOwners ?? []).map((co) => co.name).filter(Boolean)}
-              {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
-              <li class="flex items-center gap-3 px-4 py-3">
-                <span
-                  class="h-8 w-8 rounded-full shrink-0 overflow-hidden flex items-center justify-center"
-                  style="background:{primaryColor};"
-                >
-                  {#if logoSrc}
-                    <img
-                      src={logoSrc}
-                      alt=""
-                      aria-hidden="true"
-                      class="h-8 w-8 object-cover"
-                    />
-                  {:else}
-                    <span class="text-[11px] font-black" style="color:{fg};"
-                      >{getInitials(ev.associationName)}</span
-                    >
-                  {/if}
-                </span>
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-bold text-text-main truncate">{ev.title}</p>
-                  <p class="text-xs text-text-muted flex items-center gap-1.5 mt-0.5">
-                    <span class="font-semibold"
-                      >{ev.associationName}{coOwnerNames.length > 0
-                        ? ` & ${coOwnerNames.join(', ')}`
-                        : ''}</span
-                    >
-                    <span>·</span>
-                    <span
-                      >{formatTime(ev.startsAt)}{ev.endsAt
-                        ? ` – ${formatTime(ev.endsAt)}`
-                        : ''}</span
-                    >
-                  </p>
-                </div>
-                <AddEventToCalendarButton event={buildCalendarEvent(ev)} />
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/each}
-    {/if}
   </div>
 {/if}

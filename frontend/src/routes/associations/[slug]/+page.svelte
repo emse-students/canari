@@ -260,6 +260,8 @@
         <AssociationCalendarSection
           associationId={asso.id}
           associationSlug={asso.slug}
+          associationName={asso.name}
+          associationLogoUrl={asso.logoUrl}
           canEdit={canProposeEvent}
           associationColor={asso.color ?? null}
         />
