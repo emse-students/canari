@@ -133,6 +133,12 @@ export interface IMlsService {
   ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
+  /**
+   * Resolves (or generates and persists) this device's stable per-user id WITHOUT
+   * decrypting MLS state. Safe to call before {@link init}, so the PIN can be verified
+   * against the real deviceId before any state decryption / fresh-start runs.
+   */
+  resolveDeviceId(userId: string): Promise<string>;
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;

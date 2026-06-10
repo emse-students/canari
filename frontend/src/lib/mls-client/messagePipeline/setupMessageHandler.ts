@@ -532,6 +532,15 @@ async function handleKnownGroup({
     }
     if (err.includes('GAP_QUEUED')) return true; // Tauri : buffered en SQLite
 
+    // Livraison en double (publish temps-réel + queue/FCM) : le message a déjà été
+    // déchiffré et son secret de ratchet consommé/supprimé. Le groupe est sain -
+    // surtout ne PAS déclencher onOutOfSync (qui détruirait une membership valide
+    // par une recovery parasite). On ACK simplement le doublon.
+    if (err.includes('SecretReuseError')) {
+      log(`[MLS] SecretReuseError (doublon) pour ${convoKey.slice(0, 8)}… - ACK silencieux`);
+      return true;
+    }
+
     // Tout autre échec → hors-sync → requestReAdd + ACK
     log(`[MLS] Erreur déchiffrement ${convoKey.slice(0, 8)}…: ${err.slice(0, 100)} → re-add`);
     await onOutOfSync(groupId);

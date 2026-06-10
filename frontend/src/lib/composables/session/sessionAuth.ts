@@ -192,8 +192,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
 
     const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin());
-    const deviceId = mlsService.getDeviceId();
-    const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
     const verifierHeaders: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
@@ -210,33 +208,33 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
 
     cb.log('Initialisation MLS...');
-    // Run pin-check, MLS init, and DB open concurrently.
-    const pinCheckFetch = async () => {
-      const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
-        method: 'POST',
-        headers: verifierHeaders,
-        body: verifierPayload,
-      });
-      if (!res.ok) throw new Error('Impossible de verifier le PIN (serveur inaccessible).');
-      return res.json() as Promise<{ status: string; resetRequired?: boolean }>;
+    // Resolve the device id and verify the PIN BEFORE init(). init() decrypts the
+    // encrypted MLS state, and a WRONG PIN makes that decryption fail - which would
+    // trigger a destructive fresh-start (generate a new id + deleteDevice → revocation).
+    // By resolving the real deviceId (no state decryption) and verifying the PIN first:
+    //  - a wrong PIN is rejected without ever touching the device's identity or state;
+    //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
+    //    so the one-shot reset fires instead of leaving it banned forever.
+    const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+    const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
+    const pinCheckRes = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
+      method: 'POST',
+      headers: verifierHeaders,
+      body: verifierPayload,
+    });
+    if (!pinCheckRes.ok) {
+      throw new Error('Impossible de verifier le PIN (serveur inaccessible).');
+    }
+    const pinCheckData = (await pinCheckRes.json()) as {
+      status: string;
+      resetRequired?: boolean;
     };
 
-    const [pinCheckSettled, mlsInitSettled, storageSettled] = await Promise.allSettled([
-      pinCheckFetch(),
-      mlsService.init(ctx.getUserId(), ctx.getPin(), mlsStateResult?.bytes),
-      getStorage(ctx.getUserId()),
-    ]);
-
-    if (pinCheckSettled.status === 'fulfilled' && pinCheckSettled.value.status === 'mismatch') {
+    if (pinCheckData.status === 'mismatch') {
       throw new Error(
         'PIN incorrect : ce PIN ne correspond pas a celui enregistre pour cet utilisateur. Tous vos appareils doivent utiliser le meme PIN.'
       );
     }
-    if (mlsInitSettled.status === 'rejected') throw mlsInitSettled.reason;
-    if (pinCheckSettled.status === 'rejected') throw pinCheckSettled.reason;
-    if (storageSettled.status === 'rejected') throw storageSettled.reason;
-
-    const pinCheckData = pinCheckSettled.value;
     if (pinCheckData.resetRequired === true) {
       ctx.resetMls();
       await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
@@ -246,6 +244,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       );
     }
     if (pinCheckData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
+
+    // PIN verified - now safe to decrypt the MLS state. A wrong PIN can no longer
+    // reach init() and trigger a fresh-start, so init() only fresh-starts on genuine
+    // state corruption / credential mismatch.
+    const [mlsInitSettled, storageSettled] = await Promise.allSettled([
+      mlsService.init(ctx.getUserId(), ctx.getPin(), mlsStateResult?.bytes),
+      getStorage(ctx.getUserId()),
+    ]);
+    if (mlsInitSettled.status === 'rejected') throw mlsInitSettled.reason;
+    if (storageSettled.status === 'rejected') throw storageSettled.reason;
 
     ctx.setStorage(storageSettled.value);
     ctx.setMyDeviceId(mlsService.getDeviceId());

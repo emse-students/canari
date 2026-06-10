@@ -505,6 +505,46 @@ export abstract class BaseMlsService implements IMlsService {
     return this.deviceId;
   }
 
+  /**
+   * Resolves (or generates and persists) this device's stable per-user id WITHOUT
+   * touching the encrypted MLS state. Safe to call before {@link init}, so the PIN
+   * can be verified against the real deviceId before any state decryption /
+   * fresh-start can run - a wrong PIN must never delete/revoke the device.
+   *
+   * Resolution order: in-memory (already resolved) → localStorage → native restore
+   * (Tauri push context) → freshly generated. The result is cached on the instance
+   * and mirrored to the delivery client, so the subsequent {@link init} reuses it.
+   */
+  async resolveDeviceId(userId: string): Promise<string> {
+    if (this.deviceId && this.deviceId !== 'pending') return this.deviceId;
+    const deviceKey = `mls_device_id_${userId}`;
+    const stored = localStorage.getItem(deviceKey);
+    let resolved = stored;
+    if (!resolved) {
+      resolved = (await this.restoreDeviceIdFromNative(userId)) ?? this.generateDeviceId(userId);
+      localStorage.setItem(deviceKey, resolved);
+    }
+    this.deviceId = resolved;
+    this.delivery.deviceId = resolved;
+    return resolved;
+  }
+
+  /**
+   * Platform hook: restore a previously-used device id from native storage when
+   * localStorage was cleared (Tauri reads push_context.json to avoid a credential
+   * mismatch after a WebView eviction / reinstall). Web has no native store → null.
+   */
+  protected async restoreDeviceIdFromNative(_userId: string): Promise<string | null> {
+    return null;
+  }
+
+  /** Generates a fresh, unique per-user device id prefixed with the platform tag. */
+  protected generateDeviceId(userId: string): string {
+    return `${this.platform}-${userId}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 6)}`;
+  }
+
   async fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;

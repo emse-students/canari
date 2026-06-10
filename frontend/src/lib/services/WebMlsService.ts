@@ -433,23 +433,10 @@ export class WebMlsService extends BaseMlsService {
 
     // Per-user device ID - prevents two users in the same browser from sharing a
     // device ID, which would cause the delivery service to route the welcome message
-    // to the wrong user.
+    // to the wrong user. Idempotent: a no-op when login already resolved it before
+    // the pin-check.
     const deviceKey = `mls_device_id_${userId}`;
-    const storedDevice = localStorage.getItem(deviceKey);
-    if (storedDevice) {
-      this.deviceId = storedDevice;
-    } else {
-      this.deviceId =
-        'web-' +
-        userId +
-        '-' +
-        Date.now().toString(36) +
-        '-' +
-        Math.random().toString(36).slice(2, 6);
-      localStorage.setItem(deviceKey, this.deviceId);
-    }
-
-    this.delivery.deviceId = this.deviceId;
+    await this.resolveDeviceId(userId);
 
     try {
       this.client = await loadAndInitWasm(userId, this.deviceId, state, pin);
@@ -471,13 +458,7 @@ export class WebMlsService extends BaseMlsService {
             errStr.slice(0, 200)
           );
         }
-        this.deviceId =
-          'web-' +
-          userId +
-          '-' +
-          Date.now().toString(36) +
-          '-' +
-          Math.random().toString(36).slice(2, 6);
+        this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
         this.client = await loadAndInitWasm(userId, this.deviceId, undefined, pin);

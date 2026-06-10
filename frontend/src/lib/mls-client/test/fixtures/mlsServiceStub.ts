@@ -35,6 +35,7 @@ export function createMlsServiceStub(
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     fetchHistory: vi.fn().mockResolvedValue([]),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
+    resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),

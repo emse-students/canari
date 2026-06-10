@@ -329,6 +329,21 @@ export class TauriMlsService extends BaseMlsService {
     await this.initPromise;
   }
 
+  /**
+   * Tauri override: when localStorage was cleared (Android WebView eviction / reinstall),
+   * restore the original device id from native push_context.json so we don't generate a
+   * new id and trigger a credential mismatch against the persisted MLS state.
+   */
+  protected override async restoreDeviceIdFromNative(userId: string): Promise<string | null> {
+    try {
+      const ctx = await invoke<{ deviceId?: string; userId?: string } | null>('load_push_context');
+      if (ctx?.deviceId && ctx.userId === userId) return ctx.deviceId;
+    } catch {
+      /* desktop / file absent */
+    }
+    return null;
+  }
+
   /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
   protected async _initImpl(userId: string, pin: string, state?: Uint8Array): Promise<void> {
     this.userId = userId;
@@ -336,37 +351,11 @@ export class TauriMlsService extends BaseMlsService {
     this._pin = pin;
     this.freshStart = !state;
 
-    // Per-user device ID (same rationale as WebMlsService)
+    // Per-user device ID (same rationale as WebMlsService). resolveDeviceId restores
+    // from localStorage or the native push_context before generating a fresh id, and
+    // is idempotent: a no-op when login already resolved it before the pin-check.
     const deviceKey = `mls_device_id_${userId}`;
-    const storedDevice = localStorage.getItem(deviceKey);
-    if (storedDevice) {
-      this.deviceId = storedDevice;
-    } else {
-      // localStorage may have been cleared (Android WebView eviction / re-install).
-      // Try to restore the original device ID from the native push_context.json
-      // before falling back to generating a new random one - avoids credential mismatch.
-      let restoredId: string | null = null;
-      try {
-        const ctx = await invoke<{ deviceId?: string; userId?: string } | null>(
-          'load_push_context'
-        );
-        if (ctx?.deviceId && ctx.userId === userId) restoredId = ctx.deviceId;
-      } catch {
-        /* desktop / file absent */
-      }
-
-      this.deviceId =
-        restoredId ??
-        'tauri-' +
-          userId +
-          '-' +
-          Date.now().toString(36) +
-          '-' +
-          Math.random().toString(36).slice(2, 6);
-      localStorage.setItem(deviceKey, this.deviceId);
-    }
-
-    this.delivery.deviceId = this.deviceId;
+    await this.resolveDeviceId(userId);
 
     const encryptedState = state ? Array.from(state) : null;
     try {
@@ -389,13 +378,7 @@ export class TauriMlsService extends BaseMlsService {
             errStr.slice(0, 200)
           );
         }
-        this.deviceId =
-          'tauri-' +
-          userId +
-          '-' +
-          Date.now().toString(36) +
-          '-' +
-          Math.random().toString(36).slice(2, 6);
+        this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
         await invoke('initialiser_mls', {

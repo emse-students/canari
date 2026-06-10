@@ -705,10 +705,21 @@ export async function handleWelcomeRequest(params: {
     // La causalité est assurée en amont : syncConnectionAfterWsOpen n'envoie pas de
     // welcome_request tant que generateKeyPackage n'a pas réussi.
     const devices = await mlsService.fetchUserDevices(requesterUserId);
-    const targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
+    let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
-      log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} - abandon`);
-      return;
+      // fetchUserDevices applique un cutoff de 30 jours : le device demandeur peut en être
+      // absent (ancien device qui se reconnecte). On retente via fetchDeviceKeyPackage, qui
+      // n'a pas de cutoff - même fallback que processPendingInvitations. Sans ça, un device
+      // valide mais hors fenêtre reste bloqué (abandon silencieux, aucun re-add possible).
+      const fallback = await mlsService
+        .fetchDeviceKeyPackage(requesterUserId, requesterDeviceId)
+        .catch(() => null);
+      if (!fallback) {
+        log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} - abandon`);
+        return;
+      }
+      targetDevice = fallback;
+      log(`[WELCOME_REQ] KeyPackage récupéré via fallback pour ${requesterDeviceId} (> 30 jours)`);
     }
 
     // ── Vérifier si le leaf du device est déjà dans l'arbre MLS ────────
