@@ -10,6 +10,11 @@
 import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
+import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
+
+// Condense les identifiants longs (UUIDs, hex ≥ 16) dans tous les logs console,
+// avant tout autre logging, pour des logs web aussi lisibles que ceux d'adb.
+installConsoleIdTruncation();
 
 /** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */
 export function handleError({ error }: { error: unknown }): void {

@@ -230,10 +230,10 @@
                     ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
                     : 'bg-white/80 dark:bg-white/10 text-text-muted'}"
                 >
-                  {#if isCurrentDevice}
-                    <Monitor size={24} strokeWidth={2} />
-                  {:else}
+                  {#if isMobileOs(device)}
                     <Smartphone size={24} strokeWidth={2} />
+                  {:else}
+                    <Monitor size={24} strokeWidth={2} />
                   {/if}
                 </div>
 
@@ -263,8 +263,7 @@
                   {:else}
                     <div class="flex flex-wrap items-center gap-2 mb-1">
                       <span class="font-bold text-[0.95rem] text-text-main truncate">
-                        {device.deviceName ||
-                          `Appareil ${device.deviceId.slice(0, 4).toUpperCase()}`}
+                        {device.deviceName || getDeviceOsLabel(device)}
                       </span>
                       <span
                         class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
