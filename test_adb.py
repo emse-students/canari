@@ -293,6 +293,14 @@ _LOGCAT_LINE_RE = re.compile(
     r'\d{2}-\d{2} (\d{2}:\d{2}:\d{2})\.\d{3}\s+\d+\s+\d+\s+\w+\s+([^:]+):\s+(.*)'
 )
 _TAURI_MSG_RE = re.compile(r'Msg:\s+(.*)')
+_UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
+_HEX_RE = re.compile(r'\b[0-9a-f]{16,}\b', re.IGNORECASE)
+
+def truncate_ids(text: str) -> str:
+    """Réduit les UUIDs et longs hex (≥16 chars) à leurs 8 premiers caractères + '…'."""
+    text = _UUID_RE.sub(lambda m: m.group()[:8] + '…', text)
+    text = _HEX_RE.sub(lambda m: m.group()[:8] + '…', text)
+    return text
 
 def parse_logcat_line(raw: str) -> Optional[str]:
     """Extrait timestamp + message utile ; retourne None pour supprimer la ligne."""
@@ -317,7 +325,7 @@ def parse_logcat_line(raw: str) -> Optional[str]:
         if pattern.search(msg):
             return None
 
-    return f"{time_str} {msg}"
+    return f"{time_str} {truncate_ids(msg)}"
 
 class TauriManagerApp:
     def __init__(self, root: tk.Tk) -> None:
