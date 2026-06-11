@@ -1113,6 +1113,46 @@ export class MessagingService {
       where: { recipientId: safeUserId, deviceId: safeDeviceId },
       order: { createdAt: 'ASC' },
     });
+
+    // Purge les messages adressés à un groupe qui n'existe plus dans dm_groups.
+    // Ces messages sont orphelins : le groupe a été supprimé côté serveur mais sa
+    // file de messages est restée. Le destinataire ne peut jamais les déchiffrer
+    // (aucun état MLS, groupe disparu) et ne les ACK donc jamais, ce qui provoque une
+    // boucle de recovery infinie (welcome_request → reboot → aucun groupe à réclamer →
+    // jamais ACK → redélivré). Un groupe soft-deleted (deletedAt) garde sa ligne et
+    // n'est donc PAS purgé : la chaîne de successeurs reste gérée par le client.
+    const groupIds = [
+      ...new Set(
+        messages.map((m) => m.groupId).filter((id): id is string => !!id),
+      ),
+    ];
+    if (groupIds.length > 0) {
+      const existing = await this.groupRepo.find({
+        where: { id: In(groupIds) },
+        select: ['id'],
+      });
+      const existingIds = new Set(existing.map((g) => g.id));
+      const orphaned = messages.filter(
+        (m) => m.groupId && !existingIds.has(m.groupId),
+      );
+      if (orphaned.length > 0) {
+        await this.queuedMessageRepo.delete({
+          id: In(orphaned.map((m) => m.id)),
+        });
+        const missingGroups = [...new Set(orphaned.map((m) => m.groupId))];
+        this.logger.warn(
+          `[MSG_FETCH][${traceId}] purged ${orphaned.length} orphaned message(s) for ${missingGroups.length} missing group(s): ${missingGroups.join(', ')}`,
+        );
+      }
+      const deliverable = messages.filter(
+        (m) => !m.groupId || existingIds.has(m.groupId),
+      );
+      this.logger.log(
+        `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${deliverable.length}`,
+      );
+      return deliverable;
+    }
+
     this.logger.log(
       `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${messages.length}`,
     );
