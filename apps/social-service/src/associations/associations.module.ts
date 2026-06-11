@@ -9,10 +9,12 @@ import { AssociationCalendarEventCoOwner } from './entities/association-calendar
 import { AssociationDocument } from './entities/association-document.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { AssociationRoleHistory } from './entities/association-role-history.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
+import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationRoleGuard } from './guards/association-role.guard';
@@ -34,6 +36,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
       AssociationDocument,
       AssociationProduct,
       WebhookDelivery,
+      AssociationRoleHistory,
       Post,
       Form,
       PostNotification,
@@ -44,12 +47,13 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
   ],
   providers: [
     AssociationsService,
+    UserProfileService,
     ProductsService,
     AssociationRoleGuard,
     GlobalAdminOrAssociationRoleGuard,
     PushService,
   ],
   controllers: [AssociationsController],
-  exports: [AssociationsService, ProductsService],
+  exports: [AssociationsService, ProductsService, UserProfileService],
 })
 export class AssociationsModule {}

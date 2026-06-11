@@ -16,12 +16,25 @@
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
+  import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
+  import {
+    fetchUserMemberships,
+    fetchUserRoleHistory,
+    type UserMembershipRow,
+    type UserRoleHistoryRow,
+  } from '$lib/profile/api';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { Building2 } from '@lucide/svelte';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
   let error = $state('');
   let following = $state(false);
   let followLoading = $state(false);
+  let memberships = $state<UserMembershipRow[]>([]);
+  let roleHistory = $state<UserRoleHistoryRow[]>([]);
+  let extrasLoading = $state(false);
 
   onMount(async () => {
     const userId = page.params.id;
@@ -45,6 +58,18 @@
       ]);
       profile = prof;
       following = status.following;
+      extrasLoading = true;
+      try {
+        [memberships, roleHistory] = await Promise.all([
+          fetchUserMemberships(userId),
+          fetchUserRoleHistory(userId),
+        ]);
+      } catch {
+        memberships = [];
+        roleHistory = [];
+      } finally {
+        extrasLoading = false;
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Impossible de charger ce profil';
     } finally {
@@ -59,10 +84,7 @@
 
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
-    if (profile?.email) {
-      const namePart = profile.email.split('@')[0];
-      return namePart.replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
-    }
+    if (profile?.id) return getUserDisplayNameSync(profile.id, 'Membre Canari');
     return 'Membre Canari';
   });
 
@@ -167,6 +189,27 @@
       >
         <h2 class="text-lg font-extrabold text-text-main mb-4">À propos</h2>
         <ProfileBioMarkdown source={profile.bio} />
+      </div>
+    {/if}
+
+    {#if memberships.length > 0 || extrasLoading}
+      <div
+        class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl"
+      >
+        <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
+          <Building2 size={20} />
+          Associations
+        </h2>
+        <ProfileAssociationsSection memberships={memberships} loading={extrasLoading} />
+      </div>
+    {/if}
+
+    {#if roleHistory.length > 0 || extrasLoading}
+      <div
+        class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl"
+      >
+        <h2 class="text-lg font-extrabold text-text-main mb-5">Parcours associatif</h2>
+        <ProfileRoleHistorySection entries={roleHistory} />
       </div>
     {/if}
 

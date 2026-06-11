@@ -26,6 +26,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
       ChannelMember,
       ChannelMessage,
       AssociationMember,
+      AssociationRoleHistory,
       UserFollow,
       AssociationFollow,
       UserTag,

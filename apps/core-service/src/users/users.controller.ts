@@ -16,7 +16,11 @@ import {
 import type { Response } from 'express';
 import { UsersService } from './users.service';
 import { AvatarService } from './avatar.service';
-import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  DirectoryQueryDto,
+} from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 
@@ -46,6 +50,19 @@ export class UsersController {
     // Exclude current user from results if authenticated
     const currentUserId = req.user?.sub || req.user?.id;
     return this.usersService.search(query, currentUserId);
+  }
+
+  /**
+   * Paginated user directory with filters (promo, formation, association membership).
+   * Usage: GET /users/directory?q=jean&promo=2024&formation=ICM
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('directory')
+  directory(
+    @Query() query: DirectoryQueryDto,
+    @Headers('x-user-id') userId: string,
+  ) {
+    return this.usersService.directory(query, userId);
   }
 
   /**

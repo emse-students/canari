@@ -7,7 +7,6 @@ export { currentUserId, globalAdminState as isGlobalAdmin } from '$lib/stores/us
 /** Full profile returned by the `/api/users/me` and `/api/users/:id` endpoints. */
 export interface UserProfile {
   id: string;
-  email: string | null;
   displayName: string | null;
   firstName: string | null;
   lastName: string | null;

@@ -3,10 +3,12 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 /** Strips control/format chars and applies NFKC normalization to prevent homoglyph attacks. */
 const NormalizeText = () =>
@@ -97,4 +99,53 @@ export class PublicUserDto {
   createdAt?: Date;
   /** Whether the user has global admin privileges (only included in admin-facing responses). */
   admin?: boolean;
+}
+
+/** Query params for the public user directory search. */
+export class DirectoryQueryDto {
+  /** Name search (same semantics as `/users/search`). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  q?: string;
+
+  /** Filter by EMSE promotion year. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(1816)
+  @IsOptional()
+  promo?: number;
+
+  /** Filter by formation / cursus (substring, case-insensitive). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  formation?: string;
+
+  /** Limit results to members of this association (social-service lookup). */
+  @IsUUID()
+  @IsOptional()
+  associationId?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  @IsOptional()
+  limit?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  offset?: number;
+}
+
+/** Row returned by the user directory search. */
+export interface DirectoryUserRow {
+  id: string;
+  displayName: string | null;
+  promo: number | null;
+  formation: string | null;
+  bio: string | null;
 }

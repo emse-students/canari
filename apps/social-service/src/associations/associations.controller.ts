@@ -42,6 +42,8 @@ import {
   UpdateProductDto,
 } from './dto/association.dto';
 import { UserTagService } from '../users/user-tag.service';
+import { UserProfileService } from './user-profile.service';
+import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 
 const LOGO_UPLOAD_MB = 2;
@@ -53,7 +55,8 @@ export class AssociationsController {
     private readonly service: AssociationsService,
     private readonly productsService: ProductsService,
     private readonly followsService: FollowsService,
-    private readonly userTagService: UserTagService
+    private readonly userTagService: UserTagService,
+    private readonly userProfileService: UserProfileService
   ) {}
 
   // ── Public ────────────────────────────────────────────────────────────────
@@ -82,6 +85,43 @@ export class AssociationsController {
   @Get('me/following')
   myFollowedAssociations(@Headers('x-user-id') userId: string) {
     return this.followsService.listFollowedAssociations(userId);
+  }
+
+  /** Public — current association memberships for a user profile. */
+  @Get('users/:userId/memberships')
+  listUserMemberships(@Param('userId') userId: string) {
+    return this.userProfileService.listMemberships(userId);
+  }
+
+  /** Public — past/honorary association roles for a user profile. */
+  @Get('users/:userId/role-history')
+  listUserRoleHistory(@Param('userId') userId: string) {
+    return this.userProfileService.listRoleHistory(userId);
+  }
+
+  /** Adds a past role entry to the caller's profile. */
+  @UseGuards(NginxAuthGuard)
+  @Post('users/me/role-history')
+  createMyRoleHistory(@Headers('x-user-id') userId: string, @Body() dto: CreateRoleHistoryDto) {
+    return this.userProfileService.createRoleHistory(userId, dto);
+  }
+
+  /** Updates a past role entry on the caller's profile. */
+  @UseGuards(NginxAuthGuard)
+  @Patch('users/me/role-history/:entryId')
+  updateMyRoleHistory(
+    @Headers('x-user-id') userId: string,
+    @Param('entryId') entryId: string,
+    @Body() dto: UpdateRoleHistoryDto
+  ) {
+    return this.userProfileService.updateRoleHistory(userId, entryId, dto);
+  }
+
+  /** Removes a past role entry from the caller's profile. */
+  @UseGuards(NginxAuthGuard)
+  @Delete('users/me/role-history/:entryId')
+  deleteMyRoleHistory(@Headers('x-user-id') userId: string, @Param('entryId') entryId: string) {
+    return this.userProfileService.deleteRoleHistory(userId, entryId);
   }
 
   /**

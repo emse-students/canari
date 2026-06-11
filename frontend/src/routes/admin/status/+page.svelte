@@ -88,7 +88,7 @@
     const p = profiles.get(userId);
     if (!p) return '…';
     const parts = [p.firstName, p.lastName].filter(Boolean);
-    return parts.length > 0 ? parts.join(' ') : (p.displayName ?? p.email ?? userId.slice(0, 12));
+    return parts.length > 0 ? parts.join(' ') : (p.displayName ?? userId.slice(0, 12));
   }
 
   function shortId(id: string): string {

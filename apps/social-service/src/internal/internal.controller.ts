@@ -1,4 +1,12 @@
-import { Controller, Delete, Param, Headers, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Headers,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -6,6 +14,7 @@ import { Post as PostEntity } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
+import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
 import { UserFollow } from '../follows/entities/user-follow.entity';
 import { AssociationFollow } from '../follows/entities/association-follow.entity';
 import { UserTag } from '../users/entities/user-tag.entity';
@@ -32,6 +41,8 @@ export class InternalController {
     private readonly channelMessageRepo: Repository<ChannelMessage>,
     @InjectRepository(AssociationMember)
     private readonly assocMemberRepo: Repository<AssociationMember>,
+    @InjectRepository(AssociationRoleHistory)
+    private readonly roleHistoryRepo: Repository<AssociationRoleHistory>,
     @InjectRepository(UserFollow)
     private readonly userFollowRepo: Repository<UserFollow>,
     @InjectRepository(AssociationFollow)
@@ -45,6 +56,28 @@ export class InternalController {
     @InjectRepository(ContentReport)
     private readonly reportRepo: Repository<ContentReport>
   ) {}
+
+  /** Returns member user IDs for an association (core-service directory filter). */
+  @Get('associations/:associationId/member-user-ids')
+  async listMemberUserIds(
+    @Param('associationId') associationId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ) {
+    const expected = Buffer.from(this.secret);
+    const received = Buffer.from(headerSecret ?? '');
+    if (
+      expected.length === 0 ||
+      received.length !== expected.length ||
+      !crypto.timingSafeEqual(expected, received)
+    ) {
+      throw new ForbiddenException();
+    }
+    const rows = await this.assocMemberRepo.find({
+      where: { associationId },
+      select: ['userId'],
+    });
+    return { userIds: rows.map((r) => r.userId) };
+  }
 
   /**
    * Deletes or anonymises all social data for the given user.
@@ -74,6 +107,7 @@ export class InternalController {
       this.postRepo.delete({ authorId: userId }),
       this.channelMemberRepo.delete({ userId }),
       this.assocMemberRepo.delete({ userId }),
+      this.roleHistoryRepo.delete({ userId }),
       this.userFollowRepo.delete({ followerUserId: userId }),
       this.userFollowRepo.delete({ followedUserId: userId }),
       this.assoFollowRepo.delete({ followerUserId: userId }),

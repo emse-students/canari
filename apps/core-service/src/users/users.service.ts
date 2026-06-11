@@ -9,7 +9,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import axios from 'axios';
 import { User } from './entities/user.entity';
-import { CreateUserDto, UpdateUserDto, PublicUserDto } from './dto/user.dto';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  PublicUserDto,
+  DirectoryQueryDto,
+  DirectoryUserRow,
+} from './dto/user.dto';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -164,6 +170,119 @@ export class UsersService implements OnModuleInit {
     }
 
     return qb.take(10).getMany();
+  }
+
+  /**
+   * Paginated directory search with optional promo, formation and association filters.
+   * Requires at least one filter or a name query of ≥ 2 characters.
+   */
+  async directory(
+    query: DirectoryQueryDto,
+    excludeUserId?: string,
+  ): Promise<{ users: DirectoryUserRow[]; total: number }> {
+    const limit = Math.min(query.limit ?? 20, 50);
+    const offset = query.offset ?? 0;
+    const q = query.q?.trim() ?? '';
+    const formation = query.formation?.trim() ?? '';
+
+    const hasFilter =
+      q.length >= 2 ||
+      query.promo != null ||
+      formation.length > 0 ||
+      !!query.associationId;
+    if (!hasFilter) {
+      throw new BadRequestException(
+        'Indiquez au moins un critère (nom ≥ 2 caractères, promo, cursus ou association)',
+      );
+    }
+
+    let memberUserIds: string[] | null = null;
+    if (query.associationId) {
+      memberUserIds = await this.fetchAssociationMemberUserIds(
+        query.associationId,
+      );
+      if (memberUserIds.length === 0) {
+        return { users: [], total: 0 };
+      }
+    }
+
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .select([
+        'user.id',
+        'user.displayName',
+        'user.promo',
+        'user.formation',
+        'user.bio',
+      ]);
+
+    if (q.length >= 2) {
+      const terms = q.split(/\s+/).filter(Boolean);
+      terms.forEach((term, i) => {
+        qb.andWhere(
+          `unaccent(LOWER(user.displayName)) LIKE unaccent(LOWER(:term${i}))`,
+          { [`term${i}`]: `%${term}%` },
+        );
+      });
+    }
+
+    if (query.promo != null) {
+      qb.andWhere('user.promo = :promo', { promo: query.promo });
+    }
+
+    if (formation.length > 0) {
+      qb.andWhere(
+        'unaccent(LOWER(user.formation)) LIKE unaccent(LOWER(:formation))',
+        {
+          formation: `%${formation}%`,
+        },
+      );
+    }
+
+    if (memberUserIds) {
+      qb.andWhere('user.id IN (:...memberUserIds)', { memberUserIds });
+    }
+
+    if (excludeUserId) {
+      qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
+    }
+
+    qb.orderBy('user.displayName', 'ASC', 'NULLS LAST');
+
+    const total = await qb.getCount();
+    const rows = await qb.skip(offset).take(limit).getMany();
+
+    return {
+      users: rows.map((u) => ({
+        id: u.id,
+        displayName: u.displayName ?? null,
+        promo: u.promo ?? null,
+        formation: u.formation ?? null,
+        bio: u.bio ?? null,
+      })),
+      total,
+    };
+  }
+
+  /** Fetches member user IDs from social-service for association-scoped directory search. */
+  private async fetchAssociationMemberUserIds(
+    associationId: string,
+  ): Promise<string[]> {
+    try {
+      const resp = await axios.get<{ userIds: string[] }>(
+        `${this.socialUrl}/internal/associations/${encodeURIComponent(associationId)}/member-user-ids`,
+        {
+          headers: { 'X-Internal-Secret': this.internalSecret },
+          timeout: 10_000,
+        },
+      );
+      return resp.data?.userIds ?? [];
+    } catch (err) {
+      this.logger.warn(
+        `[directory] failed to fetch association members asso=${associationId}: ${String(err)}`,
+      );
+      return [];
+    }
   }
 
   /**

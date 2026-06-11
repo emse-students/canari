@@ -14,11 +14,18 @@
   import { clearAuth } from '$lib/stores/auth';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import {
+    fetchUserMemberships,
+    fetchUserRoleHistory,
+    type UserMembershipRow,
+    type UserRoleHistoryRow,
+  } from '$lib/profile/api';
+  import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
+  import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
+  import {
     CreditCard,
     Trash2,
     Edit3,
     Check,
-    Mail,
     GraduationCap,
     CalendarDays,
     Plus,
@@ -36,6 +43,8 @@
     Tag,
     ShoppingBag,
     ChevronRight,
+    Building2,
+    Users,
   } from '@lucide/svelte';
 
   async function changeProfilePhoto() {
@@ -95,6 +104,11 @@
   let activeTags = $state<UserTag[]>([]);
   let purchasesLoading = $state(false);
 
+  let memberships = $state<UserMembershipRow[]>([]);
+  let membershipsLoading = $state(false);
+  let roleHistory = $state<UserRoleHistoryRow[]>([]);
+  let roleHistoryLoading = $state(false);
+
   // Auto-clear success message
   $effect(() => {
     if (paymentSuccess) {
@@ -110,6 +124,7 @@
     try {
       profile = await fetchMyProfile();
       bioInput = profile.bio || '';
+      void loadProfileExtras(profile.id);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Impossible de charger le profil';
       if (msg.toLowerCase().includes('session') || msg.includes('401')) {
@@ -131,6 +146,35 @@
     loadPaymentMethods();
     void loadPurchasesSummary();
   });
+
+  async function loadProfileExtras(userId: string) {
+    membershipsLoading = true;
+    roleHistoryLoading = true;
+    try {
+      const [m, rh] = await Promise.all([
+        fetchUserMemberships(userId),
+        fetchUserRoleHistory(userId),
+      ]);
+      memberships = m;
+      roleHistory = rh;
+    } catch {
+      memberships = [];
+      roleHistory = [];
+    } finally {
+      membershipsLoading = false;
+      roleHistoryLoading = false;
+    }
+  }
+
+  async function reloadRoleHistory() {
+    if (!profile?.id) return;
+    roleHistoryLoading = true;
+    try {
+      roleHistory = await fetchUserRoleHistory(profile.id);
+    } finally {
+      roleHistoryLoading = false;
+    }
+  }
 
   async function loadPurchasesSummary() {
     purchasesLoading = true;
@@ -223,10 +267,6 @@
   // Utilitaire pour afficher un nom par défaut si displayName est vide
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
-    if (profile?.email) {
-      const namePart = profile.email.split('@')[0];
-      return namePart.replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
-    }
     return 'Mon Profil';
   });
 </script>
@@ -354,6 +394,42 @@
       {/if}
     </div>
 
+    <!-- Section Associations -->
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
+      style="animation-fill-mode: backwards;"
+    >
+      <div class="flex items-center justify-between mb-5">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <Building2 size={22} strokeWidth={2.5} />
+          </div>
+          <h2 class="text-lg font-extrabold text-text-main">Mes associations</h2>
+        </div>
+        <a
+          href="/directory"
+          class="inline-flex items-center gap-1 text-xs font-bold text-cn-dark hover:underline"
+        >
+          <Users size={14} />
+          Annuaire
+        </a>
+      </div>
+      <ProfileAssociationsSection memberships={memberships} loading={membershipsLoading} />
+    </div>
+
+    <!-- Section Parcours associatif -->
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
+      style="animation-fill-mode: backwards;"
+    >
+      <h2 class="text-lg font-extrabold text-text-main mb-5">Parcours associatif</h2>
+      <ProfileRoleHistorySection
+        entries={roleHistory}
+        editable={true}
+        onChanged={reloadRoleHistory}
+      />
+    </div>
+
     <!-- Section Informations -->
     <div
       class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
@@ -362,22 +438,6 @@
       <h2 class="text-lg font-extrabold text-text-main mb-6">Informations du compte</h2>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div
-          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
-        >
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
-            <Mail size={20} strokeWidth={2.5} />
-          </div>
-          <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
-              Adresse Email
-            </p>
-            <p class="text-sm font-bold text-text-main truncate">
-              {profile.email || 'Non renseigné'}
-            </p>
-          </div>
-        </div>
-
         <div
           class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
         >
