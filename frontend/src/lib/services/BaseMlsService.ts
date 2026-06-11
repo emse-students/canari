@@ -66,6 +66,8 @@ export abstract class BaseMlsService implements IMlsService {
   protected initPromise: Promise<void> | null = null;
   /** True when MLS is initialized without an existing state blob (fresh device). */
   protected freshStart = false;
+  /** Epoch ms of the last {@link republishKeyMaterial} run, used to debounce it. */
+  private lastKeyMaterialRepublish = 0;
 
   // ── Timers & event handlers ───────────────────────────────────────────────
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -555,6 +557,24 @@ export abstract class BaseMlsService implements IMlsService {
     }>
   > {
     return this.delivery.fetchUserDevices(userId);
+  }
+
+  /**
+   * Supprime tous les one-time prekeys publiés puis régénère le matériel de clé
+   * (fallback statique + pool) depuis le keystore local courant via
+   * {@link generateKeyPackage}. Garantit qu'aucun KeyPackage publié ne référence
+   * une clé privée absente localement — la racine de la boucle `NoMatchingKeyPackage`.
+   *
+   * Débounce les appels rapprochés (≤ 30 s) : plusieurs groupes peuvent échouer en
+   * même temps, mais une seule purge/régénération (coûteuse, jusqu'à 50 KeyPackages)
+   * suffit à réconcilier tout le matériel publié.
+   */
+  async republishKeyMaterial(pin: string): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastKeyMaterialRepublish < 30_000) return;
+    this.lastKeyMaterialRepublish = now;
+    await this.delivery.deleteAllOneTimePrekeys();
+    await this.generateKeyPackage(pin);
   }
 
   async fetchDeviceKeyPackage(

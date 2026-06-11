@@ -39,6 +39,15 @@ export interface IMlsService {
   changePIN(newPin: string): Promise<void>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the PIN-encrypted identity key. */
   generateKeyPackage(pin: string): Promise<Uint8Array>;
+  /**
+   * Purge les KeyPackages publiés (fallback statique + pool one-time) et en republie
+   * de frais à partir du keystore local courant.
+   *
+   * À appeler quand on détecte que nos KeyPackages serveur ne correspondent plus à nos
+   * clés privées locales (erreur `NoMatchingKeyPackage` au traitement d'un Welcome) :
+   * sans ça, l'invitant ré-ajoute en boucle avec le même KeyPackage orphelin.
+   */
+  republishKeyMaterial(pin: string): Promise<void>;
   /** Adds one device to a group via an MLS Add commit, returning the Commit and optional Welcome. */
   addMember(
     groupId: string,

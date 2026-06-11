@@ -607,6 +607,15 @@ export async function processDevWelcome(params: {
 // first one finishes).  Cross-device races are handled by acquireAddLock below.
 const welcomeRequestInProgress = new Set<string>();
 
+/** Ré-ajouts répétés par clé `${groupId}:${requesterDeviceId}` dans la fenêtre glissante. */
+const reAddAttempts = new Map<string, { count: number; first: number }>();
+
+/** Au-delà de ce nombre de ré-ajouts d'un même device dans la fenêtre, on suspend. */
+const MAX_READD_ATTEMPTS = 3;
+
+/** Fenêtre glissante du garde-fou anti-livelock de ré-ajout. */
+const READD_WINDOW_MS = 3 * 60_000;
+
 /**
  * Traite un welcome_request reçu d'un device qui veut rejoindre un groupe.
  *
@@ -700,6 +709,24 @@ export async function handleWelcomeRequest(params: {
   }
 
   try {
+    // Garde-fou anti-livelock : limite les ré-ajouts répétés du même device dans une
+    // fenêtre glissante. Si l'invité reboucle (ses KeyPackages publiés sont orphelins
+    // de leur clé privée → NoMatchingKeyPackage côté invité), le re-add est inutile et
+    // resaturerait le serveur (Welcome + bundle historique à chaque tour). La correction
+    // est côté invité (republication) ; ici on cesse simplement de re-boucler.
+    const attemptKey = `${groupId}:${requesterDeviceId}`;
+    const now = Date.now();
+    const prev = reAddAttempts.get(attemptKey);
+    const attempt = prev && now - prev.first < READD_WINDOW_MS ? prev : { count: 0, first: now };
+    attempt.count += 1;
+    reAddAttempts.set(attemptKey, attempt);
+    if (attempt.count > MAX_READD_ATTEMPTS) {
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… ré-ajouté ${attempt.count - 1}× en vain sur ${groupId.slice(0, 8)}… - re-add suspendu (cause côté invité)`
+      );
+      return;
+    }
+
     // Récupérer le KeyPackage frais du device demandeur.
     // Si absent : le device n'a pas encore publié ses KP → on ne peut pas l'inviter.
     // La causalité est assurée en amont : syncConnectionAfterWsOpen n'envoie pas de

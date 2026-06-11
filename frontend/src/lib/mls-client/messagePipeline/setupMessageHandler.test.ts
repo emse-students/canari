@@ -222,8 +222,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('Welcome (NoMatchingKeyPackage) → sendWelcomeRequest', async () => {
-    const deps = baseDeps();
+  it('Welcome (NoMatchingKeyPackage) → republie le matériel de clé + sendWelcomeRequest', async () => {
+    // groupId unique : le compteur d'échecs NoMatchingKeyPackage est module-level.
+    const gid = 'a1111111-1111-4111-8111-111111111111';
+    const deps = baseDeps({
+      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: false })]]),
+    });
     const mls = deps.mlsService as any;
     mls.processWelcome = vi
       .fn()
@@ -237,9 +241,36 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       d?: boolean,
       e?: Uint8Array
     ) => Promise<boolean>;
-    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    const ok = await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
     expect(ok).toBe(true);
-    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(groupId);
+    // 1ʳᵉ détection : on republie un matériel de clé frais puis on redemande un Welcome.
+    expect(mls.republishKeyMaterial).toHaveBeenCalledWith('pin');
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(gid);
+  });
+
+  it('Welcome (NoMatchingKeyPackage) répété → escalade requestReAdd après le seuil', async () => {
+    const recovery = await import('$lib/utils/chat/recovery');
+    vi.mocked(recovery.requestReAdd).mockClear();
+    const gid = 'a2222222-2222-4222-8222-222222222222';
+    const deps = baseDeps({
+      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: false })]]),
+    });
+    const mls = deps.mlsService as any;
+    mls.processWelcome = vi.fn().mockRejectedValue(new Error('NoMatchingKeyPackage'));
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+    // 3 tentatives = welcome_request ; la 4ᵉ (au-delà du seuil) escalade en requestReAdd.
+    for (let i = 0; i < 3; i++) await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
+    expect(recovery.requestReAdd).not.toHaveBeenCalled();
+    await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
   });
 
   it('Welcome (GroupAlreadyExists) → noop, ACK', async () => {

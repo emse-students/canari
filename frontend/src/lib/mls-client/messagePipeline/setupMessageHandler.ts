@@ -19,6 +19,17 @@ export type { MessageHandlerDeps } from './deps';
 type PendingMsg = { sender: string; content: Uint8Array };
 
 /**
+ * Échecs `NoMatchingKeyPackage` consécutifs autorisés par groupe avant d'escalader
+ * d'un simple welcome_request (l'invitant nous ré-ajoute) vers une recovery complète
+ * (requestReAdd). Empêche le livelock Welcome ↔ welcome_request quand le ré-ajout
+ * échoue durablement (KeyPackage publié orphelin de sa clé privée locale).
+ */
+const MAX_NOMATCH_KP_RETRIES = 3;
+
+/** Compteur d'échecs NoMatchingKeyPackage par groupe terminal, pour l'escalade. */
+const noMatchKpFailures = new Map<string, number>();
+
+/**
  * Installe le handler de messages MLS.
  *
  * Architecture simplifiée (RFC 9420 + OpenMLS fork-resolution) :
@@ -220,6 +231,7 @@ async function handleWelcome({
     }
     cancelReAdd(joinedGroupId, recoveryTimers);
     deps.cancelGroupRecovery?.(joinedGroupId); // annule aussi le timer armé par onGroupMissing
+    noMatchKpFailures.delete(joinedGroupId); // Welcome traité - reset l'escalade NoMatchingKeyPackage
 
     // Persister immédiatement après Welcome (epoch initialisée)
     statePersister.persistNow();
@@ -310,11 +322,38 @@ async function handleWelcome({
         }
         onGroupReady?.(groupId);
       }
+      noMatchKpFailures.delete(terminalId || (groupId ?? ''));
       log(`[WELCOME] GroupAlreadyExists pour ${groupId?.slice(0, 8)}… - noop`);
     } else if (err.includes('NoMatchingKeyPackage')) {
-      // Clé consommée - demander une nouvelle invitation
-      log(`[WELCOME] NoMatchingKeyPackage pour ${groupId?.slice(0, 8)}… - welcome_request`);
-      if (groupId) await mlsService.sendWelcomeRequest(groupId).catch(() => {});
+      // Nos KeyPackages publiés ne correspondent plus à nos clés privées locales :
+      // l'invitant nous ré-ajoute avec un KeyPackage qu'on ne peut pas honorer.
+      const target = terminalId || (groupId ?? '');
+      const failures = (noMatchKpFailures.get(target) ?? 0) + 1;
+      noMatchKpFailures.set(target, failures);
+
+      if (failures > MAX_NOMATCH_KP_RETRIES) {
+        // Ré-ajout durablement en échec → recovery complète plutôt que re-boucler.
+        log(
+          `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - escalade requestReAdd`
+        );
+        noMatchKpFailures.delete(target);
+        if (target) await requestReAdd(target, deps, recoveryTimers);
+      } else {
+        // 1ʳᵉ détection : republier un matériel de clé frais pour que le prochain
+        // ré-ajout de l'invitant utilise un KeyPackage qu'on peut honorer.
+        // republishKeyMaterial débounce lui-même les appels rapprochés.
+        if (failures === 1) {
+          log(
+            `[WELCOME] NoMatchingKeyPackage pour ${target.slice(0, 8)}… - republication KeyPackages + welcome_request`
+          );
+          await mlsService.republishKeyMaterial(deps.pin).catch(() => {});
+        } else {
+          log(
+            `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - welcome_request`
+          );
+        }
+        if (target) await mlsService.sendWelcomeRequest(target).catch(() => {});
+      }
     } else if (err.includes('CannotDecryptOwnMessage')) {
       // Welcome destiné à un autre device - ignorer
       log(`[WELCOME] CannotDecryptOwnMessage pour ${groupId?.slice(0, 8)}… - ACK silencieux`);
