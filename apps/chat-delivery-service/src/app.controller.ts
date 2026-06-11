@@ -17,6 +17,7 @@ import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
 import * as admin from 'firebase-admin';
 import { RETENTION_WINDOW_MS } from './retention.constants';
+import { MessagingService } from './services/messaging.service';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -31,6 +32,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
+  private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
 
   /**
    * Message retention / stale device TTL. A device is "stale" once its queued
@@ -55,6 +57,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly messagingService: MessagingService,
   ) {}
 
   async onModuleInit() {
@@ -131,10 +134,20 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Purge "ghost" groups: membership rows referencing a group absent from
+    // dm_groups (incomplete/legacy deletion). No other cron catches these, so
+    // they would accumulate forever — this guarantees bounded growth.
+    this.cleanupOrphanedMemberRowsInterval = setInterval(() => {
+      void this.cleanupOrphanedMemberRows().catch((e) =>
+        this.logger.error('[CRON] cleanupOrphanedMemberRows failed', e),
+      );
+    }, 24 * ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'key-package cleanup (1h), orphaned Redis groups cleanup (6h), ' +
-        'soft-deleted groups purge (24h), stale push tokens purge (24h) scheduled',
+        'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
+        'orphaned member rows purge (24h) scheduled',
     );
   }
 
@@ -174,6 +187,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupOrphanedRedisGroupsInterval);
     clearInterval(this.softDeletedGroupsCleanupInterval);
     clearInterval(this.cleanupStalePushTokensInterval);
+    clearInterval(this.cleanupOrphanedMemberRowsInterval);
   }
 
   /**
@@ -381,5 +395,36 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         `[CRON] cleanupOrphanedRedisGroups: deleted ${orphanedKeys.length} key(s)`,
       );
     }
+  }
+
+  /**
+   * Purge les groupes "fantômes" : des lignes de membership (dm_group_members /
+   * dm_device_group_memberships) référençant un groupe absent de dm_groups.
+   *
+   * Le cycle normal (soft-delete → tombstone → cleanupSoftDeletedGroups) supprime
+   * ces lignes avec le groupe. Mais un groupe disparu par un chemin anormal/legacy
+   * (hard-delete partiel) laisse ses memberships orphelins, qu'aucun autre cron ne
+   * rattrape : ils s'accumuleraient indéfiniment. On délègue la purge complète
+   * (lignes DB + clés Redis history:/group:members:/pending_welcome:) au helper
+   * partagé MessagingService.purgeOrphanGroups pour ne pas dupliquer la logique.
+   */
+  private async cleanupOrphanedMemberRows() {
+    const orphanRows: { groupId: string }[] = await this.groupRepo.query(
+      `SELECT DISTINCT m."groupId" FROM dm_group_members m
+         LEFT JOIN dm_groups g ON g.id = m."groupId"
+        WHERE g.id IS NULL
+       UNION
+       SELECT DISTINCT d."groupId" FROM dm_device_group_memberships d
+         LEFT JOIN dm_groups g ON g.id = d."groupId"
+        WHERE g.id IS NULL`,
+    );
+
+    const orphanIds = orphanRows.map((r) => r.groupId);
+    if (orphanIds.length === 0) return;
+
+    await this.messagingService.purgeOrphanGroups(orphanIds);
+    this.logger.log(
+      `[CRON] cleanupOrphanedMemberRows: swept ${orphanIds.length} ghost group(s)`,
+    );
   }
 }

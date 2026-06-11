@@ -1043,7 +1043,7 @@ export class MessagingService {
    *
    * @returns l'ensemble des `groupId` encore présents dans `dm_groups` (livrables).
    */
-  private async purgeOrphanGroups(groupIds: string[]): Promise<Set<string>> {
+  async purgeOrphanGroups(groupIds: string[]): Promise<Set<string>> {
     if (groupIds.length === 0) return new Set();
 
     const existing = await this.groupRepo.find({
