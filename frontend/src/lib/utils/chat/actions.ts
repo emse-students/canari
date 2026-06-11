@@ -667,6 +667,15 @@ export async function handleWelcomeRequest(params: {
     onNotReady,
   } = params;
 
+  // Garde anti-self : le gateway diffuse les welcome_request à TOUS les devices du
+  // user, émetteur compris. Un device ne doit jamais traiter sa propre demande : il se
+  // retrouverait lui-même dans l'arbre MLS et kickerait son propre leaf (auto-éviction),
+  // se retirant du groupe qu'il vient de créer et relançant la cascade de successeurs.
+  if (requesterUserId === userId && requesterDeviceId === mlsService.getDeviceId()) {
+    log(`[WELCOME_REQ] Demande émise par soi-même (${requesterDeviceId.slice(0, 12)}…) - ignorée`);
+    return;
+  }
+
   // Résoudre le groupe terminal dans la lignée de successeurs (max 10 hops).
   const {
     terminalId,
