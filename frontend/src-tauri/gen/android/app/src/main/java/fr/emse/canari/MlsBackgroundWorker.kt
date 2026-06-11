@@ -84,6 +84,15 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         }
         Log.d(TAG, "doWork: démarrage (attempt $runAttemptCount)")
 
+        // Garde foreground : si l'app est revenue au premier plan depuis l'enqueue, le moteur
+        // MLS Tauri traite déjà via WebSocket et écrit mls.bin. Traiter ici en parallèle
+        // clobbererait l'état (KeyPackages perdus, epoch gaps). On reporte : au prochain retry
+        // l'app sera probablement de nouveau en arrière-plan, sinon le foreground aura tout traité.
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "doWork: app au premier plan → MLS géré par le foreground, retry différé")
+            return Result.retry()
+        }
+
         val ctx = MlsContextLoader.loadPushContext(applicationContext)
         if (ctx == null) {
             Log.e(TAG, "doWork: push_context.json manquant ou invalide → failure")

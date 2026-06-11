@@ -129,6 +129,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         val msgType = data["type"]
 
+        // ── Garde foreground : un seul moteur MLS écrit mls.bin à la fois ──────────────
+        // Quand l'app est au premier plan, le moteur MLS Tauri (WebView/Rust, état en mémoire)
+        // traite déjà tout via WebSocket et persiste mls.bin. Laisser le chemin JNI background
+        // (FCM/Worker) traiter en parallèle clobbererait mls.bin : ce sont DEUX moteurs distincts
+        // partageant le même fichier sans verrou commun (MlsStateLock ne couvre que FCM↔Worker).
+        // Résultat observé : KeyPackages perdus (n_secrets retombe à 1), epoch gaps, UseAfterEviction.
+        // On laisse donc le foreground gérer ; le background n'agit qu'app fermée/en arrière-plan.
+        // Les notifications pures (social/form_reminder) ne touchent pas mls.bin → non concernées.
+        if (MainActivity.isInForeground && msgType != "social" && msgType != "form_reminder") {
+            Log.d(TAG, "App au premier plan → MLS géré par le foreground (WS), skip traitement background")
+            return
+        }
+
         // Demande de bienvenue en attente : un pair hors-ligne a besoin d'être ajouté à un groupe.
         // On traite directement en arrière-plan (JNI + HTTP PushSecret) sans ouvrir la WebView.
         if (msgType == "welcome_request_pending") {
