@@ -81,6 +81,7 @@ export class ProductsService {
 
     const product = this.productRepo.create({
       ...rest,
+      currency: 'eur',
       associationId,
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
@@ -113,7 +114,7 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
-    Object.assign(product, dto);
+    Object.assign(product, dto, { currency: 'eur' });
     return this.productRepo.save(product);
   }
 

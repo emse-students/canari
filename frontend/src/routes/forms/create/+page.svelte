@@ -12,6 +12,7 @@
   import FormBuilder from '$lib/components/forms/FormBuilder.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import { ArrowLeft, Save, Plus, FileText, CreditCard, ListChecks } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
 
@@ -21,7 +22,6 @@
   let basePrice = $state(0);
   let basePriceMember = $state<number | ''>('');
   let pricingTagName = $state('');
-  let currency = $state('eur');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
   let requiresPayment = $state(false);
@@ -98,7 +98,7 @@
         ...(requiresPayment && basePriceMember !== ''
           ? { basePriceMember: Math.round(Number(basePriceMember) * 100) }
           : {}),
-        currency: requiresPayment ? currency : 'eur',
+        currency: 'eur',
         submitLabel: requiresPayment ? 'Envoyer et payer' : 'Envoyer',
         items: items.map((item) => {
           const hasOpts = !['short_text', 'long_text', 'linear_scale'].includes(item.type);
@@ -336,7 +336,7 @@
     </label>
 
     {#if requiresPayment}
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-5 border-t-2 border-cn-border">
+      <div class="mt-5 pt-5 border-t-2 border-cn-border">
         <Input
           label="Prix de base public (€)"
           type="number"
@@ -345,19 +345,6 @@
           step="0.01"
           placeholder="0.00"
         />
-        <div>
-          <label for="currency-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
-            >Devise</label
-          >
-          <select
-            id="currency-select"
-            bind:value={currency}
-            class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
-          >
-            <option value="eur">EUR (€)</option>
-            <option value="usd">USD ($)</option>
-          </select>
-        </div>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
@@ -381,6 +368,14 @@
         Si renseigné, les utilisateurs possédant ce tag (ex. cotisation achetée en boutique) paient
         le tarif cotisant.
       </p>
+
+      <div class="mt-4">
+        <StripeNetPayoutHint
+          grossEuros={basePrice}
+          grossEurosMember={showMemberPricing ? basePriceMember : ''}
+          showOptionSupplementNote={true}
+        />
+      </div>
 
       <!-- Recipient Association -->
       <div class="mt-4">

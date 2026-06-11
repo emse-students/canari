@@ -80,6 +80,7 @@
   } from '$lib/associations/api';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
@@ -1747,6 +1748,12 @@
                 </div>
               </div>
             {/if}
+
+            <StripeNetPayoutHint
+              grossEuros={newProductAmountCents}
+              minEuros={newProductAllowCustom ? newProductMinCents : ''}
+              maxEuros={newProductAllowCustom ? newProductMaxCents : ''}
+            />
 
             {#if newProductType === 'membership'}
               <div class="grid gap-4 sm:grid-cols-2">

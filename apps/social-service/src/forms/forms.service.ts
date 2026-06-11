@@ -75,6 +75,7 @@ export class FormsService {
     const { opensAt: opensAtRaw, closedAt: closedAtRaw, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,
+      currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
       items: input.items.map((item: any) => ({
@@ -153,6 +154,7 @@ export class FormsService {
     const { opensAt: opensAtRaw, closedAt: closedAtRaw, ownerId: _ownerId, ...rest } = input;
     Object.assign(form, {
       ...rest,
+      currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
       items: (input.items ?? form.items).map((item: any) => ({
