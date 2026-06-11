@@ -292,6 +292,31 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
+  it('Welcome redélivré pour groupe déjà détenu → idempotent, pas de re-join ni welcome_request', async () => {
+    // Régression : un Welcome redélivré (requeue serveur après restart) pour un groupe
+    // qu'on tient déjà localement ne doit PAS lancer processWelcome (qui échouerait sur
+    // NoMatchingKeyPackage et déclencherait un kick+ré-ajout destructeur côté invitant).
+    const onGroupReady = vi.fn();
+    const deps = baseDeps({ onGroupReady });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+    expect(ok).toBe(true);
+    expect(mls.processWelcome).not.toHaveBeenCalled();
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(onGroupReady).toHaveBeenCalledWith(groupId);
+  });
+
   it('commit groupe inconnu → bufferisé + welcome_request envoyé', async () => {
     const unknownGroupId = 'aaaaaaaa-0000-4000-8000-000000000001';
     const deps = baseDeps();

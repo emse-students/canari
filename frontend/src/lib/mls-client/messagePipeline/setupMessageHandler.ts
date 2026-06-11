@@ -217,6 +217,27 @@ async function handleWelcome({
     return true; // ACKé - Welcome pour groupe mort traité
   }
 
+  // Welcome redélivré pour un groupe qu'on détient déjà localement (typiquement un requeue
+  // serveur après un restart de l'app : le Welcome d'origine repart dans les pending).
+  // Tenter de le (re)joindre échouerait sur NoMatchingKeyPackage — le KeyPackage du Welcome
+  // a déjà été consommé lors de la jointure initiale, OpenMLS valide la clé AVANT de
+  // détecter GroupAlreadyExists — ce qui déclencherait un welcome_request, donc un kick +
+  // ré-ajout par l'invitant. Ce ré-ajout fait avancer l'epoch au-delà de nous et nous forke
+  // durablement (group_epoch figé < msg_epoch). On traite donc le Welcome comme idempotent.
+  if (mlsService.getLocalGroups().includes(terminalId)) {
+    cancelReAdd(terminalId, recoveryTimers);
+    deps.cancelGroupRecovery?.(terminalId);
+    noMatchKpFailures.delete(terminalId);
+    const convo = deps.conversations.get(terminalId);
+    if (convo && !convo.isReady) {
+      deps.conversations.set(terminalId, { ...convo, isReady: true });
+      await saveConversation(terminalId).catch(() => {});
+    }
+    onGroupReady?.(terminalId);
+    log(`[WELCOME] ${terminalId.slice(0, 8)}… déjà détenu - Welcome redélivré ignoré (idempotent)`);
+    return true;
+  }
+
   try {
     // processWelcome retourne le groupId MLS effectif (peut différer de l'enveloppe de livraison).
     // Fallback sur le groupId de l'enveloppe si le WASM retourne undefined (ne devrait pas arriver).
