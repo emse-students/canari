@@ -23,11 +23,15 @@ object MlsContextLoader {
     )
 
     /**
-     * Répertoire géré par Tauri sur Android : context.filesDir + bundle identifier.
-     * Tauri 2 résout app_data_dir() vers filesDir/fr.emse.canari, donc tous les fichiers
-     * échangés entre Rust (app_data_dir) et Kotlin doivent utiliser ce répertoire.
+     * Répertoire de données que Tauri utilise comme `app_data_dir()` sur Android.
+     * Tauri 2 résout `app_data_dir()` vers `getDataDir` SANS suffixer le bundle identifier
+     * (cf. tauri path/android.rs : app_data_dir → getDataDir), soit `Context.getDataDir()`
+     * = `/data/user/0/<package>`. Tous les fichiers échangés entre Rust (app_data_dir) et
+     * Kotlin (push_context.json, mls.bin, fcm_token.txt, pending_push_secret.txt) doivent
+     * donc viser ce répertoire — et non `filesDir` ni `filesDir/<id>`, sinon Rust et Kotlin
+     * lisent/écrivent à deux endroits différents.
      */
-    fun tauriDataDir(context: Context): File = File(context.filesDir, "fr.emse.canari")
+    fun tauriDataDir(context: Context): File = context.dataDir
 
     /**
      * Charge push_context.json depuis le répertoire Tauri (app_data_dir).

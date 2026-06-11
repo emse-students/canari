@@ -34,13 +34,16 @@ export interface RecoveryDeps {
  * Demande à être ré-invité dans `groupId` quand l'état MLS local est absent ou désynchronisé.
  *
  * Flux :
- *  1. Si un timer est déjà actif pour ce groupe → retour immédiat (idempotent).
- *  2. Si le groupe a un successeur : appelle `requestReAdd(successorId)` puis appelle
+ *  1. Conversation déjà marquée morte → retour immédiat (idempotent, sans appel réseau).
+ *  2. Si un timer est déjà actif pour ce groupe → retour immédiat (idempotent).
+ *  3. Si le groupe a un successeur : appelle `requestReAdd(successorId)` puis appelle
  *     `migrateConversation(groupId → successorId)` pour supprimer le groupe mort d'IndexedDB.
  *     Si le successeur est déjà dans le WASM → migration directe sans recursion.
- *  3. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
- *  4. Envoyer `welcome_request` vers les membres actifs du groupe.
- *  5. Armer un timer `RECOVERY_TIMEOUT_MS` (60 s). À expiration : `reboot(groupId)` si le
+ *  4. Terminal d'une chaîne de successeurs sans métadonnée serveur (groupe successeur
+ *     inexistant/injoignable) → abort sans welcome_request ni reboot.
+ *  5. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
+ *  6. Envoyer `welcome_request` vers les membres actifs du groupe.
+ *  7. Armer un timer `RECOVERY_TIMEOUT_MS` (60 s). À expiration : `reboot(groupId)` si le
  *     groupe n'est toujours pas dans le WASM.
  */
 export async function requestReAdd(
@@ -48,11 +51,30 @@ export async function requestReAdd(
   deps: RecoveryDeps,
   timers: Map<string, ReturnType<typeof setTimeout>>
 ): Promise<void> {
+  // Idempotence : une conversation déjà marquée morte ne relance pas de recovery réseau
+  // (évite de re-spammer welcome_request/getGroupMeta sur chaque message bufferisé d'un
+  // groupe mort lors d'un même drain).
+  const known = deps.conversations.get(groupId);
+  if (known?.deletedRemotely && !known.isReady) return;
+
   const {
     terminalId,
     groupMeta: terminalMeta,
     hasChain,
   } = await resolveTerminalGroup(deps.mlsService, groupId);
+
+  // Successeur fantôme : on a suivi une chaîne de successeurs (hasChain) mais le terminal
+  // n'a aucune métadonnée serveur → le groupe successeur n'existe pas (ou plus). Envoyer un
+  // welcome_request armerait un reboot qui fabriquerait un candidat successeur pour un
+  // groupe inexistant. On abandonne sans rien marquer : terminalMeta=null est ambigu
+  // (groupe absent OU getGroupMeta en échec réseau), donc on n'écrit pas deletedRemotely ;
+  // une prochaine synchro réseau fonctionnelle re-résoudra la chaîne.
+  if (hasChain && terminalMeta === null) {
+    deps.log(
+      `[READD] terminal ${terminalId.slice(0, 8)}… sans métadonnée serveur - chaîne morte, recovery ignorée`
+    );
+    return;
+  }
 
   // Un seul timer armé par groupe terminal, mais on renvoie toujours la welcome_request
   // si le timer tourne déjà : le peer peut être revenu en ligne depuis la dernière fois,
