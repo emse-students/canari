@@ -764,6 +764,11 @@ export class MessagingService {
         isWelcome: true,
         ratchetTree: body.ratchetTreePayload,
         proto: ciphertext.toString('base64'),
+        // Sans cet id, un Welcome traité en realtime ne peut pas être ACKé côté client :
+        // la ligne durable survit et le prochain pull (ex. restart) le redélivre, ce qui
+        // provoque un retraitement NoMatchingKeyPackage destructeur. Le propager permet
+        // l'ACK immédiat → suppression de la queue → pas de redélivraison.
+        queuedMessageId: queuedWelcome.id,
       });
       this.logger.log(
         `[WELCOME][${traceId}] REALTIME_PUBLISH key=${redisKey} envelopeLen=${envelope.length}`,
