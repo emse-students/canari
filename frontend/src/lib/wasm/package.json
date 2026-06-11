@@ -1,7 +1,7 @@
 {
   "name": "mls-wasm",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.7.12",
   "files": [
     "mls_wasm_bg.wasm",
     "mls_wasm.js",

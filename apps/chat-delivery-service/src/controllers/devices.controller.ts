@@ -391,6 +391,62 @@ export class DevicesController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Get('mls/devices/:userId/:deviceId/prekeys/list')
+  /**
+   * Liste les one-time prekeys publiés d'un device (id + payload base64) afin que le
+   * client valide localement, KeyPackage par KeyPackage, lesquels il possède encore en
+   * clé privée — puis purge les orphelins via {@link pruneDevicePrekeys}.
+   */
+  async listDevicePrekeys(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+  ): Promise<{ id: string; keyPackage: string }[]> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    const rows = await this.oneTimeKeyPackageRepo.find({
+      where: { userId: safeUserId, deviceId: safeDeviceId },
+      select: ['id', 'keyPackage'],
+    });
+    return rows.map((r) => ({ id: r.id, keyPackage: r.keyPackage }));
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/devices/:userId/:deviceId/prekeys/prune')
+  /**
+   * Supprime des one-time prekeys ciblés par id (les orphelins dont le client n'a plus
+   * la clé privée locale). Borné au couple (userId, deviceId) pour empêcher toute
+   * suppression croisée entre devices.
+   */
+  async pruneDevicePrekeys(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Body() body: { ids: unknown },
+  ): Promise<{ status: string; deleted: number }> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    if (!Array.isArray(body.ids) || body.ids.length === 0) {
+      throw new BadRequestException('ids must be a non-empty array');
+    }
+    if (body.ids.length > 200) {
+      throw new BadRequestException('ids must not exceed 200 items');
+    }
+    for (const id of body.ids) {
+      if (typeof id !== 'string' || id.length === 0 || id.length > 64) {
+        throw new BadRequestException('Each id must be a non-empty string');
+      }
+    }
+    const result = await this.oneTimeKeyPackageRepo.delete({
+      id: In(body.ids as string[]),
+      userId: safeUserId,
+      deviceId: safeDeviceId,
+    });
+    this.logger.log(
+      `[PRUNE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`,
+    );
+    return { status: 'pruned', deleted: result.affected ?? 0 };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId')
   /** Completely delete a device from the user's account. Removes: all group memberships, KeyPackages, OneTimeKeyPackages, and push tokens. */
   async deleteDevice(

@@ -833,6 +833,32 @@ impl MlsManager {
         (0..count).map(|_| self.generate_key_package()).collect()
     }
 
+    /// Vérifie qu'on possède toujours la clé privée du KeyPackage public fourni.
+    ///
+    /// Recalcule le `hash_ref` du KeyPackage (la clé sous laquelle son bundle privé
+    /// est stocké lors de la génération) puis interroge le keystore. Permet au client
+    /// de détecter les KeyPackages publiés sur le serveur dont la clé privée locale a
+    /// été perdue (état réinitialisé ou restauré depuis une sauvegarde antérieure) —
+    /// racine de la boucle `NoMatchingKeyPackage`. Ces KeyPackages orphelins peuvent
+    /// alors être purgés du serveur avant qu'un pair ne les consomme.
+    pub fn key_package_has_private(&self, kp_bytes: &[u8]) -> Result<bool, MlsError> {
+        let kp_in = KeyPackageIn::tls_deserialize(&mut &kp_bytes[..])
+            .map_err(|e| MlsError::OpenMls(format!("KeyPackage deserialize error: {:?}", e)))?;
+        let key_package = kp_in
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|e| MlsError::OpenMls(format!("KeyPackage validate error: {:?}", e)))?;
+        let hash_ref = key_package
+            .hash_ref(self.provider.crypto())
+            .map_err(|e| MlsError::OpenMls(format!("HashRef error: {:?}", e)))?;
+
+        let bundle: Option<KeyPackageBundle> = self
+            .provider
+            .storage()
+            .key_package(&hash_ref)
+            .map_err(|e| MlsError::OpenMls(format!("Storage read error: {:?}", e)))?;
+        Ok(bundle.is_some())
+    }
+
     // --- F. CHIFFREMENT / DÉCHIFFREMENT (Helper) ---
 
     pub fn save_encrypted(&self, pin: &str) -> Result<Vec<u8>, MlsError> {

@@ -28,6 +28,7 @@ export function createMlsServiceStub(
     publishKeyPackage: vi.fn().mockResolvedValue(undefined),
     publishKeyPackages: vi.fn().mockResolvedValue(undefined),
     republishKeyMaterial: vi.fn().mockResolvedValue(undefined),
+    reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(0),
     sendCommit: vi.fn().mockResolvedValue(undefined),

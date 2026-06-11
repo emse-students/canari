@@ -163,6 +163,28 @@ async fn generer_key_packages(
 }
 
 #[tauri::command]
+async fn key_package_a_clef_privee(
+    key_package_bytes: Vec<u8>,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let has_private = manager
+            .key_package_has_private(&key_package_bytes)
+            .map_err(|e| e.to_string())?;
+        Ok::<bool, String>(has_private)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn generer_key_packages_et_persister(
     pin: String,
     count: usize,
@@ -1588,6 +1610,7 @@ pub fn run() {
             generer_key_package,
             generer_key_packages,
             generer_key_packages_et_persister,
+            key_package_a_clef_privee,
             ajouter_membre,
             ajouter_membres_bulk,
             retirer_membres,

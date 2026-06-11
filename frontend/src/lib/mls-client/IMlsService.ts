@@ -48,6 +48,16 @@ export interface IMlsService {
    * sans ça, l'invitant ré-ajoute en boucle avec le même KeyPackage orphelin.
    */
   republishKeyMaterial(pin: string): Promise<void>;
+  /**
+   * Réconciliation proactive : liste les one-time prekeys publiés sur le serveur,
+   * valide localement lesquels on possède encore en clé privée, et purge du serveur
+   * ceux qui sont orphelins (clé privée perdue après reset/restauration d'état).
+   *
+   * Empêche un pair de consommer un KeyPackage qu'on ne peut pas honorer — la cause
+   * de la boucle `NoMatchingKeyPackage` — au lieu d'attendre l'échec. Best-effort,
+   * conçu pour tourner en arrière-plan à la connexion.
+   */
+  reconcilePublishedKeyPackages(): Promise<void>;
   /** Adds one device to a group via an MLS Add commit, returning the Commit and optional Welcome. */
   addMember(
     groupId: string,

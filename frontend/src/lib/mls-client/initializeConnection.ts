@@ -113,6 +113,12 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     await mlsService.generateKeyPackage(pin);
     log('KeyPackage publié.');
     keyPackagePublished = true;
+    // Réconciliation proactive (best-effort, arrière-plan) : purge du serveur les
+    // one-time prekeys orphelins (clé privée locale perdue), pour qu'aucun pair ne
+    // consomme un KeyPackage qu'on ne peut pas honorer (boucle NoMatchingKeyPackage).
+    void mlsService
+      .reconcilePublishedKeyPackages()
+      .catch((e) => log(`[KP] Réconciliation prekeys échouée (non bloquant) : ${e}`));
   } catch (e) {
     log(`[KP] Publication échouée (${e}) - welcome_request reportée à la prochaine connexion`);
   }

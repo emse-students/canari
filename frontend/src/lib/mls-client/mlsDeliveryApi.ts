@@ -388,6 +388,43 @@ export class MlsDeliveryApi {
     ).catch(() => {});
   }
 
+  /**
+   * Liste les one-time prekeys publiés de ce device (id + payload décodé), pour que le
+   * client valide localement lesquels il possède encore en clé privée. Retourne `[]` sur erreur.
+   */
+  async listOwnPrekeys(): Promise<Array<{ id: string; keyPackage: Uint8Array }>> {
+    try {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys/list`,
+        { headers: await this.auth() }
+      );
+      if (!res.ok) return [];
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return [];
+      return rows
+        .filter((r) => typeof r?.id === 'string' && typeof r?.keyPackage === 'string')
+        .map((r) => ({
+          id: r.id as string,
+          keyPackage: this.decodeKeyPackageBase64(r.keyPackage),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Supprime des one-time prekeys ciblés par id (orphelins de leur clé privée locale). */
+  async pruneOwnPrekeys(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.f(
+      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys/prune`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ ids }),
+      }
+    ).catch(() => {});
+  }
+
   /** POSTs an already-encrypted MLS ciphertext to `/api/mls/send` without epoch validation. Used by Tauri (native MLS handles epoch tracking internally). */
   async postApplicationMessage(
     groupId: string,

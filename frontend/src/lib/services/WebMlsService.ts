@@ -745,4 +745,9 @@ export class WebMlsService extends BaseMlsService {
     const commitBytes: Uint8Array = this.client.remove_members_by_device(groupId, jsArray);
     await this.sendCommit(commitBytes, groupId);
   }
+
+  /** WASM client wrapper - vérifie via `this.client.key_package_has_private` qu'on possède la clé privée du KeyPackage. */
+  protected async keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean> {
+    return this.client.key_package_has_private(keyPackageBytes) as boolean;
+  }
 }

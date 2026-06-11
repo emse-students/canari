@@ -500,6 +500,13 @@ export class TauriMlsService extends BaseMlsService {
     return fallback;
   }
 
+  /** Tauri-native `invoke` wrapper - vérifie via `key_package_a_clef_privee` qu'on possède la clé privée du KeyPackage. */
+  protected async keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('key_package_a_clef_privee', {
+      keyPackageBytes: Array.from(keyPackageBytes),
+    });
+  }
+
   /** Tauri-native `invoke` wrapper - calls `ajouter_membre` and returns the commit, optional Welcome, and optional ratchet tree as Uint8Arrays. */
   async addMember(
     groupId: string,

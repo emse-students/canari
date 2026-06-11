@@ -577,6 +577,36 @@ export abstract class BaseMlsService implements IMlsService {
     await this.generateKeyPackage(pin);
   }
 
+  /**
+   * Valide chaque one-time prekey publié et purge du serveur ceux dont on n'a plus la
+   * clé privée locale (état réinitialisé/restauré). Conservateur : ne purge que les
+   * orphelins *prouvés* (KeyPackage validé mais absent du keystore) ; un KeyPackage
+   * non validable est laissé en place (un pair pourrait le valider). Best-effort.
+   */
+  async reconcilePublishedKeyPackages(): Promise<void> {
+    const published = await this.delivery.listOwnPrekeys();
+    if (published.length === 0) return;
+
+    const orphanIds: string[] = [];
+    for (const { id, keyPackage } of published) {
+      try {
+        if (!(await this.keyPackageHasPrivate(keyPackage))) orphanIds.push(id);
+      } catch {
+        // KeyPackage non désérialisable/validable localement : on ne le purge pas.
+      }
+    }
+
+    if (orphanIds.length > 0) {
+      await this.delivery.pruneOwnPrekeys(orphanIds);
+      console.log(
+        `[MLS] reconcilePublishedKeyPackages: purged ${orphanIds.length}/${published.length} orphaned prekey(s)`
+      );
+    }
+  }
+
+  /** True si le keystore local possède encore la clé privée du KeyPackage public fourni. */
+  protected abstract keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean>;
+
   async fetchDeviceKeyPackage(
     userId: string,
     deviceId: string

@@ -180,6 +180,13 @@ impl WasmMlsClient {
     }
 
     #[wasm_bindgen]
+    pub fn key_package_has_private(&self, key_package_bytes: Vec<u8>) -> Result<bool, JsValue> {
+        self.manager
+            .key_package_has_private(&key_package_bytes)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
     pub fn add_member(
         &mut self,
         group_id: String,
