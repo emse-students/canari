@@ -16,6 +16,7 @@ import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
 import { AssociationMember, AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationDocument } from './entities/association-document.entity';
+import { AssociationProduct } from './entities/association-product.entity';
 import {
   AssociationCalendarEvent,
   AssociationCalendarEventStatus,
@@ -34,6 +35,7 @@ import {
 import { RedisService } from '../common/redis/redis.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PushService } from '../push/push.service';
+import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
@@ -64,9 +66,12 @@ export class AssociationsService {
     private readonly formRepo: Repository<Form>,
     @InjectRepository(PostNotification)
     private readonly notifRepo: Repository<PostNotification>,
+    @InjectRepository(AssociationProduct)
+    private readonly productRepo: Repository<AssociationProduct>,
     private readonly redis: RedisService,
     private readonly httpService: HttpService,
-    private readonly push: PushService
+    private readonly push: PushService,
+    private readonly userTagService: UserTagService
   ) {}
 
   /** Deletes all `posts:list:v2:*` Redis keys so the next request rebuilds the feed with updated association data. */
@@ -1496,6 +1501,48 @@ export class AssociationsService {
         'createdAt',
       ],
     });
+  }
+
+  /**
+   * Distinct tag names known for an association (products, forms, granted tags).
+   * Used by the frontend tag autocomplete when configuring cotisation pricing.
+   */
+  async searchTagCatalog(associationId: string, query?: string): Promise<string[]> {
+    await this.findById(associationId);
+    const limit = 30;
+    const names = new Set<string>();
+
+    const products = await this.productRepo.find({
+      where: { associationId },
+      select: ['grantedTagName'],
+    });
+    for (const p of products) {
+      if (p.grantedTagName?.trim()) names.add(p.grantedTagName.trim());
+    }
+
+    const forms = await this.formRepo.find({
+      where: { associationId },
+      select: ['pricingTagName', 'grantedTagName'],
+    });
+    for (const f of forms) {
+      if (f.pricingTagName?.trim()) names.add(f.pricingTagName.trim());
+      if (f.grantedTagName?.trim()) names.add(f.grantedTagName.trim());
+    }
+
+    for (const tagName of await this.userTagService.listDistinctNamesForAssoc(associationId)) {
+      names.add(tagName);
+    }
+
+    let list = [...names].sort((a, b) => a.localeCompare(b, 'fr'));
+    const q = query?.trim().toLowerCase();
+    if (q) {
+      list = list.filter((n) => n.toLowerCase().includes(q));
+    }
+
+    this.logger.debug(
+      `[TagCatalog] assoc=${associationId.slice(0, 8)} q=${q ?? ''} hits=${list.length}`
+    );
+    return list.slice(0, limit);
   }
 
   // ── Stripe helpers ────────────────────────────────────────────────────────

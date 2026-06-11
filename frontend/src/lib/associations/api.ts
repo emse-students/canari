@@ -676,6 +676,17 @@ export async function listAssociationTags(associationId: string): Promise<UserTa
   return request<UserTag[]>(`/api/associations/${encodeURIComponent(associationId)}/tags`);
 }
 
+/** Searches distinct tag names for an association (products, forms, grants). */
+export async function searchAssociationTagCatalog(
+  associationId: string,
+  query = ''
+): Promise<string[]> {
+  const params = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : '';
+  return request<string[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/tag-catalog${params}`
+  );
+}
+
 /** Manually grants a cotisation tag to a user (requires MANAGE_MEMBERS). */
 export async function grantAssociationTag(
   associationId: string,

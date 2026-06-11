@@ -96,4 +96,15 @@ export class UserTagService {
     }
     return qb.orderBy('t.createdAt', 'DESC').getMany();
   }
+
+  /** Distinct tag names ever issued by an association (including expired). */
+  async listDistinctNamesForAssoc(assocId: string): Promise<string[]> {
+    const rows = await this.repo
+      .createQueryBuilder('t')
+      .select('DISTINCT t.tagName', 'tagName')
+      .where('t.issuingAssocId = :assocId', { assocId })
+      .orderBy('t.tagName', 'ASC')
+      .getRawMany<{ tagName: string }>();
+    return rows.map((r) => r.tagName).filter(Boolean);
+  }
 }

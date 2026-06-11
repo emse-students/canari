@@ -81,6 +81,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
+  import AssociationTagAutocomplete from '$lib/components/shared/AssociationTagAutocomplete.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
@@ -1761,12 +1762,13 @@
                   <label for="new-product-tag" class="text-xs font-semibold text-text-muted"
                     >Tag accordé à l'achat</label
                   >
-                  <input
-                    id="new-product-tag"
-                    type="text"
-                    bind:value={newProductGrantedTag}
-                    placeholder="cotisant:bde-2026-2027"
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  <AssociationTagAutocomplete
+                    associationId={asso?.id ?? ''}
+                    value={newProductGrantedTag}
+                    onValueChange={(v) => (newProductGrantedTag = v)}
+                    inputId="new-product-tag"
+                    placeholder="Rechercher ou créer un tag…"
+                    allowCreate={true}
                   />
                 </div>
                 <div class="space-y-1">

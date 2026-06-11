@@ -641,6 +641,25 @@ export class AssociationsController {
 
   // ── Cotisation tags (MANAGE_MEMBERS flag) ────────────────────────────────
 
+  /**
+   * Searches distinct tag names for an association (products, forms, grants).
+   * Any association member may call this when configuring forms or products.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/tag-catalog')
+  async searchTagCatalog(
+    @Param('id') id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string,
+    @Query('q') q?: string
+  ) {
+    const isGlobalAdmin = globalAdmin === 'true';
+    if (!isGlobalAdmin && !(await this.service.isMember(userId, id))) {
+      throw new ForbiddenException("Accès réservé aux membres de l'association");
+    }
+    return this.service.searchTagCatalog(id, q);
+  }
+
   /** Lists active tags issued by this association (admins with MANAGE_MEMBERS only). */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)

@@ -23,6 +23,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
+  import AssociationTagAutocomplete from '$lib/components/shared/AssociationTagAutocomplete.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import {
     ArrowLeft,
@@ -506,33 +507,6 @@
             placeholder="0.00"
           />
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-          <Input
-            label="Tag cotisant (optionnel)"
-            type="text"
-            bind:value={pricingTagName}
-            placeholder="cotisant:bde-2026-2027"
-          />
-          <Input
-            label="Prix de base cotisant (€)"
-            type="number"
-            bind:value={basePriceMember}
-            min="0"
-            step="0.01"
-            placeholder="Même que public si vide"
-            disabled={!showMemberPricing}
-          />
-        </div>
-        <p class="text-xs text-text-muted mt-1 ml-1">
-          Les utilisateurs possédant ce tag paient le tarif cotisant (base et options).
-        </p>
-        <div class="mt-4">
-          <StripeNetPayoutHint
-            grossEuros={basePrice}
-            grossEurosMember={showMemberPricing ? basePriceMember : ''}
-            showOptionSupplementNote={true}
-          />
-        </div>
         <div class="mt-4">
           <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
             >Association bénéficiaire</label
@@ -553,6 +527,39 @@
               Aucune association avec Stripe connecté.
             </p>
           {/if}
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+          <div class="space-y-1">
+            <label for="pricing-tag-autocomplete-edit" class="block text-sm font-bold text-text-main ml-1"
+              >Tag cotisant (optionnel)</label
+            >
+            <AssociationTagAutocomplete
+              associationId={associationId}
+              value={pricingTagName}
+              onValueChange={(v) => (pricingTagName = v)}
+              inputId="pricing-tag-autocomplete-edit"
+              placeholder="Rechercher un tag cotisant…"
+            />
+          </div>
+          <Input
+            label="Prix de base cotisant (€)"
+            type="number"
+            bind:value={basePriceMember}
+            min="0"
+            step="0.01"
+            placeholder="Même que public si vide"
+            disabled={!showMemberPricing}
+          />
+        </div>
+        <p class="text-xs text-text-muted mt-1 ml-1">
+          Les utilisateurs possédant ce tag paient le tarif cotisant (base et options).
+        </p>
+        <div class="mt-4">
+          <StripeNetPayoutHint
+            grossEuros={basePrice}
+            grossEurosMember={showMemberPricing ? basePriceMember : ''}
+            showOptionSupplementNote={true}
+          />
         </div>
         <div class="mt-4 pt-4 border-t-2 border-cn-border space-y-3">
           <label class="flex items-center gap-3 cursor-pointer select-none">
