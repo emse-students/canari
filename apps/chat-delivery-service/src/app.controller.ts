@@ -28,7 +28,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AppController.name);
   private staleDeviceInterval: ReturnType<typeof setInterval>;
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
-  private cleanupKeyPackagesInterval: ReturnType<typeof setInterval>;
+  private cleanupStaleDevicesInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
@@ -106,10 +106,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
-    // Cleanup KeyPackages older than 30 days whose device has no active membership
-    this.cleanupKeyPackagesInterval = setInterval(() => {
-      void this.cleanupExpiredKeyPackages().catch((e) =>
-        this.logger.error('[CRON] cleanupExpiredKeyPackages failed', e),
+    // GC complet des devices stale : purge l'empreinte entière (KeyPackages, prekeys,
+    // push tokens, messages en file, memberships, Redis) des devices hors fenêtre de
+    // rétention et sans membership active. Borne la croissance des tables per-device.
+    this.cleanupStaleDevicesInterval = setInterval(() => {
+      void this.cleanupStaleDevices().catch((e) =>
+        this.logger.error('[CRON] cleanupStaleDevices failed', e),
       );
     }, ONE_HOUR);
 
@@ -145,7 +147,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
-        'key-package cleanup (1h), orphaned Redis groups cleanup (6h), ' +
+        'stale device GC (1h), orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'orphaned member rows purge (24h) scheduled',
     );
@@ -183,7 +185,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() {
     clearInterval(this.staleDeviceInterval);
     clearInterval(this.cleanupMessagesInterval);
-    clearInterval(this.cleanupKeyPackagesInterval);
+    clearInterval(this.cleanupStaleDevicesInterval);
     clearInterval(this.cleanupOrphanedRedisGroupsInterval);
     clearInterval(this.softDeletedGroupsCleanupInterval);
     clearInterval(this.cleanupStalePushTokensInterval);
@@ -273,12 +275,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Delete KeyPackages older than the retention window whose device has no active
-   * group membership. These are leftover packages published by devices that went
-   * offline permanently. Using the same window as the device-list cutoff guarantees
-   * a still-recoverable device keeps a usable KeyPackage for as long as it stays visible.
+   * GC complet des devices stale : un device dont le KeyPackage statique date d'avant
+   * la fenêtre de rétention ET qui n'a aucune membership active est considéré
+   * définitivement hors-ligne. On purge alors TOUTE son empreinte serveur (KeyPackage,
+   * prekeys one-time, push tokens, messages en file, memberships device↔groupe, sets
+   * Redis) via le helper partagé {@link MessagingService.purgeDeviceFootprint}, le même
+   * que la suppression manuelle d'appareil. Aligné sur la fenêtre de rétention pour
+   * qu'un device encore récupérable (donc visible dans la liste) ne soit jamais purgé.
    */
-  private async cleanupExpiredKeyPackages() {
+  private async cleanupStaleDevices() {
     const expiry = new Date(Date.now() - RETENTION_WINDOW_MS);
 
     const expiredPackages = await this.keyPackageRepo.find({
@@ -287,7 +292,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (expiredPackages.length === 0) return;
 
-    // Keep packages for devices that still have active group memberships
+    // Conserver les devices qui ont encore une membership active.
     const deviceIds = [...new Set(expiredPackages.map((kp) => kp.deviceId))];
     const activeDevices = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
@@ -297,16 +302,30 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .getRawMany<{ deviceId: string }>();
 
     const activeDeviceIds = new Set(activeDevices.map((d) => d.deviceId));
-    const toDelete = expiredPackages.filter(
-      (kp) => !activeDeviceIds.has(kp.deviceId),
-    );
 
-    if (toDelete.length > 0) {
-      await this.keyPackageRepo.delete(toDelete.map((kp) => kp.id));
-      this.logger.log(
-        `[CRON] cleanupExpiredKeyPackages: deleted ${toDelete.length} package(s)`,
-      );
+    // Dédupe par (userId, deviceId) : un même device n'a qu'un KeyPackage statique,
+    // mais on se protège de doublons éventuels.
+    const staleDevices = new Map<
+      string,
+      { userId: string; deviceId: string }
+    >();
+    for (const kp of expiredPackages) {
+      if (activeDeviceIds.has(kp.deviceId)) continue;
+      staleDevices.set(`${kp.userId}:${kp.deviceId}`, {
+        userId: kp.userId,
+        deviceId: kp.deviceId,
+      });
     }
+
+    if (staleDevices.size === 0) return;
+
+    for (const { userId, deviceId } of staleDevices.values()) {
+      await this.messagingService.purgeDeviceFootprint(userId, deviceId);
+    }
+
+    this.logger.log(
+      `[CRON] cleanupStaleDevices: purged ${staleDevices.size} stale device(s)`,
+    );
   }
 
   /**

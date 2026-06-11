@@ -14,6 +14,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
+import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
 import {
@@ -92,12 +93,61 @@ export class MessagingService {
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
+    @InjectRepository(OneTimeKeyPackage)
+    private oneTimeKeyPackageRepo: Repository<OneTimeKeyPackage>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
+
+  /**
+   * Supprime l'intégralité de l'empreinte serveur d'un device (état per-device) :
+   * memberships device↔groupe, KeyPackage statique, prekeys one-time, push tokens,
+   * messages en file non délivrés, et l'appartenance Redis aux sets de routage.
+   *
+   * Ne touche PAS `dm_group_members` (appartenance au niveau user, partagée entre les
+   * devices du même user) ni la denylist `RevokedDevice` (spécifique à la suppression
+   * explicite, hors GC). Partagé entre la suppression manuelle d'appareil et le GC des
+   * devices stale pour éviter toute logique de purge dupliquée.
+   */
+  async purgeDeviceFootprint(
+    userId: string,
+    deviceId: string,
+  ): Promise<{
+    groupsCleaned: number;
+    keyPackagesDeleted: number;
+    oneTimeKeyPackagesDeleted: number;
+    queuedMessagesDeleted: number;
+  }> {
+    const memberships = await this.deviceGroupRepo.find({
+      where: { userId, deviceId },
+      select: ['groupId'],
+    });
+    const groupIds = [...new Set(memberships.map((m) => m.groupId))];
+
+    await this.deviceGroupRepo.delete({ userId, deviceId });
+
+    const memberKey = `${userId}:${deviceId}`;
+    for (const gid of groupIds) {
+      await this.redis.srem(`group:members:${gid}`, memberKey);
+    }
+
+    const [kpResult, otkpResult, queuedResult] = await Promise.all([
+      this.keyPackageRepo.delete({ userId, deviceId }),
+      this.oneTimeKeyPackageRepo.delete({ userId, deviceId }),
+      this.queuedMessageRepo.delete({ recipientId: userId, deviceId }),
+      this.pushTokenRepo.delete({ userId, deviceId }),
+    ]);
+
+    return {
+      groupsCleaned: groupIds.length,
+      keyPackagesDeleted: kpResult.affected ?? 0,
+      oneTimeKeyPackagesDeleted: otkpResult.affected ?? 0,
+      queuedMessagesDeleted: queuedResult.affected ?? 0,
+    };
+  }
 
   private makeTraceId(scope: string): string {
     const { randomUUID } = crypto;

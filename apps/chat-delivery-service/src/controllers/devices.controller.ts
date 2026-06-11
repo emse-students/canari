@@ -23,6 +23,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { MessagingService } from '../services/messaging.service';
 import {
   sanitizeQueryValue,
   sanitizeOptionalDeviceName,
@@ -53,6 +54,7 @@ export class DevicesController {
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource,
+    private readonly messagingService: MessagingService,
   ) {}
 
   private makeTraceId(scope: string): string {
@@ -448,7 +450,7 @@ export class DevicesController {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId')
-  /** Completely delete a device from the user's account. Removes: all group memberships, KeyPackages, OneTimeKeyPackages, and push tokens. */
+  /** Completely delete a device from the user's account. Purges all per-device state (memberships, KeyPackages, OneTimeKeyPackages, push tokens, queued messages) and denylists the device against immediate re-registration. */
   async deleteDevice(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
@@ -456,42 +458,14 @@ export class DevicesController {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
 
-    // 1. Remove from ALL groups and clean Redis
-    const memberships = await this.deviceGroupRepo.find({
-      where: { userId: safeUserId, deviceId: safeDeviceId },
-      select: ['groupId'],
-    });
-    const groupIds = [...new Set(memberships.map((m) => m.groupId))];
+    // 1. Purge toute l'empreinte per-device (helper partagé avec le GC des devices stale).
+    const purge = await this.messagingService.purgeDeviceFootprint(
+      safeUserId,
+      safeDeviceId,
+    );
 
-    await this.deviceGroupRepo.delete({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-    });
-
-    const memberKey = `${safeUserId}:${safeDeviceId}`;
-    for (const gid of groupIds) {
-      await this.redis.srem(`group:members:${gid}`, memberKey);
-    }
-
-    // 2. Delete all KeyPackages for this device
-    const kpResult = await this.keyPackageRepo.delete({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-    });
-
-    // 3. Delete all OneTimeKeyPackages for this device
-    const otkpResult = await this.oneTimeKeyPackageRepo.delete({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-    });
-
-    // 4. Delete push token if exists
-    await this.pushTokenRepo.delete({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-    });
-
-    // 5. Mark device as revoked to prevent immediate re-registration
+    // 2. Denylister le device pour empêcher une ré-registration immédiate (spécifique
+    //    à la suppression explicite ; le GC ne denyliste pas).
     const existingRevoked = await this.revokedDeviceRepo.findOne({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
@@ -506,14 +480,12 @@ export class DevicesController {
     }
 
     this.logger.log(
-      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${groupIds.length} keyPackagesDeleted=${kpResult.affected ?? 0} oneTimeKeyPackagesDeleted=${otkpResult.affected ?? 0}`,
+      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted}`,
     );
 
     return {
       status: 'device_deleted',
-      groupsCleaned: groupIds.length,
-      keyPackagesDeleted: kpResult.affected ?? 0,
-      oneTimeKeyPackagesDeleted: otkpResult.affected ?? 0,
+      ...purge,
     };
   }
 }
