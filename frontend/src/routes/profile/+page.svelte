@@ -151,17 +151,17 @@
     membershipsLoading = true;
     roleHistoryLoading = true;
     try {
-      const [m, rh] = await Promise.all([
-        fetchUserMemberships(userId),
-        fetchUserRoleHistory(userId),
-      ]);
-      memberships = m;
-      roleHistory = rh;
+      memberships = await fetchUserMemberships(userId);
     } catch {
       memberships = [];
-      roleHistory = [];
     } finally {
       membershipsLoading = false;
+    }
+    try {
+      roleHistory = await fetchUserRoleHistory(userId);
+    } catch {
+      roleHistory = [];
+    } finally {
       roleHistoryLoading = false;
     }
   }

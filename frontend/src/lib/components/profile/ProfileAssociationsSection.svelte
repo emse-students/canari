@@ -9,11 +9,10 @@
     emptyMessage?: string;
   }
 
-  let {
-    memberships,
-    loading = false,
-    emptyMessage = 'Aucune association pour le moment.',
-  }: Props = $props();
+  const props: Props = $props();
+  const memberships = $derived(props.memberships);
+  const loading = $derived(props.loading ?? false);
+  const emptyMessage = $derived(props.emptyMessage ?? 'Aucune association pour le moment.');
 </script>
 
 <div class="space-y-3">

@@ -15,7 +15,9 @@
     onChanged?: () => void | Promise<void>;
   }
 
-  let { entries, editable = false, onChanged }: Props = $props();
+  const props: Props = $props();
+  const entries = $derived(props.entries);
+  const editable = $derived(props.editable ?? false);
 
   let showForm = $state(false);
   let saving = $state(false);
@@ -62,7 +64,7 @@
         ...(formEndYear !== '' ? { endYear: Number(formEndYear) } : {}),
       });
       showForm = false;
-      await onChanged?.();
+      await props.onChanged?.();
     } catch (err) {
       formError = err instanceof Error ? err.message : 'Erreur';
     } finally {
@@ -81,7 +83,7 @@
     }
     try {
       await deleteMyRoleHistory(entry.id);
-      await onChanged?.();
+      await props.onChanged?.();
     } catch {
       /* ignore */
     }

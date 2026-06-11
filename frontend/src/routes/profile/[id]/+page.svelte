@@ -60,12 +60,13 @@
       following = status.following;
       extrasLoading = true;
       try {
-        [memberships, roleHistory] = await Promise.all([
-          fetchUserMemberships(userId),
-          fetchUserRoleHistory(userId),
-        ]);
+        memberships = await fetchUserMemberships(userId);
       } catch {
         memberships = [];
+      }
+      try {
+        roleHistory = await fetchUserRoleHistory(userId);
+      } catch {
         roleHistory = [];
       } finally {
         extrasLoading = false;
