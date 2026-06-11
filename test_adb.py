@@ -872,16 +872,24 @@ class TauriManagerApp:
         # shell=False + liste d'args : évite que cmd.exe sur Windows mange les guillemets
         # des filtres logcat (bug silencieux avec shell=True sur Windows).
         # *:S = silence tout par défaut, puis on sélectionne tag par tag.
-        # Tauri/Console:V      → tous les console.log JS (Verbose+)
-        # AndroidRuntime:W     → exceptions Java/Kotlin non rattrapées (Warning+)
-        # DEBUG:I              → dumps natifs du debuggerd Android (tombstones, Info+)
-        # CanariRust:I         → logs Rust via android_logger (Info+)
-        # ActivityManager:I    → réception d'Intent par l'OS (deep links)
-        # ActivityTaskManager:I→ gestion des tâches et back-stack (deep links)
+        # mines_app_lib:D      → logs Rust de l'app Tauri ([FCM], [Path], [PushCtx], [MLS]…).
+        #                        tauri-plugin-log route log::* vers android_logger, qui tague
+        #                        avec record.module_path() = nom de la lib crate (Cargo.toml
+        #                        [lib] name = "mines_app_lib"). SANS ce tag, get_fcm_token et
+        #                        les diagnostics de chemin app_data_dir sont invisibles.
+        # CanariFCM:D          → CanariFirebaseMessagingService (notifications)
+        # CanariWorker:D       → MlsBackgroundWorker (WorkManager)
+        # CanariApp:D          → CanariApplication (init, push secret)
+        # fr.emse.canari:D     → logs runtime Android du package
+        # chromium:I           → console.log() JS si le plugin Tauri les rate
+        # Tauri/Console:V      → logs console JS via le plugin Tauri
+        # MainActivity:D       → Sync token FCM au démarrage (addOnSuccessListener)
+        # FirebaseMessaging:W  → SDK FCM Android (erreurs token, connexion)
         cmd = [
             'adb', '-s', device_id, 'logcat',
             '*:S',                      # Silence total par défaut
-            'CanariRust:D',             # Moteur OpenMLS (Rust via JNI)
+            'mines_app_lib:D',          # Logs Rust de l'app Tauri (FCM, app_data_dir, push)
+            'CanariRust:D',             # Moteur OpenMLS (Rust via JNI), si tag dédié
             'CanariFCM:D',              # CanariFirebaseMessagingService (notifications)
             'CanariWorker:D',           # MlsBackgroundWorker (WorkManager)
             'CanariApp:D',              # CanariApplication (init, push secret)
