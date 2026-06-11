@@ -9,6 +9,7 @@ import { Post } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
+import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
 import { UserFollow } from '../follows/entities/user-follow.entity';
 import { AssociationFollow } from '../follows/entities/association-follow.entity';
 import { UserTag } from '../users/entities/user-tag.entity';
