@@ -616,6 +616,17 @@ const MAX_READD_ATTEMPTS = 3;
 /** Fenêtre glissante du garde-fou anti-livelock de ré-ajout. */
 const READD_WINDOW_MS = 3 * 60_000;
 
+/** Horodatage du dernier Welcome envoyé par clé `${groupId}:${requesterDeviceId}`. */
+const lastWelcomeSentAt = new Map<string, number>();
+
+/**
+ * Délai pendant lequel un device fraîchement invité est présumé « en cours de jointure ».
+ * Tant qu'il court, on ignore ses nouvelles welcome_request : son leaf est neuf, pas stale,
+ * et le re-kicker l'évincerait (l'invité tomberait en UseAfterEviction à l'envoi). Doit
+ * couvrir le déchiffrement du Welcome + l'ingestion du bundle historique (plusieurs secondes).
+ */
+const WELCOME_COOLDOWN_MS = 30_000;
+
 /**
  * Traite un welcome_request reçu d'un device qui veut rejoindre un groupe.
  *
@@ -709,13 +720,26 @@ export async function handleWelcomeRequest(params: {
   }
 
   try {
+    const attemptKey = `${groupId}:${requesterDeviceId}`;
+    const now = Date.now();
+
+    // Cooldown post-Welcome : si on a envoyé un Welcome à ce device récemment, il est
+    // presque sûrement encore en train de le traiter (déchiffrement + bundle historique
+    // prennent plusieurs secondes). Le re-kicker maintenant évincerait un leaf fraîchement
+    // ajouté → l'invité tombe en UseAfterEviction à l'envoi. On le laisse finir de rejoindre.
+    const lastWelcome = lastWelcomeSentAt.get(attemptKey);
+    if (lastWelcome && now - lastWelcome < WELCOME_COOLDOWN_MS) {
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… Welcome envoyé il y a ${Math.round((now - lastWelcome) / 1000)}s - jointure en cours, skip`
+      );
+      return;
+    }
+
     // Garde-fou anti-livelock : limite les ré-ajouts répétés du même device dans une
     // fenêtre glissante. Si l'invité reboucle (ses KeyPackages publiés sont orphelins
     // de leur clé privée → NoMatchingKeyPackage côté invité), le re-add est inutile et
     // resaturerait le serveur (Welcome + bundle historique à chaque tour). La correction
     // est côté invité (republication) ; ici on cesse simplement de re-boucler.
-    const attemptKey = `${groupId}:${requesterDeviceId}`;
-    const now = Date.now();
     const prev = reAddAttempts.get(attemptKey);
     const attempt = prev && now - prev.first < READD_WINDOW_MS ? prev : { count: 0, first: now };
     attempt.count += 1;
@@ -794,6 +818,7 @@ export async function handleWelcomeRequest(params: {
         requesterDeviceId,
         result.ratchetTree
       );
+      lastWelcomeSentAt.set(attemptKey, Date.now());
       log(`[WELCOME_REQ] Welcome → ${requesterUserId}:${requesterDeviceId} pour ${groupId}`);
     }
 

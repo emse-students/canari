@@ -52,6 +52,23 @@ function base64ToUint8(val: unknown): Uint8Array {
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
+  /** Chaîne de sérialisation des sections transactionnelles (voir runExclusive). */
+  private txnChain: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Sérialise les sections `BEGIN…COMMIT`. Le plugin SQL n'a qu'une connexion et SQLite
+   * n'imbrique pas les transactions : deux transactions concurrentes se court-circuitent
+   * (« cannot commit - no transaction is active » quand l'une COMMIT pendant l'autre).
+   * Toute section transactionnelle doit passer par ici pour s'exécuter une à la fois.
+   */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.txnChain.then(fn, fn);
+    this.txnChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
 
   /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
@@ -189,26 +206,28 @@ export class SqliteStorage implements IStorage {
     // Enveloppe tous les inserts dans une transaction pour l'atomicité et la performance.
     // Binary data stockée en base64 TEXT : passer number[] causerait le plugin à sérialiser
     // en JSON "[1,2,3]" (non-BLOB), illisible après redémarrage.
-    await this.db.execute('BEGIN');
-    try {
-      for (const item of encryptedMessages) {
-        await this.db.execute(
-          'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
-          [
-            item.msg.id,
-            item.msg.conversationId,
-            item.msg.timestamp,
-            uint8ToBase64(item.encrypted.iv),
-            uint8ToBase64(item.encrypted.salt),
-            uint8ToBase64(item.encrypted.cipherText),
-          ]
-        );
+    await this.runExclusive(async () => {
+      await this.db.execute('BEGIN');
+      try {
+        for (const item of encryptedMessages) {
+          await this.db.execute(
+            'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
+            [
+              item.msg.id,
+              item.msg.conversationId,
+              item.msg.timestamp,
+              uint8ToBase64(item.encrypted.iv),
+              uint8ToBase64(item.encrypted.salt),
+              uint8ToBase64(item.encrypted.cipherText),
+            ]
+          );
+        }
+        await this.db.execute('COMMIT');
+      } catch (e) {
+        await this.db.execute('ROLLBACK');
+        throw e;
       }
-      await this.db.execute('COMMIT');
-    } catch (e) {
-      await this.db.execute('ROLLBACK');
-      throw e;
-    }
+    });
   }
 
   /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */
