@@ -1030,6 +1030,47 @@ export class MessagingService {
   }
 
   /**
+   * Identifie parmi `groupIds` ceux qui n'ont plus aucune ligne dans `dm_groups`
+   * (ni active, ni tombstone soft-delete) et purge l'intégralité de leur résidu
+   * serveur : messages en file, lignes de membership et d'appartenance device,
+   * plus les clés Redis `history:`, `group:members:` et `pending_welcome:`.
+   *
+   * Ces groupes proviennent d'une suppression incomplète : leur ligne a disparu
+   * mais leurs données survivantes provoquent côté client une boucle de recovery
+   * (welcome_request/reboot sans cible) et un historique fantôme indéchiffrable.
+   * Un groupe soft-deleted garde sa ligne (tombstone) et n'est donc jamais purgé :
+   * sa chaîne de successeurs reste pilotée par le client.
+   *
+   * @returns l'ensemble des `groupId` encore présents dans `dm_groups` (livrables).
+   */
+  private async purgeOrphanGroups(groupIds: string[]): Promise<Set<string>> {
+    if (groupIds.length === 0) return new Set();
+
+    const existing = await this.groupRepo.find({
+      where: { id: In(groupIds) },
+      select: ['id'],
+    });
+    const existingIds = new Set(existing.map((g) => g.id));
+    const orphaned = groupIds.filter((id) => !existingIds.has(id));
+    if (orphaned.length === 0) return existingIds;
+
+    await Promise.all([
+      this.queuedMessageRepo.delete({ groupId: In(orphaned) }),
+      this.groupMemberRepo.delete({ groupId: In(orphaned) }),
+      this.deviceGroupRepo.delete({ groupId: In(orphaned) }),
+      ...orphaned.flatMap((id) => [
+        this.redis.del(`history:${id}`),
+        this.redis.del(`group:members:${id}`),
+        this.redis.del(`pending_welcome:${id}`),
+      ]),
+    ]);
+    this.logger.warn(
+      `[ORPHAN_PURGE] purged ${orphaned.length} group(s) absent from dm_groups: ${orphaned.join(', ')}`,
+    );
+    return existingIds;
+  }
+
+  /**
    * Returns the Redis stream history for a group, with optional cursor-based
    * pagination via an afterStreamId parameter.
    * Enforces group membership for non-admin callers.
@@ -1042,6 +1083,18 @@ export class MessagingService {
   ): Promise<Record<string, unknown>[]> {
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
     const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+
+    // Groupe totalement absent de dm_groups → orphelin : purge le résidu (dont le
+    // stream history:) et renvoie un historique vide. Effectué AVANT le contrôle
+    // d'appartenance, car des lignes dm_group_members peuvent survivre à la
+    // suppression de la ligne groupe et feraient passer le contrôle, servant alors
+    // un historique fantôme indéchiffrable au client.
+    const existingIds = await this.purgeOrphanGroups([groupId]);
+    if (!existingIds.has(groupId)) {
+      this.logger.warn(`[HISTORY] group=${groupId} orphaned - purged, empty`);
+      return [];
+    }
+
     if (headerGlobalAdmin !== 'true') {
       if (!authUserId) {
         throw new ForbiddenException(
@@ -1114,49 +1167,29 @@ export class MessagingService {
       order: { createdAt: 'ASC' },
     });
 
-    // Purge les messages adressés à un groupe qui n'existe plus dans dm_groups.
-    // Ces messages sont orphelins : le groupe a été supprimé côté serveur mais sa
-    // file de messages est restée. Le destinataire ne peut jamais les déchiffrer
-    // (aucun état MLS, groupe disparu) et ne les ACK donc jamais, ce qui provoque une
-    // boucle de recovery infinie (welcome_request → reboot → aucun groupe à réclamer →
-    // jamais ACK → redélivré). Un groupe soft-deleted (deletedAt) garde sa ligne et
-    // n'est donc PAS purgé : la chaîne de successeurs reste gérée par le client.
+    // Écarte les messages adressés à un groupe disparu de dm_groups : orphelins
+    // jamais déchiffrables ni ACK par le client, ils provoqueraient sinon une
+    // boucle de recovery infinie. purgeOrphanGroups en purge aussi le résidu
+    // serveur (file, memberships, clés Redis) — voir sa doc.
     const groupIds = [
       ...new Set(
         messages.map((m) => m.groupId).filter((id): id is string => !!id),
       ),
     ];
-    if (groupIds.length > 0) {
-      const existing = await this.groupRepo.find({
-        where: { id: In(groupIds) },
-        select: ['id'],
-      });
-      const existingIds = new Set(existing.map((g) => g.id));
-      const orphaned = messages.filter(
-        (m) => m.groupId && !existingIds.has(m.groupId),
+    const existingIds = await this.purgeOrphanGroups(groupIds);
+    const deliverable = messages.filter(
+      (m) => !m.groupId || existingIds.has(m.groupId),
+    );
+    if (deliverable.length !== messages.length) {
+      this.logger.warn(
+        `[MSG_FETCH][${traceId}] dropped ${messages.length - deliverable.length} orphaned message(s)`,
       );
-      if (orphaned.length > 0) {
-        await this.queuedMessageRepo.delete({
-          id: In(orphaned.map((m) => m.id)),
-        });
-        const missingGroups = [...new Set(orphaned.map((m) => m.groupId))];
-        this.logger.warn(
-          `[MSG_FETCH][${traceId}] purged ${orphaned.length} orphaned message(s) for ${missingGroups.length} missing group(s): ${missingGroups.join(', ')}`,
-        );
-      }
-      const deliverable = messages.filter(
-        (m) => !m.groupId || existingIds.has(m.groupId),
-      );
-      this.logger.log(
-        `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${deliverable.length}`,
-      );
-      return deliverable;
     }
 
     this.logger.log(
-      `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${messages.length}`,
+      `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${deliverable.length}`,
     );
-    return messages;
+    return deliverable;
   }
 
   /**
