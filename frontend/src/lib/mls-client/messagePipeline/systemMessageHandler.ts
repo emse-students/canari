@@ -224,9 +224,20 @@ export async function handleSystemEvent(
           readAt: m.readAt ?? deliveryMeta?.queuedCreatedAt ?? Date.now(),
         };
       });
+      // Receipt émis par NOUS-MÊMES depuis un autre appareil : on a lu cette
+      // conversation ailleurs → remettre le compteur non-lus à zéro pour synchroniser
+      // l'état "lu" entre nos appareils (le readBy seul ne pilote pas le badge non-lu).
+      const selfRead = senderNorm === userId;
+      if (updated || selfRead) {
+        conversations.set(convoKey, {
+          ...c,
+          messages: updated ? updatedMessages : c.messages,
+          ...(selfRead ? { unreadCount: 0 } : {}),
+        });
+        if (selfRead) await saveConversation?.(convoKey).catch(() => {});
+      }
       if (updated) {
         log(`[READ] Receipt from ${senderNorm} → ${msgIds.length} message(s) marqués lus`);
-        conversations.set(convoKey, { ...c, messages: updatedMessages });
         if (storage) {
           for (const msgId of msgIds) {
             const m = updatedMessages.find((x) => x.id === msgId);
