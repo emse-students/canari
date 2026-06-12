@@ -18,6 +18,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { showToast } from '$lib/stores/toast.svelte';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
@@ -160,6 +161,14 @@ export async function startPushService(
   try {
     let permissionGranted = await isPermissionGranted();
     if (!permissionGranted) {
+      // Contexte avant la boîte de dialogue système (évite une demande "à froid").
+      // Court délai pour laisser l'utilisateur lire avant que le dialogue ne s'ouvre.
+      showToast(
+        'Activez les notifications pour être prévenu des nouveaux messages, même app fermée.',
+        'info',
+        6000
+      );
+      await new Promise((r) => setTimeout(r, 1200));
       const permission = await requestPermission();
       permissionGranted = permission === 'granted';
     }
