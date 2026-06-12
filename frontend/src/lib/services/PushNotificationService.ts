@@ -108,40 +108,11 @@ export async function startPushService(
     return;
   }
 
-  if (pushAttempted) {
-    console.info('[Push] startPushService already attempted - skipping to avoid spam');
-    return;
-  }
-  pushAttempted = true;
-
-  console.info(
-    `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
-  );
-
   const userId = currentUserId();
   if (!userId) {
     console.warn('[Push] startPushService aborted: missing currentUserId');
     return;
   }
-
-  // --- GESTION PERMISSION ANDROID 13+ ---
-  try {
-    let permissionGranted = await isPermissionGranted();
-    if (!permissionGranted) {
-      const permission = await requestPermission();
-      permissionGranted = permission === 'granted';
-    }
-
-    if (!permissionGranted) {
-      console.warn(
-        "[Push] Permission de notification refusée. L'affichage des pop-ups sera bloqué par Android."
-      );
-      // On continue quand même : FCM peut recevoir des données silencieuses (background sync)
-    }
-  } catch (err) {
-    console.warn('[Push] Impossible de vérifier/demander la permission de notification', err);
-  }
-  // --------------------------------------
 
   const registerOnce = async (): Promise<boolean> => {
     return await registerPushToken(async (pushToken) => {
@@ -168,6 +139,41 @@ export async function startPushService(
       }
     });
   };
+
+  // Appels ultérieurs (ex. retour au premier plan) : NE PAS re-skip aveuglément.
+  // Le token FCM peut avoir tourné pendant que l'app vivait en arrière-plan ;
+  // onNewToken n'écrit le nouveau token qu'en local sans le pousser au serveur.
+  // On re-vérifie donc le token (chemin rapide, sans re-poll 30 s ni re-demander la
+  // permission) ; registerPushToken n'envoie au backend que s'il a réellement changé.
+  if (pushAttempted) {
+    console.info('[Push] startPushService re-check (rotation token éventuelle)');
+    await registerOnce();
+    return;
+  }
+  pushAttempted = true;
+
+  console.info(
+    `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
+  );
+
+  // --- GESTION PERMISSION ANDROID 13+ ---
+  try {
+    let permissionGranted = await isPermissionGranted();
+    if (!permissionGranted) {
+      const permission = await requestPermission();
+      permissionGranted = permission === 'granted';
+    }
+
+    if (!permissionGranted) {
+      console.warn(
+        "[Push] Permission de notification refusée. L'affichage des pop-ups sera bloqué par Android."
+      );
+      // On continue quand même : FCM peut recevoir des données silencieuses (background sync)
+    }
+  } catch (err) {
+    console.warn('[Push] Impossible de vérifier/demander la permission de notification', err);
+  }
+  // --------------------------------------
 
   const immediateOk = await registerOnce();
   if (immediateOk) return;
