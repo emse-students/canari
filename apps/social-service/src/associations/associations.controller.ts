@@ -129,12 +129,27 @@ export class AssociationsController {
    * Optional `associationId` limits to one association. Public.
    */
   @Get('calendar/feed')
-  aggregatedCalendarFeed(
+  async aggregatedCalendarFeed(
     @Query('from') from: string,
     @Query('to') to: string,
-    @Query('associationId') associationId?: string
+    @Query('associationId') associationId?: string,
+    @Query('includePending') includePending?: string,
+    @Headers('x-user-id') userId?: string,
+    @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.listAggregatedCalendarFeed(from, to, associationId);
+    // includePending est opt-in (le PDF ne le passe pas → seulement les validés) et
+    // n'est honoré que pour les utilisateurs autorisés à proposer (n'importe quelle
+    // asso), les admins BDE ou les admins globaux.
+    let include = false;
+    if ((includePending === 'true' || includePending === '1') && userId?.trim()) {
+      include =
+        ga === 'true' ||
+        (await this.service.canViewPendingCalendarEvents(userId.trim())) ||
+        (await this.service.isUserBdeAdmin(userId.trim()));
+    }
+    return this.service.listAggregatedCalendarFeed(from, to, associationId, {
+      includePending: include,
+    });
   }
 
   /**
@@ -222,12 +237,15 @@ export class AssociationsController {
     @Headers('x-user-id') userId?: string,
     @Headers('x-global-admin') ga?: string
   ) {
+    // Un membre autorisé à proposer (n'importe quelle asso), un admin BDE ou un admin
+    // global voit les événements en attente sur l'agenda de TOUTES les associations.
     const wantPending = includePending === 'true' || includePending === '1';
     let include = false;
     if (wantPending && userId?.trim()) {
-      include = await this.service.canPostAs(userId.trim(), id, {
-        isGlobalAdmin: ga === 'true',
-      });
+      include =
+        ga === 'true' ||
+        (await this.service.canViewPendingCalendarEvents(userId.trim())) ||
+        (await this.service.isUserBdeAdmin(userId.trim()));
     }
     return this.service.listCalendarEvents(id, from, to, { includePending: include });
   }

@@ -782,7 +782,15 @@ export class AssociationsService {
         { associationId }
       )
       .orderBy('e.startsAt', 'ASC');
-    if (!opts?.includePending) {
+    if (opts?.includePending) {
+      // Validés + en attente (grisés), jamais les refusés.
+      qb.andWhere('e.status IN (:...visibleStatuses)', {
+        visibleStatuses: [
+          AssociationCalendarEventStatus.Validated,
+          AssociationCalendarEventStatus.Pending,
+        ],
+      });
+    } else {
       qb.andWhere('e.status = :validated', {
         validated: AssociationCalendarEventStatus.Validated,
       });
@@ -960,7 +968,12 @@ export class AssociationsService {
    * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
    * optionally restricted to one association. Public (same visibility as per-association `/events`).
    */
-  async listAggregatedCalendarFeed(fromIso: string, toIso: string, associationId?: string) {
+  async listAggregatedCalendarFeed(
+    fromIso: string,
+    toIso: string,
+    associationId?: string,
+    opts?: { includePending?: boolean }
+  ) {
     const from = new Date(fromIso.trim());
     const to = new Date(toIso.trim());
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
@@ -983,10 +996,21 @@ export class AssociationsService {
       .innerJoin(Association, 'a', 'a.id = e.associationId')
       // Overlap condition: event starts before window end AND ends (or starts) within/after window.
       .where('e.startsAt <= :to AND COALESCE(e.endsAt, e.startsAt) >= :from', { from, to })
-      .andWhere('e.status = :validated', {
-        validated: AssociationCalendarEventStatus.Validated,
-      })
       .orderBy('e.startsAt', 'ASC');
+    // Par défaut : seulement les événements validés. Les membres autorisés à proposer
+    // peuvent aussi voir les événements en attente (grisés côté UI) ; jamais les refusés.
+    if (opts?.includePending) {
+      qb.andWhere('e.status IN (:...visibleStatuses)', {
+        visibleStatuses: [
+          AssociationCalendarEventStatus.Validated,
+          AssociationCalendarEventStatus.Pending,
+        ],
+      });
+    } else {
+      qb.andWhere('e.status = :validated', {
+        validated: AssociationCalendarEventStatus.Validated,
+      });
+    }
     if (aid) {
       // Include events where the association is either the primary owner or a co-owner.
       qb.andWhere(
