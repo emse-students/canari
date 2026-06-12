@@ -52,4 +52,16 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
 
     expect(manifestChannel).toBe(ktChannel);
   });
+
+  it('ne réintroduit pas android:debuggable avec placeholder (casse le merge release)', () => {
+    // build.gradle.kts ne définit pas manifestPlaceholders["debuggable"] → un
+    // android:debuggable="${debuggable}" fait échouer processUniversalReleaseMainManifest.
+    // (On cible l'attribut, pas la chaîne — qui peut légitimement figurer en commentaire.)
+    expect(manifest).not.toMatch(/android:debuggable\s*=\s*["']\$\{debuggable\}["']/);
+  });
+
+  it('garde allowBackup=false protégé par tools:replace (conflit merge librairies)', () => {
+    expect(manifest).toMatch(/android:allowBackup=["']false["']/);
+    expect(manifest).toMatch(/tools:replace=["'][^"']*android:allowBackup/);
+  });
 });
