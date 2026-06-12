@@ -1,0 +1,50 @@
+use serde::de::DeserializeOwned;
+use tauri::{
+    plugin::{PluginApi, PluginHandle},
+    AppHandle, Runtime,
+};
+
+use crate::models::*;
+
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_keystore);
+
+// initializes the Kotlin or Swift plugin classes
+pub fn init<R: Runtime, C: DeserializeOwned>(
+    _app: &AppHandle<R>,
+    api: PluginApi<R, C>,
+) -> crate::Result<Keystore<R>> {
+    #[cfg(target_os = "android")]
+    let handle = api.register_android_plugin("app.tauri.keystore", "KeystorePlugin")?;
+    #[cfg(target_os = "ios")]
+    let handle = api.register_ios_plugin(init_plugin_keystore)?;
+    Ok(Keystore(handle))
+}
+
+/// Access to the keystore APIs.
+pub struct Keystore<R: Runtime>(PluginHandle<R>);
+
+impl<R: Runtime> Keystore<R> {
+    pub fn store(&self, payload: StoreRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("store", payload)
+            .map_err(Into::into)
+    }
+
+    pub fn retrieve(&self, payload: RetrieveRequest) -> crate::Result<RetrieveResponse> {
+        self.0
+            .run_mobile_plugin("retrieve", payload)
+            .map_err(Into::into)
+        // let entry = keyring::Entry::new(&payload.service, &payload.user).unwrap();
+        // let password = entry.get_password().unwrap();
+        // Ok(RetrieveResponse {
+        //     password: Some(password),
+        // })
+    }
+
+    pub fn remove(&self, payload: RemoveRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("remove", payload)
+            .map_err(Into::into)
+    }
+}

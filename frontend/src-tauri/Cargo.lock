@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "canari"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "base64 0.22.1",
  "jni",
@@ -3228,7 +3228,7 @@ dependencies = [
 
 [[package]]
 name = "mls-core"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -5904,8 +5904,6 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-keystore"
 version = "2.1.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "532037dca4565060cb579aa54336a35d0f98d512a965ca38f1f65adacbec52be"
 dependencies = [
  "keyring",
  "serde",

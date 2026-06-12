@@ -45,6 +45,9 @@ tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }
 # tao 0.35.0 panics with NullPtr("get_object_class") when intent.getType() returns null
 # (e.g. deep links like fr.emse.canari://callback). Fixed by adding a null guard.
 tao = { path = "patches/tao" }
+# tauri-plugin-keystore: le PromptInfo biométrique est en anglais en dur dans
+# KeystorePlugin.kt (pas d'option JS). Patch local pour afficher un texte FR Canari.
+tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }
