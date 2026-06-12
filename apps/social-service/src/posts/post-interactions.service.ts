@@ -308,7 +308,7 @@ export class PostInteractionsService {
     let result: any;
     await this.postRepo.manager.transaction(async (manager) => {
       const post = await manager
-        .createQueryBuilder('post', 'post')
+        .createQueryBuilder(Post, 'post')
         .where('post.id = :postId', { postId })
         .setLock('pessimistic_write')
         .getOne();
