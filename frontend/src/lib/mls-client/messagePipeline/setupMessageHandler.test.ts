@@ -421,4 +421,41 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect.objectContaining({})
     );
   });
+
+  it('GAP_QUEUED persistant au-delà du seuil → forget + escalade requestReAdd', async () => {
+    vi.useFakeTimers();
+    const gid = 'b3333333-3333-4333-8333-333333333333';
+    const deps = baseDeps({
+      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: true })]]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockRejectedValue(new Error(`GAP_QUEUED:${gid}:msg_epoch=4:group_epoch=2`));
+    mls.forgetGroup = vi.fn();
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    // 1ʳᵉ occurrence : arme l'escalade, ACK, pas encore de forget.
+    const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+    expect(ok1).toBe(true);
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+
+    // Au-delà du seuil → forget + welcome_request (via onOutOfSync → requestReAdd).
+    vi.advanceTimersByTime(31_000);
+    await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    vi.useRealTimers();
+  });
 });

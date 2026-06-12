@@ -26,6 +26,14 @@ type PendingMsg = { sender: string; content: Uint8Array };
  */
 const MAX_NOMATCH_KP_RETRIES = 3;
 
+/**
+ * Délai pendant lequel un groupe peut rester en gap d'epoch (`msg_epoch > group_epoch`)
+ * avant d'escalader vers une recovery complète. Au-delà, les commits manqués ne
+ * reviendront pas (purgés de la file serveur) : on oublie l'état forké et on redemande
+ * un Welcome pour rejoindre à l'epoch courante.
+ */
+const EPOCH_GAP_ESCALATION_MS = 30_000;
+
 /** Compteur d'échecs NoMatchingKeyPackage par groupe terminal, pour l'escalade. */
 const noMatchKpFailures = new Map<string, number>();
 
@@ -75,6 +83,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   // Timers de recovery par groupe (deduplique les requestReAdd dans une session)
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  // Timestamp (ms) du 1er gap d'epoch non résolu par groupe. Effacé dès qu'un message
+  // se déchiffre (gap résorbé). Sert à escalader un groupe durablement forké-en-retard.
+  const epochGapSince = new Map<string, number>();
 
   // Callback partagé pour tout cas "hors-sync"
   const onOutOfSync = async (groupId: string) => {
@@ -140,6 +152,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         deps,
         statePersister,
         onOutOfSync,
+        epochGapSince,
       });
     }
   );
@@ -460,6 +473,8 @@ interface KnownGroupArgs {
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
   onOutOfSync: (groupId: string) => Promise<void>;
+  /** Timestamp (ms) du 1er gap d'epoch non résolu par groupe (escalade epoch-gap). */
+  epochGapSince: Map<string, number>;
 }
 
 /**
@@ -477,6 +492,7 @@ async function handleKnownGroup({
   deps,
   statePersister,
   onOutOfSync,
+  epochGapSince,
 }: KnownGroupArgs): Promise<boolean> {
   const {
     mlsService,
@@ -496,6 +512,9 @@ async function handleKnownGroup({
   try {
     resetWasmDuplicateDeliveryFlag();
     const decrypted = await mlsService.processIncomingMessage(groupId, content);
+    // Tout traitement réussi (commit qui avance l'epoch, ou message déchiffré) résorbe
+    // un éventuel gap d'epoch en cours → on annule l'escalade armée.
+    epochGapSince.delete(groupId);
 
     // Persister : immédiat pour les commits (epoch avancée), différé pour les app msgs
     if (isCommit) {
@@ -590,7 +609,30 @@ async function handleKnownGroup({
       deps.onMlsFatalError?.('oom');
       return true;
     }
-    if (err.includes('GAP_QUEUED')) return true; // Tauri : buffered en SQLite
+    if (err.includes('GAP_QUEUED')) {
+      // Tauri : message bufferisé en SQLite. Un gap d'epoch se résorbe normalement
+      // quand les commits manqués arrivent. Mais sur un groupe qu'on détient déjà,
+      // si les commits ne reviennent jamais (purgés serveur), le groupe reste figé en
+      // retard et tous les messages futurs échouent en boucle — le SYNC_WATCHDOG ne le
+      // couvre pas (il ne vise que les groupes absents du WASM). Au-delà du seuil, on
+      // oublie l'état forké et on redemande un Welcome : comme le groupe n'est plus
+      // local, le re-Welcome est honoré (et non ignoré comme idempotent) → on rejoint
+      // à l'epoch courante. L'historique de messages, lui, est rebackfillé par le bundle.
+      const now = Date.now();
+      const since = epochGapSince.get(groupId);
+      if (since === undefined) {
+        epochGapSince.set(groupId, now);
+      } else if (now - since > EPOCH_GAP_ESCALATION_MS) {
+        epochGapSince.delete(groupId);
+        log(
+          `[GAP] ${groupId.slice(0, 8)}… figé en retard >${EPOCH_GAP_ESCALATION_MS / 1000}s - forget + welcome_request`
+        );
+        mlsService.forgetGroup(groupId);
+        statePersister.persistNow();
+        await onOutOfSync(groupId); // forget effectué → re-Welcome honoré (groupe non local)
+      }
+      return true;
+    }
 
     // Livraison en double (publish temps-réel + queue/FCM) : le message a déjà été
     // déchiffré et son secret de ratchet consommé/supprimé. Le groupe est sain -
