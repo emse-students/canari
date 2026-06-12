@@ -685,33 +685,45 @@
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-3.5">
             <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
-              {#if themeStore.isDark}
+              {#if themeStore.preference === 'light'}
+                <Sun size={20} strokeWidth={2.5} />
+              {:else if themeStore.preference === 'dark'}
                 <Moon size={20} strokeWidth={2.5} />
               {:else}
-                <Sun size={20} strokeWidth={2.5} />
+                <Monitor size={20} strokeWidth={2.5} />
               {/if}
             </div>
             <div>
-              <p class="text-sm font-bold text-text-main">Mode sombre</p>
-              <p class="text-xs font-medium text-text-muted mt-0.5">
-                Thème sombre pour l'interface
-              </p>
+              <p class="text-sm font-bold text-text-main">Thème</p>
+              <p class="text-xs font-medium text-text-muted mt-0.5">Apparence de l'interface</p>
             </div>
           </div>
 
-          <button
-            role="switch"
-            aria-checked={themeStore.isDark}
-            aria-label="Activer ou désactiver le mode sombre"
-            onclick={() => themeStore.toggle()}
-            class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-              {themeStore.isDark ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/15'}"
+          <div
+            role="radiogroup"
+            aria-label="Thème de l'interface"
+            class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
           >
-            <span
-              class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
-                {themeStore.isDark ? 'translate-x-6' : 'translate-x-0'}"
-            ></span>
-          </button>
+            {#each [{ value: 'system', label: 'Système', Icon: Monitor }, { value: 'light', label: 'Clair', Icon: Sun }, { value: 'dark', label: 'Sombre', Icon: Moon }] as opt (opt.value)}
+              {@const Icon = opt.Icon}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={themeStore.preference === opt.value}
+                aria-label={opt.label}
+                title={opt.label}
+                onclick={() =>
+                  themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
+                class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-amber-500
+                  {themeStore.preference === opt.value
+                  ? 'bg-amber-500 text-white shadow'
+                  : 'text-text-muted hover:text-text-main'}"
+              >
+                <Icon size={15} strokeWidth={2.5} />
+                <span class="hidden sm:inline">{opt.label}</span>
+              </button>
+            {/each}
+          </div>
         </div>
       </div>
     </div>
