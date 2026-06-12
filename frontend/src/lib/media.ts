@@ -86,7 +86,8 @@ const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
 /** N'accepte la version WebP que si elle fait au moins 15 % de moins que l'original. */
 const MIN_SIZE_SAVINGS_RATIO = 0.85;
 
-import { decryptMediaBuffer, encryptMediaBuffer } from '$lib/mediaCrypto';
+import { encryptMediaBuffer } from '$lib/mediaCrypto';
+import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -409,27 +410,11 @@ export class MediaService {
    *
    * @param ref        The `MediaRef` extracted from the MLS message.
    * @param authToken  JWT token.
-   * @returns          A temporary object URL (`blob:…`) valid for this session.
-   *                   The caller is responsible for calling `URL.revokeObjectURL`
-   *                   when the element is removed.
+   * @returns          A cached object URL (`blob:…`). Call
+   *                   `releaseDecryptedMediaBlobUrl(ref)` when the element unmounts.
    */
   async downloadAndDecrypt(ref: MediaRef, authToken: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/media/${ref.mediaId}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-
-    if (!res.ok) {
-      if (res.status === 410) {
-        throw new Error('MEDIA_PURGED_BY_RETENTION');
-      }
-      throw new Error(`Media download failed: ${res.status} ${res.statusText}`);
-    }
-
-    const ciphertext = await res.arrayBuffer();
-    const plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
-
-    const blob = new Blob([plaintext], { type: ref.mimeType });
-    return URL.createObjectURL(blob);
+    return acquireDecryptedMediaBlobUrl(ref, authToken, this.baseUrl);
   }
 
   // -------------------------------------------------------------------------
@@ -468,22 +453,12 @@ export class MediaService {
    * Download a raw (unencrypted) blob from the media service and return an
    * object URL for use in an `<img>` element.
    *
-   * The caller is responsible for calling `URL.revokeObjectURL` when done.
+   * Call `releaseRawMediaBlobUrl(mediaId)` when the element unmounts.
    *
    * @param mediaId    The opaque identifier returned by `uploadRaw`.
    * @param authToken  JWT token.
    */
   async downloadRaw(mediaId: string, authToken: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/media/${encodeURIComponent(mediaId)}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-
-    if (!res.ok) {
-      if (res.status === 410) throw new Error('MEDIA_PURGED_BY_RETENTION');
-      throw new Error(`Avatar download failed: ${res.status}`);
-    }
-
-    const blob = await res.blob();
-    return URL.createObjectURL(blob);
+    return acquireRawMediaBlobUrl(mediaId, authToken, this.baseUrl);
   }
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
+  import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { Image as ImageIcon, CircleAlert } from '@lucide/svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
@@ -38,33 +39,32 @@
     }
 
     let destroyed = false;
-    let currentUrl: string | null = null;
+    let acquired = false;
     loading = true;
     loadError = '';
+
+    const mediaRef = {
+      type: 'image',
+      mediaId: media.mediaId,
+      key: media.key,
+      iv: media.iv,
+      mimeType: media.mimeType,
+      size: media.size,
+      fileName: media.fileName,
+      width: media.width,
+      height: media.height,
+    } as MediaRef;
 
     const mediaService = new MediaService();
 
     mediaService
-      .downloadAndDecrypt(
-        {
-          type: 'image',
-          mediaId: media.mediaId,
-          key: media.key,
-          iv: media.iv,
-          mimeType: media.mimeType,
-          size: media.size,
-          fileName: media.fileName,
-          width: media.width,
-          height: media.height,
-        } as MediaRef,
-        authToken
-      )
+      .downloadAndDecrypt(mediaRef, authToken)
       .then((url) => {
         if (destroyed) {
-          URL.revokeObjectURL(url);
+          releaseDecryptedMediaBlobUrl(mediaRef);
         } else {
           blobUrl = url;
-          currentUrl = url;
+          acquired = true;
         }
       })
       .catch((err) => {
@@ -78,7 +78,9 @@
 
     return () => {
       destroyed = true;
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      if (acquired) releaseDecryptedMediaBlobUrl(mediaRef);
+      acquired = false;
+      blobUrl = null;
     };
   });
 

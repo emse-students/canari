@@ -1,6 +1,10 @@
 <script lang="ts">
   import { generateAvatarPlaceholder, getInitials } from '$lib/utils/avatar';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    releaseUserAvatarDisplayUrl,
+    resolveUserAvatarDisplayUrl,
+  } from '$lib/utils/userAvatarCache';
 
   interface Props {
     /** ID of the user whose avatar should be displayed. */
@@ -31,6 +35,8 @@
 
   let imageFailed = $state(false);
   let imageLoaded = $state(false);
+  let displaySrc = $state<string | null>(null);
+  let triedDirectFallback = $state(false);
   let displayLabel = $state('');
   let resolveToken = 0;
   let lastResolvedUserId = $state('');
@@ -55,7 +61,25 @@
       lastResolvedUserId = userId;
       imageFailed = false;
       imageLoaded = false;
+      triedDirectFallback = false;
     }
+  });
+
+  $effect(() => {
+    const httpUrl = avatarSrc;
+    imageFailed = false;
+    triedDirectFallback = false;
+    let cancelled = false;
+    void resolveUserAvatarDisplayUrl(httpUrl).then((resolved) => {
+      if (!cancelled) {
+        displaySrc = resolved;
+        if (resolved?.startsWith('blob:')) imageLoaded = true;
+      }
+    });
+    return () => {
+      cancelled = true;
+      releaseUserAvatarDisplayUrl(httpUrl);
+    };
   });
 
   const sizeClasses = $derived(
@@ -90,13 +114,18 @@
       <div class="absolute inset-0 bg-cn-border/40 animate-pulse"></div>
     {/if}
     <img
-      src={avatarSrc}
+      src={displaySrc ?? avatarSrc}
       alt={`Avatar de ${displayLabel}`}
       class="w-full h-full object-cover select-none transition-opacity duration-150 {imageLoaded ? 'opacity-100' : 'opacity-0'}"
       onload={() => {
         imageLoaded = true;
       }}
       onerror={() => {
+        if (!triedDirectFallback && displaySrc && displaySrc !== avatarSrc) {
+          triedDirectFallback = true;
+          displaySrc = avatarSrc;
+          return;
+        }
         imageFailed = true;
       }}
     />

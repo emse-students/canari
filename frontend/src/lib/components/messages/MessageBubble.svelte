@@ -2,6 +2,7 @@
   import { CornerDownRight, Info, Hash } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
+  import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { parseEnvelope } from '$lib/envelope';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
@@ -391,7 +392,7 @@
     if (!mediaRef || !authToken) return;
 
     let destroyed = false;
-    let urlToRevoke: string | null = null;
+    let acquired = false;
     loadError = false;
     mediaPurgedByRetention = false;
 
@@ -402,10 +403,10 @@
       .downloadAndDecrypt(ref, token)
       .then((url) => {
         if (destroyed) {
-          URL.revokeObjectURL(url);
+          releaseDecryptedMediaBlobUrl(ref);
         } else {
           blobUrl = url;
-          urlToRevoke = url;
+          acquired = true;
         }
       })
       .catch((error) => {
@@ -421,16 +422,14 @@
 
     return () => {
       destroyed = true;
-      if (urlToRevoke) {
-        URL.revokeObjectURL(urlToRevoke);
-      }
+      if (acquired) releaseDecryptedMediaBlobUrl(ref);
+      acquired = false;
       blobUrl = null;
     };
   });
 
   onDestroy(() => {
     cancelLongPress();
-    if (blobUrl) URL.revokeObjectURL(blobUrl);
   });
 </script>
 

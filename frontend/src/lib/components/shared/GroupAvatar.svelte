@@ -3,6 +3,7 @@
   import { onDestroy } from 'svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
+  import { releaseRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 
   interface Props {
     /** Media-service ID of the avatar image. When absent, falls back to icon/initials. */
@@ -66,6 +67,7 @@
   const initials = $derived(getInitials(name));
 
   let currentMediaId: string | null = null;
+  let acquiredMediaId: string | null = null;
 
   async function loadImage(mediaId: string) {
     currentMediaId = mediaId;
@@ -73,13 +75,15 @@
     try {
       const token = await getToken();
       const url = await mediaService.downloadRaw(mediaId, token);
-      // Discard result if a newer load was triggered
       if (currentMediaId !== mediaId) {
-        URL.revokeObjectURL(url);
+        releaseRawMediaBlobUrl(mediaId);
         return;
       }
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      if (acquiredMediaId && acquiredMediaId !== mediaId) {
+        releaseRawMediaBlobUrl(acquiredMediaId);
+      }
       blobUrl = url;
+      acquiredMediaId = mediaId;
     } catch {
       if (currentMediaId === mediaId) loadFailed = true;
     }
@@ -89,16 +93,17 @@
     if (imageMediaId) {
       loadImage(imageMediaId);
     } else {
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
-        blobUrl = null;
+      if (acquiredMediaId) {
+        releaseRawMediaBlobUrl(acquiredMediaId);
+        acquiredMediaId = null;
       }
+      blobUrl = null;
       loadFailed = false;
     }
   });
 
   onDestroy(() => {
-    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    if (acquiredMediaId) releaseRawMediaBlobUrl(acquiredMediaId);
   });
 </script>
 
