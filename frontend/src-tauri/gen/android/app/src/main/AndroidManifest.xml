@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️  CE MANIFEST EST CUSTOM — NE PAS LE LAISSER ÉCRASER PAR `tauri android init`.
+  `tauri android build`/`dev` ne touchent que la section deep-link (marqueurs
+  AUTO-GENERATED). Mais `tauri android init` / `tauri migrate` / une MAJ majeure de
+  Tauri régénèrent gen/android depuis le template et EFFACENT tout ce qui suit.
+  Si ça arrive (cf. régression 53e659a0), RESTAURER impérativement :
+    - <application android:name=".CanariApplication">  (init channels, push secret)
+    - <service .CanariFirebaseMessagingService> + intent-filter MESSAGING_EVENT
+      (SANS lui, Firebase n'appelle jamais onMessageReceived → aucune notif app tuée)
+    - permissions push : POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE
+    - retrait AD_ID, networkSecurityConfig, allowBackup=false, dataExtractionRules
+    - meta-data FCM default_notification_icon / _channel_id (= CHANNEL_MESSAGES Kotlin)
+  Garde-fou CI : src/lib/mobile/androidFcmManifest.test.ts échoue si ces entrées sautent.
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- Supprime la permission AD_ID ajoutée automatiquement par Firebase Analytics -->
