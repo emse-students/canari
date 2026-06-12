@@ -51,6 +51,7 @@ import {
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -184,6 +185,8 @@ export function useMessaging() {
           const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
           return seqA - seqB;
         });
+        const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
+        beginBulkUiFlushBench(entries.length, benchMessageCount);
         bulkIngestBuffer.clear();
         for (const [contactName, messages] of entries) {
           if (messages.length > 0) {
@@ -191,6 +194,7 @@ export function useMessaging() {
             await yieldToMainThread();
           }
         }
+        finishBulkUiFlushBench();
         tick().then(() => {
           const chatContainer = ctx.getChatContainer();
           if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;

@@ -9,6 +9,12 @@ import {
   shouldAckGroupResetControl,
   logMlsMetric,
 } from '$lib/mls-client';
+import {
+  beginQueueDrainBench,
+  recordQueueDrainMessage,
+  finishQueueDrainBench,
+  recordPendingMessagesFetched,
+} from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 
@@ -315,6 +321,7 @@ export abstract class BaseMlsService implements IMlsService {
     await this.messageScheduler.drain(
       async (msg) => {
         const groupId = msg.groupId;
+        recordQueueDrainMessage(groupId);
 
         // group_reset control messages: ACK and ignore on both platforms.
         // The WebSocket reconnect is sufficient to re-sync state.
@@ -417,7 +424,10 @@ export abstract class BaseMlsService implements IMlsService {
         }
       },
       {
-        onDrainStart: (pendingCount) => this.bulkIngestStart?.(true, pendingCount > 1),
+        onDrainStart: (pendingCount) => {
+          beginQueueDrainBench(pendingCount);
+          this.bulkIngestStart?.(true, pendingCount > 1);
+        },
         onDrainEnd: async () => {
           if (ackIds.length > 0) {
             logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
@@ -434,6 +444,7 @@ export abstract class BaseMlsService implements IMlsService {
             this.scheduleRetry();
           }
 
+          finishQueueDrainBench(ackIds.length);
           await this.bulkIngestEnd?.(true, true);
         },
       }
@@ -467,6 +478,7 @@ export abstract class BaseMlsService implements IMlsService {
 
       if (Array.isArray(messages)) {
         if (messages.length > 0) {
+          recordPendingMessagesFetched(messages.length);
           console.log(`[PENDING] Fetched ${messages.length} pending messages`);
 
           // Route all pending messages through the serialized queue so they

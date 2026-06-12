@@ -13,6 +13,29 @@ export {
 } from './mlsQueueAckPolicy';
 export { commitBaseEpochForValidation } from './mlsDesyncPrevention';
 export { logMlsMetric, type MlsMetricEvent } from './mlsRecoveryMetrics';
+export {
+  isCatchupBenchEnabled,
+  beginStartupCatchupBench,
+  beginStartupCatchupPhase,
+  endStartupCatchupPhase,
+  updateStartupCatchupCounts,
+  finishStartupCatchupBench,
+  cancelStartupCatchupBench,
+  beginQueueDrainBench,
+  recordQueueDrainMessage,
+  finishQueueDrainBench,
+  recordPendingMessagesFetched,
+  beginBulkUiFlushBench,
+  finishBulkUiFlushBench,
+  getCatchupBenchReports,
+  getLatestCatchupBenchReport,
+  clearCatchupBenchReports,
+  summarizeConversationStats,
+  formatCatchupBenchSummary,
+  installCatchupBenchDevTools,
+  type CatchupBenchReport,
+  type CatchupBenchPhase,
+} from './catchupBenchmark';
 
 export {
   initTabLeadershipAsync,

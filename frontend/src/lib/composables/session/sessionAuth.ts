@@ -21,6 +21,15 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
+import {
+  beginStartupCatchupBench,
+  beginStartupCatchupPhase,
+  endStartupCatchupPhase,
+  finishStartupCatchupBench,
+  cancelStartupCatchupBench,
+  summarizeConversationStats,
+  installCatchupBenchDevTools,
+} from '$lib/mls-client/catchupBenchmark';
 import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
@@ -297,6 +306,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     ctx.setIsLoggedIn(true);
     saveUserLocally({ id: ctx.getUserId(), admin: isGlobalAdmin() });
     ctx.setIsMessagingInitializing(true);
+    installCatchupBenchDevTools();
+    beginStartupCatchupBench();
     cb.log('[INIT] MLS prêt — synchronisation messagerie en arrière-plan.');
     cb.onMlsReady?.();
 
@@ -337,9 +348,23 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     // Charger les conversations d'abord : consumeFcmCache peut accéder
     // à la Map conversations via addMessageToChat une fois qu'elle est peuplée.
+    beginStartupCatchupPhase('load_conversations');
     await cb.loadAndRestoreConversations();
+    {
+      const stats = summarizeConversationStats(cb.conversations);
+      endStartupCatchupPhase({
+        conversationCount: stats.conversationCount,
+        messageCount: stats.localMessageCount,
+      });
+    }
 
-    await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(() => {});
+    beginStartupCatchupPhase('fcm_cache');
+    const fcmInjected = await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(
+      () => [] as []
+    );
+    endStartupCatchupPhase({
+      messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
+    });
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
@@ -367,6 +392,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // processDeviceInvitationsLocally est appelé en fin de syncConnectionAfterWsOpen —
     // l'appeler ici avant l'ouverture du WebSocket est redondant.
 
+    beginStartupCatchupPhase('setup_handler');
     setupMessageHandler({
       mlsService,
       storage: ctx.getStorage(),
@@ -448,6 +474,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (mlsService.setBulkIngestHooks && cb.beginBulkMessageIngest && cb.endBulkMessageIngest) {
       mlsService.setBulkIngestHooks(cb.beginBulkMessageIngest, cb.endBulkMessageIngest);
     }
+    endStartupCatchupPhase();
 
     if ('onWelcomeProcessed' in mlsService) {
       (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
@@ -518,6 +545,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       cb.log('[TAB] Onglet follower - WebSocket actif dans un autre onglet Canari.');
     }
 
+    beginStartupCatchupPhase('initialize_connection');
     await initializeConnection({
       mlsService,
       userId: ctx.getUserId(),
@@ -532,6 +560,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onGroupDeletedRemotely: (groupId) =>
         markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
     });
+    {
+      const stats = summarizeConversationStats(cb.conversations);
+      endStartupCatchupPhase({
+        conversationCount: stats.conversationCount,
+        messageCount: stats.localMessageCount,
+      });
+    }
+    finishStartupCatchupBench(cb.log);
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
     const lastActiveKey = `canari_last_active:${ctx.getUserId()}`;
@@ -595,6 +631,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       if (!isConfig && !isDismissed) ctx.setShowBiometricEnrollPrompt(true);
     }
   } catch (_e: unknown) {
+    cancelStartupCatchupBench();
     const msg = _e instanceof Error ? _e.message : String(_e);
     ctx.setLoginError(msg);
     cb.log(`Erreur: ${msg}`);
