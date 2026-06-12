@@ -103,6 +103,9 @@ export interface SessionContext {
   setIsSyncing(v: boolean): void;
   getIsLoginInProgress(): boolean;
   setIsLoginInProgress(v: boolean): void;
+  /** True while post-auth startup sync runs (conversations, WebSocket, pending MLS queue). */
+  getIsMessagingInitializing(): boolean;
+  setIsMessagingInitializing(v: boolean): void;
 
   // ── Reconnexion ────────────────────────────────────────────────────────────
   getReconnectAttempts(): number;

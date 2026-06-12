@@ -92,6 +92,8 @@ export function useChatSession() {
   let isExporting = $state(false);
   let isImporting = $state(false);
   let isLoginInProgress = false; // plain boolean - guards against concurrent login() calls
+  /** True from MLS unlock until the full startup login path finishes (messaging catch-up). */
+  let isMessagingInitializing = $state(false);
 
   // ── Dev tools ─────────────────────────────────────────────────────────────
   let lastKeyPackage = $state('');
@@ -183,6 +185,10 @@ export function useChatSession() {
     getIsLoginInProgress: () => isLoginInProgress,
     setIsLoginInProgress: (v) => {
       isLoginInProgress = v;
+    },
+    getIsMessagingInitializing: () => isMessagingInitializing,
+    setIsMessagingInitializing: (v) => {
+      isMessagingInitializing = v;
     },
 
     // Reconnexion
@@ -301,6 +307,10 @@ export function useChatSession() {
     /** Allows ChatBackgroundService to set the flag early (before loginImpl) to close the layout race window. */
     set isLoginInProgress(v: boolean) {
       isLoginInProgress = v;
+    },
+    /** True while startup messaging sync runs after MLS unlock (overlay on /chat). */
+    get isMessagingInitializing() {
+      return isMessagingInitializing;
     },
     /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {

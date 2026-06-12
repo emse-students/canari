@@ -20,6 +20,7 @@
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
+  import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
   import TabFollowerBanner from './chat/TabFollowerBanner.svelte';
   import type { ChatMessage, Conversation } from '$lib/types';
@@ -34,6 +35,15 @@
 
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
+
+  /** Blocks the messaging UI until MLS unlock and queue catch-up complete. */
+  const isMessagingBlocked = $derived(
+    !session.isLoggedIn || session.isMessagingInitializing || messaging.isMessageCatchupActive
+  );
+
+  const messagingOverlayMessage = $derived(
+    !session.isLoggedIn ? 'Connexion en cours…' : 'Synchronisation des messages…'
+  );
 
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
   const activeConversation = $derived(convs.currentConvo);
@@ -509,12 +519,8 @@
 
 </script>
 
-{#if !session.isLoggedIn}
-  <div class="min-h-screen flex items-center justify-center text-sm text-text-muted">
-    Connexion en cours...
-  </div>
-{:else}
-  <div class="app-layout" in:fade>
+<div class="app-layout" in:fade>
+    {#if session.isLoggedIn}
     <!-- Bandeau onglet follower (multi-onglets) -->
     <TabFollowerBanner />
 
@@ -690,8 +696,14 @@
         onSelect={doForward}
       />
     </main>
+    {:else}
+      <main class="main-content" aria-hidden="true"></main>
+    {/if}
+
+    {#if isMessagingBlocked}
+      <MessagingSyncOverlay message={messagingOverlayMessage} />
+    {/if}
   </div>
-{/if}
 
 <style>
   .app-layout {

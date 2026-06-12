@@ -215,6 +215,14 @@
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
 
+  /** Ferme PIN/biométrie dès que MLS est déverrouillé ; le rattrapage continue en arrière-plan. */
+  function dismissAuthPrompts() {
+    showBiometricSheet = false;
+    showPinModal = false;
+    pinLoading = false;
+    pinStep = '';
+  }
+
   // ── Context builders ──────────────────────────────────────────────────────
   // Mirror de MainChatPage mais référence les singletons globaux.
 
@@ -284,9 +292,12 @@
     };
   }
 
-  /** Callbacks complets pour globalSession.login() / session callbacks. */
-  function sessionCb() {
-    return {
+  /**
+   * Callbacks complets pour globalSession.login() / session callbacks.
+   * @param overrides Per-call hooks (e.g. handlePinSubmit step timer).
+   */
+  function sessionCb(overrides: Partial<import('$lib/composables/session/sessionTypes').ChatSessionCallbacks> = {}) {
+    const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
@@ -390,7 +401,12 @@
       },
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
+      onMlsReady: () => {
+        dismissAuthPrompts();
+        overrides.onMlsReady?.();
+      },
     };
+    return { ...base, ...overrides, onMlsReady: base.onMlsReady };
   }
 
   // ── Post-login : chargement des canaux ─────────────────────────────────
@@ -450,12 +466,14 @@
         // set up), skip straight to PIN to avoid a confusing OS error dialog.
         const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
         if (biometricAvailable) {
-          // Show the sheet as backdrop then immediately trigger the OS biometric prompt —
-          // no click needed. The sheet stays visible until auth completes or fails.
+          // Sheet backdrop for the OS prompt; dismissed via onMlsReady as soon as MLS unlocks.
           showBiometricSheet = true;
           globalSession.isLoginInProgress = false;
-          await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
-          showBiometricSheet = false;
+          await globalSession.biometricLogin({
+            ...sessionCb(),
+            onLoginFailed: onSavedPinFailed,
+          });
+          dismissAuthPrompts();
         }
         if (!globalSession.isLoggedIn) {
           // Biométrie annulée, échouée ou non disponible → fallback modal PIN
@@ -595,17 +613,18 @@
   async function handleBiometricFromModal() {
     pinError = '';
     pinLoading = true;
-    await globalSession.biometricLogin({
-      ...sessionCb(),
-      onLoginFailed: (msg: string) => {
-        pinError = msg;
-        pinLoading = false;
-        void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
-      },
-    });
+    await globalSession.biometricLogin(
+      sessionCb({
+        onLoginFailed: (msg: string) => {
+          pinError = msg;
+          pinLoading = false;
+          void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
+        },
+      })
+    );
     pinLoading = false;
     if (globalSession.isLoggedIn) {
-      showPinModal = false;
+      dismissAuthPrompts();
     } else if (!pinError) {
       pinError = "L'empreinte digitale a échoué. Entrez votre PIN.";
     }
@@ -624,22 +643,20 @@
       if (pinLoading) pinStep = 'Chargement MLS…';
     }, 800);
 
-    void globalSession.login({
-      ...sessionCb(),
-      onMlsReady: () => {
-        clearTimeout(stepTimer);
-        showPinModal = false;
-        pinLoading = false;
-        pinStep = '';
-      },
-      onLoginFailed: (msg: string) => {
-        clearTimeout(stepTimer);
-        pinError = msg;
-        pinLoading = false;
-        pinStep = '';
-        void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
-      },
-    });
+    void globalSession.login(
+      sessionCb({
+        onMlsReady: () => {
+          clearTimeout(stepTimer);
+        },
+        onLoginFailed: (msg: string) => {
+          clearTimeout(stepTimer);
+          pinError = msg;
+          pinLoading = false;
+          pinStep = '';
+          void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
+        },
+      })
+    );
   }
 
   /**

@@ -296,6 +296,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     ctx.setIsLoggedIn(true);
     saveUserLocally({ id: ctx.getUserId(), admin: isGlobalAdmin() });
+    ctx.setIsMessagingInitializing(true);
+    cb.log('[INIT] MLS prêt — synchronisation messagerie en arrière-plan.');
     cb.onMlsReady?.();
 
     // Fire-and-forget : savePin est indépendant du chargement des conversations.
@@ -608,6 +610,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
   } finally {
     ctx.setIsLoginInProgress(false);
+    ctx.setIsMessagingInitializing(false);
   }
 }
 
@@ -776,6 +779,7 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.setTabLeaderSessionCb(null);
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);
+  ctx.setIsMessagingInitializing(false);
   cb.conversations.clear();
   cb.setSelectedContact(null);
   ctx.setStorage(null);
