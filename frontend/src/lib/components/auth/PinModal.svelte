@@ -25,6 +25,18 @@
      * Shows a "choose and save your PIN" message instead of the standard unlock message.
      */
     isFirstSetup?: boolean;
+    /**
+     * Called when the user confirms a "forgot PIN" reset. When provided, the modal
+     * offers a reset option that wipes the PIN-protected messaging state (keeping the
+     * account) instead of only pointing to full account deletion. Omit to hide it.
+     */
+    onForgotPinReset?: () => void;
+    /**
+     * Called when the user chooses to recover after the PIN was changed on another device.
+     * Provided by the parent only when recovery is applicable (a mismatch occurred and a
+     * local MLS state exists). When set, a "PIN changed elsewhere → recover" link is shown.
+     */
+    onRecoverPin?: () => void;
   }
 
   let {
@@ -37,11 +49,15 @@
     isLoading = false,
     isFirstSetup = false,
     loadingStep = '',
+    onForgotPinReset,
+    onRecoverPin,
   }: Props = $props();
 
   let pin = $state('');
   let internalError = $state('');
   let showForgotPin = $state(false);
+  // Two-step guard so a single tap never triggers the destructive PIN reset.
+  let confirmReset = $state(false);
   // Default to numpad on touch devices, keyboard input on desktop.
   let useNumpad = $state(true);
   onMount(() => {
@@ -132,7 +148,7 @@
 
       <!-- Numeric keypad -->
       <div class="grid grid-cols-3 gap-2.5" aria-label="Clavier numérique">
-        {#each ['1','2','3','4','5','6','7','8','9','','0','⌫'] as key (key)}
+        {#each ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'] as key (key)}
           {#if key === ''}
             <span></span>
           {:else}
@@ -149,8 +165,8 @@
               }}
               class="h-14 rounded-2xl text-xl font-semibold text-text-main transition-all active:scale-95 disabled:opacity-50
                 {key === '⌫'
-                  ? 'bg-black/5 dark:bg-white/10 text-base'
-                  : 'bg-black/5 dark:bg-white/8 hover:bg-black/10 dark:hover:bg-white/15'}"
+                ? 'bg-black/5 dark:bg-white/10 text-base'
+                : 'bg-black/5 dark:bg-white/8 hover:bg-black/10 dark:hover:bg-white/15'}"
             >
               {key}
             </button>
@@ -159,12 +175,17 @@
       </div>
 
       <p class="text-xs text-text-muted text-center">
-        {isFirstSetup ? 'Au moins 4 chiffres.' : 'Entrez le PIN choisi lors de votre première connexion.'}
+        {isFirstSetup
+          ? 'Au moins 4 chiffres.'
+          : 'Entrez le PIN choisi lors de votre première connexion.'}
         <button
           type="button"
-          onclick={() => { pin = ''; useNumpad = false; }}
-          class="ml-1 underline hover:text-text-main transition-colors"
-        >Saisie manuelle</button>
+          onclick={() => {
+            pin = '';
+            useNumpad = false;
+          }}
+          class="ml-1 underline hover:text-text-main transition-colors">Saisie manuelle</button
+        >
       </p>
     {:else}
       <!-- Text input fallback (alphanumeric PINs) -->
@@ -175,18 +196,25 @@
           type="password"
           autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
           bind:value={pin}
-          oninput={() => { internalError = ''; }}
+          oninput={() => {
+            internalError = '';
+          }}
           disabled={isLoading}
           placeholder="••••••"
           class="w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3.5 text-center text-2xl tracking-[0.4em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50"
         />
         <p class="text-xs text-text-muted text-center">
-          {isFirstSetup ? 'Au moins 4 chiffres ou caractères de votre choix.' : 'Entrez le PIN choisi lors de votre première connexion.'}
+          {isFirstSetup
+            ? 'Au moins 4 chiffres ou caractères de votre choix.'
+            : 'Entrez le PIN choisi lors de votre première connexion.'}
           <button
             type="button"
-            onclick={() => { pin = ''; useNumpad = true; }}
-            class="ml-1 underline hover:text-text-main transition-colors"
-          >Clavier numérique</button>
+            onclick={() => {
+              pin = '';
+              useNumpad = true;
+            }}
+            class="ml-1 underline hover:text-text-main transition-colors">Clavier numérique</button
+          >
         </p>
         {#if displayError}
           <p class="text-sm text-red-500 font-medium text-center">{displayError}</p>
@@ -209,6 +237,18 @@
       {/if}
     </button>
 
+    <!-- PIN changed on another device → recover messages (shown only when applicable) -->
+    {#if !isFirstSetup && onRecoverPin && displayError}
+      <button
+        type="button"
+        disabled={isLoading}
+        onclick={() => onRecoverPin?.()}
+        class="w-full text-xs font-semibold text-cn-yellow hover:underline text-center disabled:opacity-50"
+      >
+        Mon PIN a changé sur un autre appareil → Récupérer mes messages
+      </button>
+    {/if}
+
     <!-- Forgot PIN section (only for returning users) -->
     {#if !isFirstSetup}
       <div class="border-t border-cn-border/30 pt-4">
@@ -221,21 +261,53 @@
         </button>
 
         {#if showForgotPin}
-          <div class="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 space-y-2">
+          <div class="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 space-y-3">
             <div class="flex items-start gap-2">
               <AlertTriangle size={16} class="text-red-500 shrink-0 mt-0.5" />
               <p class="text-xs text-text-muted leading-relaxed">
                 Le PIN n'est <strong class="text-text-main">jamais stocké sur nos serveurs</strong>
-                - il est impossible à récupérer. Si vous l'avez oublié, la seule option est de
-                <strong class="text-text-main">supprimer votre compte</strong> et d'en créer un nouveau.
+                - il est impossible à récupérer.
               </p>
             </div>
+
+            {#if onForgotPinReset}
+              <p class="text-xs text-text-muted leading-relaxed">
+                <strong class="text-text-main">Réinitialiser votre PIN</strong> conserve votre
+                compte, vos publications et la communauté, mais
+                <strong class="text-text-main"
+                  >efface définitivement l'historique de vos messages chiffrés</strong
+                >. Vous serez ré-invité à vos conversations.
+              </p>
+              {#if confirmReset}
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onclick={() => {
+                    confirmReset = false;
+                    onForgotPinReset?.();
+                  }}
+                  class="block w-full text-center text-xs font-bold text-white bg-red-500 hover:bg-red-600 transition-colors py-2 rounded-lg disabled:opacity-50"
+                >
+                  Confirmer - effacer mes messages et réinitialiser
+                </button>
+              {:else}
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onclick={() => (confirmReset = true)}
+                  class="block w-full text-center text-xs font-semibold text-red-500 hover:text-red-400 transition-colors py-1.5 rounded-lg border border-red-500/30 hover:border-red-400/40 hover:bg-red-500/5 disabled:opacity-50"
+                >
+                  Réinitialiser mon PIN
+                </button>
+              {/if}
+            {/if}
+
             <a
               href="/profile"
               onclick={() => onClose?.()}
-              class="block w-full text-center text-xs font-semibold text-red-500 hover:text-red-400 transition-colors py-1.5 rounded-lg border border-red-500/30 hover:border-red-400/40 hover:bg-red-500/5"
+              class="block w-full text-center text-xs font-medium text-text-muted hover:text-text-main transition-colors py-1.5"
             >
-              Aller à la suppression de compte →
+              Ou supprimer définitivement mon compte →
             </a>
           </div>
         {/if}

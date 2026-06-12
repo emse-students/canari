@@ -125,6 +125,49 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract _initImpl(userId: string, pin: string, state?: Uint8Array): Promise<void>;
 
   /**
+   * Platform-specific decrypt + client init for a given PIN and (optional) saved state.
+   * Throws on a wrong PIN / unusable state - and unlike {@link _initImpl} performs NO
+   * fresh-start fallback, so callers can probe a candidate PIN non-destructively.
+   * `this.userId` and `this.deviceId` must already be resolved.
+   */
+  protected abstract loadStateWithPin(pin: string, state?: Uint8Array): Promise<void>;
+
+  /**
+   * Forgot-PIN-elsewhere recovery: the account PIN was changed on another device, so this
+   * device's local state is still sealed under the OLD pin. Decrypts it with `oldPin`
+   * (non-destructively - no fresh-start, device id untouched) then re-encrypts it under
+   * `newPin` via {@link changePIN}, preserving all local messages. Marks the client as
+   * initialised so a following {@link init}/login reuses it instead of re-decrypting.
+   *
+   * Returns `false` when `oldPin` does not decrypt the local state (so the caller can show
+   * an "ancien PIN incorrect" error); `true` on success.
+   */
+  async recoverAndRekey(
+    userId: string,
+    oldPin: string,
+    newPin: string,
+    state: Uint8Array
+  ): Promise<boolean> {
+    this.userId = userId;
+    this.delivery.userId = userId;
+    await this.resolveDeviceId(userId);
+    try {
+      await this.loadStateWithPin(oldPin, state);
+    } catch (e) {
+      console.warn(
+        '[MLS] recoverAndRekey: old PIN did not decrypt local state:',
+        String(e).slice(0, 160)
+      );
+      return false;
+    }
+    await this.changePIN(newPin);
+    // The client is already decrypted in memory and the persisted blob is now re-encrypted
+    // under newPin; short-circuit init() so the subsequent login reuses this exact client.
+    this.initPromise = Promise.resolve();
+    return true;
+  }
+
+  /**
    * Removes shared event listeners and clears the heartbeat timer.
    * Calls {@link destroyPlatformResources} for subclass-specific teardown.
    */

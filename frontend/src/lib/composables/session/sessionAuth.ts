@@ -9,6 +9,7 @@ import { goto } from '$app/navigation';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
+import { applyNewPinLocally } from '$lib/utils/chat/pinChange';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
@@ -645,12 +646,87 @@ export async function biometricLoginImpl(
     cb.log('[BIOMETRIE] PIN récupéré via biométrie - appel login()');
     ctx.setUserId(savedUser);
     ctx.setPin(retrieved);
-    await loginImpl(ctx, cb);
+
+    // Capture a PIN-mismatch failure: the keystore holds a stale PIN (e.g. the PIN
+    // was changed on another device). Disable biometric so the user re-enters the
+    // new PIN and re-enrols, instead of the fingerprint failing on every attempt.
+    let failMsg = '';
+    await loginImpl(ctx, {
+      ...cb,
+      onLoginFailed: (msg: string) => {
+        failMsg = msg;
+        cb.onLoginFailed?.(msg);
+      },
+    });
+    if (failMsg && /PIN incorrect/i.test(failMsg)) {
+      await BiometricService.disable().catch(() => {});
+      cb.log('[BIOMETRIE] PIN obsolète détecté - empreinte désactivée, ré-enrôlement requis.');
+    }
   } catch (e) {
     ctx.setLoginError('Echec de la biometrie. Entrez votre PIN manuellement.');
     cb.log(`[BIOMETRIE] Exception: ${e instanceof Error ? e.message : String(e)}`);
     console.error(e);
   }
+}
+
+/**
+ * "PIN changed on another device" recovery. The account PIN was rotated elsewhere, so
+ * this device's local MLS state is still sealed under the OLD pin while the server now
+ * expects the NEW one. Decrypts the local state with `oldPin` (non-destructively),
+ * re-encrypts it under `newPin` (reusing changePIN), then logs in normally - preserving
+ * every local message instead of falling back to a fresh-start.
+ *
+ * Throws a user-facing message when the new PIN is wrong, the old PIN does not decrypt
+ * the local state, or there is no local state to recover.
+ */
+export async function recoverPinImpl(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  oldPin: string,
+  newPin: string
+): Promise<void> {
+  const userId = ctx.getUserId();
+  if (!userId.trim()) throw new Error('Aucun utilisateur connecté.');
+  cb.log('[PIN_RECOVER] Démarrage de la récupération…');
+
+  const { loadMlsState } = await import('$lib/utils/hex');
+  const state = await loadMlsState(userId);
+  if (!state) {
+    throw new Error('Aucun état local à récupérer sur cet appareil.');
+  }
+
+  // The new PIN must be the real (rotated) account PIN: verify its verifier server-side.
+  const newVerifier = await computePinVerifier(userId, newPin);
+  const token = await getToken();
+  const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ userId, verifier: newVerifier }),
+  });
+  if (!res.ok) throw new Error('Impossible de vérifier le nouveau PIN (serveur inaccessible).');
+  const data = (await res.json()) as { status: string };
+  if (data.status !== 'ok') {
+    throw new Error('Le nouveau PIN est incorrect.');
+  }
+
+  // Non-destructively decrypt local state with the old PIN, then re-encrypt under the new.
+  const mls = ctx.ensureMls();
+  const ok = await mls.recoverAndRekey(userId, oldPin, newPin, state);
+  if (!ok) {
+    throw new Error("L'ancien PIN est incorrect (il ne déchiffre pas cet appareil).");
+  }
+  cb.log('[PIN_RECOVER] État local re-chiffré avec le nouveau PIN.');
+
+  await applyNewPinLocally(newPin, cb.log);
+  ctx.setPin(newPin);
+
+  // Continue with a normal login. init() is a no-op (recoverAndRekey already marked the
+  // client initialised), so the decrypted client is reused and all messages are kept.
+  await loginImpl(ctx, cb);
+  if (!ctx.isLoggedIn()) {
+    throw new Error('La connexion a échoué après la récupération.');
+  }
+  cb.log('[PIN_RECOVER] Terminé - messages conservés.');
 }
 
 /**

@@ -439,7 +439,7 @@ export class WebMlsService extends BaseMlsService {
     await this.resolveDeviceId(userId);
 
     try {
-      this.client = await loadAndInitWasm(userId, this.deviceId, state, pin);
+      await this.loadStateWithPin(pin, state);
     } catch (e) {
       // If init fails AND a saved state existed, the state is to blame
       // (credential mismatch, partial corruption, invalid Argon2 key…).
@@ -461,7 +461,7 @@ export class WebMlsService extends BaseMlsService {
         this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
-        this.client = await loadAndInitWasm(userId, this.deviceId, undefined, pin);
+        await this.loadStateWithPin(pin, undefined);
         this.deleteDevice(userId, oldDeviceId).catch((err) =>
           console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
         );
@@ -470,6 +470,11 @@ export class WebMlsService extends BaseMlsService {
         throw e;
       }
     }
+  }
+
+  /** WASM decrypt + client init for a given PIN/state; throws on wrong PIN (no fresh-start). */
+  protected async loadStateWithPin(pin: string, state?: Uint8Array): Promise<void> {
+    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */

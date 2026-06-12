@@ -24,6 +24,7 @@ import {
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
+  recoverPinImpl,
 } from './session/sessionAuth';
 import { dismissBiometricPromptImpl, enrollBiometricImpl } from './session/sessionBiometrics';
 import {
@@ -467,5 +468,11 @@ export function useChatSession() {
       userIdToReset: string,
       cb: import('./session/sessionTypes').ChatSessionCallbacks
     ) => resetDeviceAsFreshImpl(ctx, userIdToReset, cb),
+    /** Recovers messages after the PIN was changed on another device (old PIN → new PIN, no data loss). */
+    recoverPin: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      oldPin: string,
+      newPin: string
+    ) => recoverPinImpl(ctx, cb, oldPin, newPin),
   };
 }

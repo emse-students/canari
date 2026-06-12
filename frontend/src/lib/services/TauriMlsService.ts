@@ -357,9 +357,8 @@ export class TauriMlsService extends BaseMlsService {
     const deviceKey = `mls_device_id_${userId}`;
     await this.resolveDeviceId(userId);
 
-    const encryptedState = state ? Array.from(state) : null;
     try {
-      await invoke('initialiser_mls', { userId, deviceId: this.deviceId, pin, encryptedState });
+      await this.loadStateWithPin(pin, state);
     } catch (e) {
       // If init fails AND a saved state existed, the state is to blame
       // (credential mismatch, partial corruption, invalid Argon2 key…).
@@ -381,12 +380,7 @@ export class TauriMlsService extends BaseMlsService {
         this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
-        await invoke('initialiser_mls', {
-          userId,
-          deviceId: this.deviceId,
-          pin,
-          encryptedState: null,
-        });
+        await this.loadStateWithPin(pin, undefined);
         // Deregister the stale device from the server so other devices no longer
         // try to use its key packages when generating Welcome messages.
         // Without this, re-bootstrap sends a Welcome for the OLD key package
@@ -455,9 +449,38 @@ export class TauriMlsService extends BaseMlsService {
    * Re-encrypts the MLS state with the new PIN via the native Tauri command and updates
    * the cached PIN used for background saves. Must be called after a successful PIN change.
    */
+  /** Native decrypt + client init for a given PIN/state; throws on wrong PIN (no fresh-start). */
+  protected async loadStateWithPin(pin: string, state?: Uint8Array): Promise<void> {
+    this._pin = pin;
+    const encryptedState = state ? Array.from(state) : null;
+    await invoke('initialiser_mls', {
+      userId: this.userId,
+      deviceId: this.deviceId,
+      pin,
+      encryptedState,
+    });
+  }
+
   async changePIN(newPin: string): Promise<void> {
     this._pin = newPin;
     await this.saveState(newPin);
+
+    // Refresh the native push context so background FCM decryption and native
+    // auto-login use the new PIN. mls.bin is now re-encrypted under newPin; without
+    // this update push_context.json would keep the old PIN and background decrypts
+    // (and silent re-login) would fail until the next manual login. Mirrors init().
+    void getToken()
+      .then((pushToken: string) =>
+        invoke('store_push_context', {
+          pin: newPin,
+          userId: this.userId,
+          deviceId: this.deviceId,
+          baseUrl: this.historyUrl,
+          pushToken,
+        })
+      )
+      .catch((e) => console.warn('[MLS][Tauri] push_context refresh after PIN change failed:', e));
+
     console.log('[MLS][Tauri] PIN changed - state re-encrypted and persisted.');
   }
 

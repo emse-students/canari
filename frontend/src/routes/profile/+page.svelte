@@ -45,6 +45,14 @@
     ChevronRight,
     Building2,
     Users,
+    Shield,
+    KeyRound,
+    Smartphone,
+    Monitor,
+    Upload,
+    Download,
+    ScanLine,
+    RefreshCw,
   } from '@lucide/svelte';
 
   async function changeProfilePhoto() {
@@ -54,6 +62,17 @@
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import {
+    globalSession as session,
+    globalConvs as convs,
+    appendLog,
+  } from '$lib/stores/globalChatSingleton.svelte';
+  import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
+  import SyncSessionModal from '$lib/components/chat/SyncSessionModal.svelte';
+  import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
+  import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
+  import { performPinChange } from '$lib/utils/chat/pinChange';
+  import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -65,6 +84,103 @@
   let loading = $state(true);
   let error = $state('');
   let isTouchDevice = $state(false);
+
+  // ── Sécurité & appareils + Synchronisation ────────────────────────────────
+  const sync = useSyncSession();
+  let showDevicePanel = $state(false);
+  let showChangePinModal = $state(false);
+  let changePinError = $state('');
+  let changePinLoading = $state(false);
+  let changePinSuccess = $state('');
+  let pendingInvitationCount = $state(0);
+  let fileInput: HTMLInputElement | undefined = $state();
+
+  function syncCtx() {
+    return {
+      historyBaseUrl: session.historyBaseUrl,
+      userId: session.userId,
+      myDeviceId: session.myDeviceId,
+      pin: session.pin,
+      storage: session.storage,
+      log: appendLog,
+      loadExistingConversations: async () => {},
+      processDeviceInvitationsLocally: async () => {},
+    };
+  }
+
+  function triggerImport() {
+    fileInput?.click();
+  }
+
+  function handleFileChange(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (file) {
+      session.handleImport(
+        file,
+        appendLog,
+        () => convs.conversations.clear(),
+        async () => {}
+      );
+      input.value = '';
+    }
+  }
+
+  async function handleChangePin(currentPin: string, newPin: string) {
+    changePinError = '';
+    changePinLoading = true;
+    try {
+      await performPinChange(
+        {
+          userId: session.userId,
+          mlsService: session.ensureMls(),
+          setPin: (p: string) => (session.pin = p),
+          log: appendLog,
+        },
+        currentPin,
+        newPin
+      );
+      showChangePinModal = false;
+      changePinSuccess =
+        'PIN modifié. Vos autres appareils devront se reconnecter avec le nouveau PIN.';
+    } catch (e) {
+      changePinError = e instanceof Error ? e.message : String(e);
+    } finally {
+      changePinLoading = false;
+    }
+  }
+
+  // Pending-invitation badge for the device panel (polls the current device's memberships).
+  $effect(() => {
+    if (!session.isLoggedIn || !session.myDeviceId) return;
+    const userId = session.userId;
+    const deviceId = session.myDeviceId;
+    let cancelled = false;
+    async function poll() {
+      if (cancelled) return;
+      try {
+        const memberships = await session.ensureMls().getDeviceMemberships(userId, deviceId);
+        if (!cancelled) {
+          pendingInvitationCount = memberships.filter((m) => m.status === 'pending').length;
+        }
+      } catch {
+        // MLS not ready yet
+      }
+    }
+    const cleanup = createPausableInterval(() => void poll(), 30_000);
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  });
+
+  // Auto-clear the PIN-change success banner.
+  $effect(() => {
+    if (changePinSuccess) {
+      const t = setTimeout(() => (changePinSuccess = ''), 6000);
+      return () => clearTimeout(t);
+    }
+  });
 
   // Bio state
   let editingBio = $state(false);
@@ -219,7 +335,13 @@
   }
 
   async function handleDeletePaymentMethod(id: string) {
-    if (!await showConfirm('Supprimer cette carte bancaire ?', { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (
+      !(await showConfirm('Supprimer cette carte bancaire ?', {
+        danger: true,
+        confirmLabel: 'Supprimer',
+      }))
+    )
+      return;
     try {
       await deletePaymentMethod(id);
       paymentMethods = paymentMethods.filter((m) => m.id !== id);
@@ -294,7 +416,9 @@
       class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
     >
       <div class="relative w-24 h-24 sm:w-28 sm:h-28 flex-shrink-0">
-        <div class="w-full h-full shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full overflow-hidden">
+        <div
+          class="w-full h-full shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full overflow-hidden"
+        >
           <Avatar userId={profile.id} fill shape="circle" />
         </div>
         <button
@@ -414,7 +538,7 @@
           Annuaire
         </a>
       </div>
-      <ProfileAssociationsSection memberships={memberships} loading={membershipsLoading} />
+      <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
     </div>
 
     <!-- Section Parcours associatif -->
@@ -422,7 +546,12 @@
       class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
       style="animation-fill-mode: backwards;"
     >
-      <h2 class="text-lg font-extrabold text-text-main mb-5">Parcours associatif</h2>
+      <div class="flex items-center gap-2.5 mb-5">
+        <h2 class="text-lg font-extrabold text-text-main">Parcours associatif</h2>
+        {#if roleHistoryLoading}
+          <Loader2 size={16} class="animate-spin text-amber-500" />
+        {/if}
+      </div>
       <ProfileRoleHistorySection
         entries={roleHistory}
         editable={true}
@@ -510,9 +639,7 @@
             aria-label="Activer ou désactiver les bruitages"
             onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
             class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-              {settings.soundsEnabled
-              ? 'bg-amber-500'
-              : 'bg-black/20 dark:bg-white/15'}"
+              {settings.soundsEnabled ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
               class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -545,9 +672,7 @@
               aria-label="Activer ou désactiver les vibrations"
               onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
               class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-                {settings.vibrationsEnabled
-                ? 'bg-amber-500'
-                : 'bg-black/20 dark:bg-white/15'}"
+                {settings.vibrationsEnabled ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/15'}"
             >
               <span
                 class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -580,9 +705,7 @@
             aria-label="Activer ou désactiver le mode sombre"
             onclick={() => themeStore.toggle()}
             class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-              {themeStore.isDark
-              ? 'bg-amber-500'
-              : 'bg-black/20 dark:bg-white/15'}"
+              {themeStore.isDark ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
               class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -591,6 +714,167 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- Section Sécurité & appareils -->
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      style="animation-fill-mode: backwards;"
+    >
+      <div class="flex items-center gap-3 mb-6">
+        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <Shield size={22} strokeWidth={2.5} />
+        </div>
+        <h2 class="text-lg font-extrabold text-text-main">Sécurité &amp; appareils</h2>
+      </div>
+
+      {#if changePinSuccess}
+        <div
+          transition:slide={{ duration: 200 }}
+          class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-5 shadow-inner"
+        >
+          <CheckCircle2 size={20} class="shrink-0" />
+          {changePinSuccess}
+        </div>
+      {/if}
+
+      {#if session.isLoggedIn}
+        <div class="space-y-4">
+          <div
+            class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          >
+            <div class="flex items-center gap-3.5 min-w-0">
+              <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+                <KeyRound size={20} strokeWidth={2.5} />
+              </div>
+              <div class="min-w-0">
+                <p class="text-sm font-bold text-text-main">Code PIN de chiffrement</p>
+                <p class="text-xs font-medium text-text-muted mt-0.5">
+                  Modifiez le PIN qui protège vos messages chiffrés de bout en bout
+                </p>
+              </div>
+            </div>
+            <button
+              onclick={() => {
+                changePinError = '';
+                showChangePinModal = true;
+              }}
+              class="shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+            >
+              <KeyRound size={16} strokeWidth={2.5} />
+              <span class="hidden sm:inline">Changer</span>
+            </button>
+          </div>
+
+          <div
+            class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          >
+            <div class="flex items-center gap-3.5 min-w-0">
+              <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+                <Monitor size={20} strokeWidth={2.5} />
+              </div>
+              <div class="min-w-0">
+                <p class="text-sm font-bold text-text-main">Appareils connectés</p>
+                <p class="text-xs font-medium text-text-muted mt-0.5">
+                  Renommez ou révoquez les appareils liés à votre compte
+                </p>
+              </div>
+            </div>
+            <button
+              onclick={() => (showDevicePanel = true)}
+              class="relative shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+            >
+              <Monitor size={16} strokeWidth={2.5} />
+              <span class="hidden sm:inline">Gérer</span>
+              {#if pendingInvitationCount > 0}
+                <span
+                  class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center px-1 shadow"
+                >
+                  {pendingInvitationCount > 99 ? '99+' : pendingInvitationCount}
+                </span>
+              {/if}
+            </button>
+          </div>
+        </div>
+      {:else}
+        <p class="text-sm text-text-muted leading-relaxed">
+          Déverrouillez la messagerie (saisie de votre PIN) pour gérer votre sécurité et vos
+          appareils.
+        </p>
+      {/if}
+    </div>
+
+    <!-- Section Sauvegarde & synchronisation -->
+    <div
+      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      style="animation-fill-mode: backwards;"
+    >
+      <div class="flex items-center gap-3 mb-2">
+        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <RefreshCw size={22} strokeWidth={2.5} />
+        </div>
+        <h2 class="text-lg font-extrabold text-text-main">Sauvegarde &amp; synchronisation</h2>
+      </div>
+      <p class="text-xs font-medium text-text-muted mb-6 sm:pl-[3.75rem] leading-relaxed">
+        Transférez vos conversations vers un autre appareil (QR) ou sauvegardez-les dans un fichier
+        chiffré <code class="font-mono">.canari</code>.
+      </p>
+
+      {#if session.isLoggedIn}
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <button
+            type="button"
+            onclick={() => sync.handleStartSyncSession(syncCtx())}
+            disabled={sync.isSyncSessionBusy}
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            title="Démarrer une synchronisation QR"
+          >
+            <ScanLine size={22} class="text-text-muted" />
+            <span class="text-sm font-bold text-text-main">Transférer</span>
+            <span class="text-[0.7rem] text-text-muted">Afficher le QR</span>
+          </button>
+
+          <button
+            type="button"
+            onclick={() => sync.openJoinSyncModal()}
+            disabled={sync.isSyncSessionBusy}
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            title="Rejoindre une synchronisation QR"
+          >
+            <Smartphone size={22} class="text-text-muted" />
+            <span class="text-sm font-bold text-text-main">Scanner</span>
+            <span class="text-[0.7rem] text-text-muted">Scanner un QR</span>
+          </button>
+
+          <button
+            type="button"
+            onclick={triggerImport}
+            disabled={session.isImporting}
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            title="Importer une sauvegarde (.canari)"
+          >
+            <Upload size={22} class="text-text-muted" />
+            <span class="text-sm font-bold text-text-main">Importer</span>
+            <span class="text-[0.7rem] text-text-muted">Restaurer</span>
+          </button>
+
+          <button
+            type="button"
+            onclick={() => session.handleExport(appendLog)}
+            disabled={session.isExporting}
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            title="Exporter les conversations"
+          >
+            <Download size={22} class="text-text-muted" />
+            <span class="text-sm font-bold text-text-main">Exporter</span>
+            <span class="text-[0.7rem] text-text-muted">Sauvegarder</span>
+          </button>
+        </div>
+      {:else}
+        <p class="text-sm text-text-muted leading-relaxed">
+          Déverrouillez la messagerie pour synchroniser ou sauvegarder vos conversations.
+        </p>
+      {/if}
     </div>
 
     <!-- Section Paiements -->
@@ -746,9 +1030,7 @@
           Chargement…
         </div>
       {:else if activeTags.length === 0}
-        <p class="text-sm text-text-muted mb-4">
-          Aucune cotisation active pour le moment.
-        </p>
+        <p class="text-sm text-text-muted mb-4">Aucune cotisation active pour le moment.</p>
       {:else}
         <ul class="space-y-2 mb-4">
           {#each activeTags as tag (tag.id)}
@@ -865,3 +1147,44 @@
     </div>
   {/if}
 </div>
+
+<!-- Outillage sécurité / synchronisation (hors du flux conditionnel pour rester monté) -->
+<input
+  bind:this={fileInput}
+  type="file"
+  accept=".canari"
+  class="hidden"
+  onchange={handleFileChange}
+/>
+
+<ChangePinModal
+  open={showChangePinModal}
+  onSubmit={handleChangePin}
+  onClose={() => (showChangePinModal = false)}
+  externalError={changePinError}
+  isLoading={changePinLoading}
+/>
+
+<SyncSessionModal
+  isOpen={sync.isSyncSessionOpen}
+  mode={sync.syncMode}
+  qrPayload={sync.syncQrPayloadText}
+  qrDataUrl={sync.syncQrDataUrl}
+  joinPayload={sync.syncJoinPayload}
+  statusText={sync.syncStatusText}
+  isBusy={sync.isSyncSessionBusy}
+  onJoinPayloadChange={(value: string) => (sync.syncJoinPayload = value)}
+  onConfirmJoin={() => sync.handleConfirmJoinSync(syncCtx())}
+  onCopyPayload={sync.copySyncPayload}
+  onClose={sync.closeModal}
+/>
+
+{#if session.isLoggedIn}
+  <DeviceManagementPanel
+    open={showDevicePanel}
+    userId={session.userId}
+    myDeviceId={session.myDeviceId}
+    mlsService={session.ensureMls()}
+    onClose={() => (showDevicePanel = false)}
+  />
+{/if}

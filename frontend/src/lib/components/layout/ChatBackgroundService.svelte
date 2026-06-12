@@ -27,6 +27,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import PinModal from '$lib/components/auth/PinModal.svelte';
+  import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import BiometricBottomSheet from '$lib/components/auth/BiometricBottomSheet.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
@@ -101,6 +102,57 @@
   let pinStep = $state('');
   let biometricConfigured = $state(false);
 
+  // "PIN changed on another device" recovery (offered on a mismatch when local state exists).
+  let canRecoverPin = $state(false);
+  let showRecoverModal = $state(false);
+  let recoverError = $state('');
+  let recoverLoading = $state(false);
+
+  /** Enables the recovery link only when the failure is a PIN mismatch AND a local MLS state exists. */
+  async function evaluateRecoverable(uid: string, msg: string) {
+    if (!uid || !/PIN incorrect/i.test(msg)) {
+      canRecoverPin = false;
+      return;
+    }
+    try {
+      const { loadMlsState } = await import('$lib/utils/hex');
+      canRecoverPin = !!(await loadMlsState(uid));
+    } catch {
+      canRecoverPin = false;
+    }
+  }
+
+  /** Opens the recovery modal (old PIN → new PIN, no data loss). */
+  function handleOpenRecover() {
+    recoverError = '';
+    showRecoverModal = true;
+  }
+
+  /** Runs the cross-device PIN recovery, then closes the modals on success. */
+  async function handleRecoverSubmit(oldPin: string, newPin: string) {
+    recoverError = '';
+    recoverLoading = true;
+    let failMsg = '';
+    try {
+      await globalSession.recoverPin(
+        { ...sessionCb(), onLoginFailed: (m: string) => (failMsg = m), onMlsReady: () => {} },
+        oldPin,
+        newPin
+      );
+      if (!globalSession.isLoggedIn) {
+        throw new Error(failMsg || 'Échec de la connexion après récupération.');
+      }
+      showRecoverModal = false;
+      showPinModal = false;
+      canRecoverPin = false;
+      pinError = '';
+    } catch (e) {
+      recoverError = e instanceof Error ? e.message : String(e);
+    } finally {
+      recoverLoading = false;
+    }
+  }
+
   let showBiometricSheet = $state(false);
 
   function onBiometricSkip() {
@@ -130,23 +182,26 @@
     pinError = msg;
     isFirstPinSetup = false;
     showPinModal = true;
+    void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
   }
 
   /**
-   * Returns true only if the user has zero MLS devices on the server - i.e. a genuinely
-   * new account that has never registered a device anywhere. Defaults to false on any
-   * network/auth failure so that users with an existing PIN on another device are never
-   * shown the "first setup" wording by mistake.
+   * Returns true only when the user has never registered a PIN (no PinVerifier row
+   * server-side) - the genuine "first setup" case. This is the source of truth, unlike
+   * a device-count check which wrongly reports "first setup" for a user whose devices
+   * were all revoked/GC'd but who still has a registered PIN (picking a new PIN would
+   * then fail the verifier with a confusing mismatch). Defaults to false on any
+   * network/auth failure so the "first setup" wording is never shown by mistake.
    */
   async function detectFirstPinSetup(uid: string): Promise<boolean> {
     try {
       const token = await getToken();
-      const res = await fetch(`/api/mls/devices/${encodeURIComponent(uid)}`, {
+      const res = await fetch(`/api/mls/security/pin-status/${encodeURIComponent(uid)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return false;
-      const devices: unknown[] = await res.json();
-      return devices.length === 0;
+      const { registered } = (await res.json()) as { registered: boolean };
+      return !registered;
     } catch {
       return false;
     }
@@ -540,6 +595,7 @@
       onLoginFailed: (msg: string) => {
         pinError = msg;
         pinLoading = false;
+        void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
       },
     });
     pinLoading = false;
@@ -554,6 +610,7 @@
     pinError = '';
     pinLoading = true;
     pinStep = 'Vérification du PIN…';
+    canRecoverPin = false;
     globalSession.pin = submittedPin;
     _loginInProgress = true;
 
@@ -575,8 +632,44 @@
         pinError = msg;
         pinLoading = false;
         pinStep = '';
+        void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
       },
     });
+  }
+
+  /**
+   * "PIN oublié" reset: wipes the user's PIN-protected MLS state server-side (keeping
+   * the account, posts and community), clears local MLS state, then re-opens the modal
+   * in first-setup mode so the user chooses a new PIN. Past encrypted messages are lost.
+   */
+  async function handlePinReset() {
+    const uid = globalSession.userId || currentUserId();
+    if (!uid) return;
+    pinError = '';
+    pinLoading = true;
+    pinStep = 'Réinitialisation du PIN…';
+    appendLog(`[PIN_RESET] Démarrage pour userId=${uid.slice(0, 8)}…`);
+    try {
+      const token = await getToken();
+      const res = await fetch('/api/mls/security/pin-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId: uid }),
+      });
+      if (!res.ok) throw new Error('Échec de la réinitialisation côté serveur.');
+      // Local MLS state is encrypted under the old PIN - wipe it so a new PIN starts fresh.
+      await globalSession.resetDeviceAsFresh(uid, sessionCb());
+      appendLog('[PIN_RESET] État MLS effacé - choix d un nouveau PIN.');
+      globalSession.userId = uid;
+      isFirstPinSetup = true;
+      showPinModal = true;
+    } catch (e) {
+      pinError = e instanceof Error ? e.message : String(e);
+      appendLog(`[PIN_RESET] Échec: ${pinError}`);
+    } finally {
+      pinLoading = false;
+      pinStep = '';
+    }
   }
 
   // Safety net for navigations that arrive before onMount's startLoginFlow completes
@@ -659,6 +752,18 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
+  onForgotPinReset={handlePinReset}
+  onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
+/>
+
+<!-- Récupération après changement de PIN sur un autre appareil -->
+<ChangePinModal
+  open={showRecoverModal}
+  variant="recover"
+  onSubmit={handleRecoverSubmit}
+  onClose={() => (showRecoverModal = false)}
+  externalError={recoverError}
+  isLoading={recoverLoading}
 />
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}

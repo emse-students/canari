@@ -37,6 +37,18 @@ export interface IMlsService {
    * so the stored state remains decryptable on the next login.
    */
   changePIN(newPin: string): Promise<void>;
+  /**
+   * Forgot-PIN-elsewhere recovery: decrypts this device's local state with the OLD pin
+   * (non-destructively) then re-encrypts it under the NEW account pin, preserving all
+   * local messages. Marks the client initialised so a following login reuses it.
+   * Returns `false` if `oldPin` does not decrypt the local state.
+   */
+  recoverAndRekey(
+    userId: string,
+    oldPin: string,
+    newPin: string,
+    state: Uint8Array
+  ): Promise<boolean>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the PIN-encrypted identity key. */
   generateKeyPackage(pin: string): Promise<Uint8Array>;
   /**
