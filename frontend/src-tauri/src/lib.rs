@@ -528,6 +528,19 @@ async fn recevoir_message_bytes(
                 return Err(format!("UNRECOVERABLE:{}", group_id));
             }
 
+            // SecretReuseError = la clé de ratchet de ce message a déjà été consommée
+            // (doublon : livraison realtime + queue, ou requeue après restart). À l'inverse
+            // d'un gap de génération FUTURE, elle ne déchiffrera JAMAIS : la mettre en file
+            // SQLite la ferait boucler indéfiniment. On la traite comme un doublon bénin —
+            // Ok(None) → le frontend ACK et la supprime (parité avec le chemin WASM web).
+            if err_str.contains("SecretReuseError") {
+                log::debug!(
+                    "[DUP] SecretReuseError group={} - doublon déjà consommé, ACK silencieux",
+                    group_id
+                );
+                return Ok(None);
+            }
+
             // "Process error:" indique une erreur OpenMLS sur le même epoch →
             // probable gap du Sender Ratchet (génération future reçue).
             if err_str.contains("Process error:") {
