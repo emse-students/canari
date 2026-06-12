@@ -800,39 +800,83 @@ export function useMessaging() {
   }
 
   /**
-   * Transfère le contenu textuel d'un message vers une AUTRE conversation, sans
-   * toucher à l'état de composition courant (reply/fichiers en attente). Pour un
-   * message média, transfère sa légende ; un média sans texte n'est pas transférable.
+   * Transfère un message (texte OU média) vers une AUTRE discussion, sans toucher à
+   * l'état de composition courant (reply/fichiers en attente).
+   *
+   * Média : l'enveloppe porte déjà la référence du blob chiffré (mediaId) + la clé de
+   * déchiffrement (CEK/iv). On ré-envoie donc la MÊME enveloppe média (aucun re-upload),
+   * ce qui donne aux membres de la cible l'accès au même blob via la clé transmise.
+   * La cible est toujours une discussion (canaux exclus par le sélecteur de transfert).
    */
   async function forwardMessage(
     sourceContent: string,
     targetName: string,
     ctx: MessagingContext
   ): Promise<{ success: boolean; error?: string }> {
-    const env = parseEnvelope(sourceContent) as { text?: string; caption?: string };
-    const text = (env.text ?? env.caption ?? '').trim();
-    if (!text) return { success: false, error: 'Rien à transférer (média sans texte).' };
-
     const convo = ctx.conversations.get(targetName);
     if (!convo) return { success: false, error: 'Conversation introuvable.' };
+    if (!convo.isReady) return { success: false, error: 'Conversation non prête.' };
 
-    const isChannel = isChannelConversationId(targetName);
-    const mlsService = isChannel ? null : ctx.ensureMls();
+    const env = parseEnvelope(sourceContent);
+    const mlsService = ctx.ensureMls();
 
-    return await sendChatMessage(text, targetName, null, {
-      mlsService: isChannel ? (null as any) : mlsService!,
-      userId: ctx.userId,
-      pin: ctx.pin,
-      conversation: convo,
-      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
-        addMessageToChat(sid, content, contactName, ctx, options),
-      patchMessage: (
-        msgId: string,
-        contactName: string,
-        patch: { status: ChatMessage['status'] }
-      ) => patchMessage(msgId, contactName, patch, ctx),
-      log: ctx.log,
-    });
+    try {
+      if (env.kind === 'media') {
+        const m = env.media;
+        const kindMap: Record<string, number> = {
+          image: MediaKind.MEDIA_IMAGE,
+          video: MediaKind.MEDIA_VIDEO,
+          audio: MediaKind.MEDIA_AUDIO,
+          file: MediaKind.MEDIA_FILE,
+        };
+        const hexToBytes = (h: string) =>
+          new Uint8Array((h.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
+        const messageId = crypto.randomUUID();
+        const protoBytes = encodeAppMessage({
+          ...mkMedia({
+            kind: kindMap[m.type] ?? MediaKind.MEDIA_FILE,
+            mediaId: m.mediaId,
+            key: hexToBytes(m.key),
+            iv: hexToBytes(m.iv),
+            mimeType: m.mimeType,
+            size: m.size,
+            fileName: m.fileName ?? '',
+            caption: env.caption,
+            ...(m.width && m.height ? { width: m.width, height: m.height } : {}),
+          }),
+          messageId,
+          sentAt: Date.now(),
+        });
+        await mlsService.sendMessage(convo.id, protoBytes, messageId);
+        const stateBytes = await mlsService.saveState(ctx.pin);
+        await saveMlsState(ctx.userId, stateBytes);
+        const payload = serializeEnvelope(mkMediaEnvelope({ ...m }, env.caption));
+        await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
+        return { success: true };
+      }
+
+      const text = env.kind === 'text' ? env.text.trim() : '';
+      if (!text) return { success: false, error: 'Rien à transférer.' };
+      return await sendChatMessage(text, targetName, null, {
+        mlsService,
+        userId: ctx.userId,
+        pin: ctx.pin,
+        conversation: convo,
+        addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+          addMessageToChat(sid, content, contactName, ctx, options),
+        patchMessage: (
+          msgId: string,
+          contactName: string,
+          patch: { status: ChatMessage['status'] }
+        ) => patchMessage(msgId, contactName, patch, ctx),
+        log: ctx.log,
+      });
+    } catch (e) {
+      return {
+        success: false,
+        error: `Échec du transfert : ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
   }
 
   // ── Exposed API ───────────────────────────────────────────────────────────
