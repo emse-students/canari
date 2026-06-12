@@ -2,7 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
 import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
-import { logMlsMetric, commitBaseEpochForValidation, detectRuntimeDeviceOs } from '$lib/mls-client';
+import {
+  logMlsMetric,
+  commitBaseEpochForValidation,
+  detectRuntimeDeviceOs,
+  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  type MlsInitOptions,
+} from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { BaseMlsService } from './BaseMlsService';
@@ -345,7 +351,12 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
-  protected async _initImpl(userId: string, pin: string, state?: Uint8Array): Promise<void> {
+  protected async _initImpl(
+    userId: string,
+    pin: string,
+    state?: Uint8Array,
+    opts?: MlsInitOptions
+  ): Promise<void> {
     this.userId = userId;
     this.delivery.userId = userId;
     this._pin = pin;
@@ -368,6 +379,9 @@ export class TauriMlsService extends BaseMlsService {
       const isCredentialMismatch =
         errStr.includes('identity mismatch') || errStr.includes('Credential identity');
       if (isCredentialMismatch || state != null) {
+        // Caller wants a chance to recover (decrypt with the old PIN) before any
+        // destructive fresh-start: signal instead of discarding local history.
+        if (opts?.noFreshStart) throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         const oldDeviceId = this.deviceId; // capture before overwriting
         if (isCredentialMismatch) {
           console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');

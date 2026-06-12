@@ -2,6 +2,24 @@ import type { IncomingDeliveryMeta } from './incomingDelivery';
 
 export type { IncomingDeliveryMeta };
 
+/** Options for {@link IMlsService.init}. */
+export interface MlsInitOptions {
+  /**
+   * When true, a saved state that fails to decrypt with the given PIN is NOT discarded
+   * via the destructive fresh-start fallback; instead {@link MLS_LOCAL_STATE_UNDECRYPTABLE}
+   * is thrown so the caller can offer cross-device PIN recovery (decrypt with the old PIN)
+   * before any local history is dropped.
+   */
+  noFreshStart?: boolean;
+}
+
+/**
+ * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state
+ * cannot be decrypted with the supplied PIN - the signal that the account PIN was likely
+ * rotated on another device and recovery should be offered.
+ */
+export const MLS_LOCAL_STATE_UNDECRYPTABLE = 'MLS_LOCAL_STATE_UNDECRYPTABLE';
+
 /** Row from `GET /api/mls/users/:id/groups` (includes successor routing when soft-deleted). */
 export type UserGroupRow = {
   groupId: string;
@@ -22,7 +40,7 @@ export type GroupMeta = {
 
 export interface IMlsService {
   /** Initialises the MLS identity for the given user, decrypting stored state with the PIN. */
-  init(userId: string, pin: string, state?: Uint8Array): Promise<void>;
+  init(userId: string, pin: string, state?: Uint8Array, opts?: MlsInitOptions): Promise<void>;
   /** Creates a new local MLS group with the given ID. */
   createGroup(groupId: string): Promise<void>;
   /** Wipes any orphan OpenMLS state for groupId then creates a fresh group. */

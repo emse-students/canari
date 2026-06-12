@@ -2,7 +2,8 @@
  * `$lib/mls-client` - MLS runtime surface (types, queue policy, WASM load).
  * Import from `$lib/mls-client`; prefer not to deep-import internal paths from app code.
  */
-export type { IMlsService, GroupMeta, UserGroupRow } from './IMlsService';
+export type { IMlsService, GroupMeta, UserGroupRow, MlsInitOptions } from './IMlsService';
+export { MLS_LOCAL_STATE_UNDECRYPTABLE } from './IMlsService';
 export { loadAndInitWasm } from './mlsWasmLoader';
 export {
   shouldAckAfterSuccess,

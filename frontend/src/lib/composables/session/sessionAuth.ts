@@ -10,6 +10,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import { applyNewPinLocally } from '$lib/utils/chat/pinChange';
+import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
@@ -246,14 +247,27 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
     if (pinCheckData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
 
-    // PIN verified - now safe to decrypt the MLS state. A wrong PIN can no longer
-    // reach init() and trigger a fresh-start, so init() only fresh-starts on genuine
-    // state corruption / credential mismatch.
+    // PIN verified server-side - now decrypt the local MLS state. When a saved state
+    // exists, pass noFreshStart so an undecryptable state (the account PIN was rotated
+    // on another device → local state still sealed under the old PIN) surfaces as a
+    // recoverable signal instead of a destructive fresh-start that would drop history.
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
-      mlsService.init(ctx.getUserId(), ctx.getPin(), mlsStateResult?.bytes),
+      mlsService.init(ctx.getUserId(), ctx.getPin(), mlsStateResult?.bytes, {
+        noFreshStart: !!mlsStateResult?.bytes,
+      }),
       getStorage(ctx.getUserId()),
     ]);
-    if (mlsInitSettled.status === 'rejected') throw mlsInitSettled.reason;
+    if (mlsInitSettled.status === 'rejected') {
+      const reason = mlsInitSettled.reason;
+      const isUndecryptable =
+        reason instanceof Error && reason.message === MLS_LOCAL_STATE_UNDECRYPTABLE;
+      if (isUndecryptable) {
+        throw new Error(
+          'Votre PIN a changé sur un autre appareil. Récupérez vos messages avec votre ancien PIN.'
+        );
+      }
+      throw mlsInitSettled.reason;
+    }
     if (storageSettled.status === 'rejected') throw storageSettled.reason;
 
     ctx.setStorage(storageSettled.value);

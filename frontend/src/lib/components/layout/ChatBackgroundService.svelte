@@ -108,9 +108,14 @@
   let recoverError = $state('');
   let recoverLoading = $state(false);
 
-  /** Enables the recovery link only when the failure is a PIN mismatch AND a local MLS state exists. */
+  /**
+   * Enables the recovery link when a local MLS state exists and the failure is either a
+   * PIN mismatch (tried the old PIN) or the explicit "PIN changed on another device"
+   * signal (tried the new PIN but the local state is still sealed under the old one).
+   */
   async function evaluateRecoverable(uid: string, msg: string) {
-    if (!uid || !/PIN incorrect/i.test(msg)) {
+    const recoverable = /PIN incorrect/i.test(msg) || /changé sur un autre appareil/i.test(msg);
+    if (!uid || !recoverable) {
       canRecoverPin = false;
       return;
     }

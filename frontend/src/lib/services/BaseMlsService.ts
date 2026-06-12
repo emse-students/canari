@@ -1,4 +1,4 @@
-import type { IMlsService, GroupMeta, UserGroupRow } from '$lib/mls-client';
+import type { IMlsService, GroupMeta, UserGroupRow, MlsInitOptions } from '$lib/mls-client';
 import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
 import type { MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
@@ -115,14 +115,32 @@ export abstract class BaseMlsService implements IMlsService {
    * Initialises the MLS identity, deduplicating concurrent calls via a shared promise.
    * Delegates actual init to the platform-specific {@link _initImpl}.
    */
-  async init(userId: string, pin: string, state?: Uint8Array): Promise<void> {
+  async init(
+    userId: string,
+    pin: string,
+    state?: Uint8Array,
+    opts?: MlsInitOptions
+  ): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this._initImpl(userId, pin, state);
-    await this.initPromise;
+    const p = this._initImpl(userId, pin, state, opts);
+    this.initPromise = p;
+    try {
+      await p;
+    } catch (e) {
+      // Clear the cached promise so a failed init (e.g. undecryptable state pending
+      // recovery) can be retried instead of returning the same rejection forever.
+      this.initPromise = null;
+      throw e;
+    }
   }
 
   /** Platform-specific init body (WASM load vs Tauri invoke). */
-  protected abstract _initImpl(userId: string, pin: string, state?: Uint8Array): Promise<void>;
+  protected abstract _initImpl(
+    userId: string,
+    pin: string,
+    state?: Uint8Array,
+    opts?: MlsInitOptions
+  ): Promise<void>;
 
   /**
    * Platform-specific decrypt + client init for a given PIN and (optional) saved state.

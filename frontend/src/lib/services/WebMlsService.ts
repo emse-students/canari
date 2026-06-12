@@ -2,6 +2,8 @@ import {
   loadAndInitWasm,
   detectRuntimeDeviceOs,
   commitBaseEpochForValidation,
+  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  type MlsInitOptions,
 } from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -425,7 +427,12 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** Implementation body for init(); resolves device ID from localStorage and calls `loadAndInitWasm`, handling credential-mismatch recovery. */
-  protected async _initImpl(userId: string, pin: string, state?: Uint8Array): Promise<void> {
+  protected async _initImpl(
+    userId: string,
+    pin: string,
+    state?: Uint8Array,
+    opts?: MlsInitOptions
+  ): Promise<void> {
     this.userId = userId;
     this.delivery.userId = userId;
     this.freshStart = !state;
@@ -449,6 +456,9 @@ export class WebMlsService extends BaseMlsService {
       const isCredentialMismatch =
         errStr.includes('identity mismatch') || errStr.includes('Credential identity');
       if (isCredentialMismatch || state != null) {
+        // Caller wants a chance to recover (decrypt with the old PIN) before any
+        // destructive fresh-start: signal instead of discarding local history.
+        if (opts?.noFreshStart) throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         const oldDeviceId = this.deviceId;
         if (isCredentialMismatch) {
           console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');

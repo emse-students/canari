@@ -18,6 +18,8 @@ import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { KeyPackage } from '../entities/key-package.entity';
+import { MessagingService } from '../services/messaging.service';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
   sanitizeQueryValue,
@@ -40,7 +42,32 @@ export class SecurityController {
     private pinVerifierRepo: Repository<PinVerifier>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(KeyPackage)
+    private keyPackageRepo: Repository<KeyPackage>,
+    private readonly messagingService: MessagingService,
   ) {}
+
+  /**
+   * Authorises a PIN/security operation: the caller must be the target user
+   * themselves (matched on the Nginx-injected `x-user-id` header) or a global
+   * admin. Throws {@link ForbiddenException} otherwise.
+   */
+  private assertSelfOrGlobalAdmin(
+    targetUserId: string,
+    headerUserId?: string,
+    headerGlobalAdmin?: string,
+  ): void {
+    if (headerGlobalAdmin === 'true') return;
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (
+      !caller ||
+      caller.trim().toLowerCase() !== targetUserId.trim().toLowerCase()
+    ) {
+      throw new ForbiddenException(
+        'Operation restricted to the authenticated user',
+      );
+    }
+  }
 
   /**
    * Check (and register on first use) the PIN verifier for a user.
@@ -61,17 +88,7 @@ export class SecurityController {
     @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    if (headerGlobalAdmin !== 'true') {
-      const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-      if (
-        !caller ||
-        caller.trim().toLowerCase() !== safeUserId.trim().toLowerCase()
-      ) {
-        throw new ForbiddenException(
-          'PIN verifier check is restricted to the authenticated user',
-        );
-      }
-    }
+    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
     const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
     const safeDeviceId = sanitizeOptionalQueryValue(body.deviceId, 'deviceId');
 
@@ -121,6 +138,136 @@ export class SecurityController {
     }
 
     return { status: match ? 'ok' : 'mismatch', resetRequired };
+  }
+
+  /**
+   * Reports whether the user has ever registered a PIN (i.e. a PinVerifier row
+   * exists). This is the source of truth for "first setup": the client shows the
+   * "choose your PIN" flow only when `registered` is false. Unlike a device-count
+   * heuristic, it stays correct for a user whose devices have all been revoked or
+   * garbage-collected but who still has a registered PIN.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/security/pin-status/:userId')
+  async getPinStatus(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ): Promise<{ registered: boolean }> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    const doc = await this.pinVerifierRepo.findOne({
+      where: { userId: safeUserId },
+      select: ['id'],
+    });
+    return { registered: !!doc };
+  }
+
+  /**
+   * Updates a user's PIN verifier after an authenticated PIN change.
+   *
+   * The caller proves knowledge of the current PIN by sending its verifier
+   * (`oldVerifier`); only if it matches the stored row is it overwritten with
+   * `newVerifier`. The raw PIN is never transmitted. The actual re-encryption of
+   * the MLS state happens client-side (`changePIN`); this only rotates the
+   * account-wide verifier so the new PIN becomes the one accepted at login.
+   *
+   * Because the verifier is account-wide, other devices still holding the old PIN
+   * will get a mismatch at their next login and must re-enter the new PIN.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/security/pin-change')
+  async changePin(
+    @Body() body: { userId: string; oldVerifier: string; newVerifier: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ): Promise<{ ok: boolean }> {
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+
+    const oldVerifier = sanitizeQueryValue(body.oldVerifier, 'oldVerifier');
+    const newVerifier = sanitizeQueryValue(body.newVerifier, 'newVerifier');
+    if (
+      !/^[0-9a-f]{64}$/.test(oldVerifier) ||
+      !/^[0-9a-f]{64}$/.test(newVerifier)
+    ) {
+      throw new BadRequestException('verifier format invalid');
+    }
+
+    const doc = await this.pinVerifierRepo.findOne({
+      where: { userId: safeUserId },
+    });
+    if (!doc || typeof doc.verifier !== 'string') {
+      throw new BadRequestException('no PIN registered for this user');
+    }
+
+    const stored = Buffer.from(doc.verifier, 'hex');
+    const incoming = Buffer.from(oldVerifier, 'hex');
+    const matches =
+      stored.length === incoming.length &&
+      crypto.timingSafeEqual(stored, incoming);
+    if (!matches) {
+      throw new ForbiddenException('current PIN is incorrect');
+    }
+
+    doc.verifier = newVerifier;
+    await this.pinVerifierRepo.save(doc);
+    this.logger.log(`[PIN_CHANGE] verifier rotated for ${safeUserId}`);
+
+    return { ok: true };
+  }
+
+  /**
+   * Resets a user's PIN-protected MLS state without deleting their account.
+   *
+   * Used for the "forgot PIN" flow: the PIN is unrecoverable (never stored), so
+   * the only way back in - short of deleting the whole account - is to wipe the
+   * MLS material encrypted under the old PIN and start fresh under a new one.
+   *
+   * Scope (intentional):
+   *   - Purges every device's MLS footprint (KeyPackages, one-time prekeys, push
+   *     tokens, queued messages, Redis membership, per-device group memberships).
+   *   - Deletes the PinVerifier so the next login registers a brand-new PIN.
+   *   - Clears revocation markers so the same physical device can re-register.
+   *   - KEEPS GroupMember rows: the user stays a member of their groups/DMs and is
+   *     re-invited automatically (re-add flow) once a fresh device registers.
+   *
+   * Not affected: the account itself, social data, and community channels (which
+   * use server-assisted HKDF keys, not the PIN). Past encrypted message history is
+   * permanently lost - that is inherent to forgetting the PIN.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/security/pin-reset')
+  async resetPin(
+    @Body() body: { userId: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ): Promise<{ ok: boolean; devicesPurged: number }> {
+    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+
+    const devices = await this.keyPackageRepo.find({
+      where: { userId: safeUserId },
+      select: ['deviceId'],
+    });
+    const deviceIds = [...new Set(devices.map((d) => d.deviceId))];
+
+    let devicesPurged = 0;
+    for (const deviceId of deviceIds) {
+      await this.messagingService.purgeDeviceFootprint(safeUserId, deviceId);
+      devicesPurged++;
+    }
+
+    await Promise.all([
+      this.pinVerifierRepo.delete({ userId: safeUserId }),
+      this.revokedDeviceRepo.delete({ userId: safeUserId }),
+    ]);
+
+    this.logger.log(
+      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} (GroupMember rows kept for re-add)`,
+    );
+
+    return { ok: true, devicesPurged };
   }
 
   @Get('mls/link-preview')
