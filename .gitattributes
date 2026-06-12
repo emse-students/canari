@@ -1,0 +1,42 @@
+# Normalise les fins de ligne : LF dans le dépôt ET au checkout sur toutes les
+# plateformes. Surcharge core.autocrlf=true (Windows) qui faisait apparaître des
+# fichiers "modifiés" fantômes en CRLF et provoquait des commits groupés accidentels.
+* text=auto eol=lf
+
+# Scripts Windows : doivent rester en CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Fichiers binaires : jamais normalisés (sinon corruption).
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.avif  binary
+*.bmp   binary
+*.svg   text
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.wasm  binary
+*.jks   binary
+*.keystore binary
+*.so    binary
+*.a     binary
+*.dll   binary
+*.dylib binary
+*.jar   binary
+*.aar   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.mp3   binary
+*.mp4   binary
+*.wav   binary
+*.ogg   binary
+*.webm  binary
