@@ -59,6 +59,8 @@
     replyingTo?: ChatMessage | null;
     /** Callback fired when the user chooses to reply to a message. */
     onReply?: (message: ChatMessage) => void;
+    /** Callback fired when the user chooses to forward a message to another conversation. */
+    onForward?: (message: ChatMessage) => void;
     /** Callback to scroll/jump to a specific message by ID. */
     onNavigateToMessage?: (messageId: string) => void;
     /** Callback fired when the user adds an emoji reaction to a message. */
@@ -120,6 +122,7 @@
     messageReactions,
     replyingTo,
     onReply,
+    onForward,
     onNavigateToMessage,
     onReact,
     onDelete,
@@ -563,6 +566,7 @@
             {currentUserId}
             searchQuery={searchQuery.trim()}
             {onReply}
+            {onForward}
             onNavigateToMessage={navigateToMessage}
             {onReact}
             {onDelete}

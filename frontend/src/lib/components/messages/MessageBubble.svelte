@@ -79,6 +79,8 @@
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
     /** Called when the user triggers the reply action. */
     onReply?: (messageId: string) => void;
+    /** Called when the user triggers the forward action. */
+    onForward?: (messageId: string) => void;
     /** Called when the user clicks a quoted reply to scroll to the original message. */
     onNavigateToMessage?: (messageId: string) => void;
     /** Called when the user selects an emoji reaction. */
@@ -121,6 +123,7 @@
     isDeleted = false,
     groupPosition = 'single',
     onReply,
+    onForward,
     onNavigateToMessage,
     onReact,
     onDelete,
@@ -603,6 +606,7 @@
         {showEmojiPicker}
         forceVisible={showMobileActions && isMobile}
         onReply={onReply ? () => onReply!(messageId) : undefined}
+        onForward={onForward ? () => onForward!(messageId) : undefined}
         onToggleEmojiPicker={onReact
           ? () => {
               showEmojiPicker = !showEmojiPicker;
@@ -685,6 +689,7 @@
         showEmojiPicker = true;
       }}
       onReply={onReply && !isDeleted ? () => { onReply!(messageId); showMobileActions = false; } : undefined}
+      onForward={onForward && !isDeleted ? () => onForward!(messageId) : undefined}
       onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? () => { startInlineEdit(); showMobileActions = false; } : undefined}
       onDelete={!isDeleted && isOwn && onDelete ? () => { showDeleteModal = true; showMobileActions = false; } : undefined}
       onClose={() => { showMobileActions = false; }}

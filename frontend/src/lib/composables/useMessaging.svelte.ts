@@ -799,6 +799,42 @@ export function useMessaging() {
     replyingTo = null;
   }
 
+  /**
+   * Transfère le contenu textuel d'un message vers une AUTRE conversation, sans
+   * toucher à l'état de composition courant (reply/fichiers en attente). Pour un
+   * message média, transfère sa légende ; un média sans texte n'est pas transférable.
+   */
+  async function forwardMessage(
+    sourceContent: string,
+    targetName: string,
+    ctx: MessagingContext
+  ): Promise<{ success: boolean; error?: string }> {
+    const env = parseEnvelope(sourceContent) as { text?: string; caption?: string };
+    const text = (env.text ?? env.caption ?? '').trim();
+    if (!text) return { success: false, error: 'Rien à transférer (média sans texte).' };
+
+    const convo = ctx.conversations.get(targetName);
+    if (!convo) return { success: false, error: 'Conversation introuvable.' };
+
+    const isChannel = isChannelConversationId(targetName);
+    const mlsService = isChannel ? null : ctx.ensureMls();
+
+    return await sendChatMessage(text, targetName, null, {
+      mlsService: isChannel ? (null as any) : mlsService!,
+      userId: ctx.userId,
+      pin: ctx.pin,
+      conversation: convo,
+      addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+        addMessageToChat(sid, content, contactName, ctx, options),
+      patchMessage: (
+        msgId: string,
+        contactName: string,
+        patch: { status: ChatMessage['status'] }
+      ) => patchMessage(msgId, contactName, patch, ctx),
+      log: ctx.log,
+    });
+  }
+
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
@@ -834,6 +870,7 @@ export function useMessaging() {
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */
     handleSendChat,
+    forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
     /** Removes a staged file from the pending media queue by index. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Pencil, Trash2, SmilePlus } from '@lucide/svelte';
+  import { Reply, Forward, Pencil, Trash2, SmilePlus } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
@@ -30,6 +30,8 @@
     onOpenFullPicker?: () => void;
     /** Called when the user taps the reply button. */
     onReply?: () => void;
+    /** Called when the user taps the forward button. */
+    onForward?: () => void;
     /** Called when the user taps the edit button. */
     onEdit?: () => void;
     /** Called when the user taps the delete button. */
@@ -51,6 +53,7 @@
     onReactEmoji,
     onOpenFullPicker,
     onReply,
+    onForward,
     onEdit,
     onDelete,
     onClose,
@@ -123,6 +126,20 @@
           >
             <Reply size={20} />
             <span class="text-[10px] font-medium text-text-muted">Répondre</span>
+          </button>
+        {/if}
+
+        {#if !isDeleted && onForward}
+          <button
+            onclick={() => {
+              onForward?.();
+              onClose?.();
+            }}
+            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
+            aria-label="Transférer"
+          >
+            <Forward size={20} />
+            <span class="text-[10px] font-medium text-text-muted">Transférer</span>
           </button>
         {/if}
 

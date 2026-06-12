@@ -22,6 +22,8 @@
     messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
     /** Callback fired when the user chooses to reply to a message. */
     onReply?: (message: ChatMessage) => void;
+    /** Callback fired when the user chooses to forward a message to another conversation. */
+    onForward?: (message: ChatMessage) => void;
     /** Callback to scroll/jump to a specific message by ID. */
     onNavigateToMessage?: (messageId: string) => void;
     /** Callback fired when the user adds an emoji reaction to a message. */
@@ -48,6 +50,7 @@
     searchQuery = '',
     messageReactions,
     onReply,
+    onForward,
     onNavigateToMessage,
     onReact,
     onDelete,
@@ -192,6 +195,7 @@
             replyTo={msg.replyTo}
             {reactions}
             onReply={onReply ? () => onReply?.(msg) : undefined}
+            onForward={onForward ? () => onForward?.(msg) : undefined}
             {onReact}
             {currentUserId}
             shouldAnimate={msg.timestamp.getTime() > switchTime}
@@ -248,6 +252,7 @@
               status={msg.status}
               {groupPosition}
               onReply={onReply ? () => onReply?.(msg) : undefined}
+            onForward={onForward ? () => onForward?.(msg) : undefined}
               {onNavigateToMessage}
               {onReact}
               {onDelete}

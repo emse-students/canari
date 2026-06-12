@@ -20,7 +20,9 @@
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
   import SyncSessionModal from './chat/SyncSessionModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
+  import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
   import TabFollowerBanner from './chat/TabFollowerBanner.svelte';
+  import type { ChatMessage, Conversation } from '$lib/types';
   import { WifiOff } from '@lucide/svelte';
 
   interface Props {
@@ -65,6 +67,9 @@
   const sync = useSyncSession();
 
   let messageText = $state('');
+
+  /** Message en cours de transfert (ouvre ForwardMessageModal quand non-null). */
+  let forwardingMessage = $state<ChatMessage | null>(null);
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
 
@@ -463,6 +468,24 @@
     void messaging.handleFilesSelected(files, msgCtx());
   }
 
+  /** Opens the forward picker for a given message. */
+  function handleForward(message: ChatMessage) {
+    forwardingMessage = message;
+  }
+
+  /** Transfère le message en cours vers la conversation choisie dans la modal. */
+  async function doForward(targetKey: string, target: Conversation) {
+    const message = forwardingMessage;
+    forwardingMessage = null;
+    if (!message) return;
+    const result = await messaging.forwardMessage(message.content, targetKey, msgCtx());
+    if (result.success) {
+      showToast(`Message transféré à ${target.name}`, 'info');
+    } else {
+      showToast(result.error ?? 'Échec du transfert', 'error');
+    }
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -551,6 +574,7 @@
           messageReactions={messaging.messageReactions}
           replyingTo={messaging.replyingTo}
           onReply={messaging.handleReply}
+          onForward={isSelectedChannel ? undefined : handleForward}
           onReact={isSelectedChannel
             ? undefined
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
@@ -656,6 +680,14 @@
         onConfirmJoin={() => sync.handleConfirmJoinSync(syncCtx())}
         onCopyPayload={sync.copySyncPayload}
         onClose={sync.closeModal}
+      />
+
+      <ForwardMessageModal
+        open={!!forwardingMessage}
+        conversations={[...convs.conversations.entries()]}
+        excludeKey={convs.selectedContact}
+        onClose={() => (forwardingMessage = null)}
+        onSelect={doForward}
       />
     </main>
   </div>

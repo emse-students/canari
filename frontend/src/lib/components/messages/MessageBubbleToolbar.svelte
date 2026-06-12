@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Smile, Pencil, Trash2 } from '@lucide/svelte';
+  import { Reply, Forward, Smile, Pencil, Trash2 } from '@lucide/svelte';
 
   interface Props {
     /** When true, positions the toolbar on the right side. */
@@ -14,6 +14,8 @@
     forceVisible?: boolean;
     /** Called when the reply button is clicked. Omit to hide the button. */
     onReply?: () => void;
+    /** Called when the forward button is clicked. Omit to hide the button. */
+    onForward?: () => void;
     /** Called when the emoji/react button is clicked. Omit to hide the button. */
     onToggleEmojiPicker?: () => void;
     /** Called when the edit button is clicked. Omit to hide the button. */
@@ -29,6 +31,7 @@
     showEmojiPicker,
     forceVisible = false,
     onReply,
+    onForward,
     onToggleEmojiPicker,
     onEdit,
     onDelete,
@@ -54,6 +57,19 @@
       title="Répondre"
     >
       <Reply size={16} />
+    </button>
+  {/if}
+  {#if !isDeleted && onForward}
+    <button
+      onclick={(e) => {
+        e.stopPropagation();
+        onForward?.();
+      }}
+      class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
+      aria-label="Transférer"
+      title="Transférer"
+    >
+      <Forward size={16} />
     </button>
   {/if}
   {#if onToggleEmojiPicker}
