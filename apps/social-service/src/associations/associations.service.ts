@@ -942,6 +942,8 @@ export class AssociationsService {
       .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
+      .addSelect('a.color', 'associationColor')
+      .addSelect('a.logoUrl', 'associationLogoUrl')
       .getRawMany();
 
     return rows.map((r: Record<string, unknown>) => {
@@ -969,6 +971,8 @@ export class AssociationsService {
         ...base,
         associationName: this.rawQueryString(r.associationName),
         associationSlug: this.rawQueryString(r.associationSlug),
+        associationColor: (r.associationColor as string | null) ?? null,
+        associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
       };
     });
   }

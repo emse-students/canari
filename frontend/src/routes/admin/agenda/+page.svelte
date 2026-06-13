@@ -5,11 +5,15 @@
     validateAssociationCalendarEvent,
     rejectAssociationCalendarEvent,
     deleteAssociationCalendarEvent,
+    associationLogoSrc,
     type AssociationCalendarFeedEvent,
   } from '$lib/associations/api';
-  import { Check, X, Trash2, ExternalLink, Clock } from '@lucide/svelte';
+  import { Check, X, Trash2, ExternalLink } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { generateAvatarColor } from '$lib/utils/avatar';
+  import { contrastColor, toHex } from '$lib/utils/color';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
@@ -21,6 +25,14 @@
   let rejectTarget = $state<AssociationCalendarFeedEvent | null>(null);
   let rejectReason = $state('');
   let rejecting = $state(false);
+
+  /** Event currently previewed in the shared detail modal (read-only). */
+  let previewEvent = $state<AssociationCalendarFeedEvent | null>(null);
+
+  /** Resolved hex color of the event's primary association (for the date badge). */
+  function eventColor(ev: AssociationCalendarFeedEvent): string {
+    return toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+  }
 
   async function load() {
     loading = true;
@@ -131,14 +143,26 @@
   {:else}
     <ul class="space-y-3">
       {#each events as ev (ev.id)}
+        {@const color = eventColor(ev)}
+        {@const fg = contrastColor(color)}
+        {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
         <li
-          class="rounded-2xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-4 flex flex-col sm:flex-row sm:items-start gap-4"
+          class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] px-4 py-4 flex flex-col sm:flex-row sm:items-start gap-4"
+          style="border-left:4px solid {color};"
         >
           <div
-            class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-amber-200/60 text-amber-900 font-bold text-xs"
+            class="relative flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl font-bold text-sm overflow-hidden"
+            style="background:{color};color:{fg};"
           >
-            <Clock size={14} class="mb-0.5 opacity-70" />
-            {new Date(ev.startsAt).getDate()}
+            {#if logoSrc}
+              <img
+                src={logoSrc}
+                alt=""
+                aria-hidden="true"
+                class="absolute inset-0 h-full w-full object-cover opacity-25"
+              />
+            {/if}
+            <span class="relative z-10 leading-none">{new Date(ev.startsAt).getDate()}</span>
           </div>
           <div class="min-w-0 flex-1 space-y-1">
             <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
@@ -148,11 +172,23 @@
               >
                 {ev.associationName}
               </a>
+              {#each ev.coOwners ?? [] as co (co.associationId)}
+                <span class="text-text-muted"> · </span>
+                <a href="/associations/{encodeURIComponent(co.slug)}" class="hover:underline">
+                  {co.name}
+                </a>
+              {/each}
             </p>
-            <p class="font-bold text-text-main">{ev.title}</p>
+            <button
+              type="button"
+              onclick={() => (previewEvent = ev)}
+              class="block text-left font-bold text-text-main hover:text-cn-yellow transition-colors"
+            >
+              {ev.title}
+            </button>
             <p class="text-xs text-text-muted">{formatRange(ev)}</p>
             {#if ev.description?.trim()}
-              <p class="text-sm text-text-muted whitespace-pre-wrap">{ev.description}</p>
+              <p class="text-sm text-text-muted whitespace-pre-wrap line-clamp-2">{ev.description}</p>
             {/if}
           </div>
           <div class="flex flex-wrap gap-2 shrink-0">
@@ -198,6 +234,13 @@
     </ul>
   {/if}
 </div>
+
+<!-- Read-only preview, reuses the same modal as the public agenda -->
+<CalendarEventDetailModal
+  open={previewEvent !== null}
+  event={previewEvent}
+  onClose={() => (previewEvent = null)}
+/>
 
 <!-- Reject modal -->
 {#if rejectTarget}
