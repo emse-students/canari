@@ -7,6 +7,7 @@
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
+  import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -540,6 +541,32 @@
     return aggregateSharedContent(msgs);
   }
 
+  /**
+   * Full-conversation search over the local store (DMs/groups), returning matching message IDs
+   * oldest-first. Returns null for channels (not persisted locally) so the UI searches the
+   * in-memory loaded messages instead.
+   */
+  async function searchConversation(
+    conversationId: string,
+    query: string
+  ): Promise<string[] | null> {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    if (isChannelConversationId(conversationId) || !session.storage) return null;
+    const msgs = await session.storage.getMessages(conversationId, session.pin);
+    return msgs
+      .filter((m) => !m.isDeleted && messageSearchText(m.content).toLowerCase().includes(q))
+      .map((m) => m.id);
+  }
+
+  function messageSearchText(content: string): string {
+    try {
+      return getPreviewText(parseEnvelope(content));
+    } catch {
+      return content;
+    }
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -604,6 +631,7 @@
           onSend={handleSendChat}
           onTyping={handleTyping}
           onLoadSharedContent={loadSharedContent}
+          onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
           onBack={() => {
             channels.selectedChannelConversationId = '';

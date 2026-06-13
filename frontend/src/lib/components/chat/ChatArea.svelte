@@ -35,6 +35,12 @@
     onTyping?: (isTyping: boolean) => void;
     /** Loads the conversation's shared media/links/files from the local history. */
     onLoadSharedContent?: (conversationId: string) => Promise<SharedContent>;
+    /**
+     * Full-conversation search over the entire local history. Returns matching message IDs
+     * (oldest-first), or `null` to signal the caller to fall back to in-memory search
+     * (e.g. community channels, whose messages are not persisted locally).
+     */
+    onSearchAll?: (conversationId: string, query: string) => Promise<string[] | null>;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
     /** Callback to navigate back to the conversation list on mobile. */
@@ -117,6 +123,7 @@
     onSend,
     onTyping,
     onLoadSharedContent,
+    onSearchAll,
     onInviteMembers,
     onBack,
     onOpenConversations: _onOpenConversations,
@@ -175,6 +182,10 @@
   let searchQuery = $state('');
   let searchMatches = $state<string[]>([]);
   let activeSearchIndex = $state(-1);
+  /** True when search could only cover the in-memory messages (channels). */
+  let searchLimitedToLoaded = $state(false);
+  /** Monotonic token to drop stale async search results. */
+  let searchSeq = 0;
   let showSearch = $state(false);
   let showMediaPanel = $state(false);
   /** Whether local DB may have messages older than what's currently in memory. */
@@ -371,25 +382,71 @@
     }
   }
 
-  function refreshSearchMatches() {
+  /** Filters the in-memory loaded messages (fallback / channels). */
+  function inMemoryMatches(q: string): string[] {
+    if (!chatView) return [];
+    return chatView.conversation.messages
+      .filter((m) => searchableText(m).toLowerCase().includes(q))
+      .map((m) => m.id);
+  }
+
+  async function refreshSearchMatches() {
     const q = searchQuery.trim().toLowerCase();
     if (!chatView || q.length < 2) {
       searchMatches = [];
       activeSearchIndex = -1;
+      searchLimitedToLoaded = false;
       return;
     }
-    const hits = chatView.conversation.messages
-      .filter((m) => searchableText(m).toLowerCase().includes(q))
-      .map((m) => m.id);
-    searchMatches = hits;
-    activeSearchIndex = hits.length > 0 ? 0 : -1;
+    const seq = ++searchSeq;
+    const convId = chatView.conversation.id;
+
+    // Full-history search via the local store (DMs/groups); null falls back to in-memory
+    // (channels, whose messages aren't persisted locally).
+    let ids: string[] | null = null;
+    if (onSearchAll) {
+      try {
+        ids = await onSearchAll(convId, q);
+      } catch {
+        ids = null;
+      }
+    }
+    if (seq !== searchSeq) return; // a newer query superseded this one
+
+    if (ids === null) {
+      searchMatches = inMemoryMatches(q);
+      searchLimitedToLoaded = isChannel;
+    } else {
+      searchMatches = ids;
+      searchLimitedToLoaded = false;
+    }
+    activeSearchIndex = searchMatches.length > 0 ? 0 : -1;
+  }
+
+  /**
+   * Scrolls to a message, first paging older history into memory if it isn't loaded yet
+   * (bounded). Lets a full-history search result that lives far up the timeline be reached.
+   */
+  async function navigateToMessageEnsureLoaded(messageId: string) {
+    let attempts = 0;
+    while (
+      onLoadOlderMessages &&
+      !(chatView?.conversation.messages.some((m) => m.id === messageId) ?? false) &&
+      attempts < 120
+    ) {
+      const hasMore = await onLoadOlderMessages();
+      attempts++;
+      await tick();
+      if (!hasMore) break;
+    }
+    await navigateToMessage(messageId);
   }
 
   async function jumpSearch(delta: 1 | -1) {
     if (searchMatches.length === 0) return;
     const next = (activeSearchIndex + delta + searchMatches.length) % searchMatches.length;
     activeSearchIndex = next;
-    await navigateToMessage(searchMatches[next]);
+    await navigateToMessageEnsureLoaded(searchMatches[next]);
   }
 
   $effect(() => {
@@ -473,7 +530,8 @@
   });
 
   $effect(() => {
-    refreshSearchMatches();
+    void searchQuery;
+    void refreshSearchMatches();
   });
 
   $effect(() => {
@@ -553,6 +611,7 @@
                   searchQuery = '';
                   searchMatches = [];
                   activeSearchIndex = -1;
+                  searchLimitedToLoaded = false;
                 }}
                 class="chat-search-action"
                 aria-label="Effacer la recherche"
@@ -587,6 +646,12 @@
             </button>
           </div>
         </div>
+        {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
+          <p class="px-1 pt-1 text-[0.7rem] text-text-muted">
+            Recherche limitée aux messages chargés. Faites défiler vers le haut pour en charger
+            davantage.
+          </p>
+        {/if}
       </div>
     {/if}
 
