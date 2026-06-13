@@ -260,6 +260,9 @@ h6,
   scroll-padding-bottom: calc(
     var(--chat-composer-height, 7.5rem) + env(safe-area-inset-bottom, 0px)
   );
+  /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
+     would drag content off-screen (notably while the keyboard is open). */
+  overscroll-behavior: contain;
 }
 
 @media (min-width: 768px) {
@@ -296,6 +299,13 @@ h6,
 .keyboard-open .chat-composer-footer {
   bottom: var(--keyboard-layout-inset-bottom, 0px);
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+}
+
+/* Keyboard open with adjustPan (the layout viewport does NOT shrink): bound the chat shell
+   to the visible visual-viewport height so messages can't be scrolled off-screen below the
+   keyboard. No-op under adjustResize, where --app-viewport-height already equals the window. */
+html.keyboard-open .app-layout {
+  height: var(--app-viewport-height, 100dvh);
 }
 
 .keyboard-open .chat-messages-scroll {

@@ -64,6 +64,9 @@ class MainActivity : TauriActivity() {
         super.onResume()
         isInForeground = true
         MlsBackgroundWorker.resetFailureFlag(this)
+        // Opening the app clears lingering message notifications (read here or on another
+        // device) - the visible half of cross-device read-state sync.
+        CanariFirebaseMessagingService.cancelAllMessageNotifications(this)
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after
         // FCM registration (store_push_secret writes the file during the live session;

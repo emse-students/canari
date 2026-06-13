@@ -75,6 +75,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /** Nombre maximum de messages empilés dans une notification MessagingStyle par conversation. */
         private const val MAX_NOTIF_MESSAGES = 6
+
+        /**
+         * Annule toutes les notifications de messages affichées (canal [CHANNEL_MESSAGES] + résumé).
+         * Appelé quand l'app passe au premier plan (MainActivity.onResume) : ouvrir l'app vide les
+         * notifications de messages lus ici ou ailleurs (partie visible de la sync read-state).
+         */
+        fun cancelAllMessageNotifications(context: Context) {
+            if (android.os.Build.VERSION.SDK_INT < 23) return
+            try {
+                val manager =
+                    context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                for (sbn in manager.activeNotifications) {
+                    val channelId =
+                        if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
+                    // Ne toucher qu'aux notifications de messages (laisser social/formulaires).
+                    if (channelId == null || channelId == CHANNEL_MESSAGES) manager.cancel(sbn.id)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
+            }
+        }
     }
 
     // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
