@@ -24,6 +24,12 @@ interface IceServerConfig {
   credential?: string;
 }
 
+/** Optional hook to mirror call lifecycle events into the chat timeline. */
+export interface CallChatNotifier {
+  onCallStarted: (groupId: string, callId: string) => void | Promise<void>;
+  onCallEnded: (groupId: string, callId: string) => void | Promise<void>;
+}
+
 /** Gecko (Firefox) - standard `RTCRtpScriptTransform`; no Chromium-only PC flags. */
 function isGeckoBrowser(): boolean {
   return typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent);
@@ -65,7 +71,14 @@ export class CallService {
   public isMuted = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
 
+  private chatNotifier: CallChatNotifier | null = null;
+
   constructor(private mlsService: IMlsService) {}
+
+  /** Registers callbacks that insert call system messages into the chat timeline. */
+  public setChatNotifier(notifier: CallChatNotifier | null): void {
+    this.chatNotifier = notifier;
+  }
 
   /**
    * Handles an incoming MLS `CallMsg` for a specific group conversation.
@@ -109,6 +122,7 @@ export class CallService {
       await this.setupEncryption(groupId, this.currentCallId!);
       await this.connectToSfu(this.currentCallId!);
       await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video));
+      void this.chatNotifier?.onCallStarted(groupId, this.currentCallId!);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog(`[Call] startCall failed: ${msg}`);
@@ -143,10 +157,13 @@ export class CallService {
 
   /** Ends the active call and optionally notifies the group via MLS. */
   public endCall(notify: boolean = true) {
-    if (notify && this.currentGroupId && this.currentCallId) {
-      this.sendMlsNotification(this.currentGroupId, mkCallHangup(this.currentCallId)).catch(
-        console.error
-      );
+    const groupId = this.currentGroupId;
+    const callId = this.currentCallId;
+    if (notify && groupId && callId) {
+      this.sendMlsNotification(groupId, mkCallHangup(callId)).catch(console.error);
+    }
+    if (groupId && callId) {
+      void this.chatNotifier?.onCallEnded(groupId, callId);
     }
     this.cleanup();
   }

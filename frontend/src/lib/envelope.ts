@@ -41,6 +41,12 @@ export interface SystemEnvelope {
     channelName: string;
     workspaceName?: string;
   };
+  /** Metadata for call lifecycle messages (start → duration update on hangup). */
+  callEvent?: {
+    callId: string;
+    starterId: string;
+    startedAt: number;
+  };
 }
 
 export type MessageEnvelope = TextEnvelope | MediaEnvelope | SystemEnvelope;
@@ -120,7 +126,24 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 workspaceName: typeof ci.workspaceName === 'string' ? ci.workspaceName : undefined,
               }
             : undefined;
-        return { kind: 'system', text: obj.text, ...(channelInvite ? { channelInvite } : {}) };
+        const ce = obj.callEvent as Record<string, unknown> | undefined;
+        const callEvent =
+          ce &&
+          typeof ce.callId === 'string' &&
+          typeof ce.starterId === 'string' &&
+          typeof ce.startedAt === 'number'
+            ? {
+                callId: ce.callId,
+                starterId: ce.starterId,
+                startedAt: ce.startedAt,
+              }
+            : undefined;
+        return {
+          kind: 'system',
+          text: obj.text,
+          ...(channelInvite ? { channelInvite } : {}),
+          ...(callEvent ? { callEvent } : {}),
+        };
       }
 
       if (obj.kind === 'media' && typeof obj.media === 'object' && obj.media !== null) {
@@ -207,4 +230,31 @@ export function mkChannelInviteEnvelope(
     text: `Invitation à rejoindre #${channelName}`,
     channelInvite: { channelId, channelName, workspaceName },
   };
+}
+
+/** Build a system envelope for a call that just started. */
+export function mkCallStartedEnvelope(
+  starterName: string,
+  callId: string,
+  starterId: string,
+  startedAt: number = Date.now()
+): SystemEnvelope {
+  return {
+    kind: 'system',
+    text: `${starterName} a démarré un appel`,
+    callEvent: { callId, starterId, startedAt },
+  };
+}
+
+/** Returns the system text after a call ends, including its duration. */
+export function buildCallEndedText(starterName: string, durationMs: number): string {
+  return `${starterName} a démarré un appel qui a duré ${formatCallDuration(durationMs)}`;
+}
+
+/** Formats a call duration for display in French. */
+export function formatCallDuration(durationMs: number): string {
+  const minutes = Math.floor(Math.max(0, durationMs) / 60_000);
+  if (minutes < 1) return "moins d'une minute";
+  if (minutes === 1) return '1 minute';
+  return `${minutes} minutes`;
 }

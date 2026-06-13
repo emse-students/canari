@@ -40,6 +40,14 @@ import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleWelcomeRequest, processPendingInvitations } from '$lib/utils/chat/actions';
 import { cancelReAdd } from '$lib/utils/chat/recovery';
 import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
+import {
+  getCallSystemMessageContext,
+  handleCallSignalForChat,
+  recordCallEnded,
+  recordCallStarted,
+  setCallSystemMessageContext,
+} from '$lib/utils/chat/callSystemMessages';
+import type { ICallMsg } from '$lib/proto/codec';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
   scheduleReconnectImpl,
@@ -393,6 +401,22 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // l'appeler ici avant l'ouverture du WebSocket est redondant.
 
     beginStartupCatchupPhase('setup_handler');
+
+    const callSystemCtx = {
+      userId: ctx.getUserId(),
+      pin: ctx.getPin(),
+      storage: ctx.getStorage(),
+      conversations: cb.conversations,
+      addMessageToChat: cb.addMessageToChat,
+    };
+    setCallSystemMessageContext(callSystemCtx);
+    ctx.getCallService()?.setChatNotifier({
+      onCallStarted: (groupId: string, callId: string) =>
+        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
+      onCallEnded: (groupId: string, callId: string) =>
+        recordCallEnded(getCallSystemMessageContext(), groupId, callId),
+    });
+
     setupMessageHandler({
       mlsService,
       storage: ctx.getStorage(),
@@ -417,6 +441,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
       onReadReceiptReceived: cb.onReadReceiptReceived,
       onCallSignal: (senderId: string, groupId: string, callMsg) => {
+        void handleCallSignalForChat(
+          getCallSystemMessageContext(),
+          senderId,
+          groupId,
+          callMsg as ICallMsg
+        );
         ctx.getCallService()?.handleCallSignal(senderId, groupId, callMsg);
       },
       onGroupReady: (() => {
@@ -822,6 +852,8 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.setStorage(null);
   ctx.setAuthToken('');
   ctx.setShowBiometricEnrollPrompt(false);
+  setCallSystemMessageContext(null);
+  ctx.getCallService()?.setChatNotifier(null);
   clearUserLocally();
   clearPinAndKey();
   clearAuth();
