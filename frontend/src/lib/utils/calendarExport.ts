@@ -224,18 +224,28 @@ function buildCalendarHtml(
           const bg = eventBgCss(ev);
           const fg = contrastColor(eventHexColors(ev)[0]);
 
-          // Resolve logo: data URL map for PDF export, direct URL for preview.
-          const logoSrc = ev.associationLogoUrl
-            ? logoMap === 'direct'
-              ? ev.associationLogoUrl
-              : (logoMap.get(ev.associationLogoUrl) ?? null)
-            : null;
+          // Resolve logos (primary + co-owners): data URL map for PDF export, direct URL for preview.
+          const resolveLogo = (url: string | null | undefined): string | null =>
+            url ? (logoMap === 'direct' ? url : (logoMap.get(url) ?? null)) : null;
+          const logoSrcs = [ev.associationLogoUrl, ...(ev.coOwners ?? []).map((co) => co.logoUrl)]
+            .map(resolveLogo)
+            .filter((s): s is string => !!s);
 
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
+          const smallSize = Math.max(Math.round(slotH * 0.34), 12);
           // Watermark stays absolute - decorative only, doesn't affect flow.
-          const watermark = logoSrc
-            ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrc}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
-            : '';
+          // Co-owned events show a row of every association's logo (colors already split the bg).
+          const watermark =
+            logoSrcs.length === 0
+              ? ''
+              : logoSrcs.length === 1
+                ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
+                : `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:3px;opacity:0.22;pointer-events:none;">${logoSrcs
+                    .map(
+                      (s) =>
+                        `<img src="${s}" style="height:${smallSize}px;width:${smallSize}px;border-radius:50%;object-fit:cover;" />`
+                    )
+                    .join('')}</div>`;
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
 
@@ -354,9 +364,15 @@ export async function exportCalendarMonth(
   const year = focusDate.getFullYear();
   const month = focusDate.getMonth();
 
+  // Logos primaires ET co-owners, pour que le PDF (data-URLs) affiche tous les logos.
   const uniqueLogoUrls = [
-    ...new Set(events.map((ev) => ev.associationLogoUrl).filter(Boolean) as string[]),
-  ];
+    ...new Set(
+      events.flatMap((ev) => [
+        ev.associationLogoUrl,
+        ...(ev.coOwners ?? []).map((co) => co.logoUrl),
+      ])
+    ),
+  ].filter((u): u is string => !!u);
   const [faviconDataUrl, ...resolvedLogos] = await Promise.all([
     fetchDataUrl('/favicon.png'),
     ...uniqueLogoUrls.map(fetchDataUrl),

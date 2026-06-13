@@ -72,6 +72,17 @@
     ];
   }
 
+  /** Logos for the event: primary first, then co-owners (resolved src, or null → initials). */
+  function eventLogos(ev: AssociationCalendarFeedEvent): { src: string | null; name: string }[] {
+    return [
+      { src: associationLogoSrc(ev.associationLogoUrl), name: ev.associationName },
+      ...(ev.coOwners ?? []).map((co) => ({
+        src: associationLogoSrc(co.logoUrl ?? null),
+        name: co.name,
+      })),
+    ];
+  }
+
   /** Inline CSS background for an event block - solid or split-color gradient. */
   function eventBgStyle(ev: AssociationCalendarFeedEvent): string {
     const colors = eventColors(ev);
@@ -150,7 +161,7 @@
                 {#each visible as ev, ei (ev.id)}
                   {@const colors = eventColors(ev)}
                   {@const fg = contrastColor(colors[0])}
-                  {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
+                  {@const logos = eventLogos(ev)}
                   <div
                     class="relative flex-1 flex items-center justify-center overflow-hidden {ev.status ===
                     'pending'
@@ -171,21 +182,46 @@
                         style="color:{fg};">{cell.day}</span
                       >
                     {/if}
-                    <!-- Circular logo watermark centred in the slot -->
-                    {#if logoSrc}
-                      <img
-                        src={logoSrc}
-                        alt=""
-                        aria-hidden="true"
-                        class="absolute rounded-full object-cover"
-                        style="width:62%;height:62%;max-width:52px;max-height:52px;opacity:0.18;left:50%;top:50%;transform:translate(-50%,-50%);"
-                      />
+                    <!-- Logo(s) en filigrane : un seul centré, ou une rangée pour les co-portages -->
+                    {#if logos.length === 1}
+                      {#if logos[0].src}
+                        <img
+                          src={logos[0].src}
+                          alt=""
+                          aria-hidden="true"
+                          class="absolute rounded-full object-cover"
+                          style="width:62%;height:62%;max-width:52px;max-height:52px;opacity:0.18;left:50%;top:50%;transform:translate(-50%,-50%);"
+                        />
+                      {:else}
+                        <span
+                          class="absolute rounded-full flex items-center justify-center text-[11px] font-black opacity-15"
+                          style="width:52px;height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
+                          >{getInitials(ev.associationName)}</span
+                        >
+                      {/if}
                     {:else}
-                      <span
-                        class="absolute rounded-full flex items-center justify-center text-[11px] font-black opacity-15"
-                        style="width:52px;height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
-                        >{getInitials(ev.associationName)}</span
+                      <div
+                        class="absolute inset-0 flex items-center justify-center gap-1"
+                        style="opacity:0.22;"
+                        aria-hidden="true"
                       >
+                        {#each logos as lg (lg.name)}
+                          {#if lg.src}
+                            <img
+                              src={lg.src}
+                              alt=""
+                              class="rounded-full object-cover"
+                              style="width:30%;height:30%;max-width:30px;max-height:30px;"
+                            />
+                          {:else}
+                            <span
+                              class="rounded-full flex items-center justify-center text-[9px] font-black"
+                              style="width:26px;height:26px;background:rgba(255,255,255,0.3);color:{fg};"
+                              >{getInitials(lg.name)}</span
+                            >
+                          {/if}
+                        {/each}
+                      </div>
                     {/if}
                     <!-- Event title, centred and always on top of watermark -->
                     <span
