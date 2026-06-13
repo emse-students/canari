@@ -88,6 +88,10 @@
     onReact?: (messageId: string, emoji: string) => void;
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
+    /** Whether this message is currently pinned in the conversation. */
+    pinned?: boolean;
+    /** Called to toggle this message's pinned state. Omit to hide the pin action. */
+    onTogglePin?: (messageId: string) => void;
     /** Called when the user confirms an inline edit. */
     onEdit?: (messageId: string, newText: string) => void;
     /** ID of the authenticated user, used to highlight own reactions and gate edit/delete. */
@@ -129,6 +133,8 @@
     onReact,
     onDelete,
     onEdit,
+    pinned = false,
+    onTogglePin,
     currentUserId = '',
     authToken = '',
     shouldAnimate = false,
@@ -621,6 +627,8 @@
               showDeleteModal = true;
             }
           : undefined}
+        {pinned}
+        onPin={!isDeleted && onTogglePin ? () => onTogglePin!(messageId) : undefined}
       />
     </div>
 
@@ -693,6 +701,8 @@
       }}
       onReply={onReply && !isDeleted ? () => { onReply!(messageId); showMobileActions = false; } : undefined}
       onForward={onForward && !isDeleted ? () => onForward!(messageId) : undefined}
+      {pinned}
+      onPin={!isDeleted && onTogglePin ? () => { onTogglePin!(messageId); showMobileActions = false; } : undefined}
       onCopy={textContent && !isDeleted
         ? () => {
             navigator.clipboard?.writeText(textContent);

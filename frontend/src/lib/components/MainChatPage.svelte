@@ -664,6 +664,9 @@
           onEdit={isSelectedChannel
             ? undefined
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
+          onTogglePin={isSelectedChannel
+            ? undefined
+            : (msgId) => void messaging.handleTogglePin(msgId, msgCtx())}
           onCancelReply={messaging.cancelReply}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}

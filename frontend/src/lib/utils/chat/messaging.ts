@@ -287,6 +287,26 @@ export async function deleteMessage(messageId: string, deps: MessageActionDeps):
   }
 }
 
+/** Sends a "pin"/"unpin" system message so all members share the pinned-messages set. */
+export async function setMessagePinned(
+  messageId: string,
+  pinned: boolean,
+  deps: MessageActionDeps
+): Promise<void> {
+  const { mlsService, userId, pin, conversation } = deps;
+  if (!conversation.isReady) return;
+  try {
+    const payload = encodeAppMessage(
+      mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId }))
+    );
+    await mlsService.sendMessage(conversation.id, payload, undefined, true /* silent */);
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
+  } catch (e) {
+    console.warn('Failed to (un)pin message:', e);
+  }
+}
+
 /** Sends a "read_receipt" system message so peers can update delivered/read status for the given messageIds. Returns false if the group is not ready or the list is empty. */
 export async function sendReadReceipt(
   messageIds: string[],

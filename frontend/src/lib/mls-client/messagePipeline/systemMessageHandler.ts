@@ -5,6 +5,7 @@ import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
+import { applyPin } from '$lib/stores/pinStore.svelte';
 import type { MessageHandlerDeps } from './deps';
 
 /**
@@ -422,6 +423,11 @@ export async function handleSystemEvent(
         }
       }
     }
+    return true;
+  }
+
+  if ((event === 'pin' || event === 'unpin') && data.messageId) {
+    applyPin(convoKey, String(data.messageId), event === 'pin');
     return true;
   }
 

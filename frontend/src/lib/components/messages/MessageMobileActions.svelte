@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Forward, Pencil, Trash2, SmilePlus, Copy } from '@lucide/svelte';
+  import { Reply, Forward, Pencil, Trash2, SmilePlus, Copy, Pin, PinOff } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
@@ -34,6 +34,10 @@
     onForward?: () => void;
     /** Called when the user taps the copy button. Hidden when undefined (e.g. media-only). */
     onCopy?: () => void;
+    /** Whether the message is pinned (toggles the pin/unpin label + icon). */
+    pinned?: boolean;
+    /** Called when the user taps the pin/unpin button. Hidden when undefined. */
+    onPin?: () => void;
     /** Called when the user taps the edit button. */
     onEdit?: () => void;
     /** Called when the user taps the delete button. */
@@ -57,6 +61,8 @@
     onReply,
     onForward,
     onCopy,
+    pinned = false,
+    onPin,
     onEdit,
     onDelete,
     onClose,
@@ -157,6 +163,20 @@
           >
             <Copy size={20} />
             <span class="text-[10px] font-medium text-text-muted">Copier</span>
+          </button>
+        {/if}
+
+        {#if !isDeleted && onPin}
+          <button
+            onclick={() => {
+              onPin?.();
+              onClose?.();
+            }}
+            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-amber-600 dark:text-amber-500 active:scale-95 transition-transform hover:bg-amber-500/10"
+            aria-label={pinned ? 'Désépingler' : 'Épingler'}
+          >
+            {#if pinned}<PinOff size={20} />{:else}<Pin size={20} />{/if}
+            <span class="text-[10px] font-medium">{pinned ? 'Désépingler' : 'Épingler'}</span>
           </button>
         {/if}
 

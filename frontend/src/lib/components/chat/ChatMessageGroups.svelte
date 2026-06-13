@@ -32,6 +32,10 @@
     onDelete?: (messageId: string) => void;
     /** Callback to edit a message by ID with new text. */
     onEdit?: (messageId: string, text: string) => void;
+    /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
+    onTogglePin?: (messageId: string) => void;
+    /** IDs of pinned messages in this conversation. */
+    pinnedIds?: string[];
     /** Timestamp (ms) when the current conversation was opened; messages newer than this animate in. */
     switchTime: number;
     /** ID of the currently authenticated user, used to determine message ownership. */
@@ -55,12 +59,16 @@
     onReact,
     onDelete,
     onEdit,
+    onTogglePin,
+    pinnedIds = [],
     switchTime,
     currentUserId = '',
     authToken,
     isDirect = false,
     isMobile = false,
   }: Props = $props();
+
+  const pinnedSet = $derived(new Set(pinnedIds));
 
   let resolvedSenderNames = $state<Record<string, string>>({});
 
@@ -257,6 +265,8 @@
               {onReact}
               {onDelete}
               {onEdit}
+              {onTogglePin}
+              pinned={pinnedSet.has(msg.id)}
               {currentUserId}
               shouldAnimate={msg.timestamp.getTime() > switchTime}
               searchTerm={searchQuery}

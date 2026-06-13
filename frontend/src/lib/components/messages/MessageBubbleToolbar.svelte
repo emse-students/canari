@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Forward, Smile, Pencil, Trash2 } from '@lucide/svelte';
+  import { Reply, Forward, Smile, Pencil, Trash2, Pin, PinOff } from '@lucide/svelte';
 
   /** Quick-reaction emojis shown inline in the web hover toolbar (mirrors mobile). */
   const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡'] as const;
@@ -25,6 +25,10 @@
     userReactions?: string[];
     /** Called when the "more reactions" (+) button is clicked. Omit to hide the button. */
     onToggleEmojiPicker?: () => void;
+    /** Whether the message is pinned (toggles the pin/unpin icon + tooltip). */
+    pinned?: boolean;
+    /** Called when the pin/unpin button is clicked. Omit to hide the button. */
+    onPin?: () => void;
     /** Called when the edit button is clicked. Omit to hide the button. */
     onEdit?: () => void;
     /** Called when the delete button is clicked. Omit to hide the button. */
@@ -42,6 +46,8 @@
     onReact,
     userReactions = [],
     onToggleEmojiPicker,
+    pinned = false,
+    onPin,
     onEdit,
     onDelete,
   }: Props = $props();
@@ -114,6 +120,21 @@
       title={onReact ? 'Plus de réactions' : 'Réagir'}
     >
       <Smile size={16} />
+    </button>
+  {/if}
+  {#if !isDeleted && onPin}
+    <button
+      onclick={(e) => {
+        e.stopPropagation();
+        onPin?.();
+      }}
+      class="p-1.5 rounded-full transition-colors {pinned
+        ? 'text-amber-500'
+        : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
+      aria-label={pinned ? 'Désépingler' : 'Épingler'}
+      title={pinned ? 'Désépingler' : 'Épingler'}
+    >
+      {#if pinned}<PinOff size={16} />{:else}<Pin size={16} />{/if}
     </button>
   {/if}
   {#if !isDeleted && isOwn && !hasMedia && onEdit}

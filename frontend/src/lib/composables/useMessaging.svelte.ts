@@ -17,7 +17,9 @@ import {
   removeReaction,
   editMessage,
   deleteMessage,
+  setMessagePinned,
 } from '$lib/utils/chat/messaging';
+import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
   isStaleInboundMessage,
   normalizeMessageId,
@@ -791,6 +793,24 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * Toggles a message's pinned state: applies it locally (optimistic - the sender gets no
+   * MLS echo) and broadcasts a "pin"/"unpin" system message so all members converge.
+   */
+  async function handleTogglePin(messageId: string, ctx: MessagingContext) {
+    if (!ctx.selectedContact) return;
+    const convo = ctx.conversations.get(ctx.selectedContact);
+    if (!convo) return;
+    const next = !isMessagePinned(convo.id, messageId);
+    applyPin(convo.id, messageId, next);
+    await setMessagePinned(messageId, next, {
+      mlsService: ctx.ensureMls(),
+      userId: ctx.userId,
+      pin: ctx.pin,
+      conversation: convo,
+    });
+  }
+
   // ── Reply ─────────────────────────────────────────────────────────────────
 
   /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
@@ -929,6 +949,8 @@ export function useMessaging() {
     handleDeleteMessage,
     /** Sends an edit_message MLS event and updates the message content locally. */
     handleEditMessage,
+    /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */
+    handleTogglePin,
     /** Sets the message to reply to (shown as a quote in the next send). */
     handleReply,
     /** Clears the pending reply state. */

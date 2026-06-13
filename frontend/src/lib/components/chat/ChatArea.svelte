@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ShieldCheck, TriangleAlert, Loader2 } from '@lucide/svelte';
-  import { ArrowDown, Search, ChevronUp, ChevronDown, X, ChevronLeft } from '@lucide/svelte';
+  import { ArrowDown, Search, ChevronUp, ChevronDown, X, ChevronLeft, Pin } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -18,6 +18,7 @@
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
   import { typingUsersFor } from '$lib/stores/typingStore.svelte';
+  import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
@@ -41,6 +42,8 @@
      * (e.g. community channels, whose messages are not persisted locally).
      */
     onSearchAll?: (conversationId: string, query: string) => Promise<string[] | null>;
+    /** Callback to toggle a message's pinned state. */
+    onTogglePin?: (messageId: string) => void;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
     /** Callback to navigate back to the conversation list on mobile. */
@@ -124,6 +127,7 @@
     onTyping,
     onLoadSharedContent,
     onSearchAll,
+    onTogglePin,
     onInviteMembers,
     onBack,
     onOpenConversations: _onOpenConversations,
@@ -299,6 +303,18 @@
       isDirect: convType === 'direct',
     };
   });
+
+  /** Pinned message IDs for the active conversation (reactive). */
+  const pinnedIds = $derived(chatView ? pinnedMessageIds(chatView.conversation.id) : []);
+  let showPinned = $state(false);
+
+  /** Resolves a short preview for a pinned message, or null when it isn't loaded in memory. */
+  function pinnedPreview(messageId: string): string | null {
+    const m = chatView?.conversation.messages.find((x) => x.id === messageId);
+    if (!m) return null;
+    const text = searchableText(m).replace(/\s+/g, ' ').trim();
+    return text.length > 80 ? `${text.slice(0, 77)}…` : text || 'Message';
+  }
 
   /** Reactive "X écrit…" label for the active conversation, excluding the current user. */
   const typingLabel = $derived.by(() => {
@@ -655,6 +671,58 @@
       </div>
     {/if}
 
+    {#if pinnedIds.length > 0}
+      <div class="px-3 md:px-6 pt-1">
+        <button
+          type="button"
+          onclick={() => (showPinned = !showPinned)}
+          class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+        >
+          <Pin size={14} class="shrink-0 text-amber-500" />
+          <span class="font-semibold"
+            >{pinnedIds.length} message{pinnedIds.length > 1 ? 's' : ''} épinglé{pinnedIds.length > 1
+              ? 's'
+              : ''}</span
+          >
+          <ChevronDown size={15} class="ml-auto transition-transform {showPinned ? 'rotate-180' : ''}" />
+        </button>
+        {#if showPinned}
+          <div
+            transition:slide={{ duration: 150 }}
+            class="mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border border-cn-border bg-[var(--cn-surface)] p-1"
+          >
+            {#each pinnedIds as pid (pid)}
+              <div
+                class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-black/5 dark:hover:bg-white/5"
+              >
+                <button
+                  type="button"
+                  class="min-w-0 flex-1 truncate text-left text-sm text-text-main"
+                  onclick={() => {
+                    showPinned = false;
+                    void navigateToMessageEnsureLoaded(pid);
+                  }}
+                >
+                  {pinnedPreview(pid) ?? 'Message épinglé'}
+                </button>
+                {#if onTogglePin}
+                  <button
+                    type="button"
+                    onclick={() => onTogglePin?.(pid)}
+                    class="shrink-0 rounded-lg p-1 text-text-muted hover:bg-red-500/10 hover:text-red-500"
+                    aria-label="Désépingler"
+                    title="Désépingler"
+                  >
+                    <X size={14} />
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Messages (padding bas pour laisser défiler sous le composeur glass) -->
     <div class="relative flex-1 min-h-0 flex flex-col">
       <div
@@ -692,6 +760,8 @@
             {onReact}
             {onDelete}
             {onEdit}
+            {onTogglePin}
+            {pinnedIds}
             {switchTime}
             {authToken}
             isDirect={chatView?.isDirect ?? false}
