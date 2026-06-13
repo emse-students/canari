@@ -599,6 +599,11 @@
       .catch(() => {});
   });
 
+  /** Sends a picked GIF as a message (its direct URL is rendered inline as a GIF). */
+  function handleSendGif(url: string) {
+    void messaging.handleSendChat(msgCtx(), url);
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -662,6 +667,7 @@
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}
           onTyping={handleTyping}
+          onSendGif={handleSendGif}
           onLoadSharedContent={loadSharedContent}
           onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}

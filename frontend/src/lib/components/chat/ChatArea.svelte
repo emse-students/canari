@@ -34,6 +34,8 @@
     onSend: () => void;
     /** Optional callback emitting throttled typing start/stop signals. */
     onTyping?: (isTyping: boolean) => void;
+    /** Optional callback to send a picked GIF by direct URL. */
+    onSendGif?: (url: string) => void;
     /** Loads the conversation's shared media/links/files from the local history. */
     onLoadSharedContent?: (conversationId: string) => Promise<SharedContent>;
     /**
@@ -125,6 +127,7 @@
     onMessageChange,
     onSend,
     onTyping,
+    onSendGif,
     onLoadSharedContent,
     onSearchAll,
     onTogglePin,
@@ -836,6 +839,7 @@
           {messageText}
           {onMessageChange}
           {onTyping}
+          {onSendGif}
           onFocusChange={(focused) => (_composerFocused = focused)}
           {onSend}
           {replyingTo}

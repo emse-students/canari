@@ -7,6 +7,7 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import GifPickerModal from './GifPickerModal.svelte';
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -28,6 +29,8 @@
     onFocusChange?: (focused: boolean) => void;
     /** Optional callback emitting throttled typing start/stop signals. */
     onTyping?: (isTyping: boolean) => void;
+    /** Optional callback to send a picked GIF (by direct URL). Enables the GIF button. */
+    onSendGif?: (url: string) => void;
     /** Message being replied to, shown as a preview above the input. */
     replyingTo?: ReplyTo | null;
     /** Callback to cancel the current reply. */
@@ -50,6 +53,7 @@
     onSend,
     onFocusChange,
     onTyping,
+    onSendGif,
     replyingTo,
     onCancelReply,
     onFilesSelected,
@@ -63,6 +67,9 @@
   let composerFooter = $state<HTMLElement | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
+  let showGifPicker = $state(false);
+  /** GIF button is only shown when a GIPHY key is configured (Tenor no longer issues keys). */
+  const hasGiphy = !!(import.meta.env as Record<string, string | undefined>).VITE_GIPHY_KEY;
   let previewUrls = $state<Record<string, string>>({});
   /** Index into imageEntries of the currently open lightbox, or null when closed. */
   let lightboxIndex = $state<number | null>(null);
@@ -519,6 +526,22 @@
         </button>
       </div>
 
+      <!-- Bouton GIF (visible si GIPHY configuré) -->
+      {#if hasGiphy && onSendGif && !isComposing}
+        <div class="shrink-0">
+          <button
+            type="button"
+            onclick={() => (showGifPicker = true)}
+            disabled={interactionLocked}
+            title="Envoyer un GIF"
+            aria-label="Envoyer un GIF"
+            class="chat-composer-icon-button text-[0.7rem] font-extrabold tracking-tight"
+          >
+            GIF
+          </button>
+        </div>
+      {/if}
+
       <!-- Enregistreur Vocal (Mobile uniquement) -->
       {#if isVoiceRecordingSupported}
         <div class="shrink-0">
@@ -589,4 +612,12 @@
       class="max-h-full max-w-full object-contain select-none"
     />
   </MediaLightbox>
+{/if}
+
+{#if onSendGif}
+  <GifPickerModal
+    open={showGifPicker}
+    onClose={() => (showGifPicker = false)}
+    onSelect={(url) => onSendGif?.(url)}
+  />
 {/if}
