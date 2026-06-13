@@ -1,7 +1,8 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
   import { Search, Forward, Hash } from '@lucide/svelte';
-  import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import type { Conversation } from '$lib/types';
@@ -123,14 +124,20 @@
             onclick={() => pick(cand)}
             class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <span
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-              style="background-color: {generateAvatarColor(
-                cand.community ? `${cand.community} ${cand.label}` : cand.label
-              )}"
-            >
-              {getInitials(cand.label)}
-            </span>
+            {#if cand.conversation.conversationType === 'direct'}
+              <Avatar
+                userId={cand.conversation.directPeerId ?? cand.conversation.contactName}
+                size="md"
+                fallbackLabel={cand.label}
+              />
+            {:else}
+              <GroupAvatar
+                imageMediaId={cand.conversation.imageMediaId}
+                name={cand.label}
+                variant={cand.conversation.conversationType === 'channel' ? 'channel' : 'group'}
+                size="md"
+              />
+            {/if}
             <span class="flex min-w-0 flex-1 flex-col">
               <span class="truncate text-sm font-semibold text-text-main">{cand.label}</span>
               {#if cand.community}

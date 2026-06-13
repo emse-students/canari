@@ -823,23 +823,12 @@
       </div>
     {:else}
       <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
-        {#if typingLabel}
-          <div transition:slide={{ duration: 150, axis: 'y' }} class="px-4 md:px-6 pb-1">
-            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
-              <span class="flex items-end gap-0.5" aria-hidden="true">
-                <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"></span>
-                <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:150ms"></span>
-                <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:300ms"></span>
-              </span>
-              {typingLabel}
-            </span>
-          </div>
-        {/if}
         <ChatComposer
           {messageText}
           {onMessageChange}
           {onTyping}
           {onSendGif}
+          {typingLabel}
           onFocusChange={(focused) => (_composerFocused = focused)}
           {onSend}
           {replyingTo}

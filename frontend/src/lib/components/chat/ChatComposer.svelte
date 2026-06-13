@@ -31,6 +31,8 @@
     onTyping?: (isTyping: boolean) => void;
     /** Optional callback to send a picked GIF (by direct URL). Enables the GIF button. */
     onSendGif?: (url: string) => void;
+    /** "X écrit…" label shown just above the input, or empty when nobody is typing. */
+    typingLabel?: string;
     /** Message being replied to, shown as a preview above the input. */
     replyingTo?: ReplyTo | null;
     /** Callback to cancel the current reply. */
@@ -54,6 +56,7 @@
     onFocusChange,
     onTyping,
     onSendGif,
+    typingLabel,
     replyingTo,
     onCancelReply,
     onFilesSelected,
@@ -373,6 +376,19 @@
 
 <!-- Footer Container -->
 <footer class="chat-composer-footer" bind:this={composerFooter}>
+  <!-- Indicateur de frappe : juste au-dessus du champ, jamais derrière. -->
+  {#if typingLabel}
+    <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 sm:px-4 md:px-6 pb-1">
+      <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
+        <span class="flex items-end gap-0.5" aria-hidden="true">
+          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"></span>
+          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:150ms"></span>
+          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:300ms"></span>
+        </span>
+        {typingLabel}
+      </span>
+    </div>
+  {/if}
   <!-- Zone de Réponse (Reply) -->
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">

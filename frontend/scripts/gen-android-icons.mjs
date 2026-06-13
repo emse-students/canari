@@ -19,7 +19,7 @@ const SVG = path.join(ROOT, 'static', 'favicon.svg');
 const RES = path.join(ROOT, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'res');
 
 const NAVY = '#151B2C';
-const BIRD_SCALE = 0.62;
+const BIRD_SCALE = 0.5;
 
 const FOREGROUND = { mdpi: 108, hdpi: 162, xhdpi: 216, xxhdpi: 324, xxxhdpi: 432 };
 const LEGACY = { mdpi: 48, hdpi: 72, xhdpi: 96, xxhdpi: 144, xxxhdpi: 192 };
