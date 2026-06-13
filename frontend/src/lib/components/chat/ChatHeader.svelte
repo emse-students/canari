@@ -7,6 +7,7 @@
     Users,
     Phone,
     Video,
+    Images,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -46,6 +47,8 @@
     onGroupLeave?: () => void;
     /** Callback to remove a specific member from the group. */
     onGroupRemoveMember?: (userId: string) => void;
+    /** Callback to open the shared media/links/files panel. */
+    onOpenMedia?: () => void;
     /** Callback to toggle the in-conversation search bar. */
     onToggleSearch?: () => void;
     /** Whether the search bar is currently active. */
@@ -74,6 +77,7 @@
     onGroupLeave,
     onGroupRemoveMember,
     onOpenSettings,
+    onOpenMedia,
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
@@ -217,6 +221,17 @@
         class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
       >
         <Users size={20} strokeWidth={2.5} />
+      </button>
+    {/if}
+
+    {#if onOpenMedia}
+      <button
+        onclick={onOpenMedia}
+        aria-label="Médias, liens et fichiers"
+        title="Médias, liens et fichiers"
+        class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+      >
+        <Images size={20} strokeWidth={2.5} />
       </button>
     {/if}
 

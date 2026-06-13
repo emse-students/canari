@@ -6,6 +6,7 @@
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
+  import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -516,6 +517,29 @@
       .catch(() => {});
   }
 
+  /**
+   * Loads the conversation's shared media/links/files from the FULL local history
+   * (IndexedDB/SQLite), for the "Médias, liens & fichiers" panel.
+   */
+  async function loadSharedContent(conversationId: string): Promise<SharedContent> {
+    // Community channels don't persist messages locally (skipDbSave), so aggregate from
+    // the in-memory loaded messages. DMs/groups use the full local history from storage.
+    if (isChannelConversationId(conversationId)) {
+      const convo = convs.conversations.get(conversationId);
+      const msgs = (convo?.messages ?? []).map((m) => ({
+        id: m.id,
+        senderId: m.senderId,
+        timestamp: m.timestamp.getTime(),
+        content: m.content,
+        isDeleted: m.isDeleted,
+      }));
+      return aggregateSharedContent(msgs);
+    }
+    if (!session.storage) return { media: [], files: [], links: [] };
+    const msgs = await session.storage.getMessages(conversationId, session.pin);
+    return aggregateSharedContent(msgs);
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -579,6 +603,7 @@
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}
           onTyping={handleTyping}
+          onLoadSharedContent={loadSharedContent}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
           onBack={() => {
             channels.selectedChannelConversationId = '';

@@ -6,7 +6,9 @@
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
+  import ConversationMediaPanel from './ConversationMediaPanel.svelte';
   import EmptyState from '../shared/EmptyState.svelte';
+  import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
@@ -31,6 +33,8 @@
     onSend: () => void;
     /** Optional callback emitting throttled typing start/stop signals. */
     onTyping?: (isTyping: boolean) => void;
+    /** Loads the conversation's shared media/links/files from the local history. */
+    onLoadSharedContent?: (conversationId: string) => Promise<SharedContent>;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
     /** Callback to navigate back to the conversation list on mobile. */
@@ -112,6 +116,7 @@
     onMessageChange,
     onSend,
     onTyping,
+    onLoadSharedContent,
     onInviteMembers,
     onBack,
     onOpenConversations: _onOpenConversations,
@@ -171,6 +176,7 @@
   let searchMatches = $state<string[]>([]);
   let activeSearchIndex = $state(-1);
   let showSearch = $state(false);
+  let showMediaPanel = $state(false);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
@@ -513,8 +519,20 @@
           }
         }}
         searchActive={showSearch}
+        onOpenMedia={onLoadSharedContent ? () => (showMediaPanel = true) : undefined}
       />
     </div>
+
+    {#if onLoadSharedContent && chatView}
+      <ConversationMediaPanel
+        open={showMediaPanel}
+        conversationId={chatView.conversation.id}
+        {authToken}
+        loadSharedContent={onLoadSharedContent}
+        onClose={() => (showMediaPanel = false)}
+        onOpenSearch={() => (showSearch = true)}
+      />
+    {/if}
 
     {#if showSearch}
       <div class="px-3 md:px-6 pt-2 pb-0.5" transition:slide={{ duration: 180 }}>
