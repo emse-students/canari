@@ -5,4 +5,4 @@
   const slug = $derived((page.params as Record<string, string>).slug);
 </script>
 
-<AssociationDetailView {slug} kind="association" />
+<AssociationDetailView {slug} kind="list" />
