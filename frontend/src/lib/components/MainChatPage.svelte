@@ -8,6 +8,7 @@
   import { channelService } from '$lib/services/ChannelService';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
+  import { isMessagePinned, applyPin, setPinnedSet } from '$lib/stores/pinStore.svelte';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -567,6 +568,37 @@
     }
   }
 
+  /**
+   * Toggles a message's pinned state, routing to the right transport: server pin for
+   * community channels (with optimistic local apply + revert on failure), MLS `pin`/`unpin`
+   * system message for DMs/groups.
+   */
+  function handleTogglePinMessage(messageId: string) {
+    const key = convs.selectedContact;
+    if (!key) return;
+    const convo = convs.conversations.get(key);
+    if (!convo) return;
+    if (isSelectedChannel) {
+      const next = !isMessagePinned(convo.id, messageId);
+      applyPin(convo.id, messageId, next);
+      void channelService.setMessagePinned(convo.id, messageId, next).catch(() => {
+        applyPin(convo.id, messageId, !next); // revert if the server rejects
+      });
+    } else {
+      void messaging.handleTogglePin(messageId, msgCtx());
+    }
+  }
+
+  // Load the channel's pinned-message set from the server when a channel is opened.
+  $effect(() => {
+    const key = convs.selectedContact;
+    if (!key || !isSelectedChannel) return;
+    void channelService
+      .listPinnedMessageIds(key)
+      .then((ids) => setPinnedSet(key, ids))
+      .catch(() => {});
+  });
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -664,9 +696,7 @@
           onEdit={isSelectedChannel
             ? undefined
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
-          onTogglePin={isSelectedChannel
-            ? undefined
-            : (msgId) => void messaging.handleTogglePin(msgId, msgCtx())}
+          onTogglePin={handleTogglePinMessage}
           onCancelReply={messaging.cancelReply}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}

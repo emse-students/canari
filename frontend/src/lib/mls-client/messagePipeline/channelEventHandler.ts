@@ -4,6 +4,7 @@ import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
+import { applyPin } from '$lib/stores/pinStore.svelte';
 import type { MessageHandlerDeps } from './deps';
 
 /**
@@ -61,6 +62,14 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         : String(data.groupId || '');
     if (!conversationId) return;
     setTyping(conversationId, userId, data.state !== 'stop');
+    return;
+  }
+
+  if (event.type === 'channel.pin') {
+    const data = event.data || {};
+    const channelId = String(data.channelId || '');
+    const messageId = String(data.messageId || '');
+    if (channelId && messageId) applyPin(`channel_${channelId}`, messageId, !!data.pinned);
     return;
   }
 

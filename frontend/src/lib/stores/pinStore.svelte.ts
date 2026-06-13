@@ -49,6 +49,15 @@ export function isMessagePinned(conversationId: string, messageId: string): bool
   return load(conversationId).has(messageId);
 }
 
+/** Replaces the entire pinned set for a conversation (e.g. from the server list on channel open). */
+export function setPinnedSet(conversationId: string, messageIds: string[]): void {
+  if (!conversationId) return;
+  const set = load(conversationId);
+  set.clear();
+  for (const id of messageIds) if (id) set.add(id);
+  persist(conversationId, set);
+}
+
 /** Applies a pin/unpin to the local set and persists it. */
 export function applyPin(conversationId: string, messageId: string, pinned: boolean): void {
   if (!conversationId || !messageId) return;

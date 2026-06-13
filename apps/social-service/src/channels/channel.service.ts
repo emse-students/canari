@@ -1291,6 +1291,58 @@ export class ChannelService {
     );
   }
 
+  /** Pins/unpins a channel message and broadcasts a `channel.pin` event to workspace members. */
+  async setMessagePinned(
+    channelId: string,
+    messageId: string,
+    userId: string,
+    pinned: boolean
+  ): Promise<void> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
+    if (!msg) throw new NotFoundException('Message not found');
+    if (msg.pinned !== pinned) {
+      msg.pinned = pinned;
+      await this.messageRepo.save(msg);
+    }
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.pin',
+      { channelId, messageId, pinned },
+      workspaceMemberIds
+    );
+  }
+
+  /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
+  async listPinnedMessageIds(channelId: string, userId: string): Promise<string[]> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const rows = await this.messageRepo.find({
+      where: { channelId, pinned: true },
+      select: { id: true },
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((r) => r.id);
+  }
+
   /** Returns up to 200 messages from a channel in reverse chronological order (newest first). Access-controlled by canAccessChannel. */
   async listMessages(channelId: string, userId: string, limit = 50) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });

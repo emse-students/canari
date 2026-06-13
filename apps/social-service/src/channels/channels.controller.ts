@@ -356,6 +356,31 @@ export class ChannelsController {
     return { ok: true };
   }
 
+  /** Pins or unpins a message in a channel (broadcasts a channel.pin event). */
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/messages/:messageId/pin')
+  async pinMessage(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('messageId') messageId: string,
+    @Body() body: { pinned?: boolean }
+  ) {
+    await this.service.setMessagePinned(
+      channelId,
+      messageId,
+      xUserId.trim().toLowerCase(),
+      body?.pinned !== false
+    );
+    return { ok: true };
+  }
+
+  /** Returns the IDs of the pinned messages in a channel. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/pins')
+  listPins(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    return this.service.listPinnedMessageIds(channelId, xUserId.trim().toLowerCase());
+  }
+
   /** Returns recent messages for a channel accessible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/messages')

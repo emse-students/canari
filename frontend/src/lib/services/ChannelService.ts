@@ -355,6 +355,24 @@ export class ChannelService {
     }
   }
 
+  /** Pins or unpins a channel message (broadcasts a channel.pin event server-side). */
+  async setMessagePinned(channelId: string, messageId: string, pinned: boolean): Promise<void> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/messages/${encodeURIComponent(messageId)}/pin`,
+      { method: 'POST', body: JSON.stringify({ pinned }) }
+    );
+    await this.handleError(res);
+  }
+
+  /** Returns the IDs of the pinned messages in a channel. */
+  async listPinnedMessageIds(channelId: string): Promise<string[]> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/pins`);
+    await this.handleError(res);
+    return res.json() as Promise<string[]>;
+  }
+
   async listMessages(channelId: string, limit = 100) {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(

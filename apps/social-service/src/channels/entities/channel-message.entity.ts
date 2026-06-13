@@ -44,6 +44,10 @@ export class ChannelMessage {
   @Column('jsonb', { default: {} })
   metadata: any;
 
+  /** Whether this message is pinned in its channel (Discord-style pinned messages). */
+  @Column({ type: 'boolean', default: false })
+  pinned: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 
