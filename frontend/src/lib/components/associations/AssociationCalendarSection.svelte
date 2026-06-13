@@ -199,7 +199,12 @@
       events = await listAssociationCalendarEvents(associationId, {
         from,
         to,
-        includePending: canEdit,
+        // Toujours demandé : le backend ne renvoie les événements en attente qu'aux
+        // proposeurs / BDE / admins (sinon ignoré), pour qu'ils les voient grisés sur
+        // l'agenda de TOUTES les assos, pas seulement celles qu'ils éditent.
+        includePending: true,
+        // Les refusés (section de gestion) seulement pour les éditeurs de cette asso.
+        includeRejected: canEdit,
       });
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Erreur';
@@ -237,7 +242,11 @@
     };
   }
 
-  const feedEvents = $derived(validatedEvents.map(toFeedEvent));
+  // L'agenda affiche les validés + les en-attente (grisés via MonthCalendarGridRich),
+  // jamais les refusés (ceux-ci n'apparaissent que dans la section de gestion).
+  const feedEvents = $derived(
+    events.filter((e) => (e.status ?? 'validated') !== 'rejected').map(toFeedEvent)
+  );
 
   const sortedPendingEvents = $derived(
     [...pendingEvents].sort(

@@ -251,12 +251,13 @@ export async function listMembers(associationId: string): Promise<AssociationMem
 
 export async function listAssociationCalendarEvents(
   associationId: string,
-  opts?: { from?: string; to?: string; includePending?: boolean }
+  opts?: { from?: string; to?: string; includePending?: boolean; includeRejected?: boolean }
 ): Promise<AssociationCalendarEvent[]> {
   const q = new URLSearchParams();
   if (opts?.from) q.set('from', opts.from);
   if (opts?.to) q.set('to', opts.to);
   if (opts?.includePending) q.set('includePending', 'true');
+  if (opts?.includeRejected) q.set('includeRejected', 'true');
   const qs = q.toString();
   return request<AssociationCalendarEvent[]>(
     `/api/associations/${encodeURIComponent(associationId)}/events${qs ? `?${qs}` : ''}`

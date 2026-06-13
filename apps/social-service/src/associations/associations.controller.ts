@@ -234,20 +234,33 @@ export class AssociationsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('includePending') includePending?: string,
+    @Query('includeRejected') includeRejected?: string,
     @Headers('x-user-id') userId?: string,
     @Headers('x-global-admin') ga?: string
   ) {
     // Un membre autorisé à proposer (n'importe quelle asso), un admin BDE ou un admin
     // global voit les événements en attente sur l'agenda de TOUTES les associations.
     const wantPending = includePending === 'true' || includePending === '1';
+    const wantRejected = includeRejected === 'true' || includeRejected === '1';
     let include = false;
-    if (wantPending && userId?.trim()) {
-      include =
-        ga === 'true' ||
-        (await this.service.canViewPendingCalendarEvents(userId.trim())) ||
-        (await this.service.isUserBdeAdmin(userId.trim()));
+    let includeRej = false;
+    if (userId?.trim()) {
+      const uid = userId.trim();
+      if (wantPending) {
+        include =
+          ga === 'true' ||
+          (await this.service.canViewPendingCalendarEvents(uid)) ||
+          (await this.service.isUserBdeAdmin(uid));
+      }
+      // Les refusés (vue de gestion) ne sont visibles que pour les éditeurs de CETTE asso.
+      if (wantRejected) {
+        includeRej = await this.service.canPostAs(uid, id, { isGlobalAdmin: ga === 'true' });
+      }
     }
-    return this.service.listCalendarEvents(id, from, to, { includePending: include });
+    return this.service.listCalendarEvents(id, from, to, {
+      includePending: include,
+      includeRejected: includeRej,
+    });
   }
 
   /** Returns whether the calling user is following the specified association. */

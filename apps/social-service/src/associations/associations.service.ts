@@ -785,7 +785,7 @@ export class AssociationsService {
     associationId: string,
     fromIso?: string,
     toIso?: string,
-    opts?: { includePending?: boolean }
+    opts?: { includePending?: boolean; includeRejected?: boolean }
   ) {
     await this.findById(associationId);
     const qb = this.calendarRepo
@@ -798,19 +798,12 @@ export class AssociationsService {
         { associationId }
       )
       .orderBy('e.startsAt', 'ASC');
-    if (opts?.includePending) {
-      // Validés + en attente (grisés), jamais les refusés.
-      qb.andWhere('e.status IN (:...visibleStatuses)', {
-        visibleStatuses: [
-          AssociationCalendarEventStatus.Validated,
-          AssociationCalendarEventStatus.Pending,
-        ],
-      });
-    } else {
-      qb.andWhere('e.status = :validated', {
-        validated: AssociationCalendarEventStatus.Validated,
-      });
-    }
+    // Validés toujours visibles ; en attente (grisés sur l'agenda) pour les proposeurs ;
+    // refusés uniquement pour la vue de gestion des éditeurs de l'asso.
+    const statuses: AssociationCalendarEventStatus[] = [AssociationCalendarEventStatus.Validated];
+    if (opts?.includePending) statuses.push(AssociationCalendarEventStatus.Pending);
+    if (opts?.includeRejected) statuses.push(AssociationCalendarEventStatus.Rejected);
+    qb.andWhere('e.status IN (:...statuses)', { statuses });
     if (fromIso?.trim()) {
       // Include multi-day events that started before `from` but end within or after the window.
       qb.andWhere('COALESCE(e.endsAt, e.startsAt) >= :from', { from: new Date(fromIso) });
