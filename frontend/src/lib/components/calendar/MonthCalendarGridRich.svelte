@@ -152,8 +152,16 @@
                   {@const fg = contrastColor(colors[0])}
                   {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
                   <div
-                    class="relative flex-1 flex items-center justify-center overflow-hidden"
-                    style="{eventBgStyle(ev)} color:{fg};"
+                    class="relative flex-1 flex items-center justify-center overflow-hidden {ev.status ===
+                    'pending'
+                      ? 'opacity-50'
+                      : ''}"
+                    style="{eventBgStyle(ev)} color:{fg};{ev.status === 'pending'
+                      ? `outline:1.5px dashed ${fg};outline-offset:-2px;`
+                      : ''}"
+                    title={ev.status === 'pending'
+                      ? `${ev.title} — en attente de validation`
+                      : `${ev.title} - ${ev.associationName}`}
                   >
                     <!-- Day number on the first slot -->
                     {#if ei === 0}

@@ -1902,3 +1902,82 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
     env.new_string(&json_str)
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
+
+/// Applique un Welcome MLS reçu en arrière-plan (côté RECEVEUR, app tuée) : rejoint le
+/// groupe et persiste `mls.bin`. Miroir receveur de `nativeCreateWelcomeBackground`.
+///
+/// Sans ceci, le device ne rejoignait un nouveau groupe qu'à l'ouverture de l'app (moteur
+/// foreground), si bien que le 1er message d'une conversation initiée pendant que l'app est
+/// fermée restait indéchiffrable par FCM jusqu'à cette ouverture.
+///
+/// - `welcome_b64` : bytes du Welcome (base64).
+/// - `ratchet_tree_b64` : ratchet tree (base64) ; chaîne vide ou "null" si absent.
+/// - Retourne `1` en cas de succès, `0` sinon.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProcessWelcomeBackground(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    files_dir: jni::objects::JString,
+    state_bytes: jni::objects::JByteArray,
+    pin: jni::objects::JString,
+    user_id: jni::objects::JString,
+    device_id: jni::objects::JString,
+    welcome_b64: jni::objects::JString,
+    ratchet_tree_b64: jni::objects::JString,
+) -> jni::sys::jboolean {
+    let result = (|| -> Result<(), String> {
+        let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
+        let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
+        let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
+        let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env.get_string(&device_id).map_err(|e| e.to_string())?.into();
+        let welcome_b64_str: String =
+            env.get_string(&welcome_b64).map_err(|e| e.to_string())?.into();
+        let rt_b64_str: String = env
+            .get_string(&ratchet_tree_b64)
+            .map_err(|e| e.to_string())?
+            .into();
+
+        let welcome_bytes = STANDARD
+            .decode(welcome_b64_str.trim())
+            .map_err(|e| format!("base64 decode welcome: {}", e))?;
+
+        let rt_trimmed = rt_b64_str.trim();
+        let ratchet_tree_bytes = if rt_trimmed.is_empty() || rt_trimmed == "null" {
+            None
+        } else {
+            Some(
+                STANDARD
+                    .decode(rt_trimmed)
+                    .map_err(|e| format!("base64 decode ratchet tree: {}", e))?,
+            )
+        };
+
+        let mut manager =
+            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
+                .map_err(|e| e.to_string())?;
+
+        let group_id = manager
+            .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
+            .map_err(|e| format!("process_welcome: {:?}", e))?;
+
+        let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
+        let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
+        write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
+        log::info!(
+            "[BG_JOIN] groupe rejoint via Welcome: {} (mls.bin {} octets)",
+            group_id,
+            enc.len()
+        );
+        Ok(())
+    })();
+
+    match result {
+        Ok(_) => 1,
+        Err(e) => {
+            log::error!("[BG_JOIN] nativeProcessWelcomeBackground failed: {}", e);
+            0
+        }
+    }
+}

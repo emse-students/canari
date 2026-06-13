@@ -14,6 +14,8 @@ import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
+import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
@@ -70,6 +72,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /** ID réservé pour la notification de résumé du groupe (ne doit pas collisionner avec getStableNotifId). */
         private const val GROUP_SUMMARY_ID   = 9999
+
+        /** Nombre maximum de messages empilés dans une notification MessagingStyle par conversation. */
+        private const val MAX_NOTIF_MESSAGES = 6
     }
 
     // Retourne un JSON : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
@@ -904,9 +909,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
 
-        val isGroup    = groupName.isNotEmpty() && groupName != senderName
-        val notifTitle = if (isGroup) groupName else senderName.ifEmpty { "Canari" }
-        val notifBody  = if (isGroup && senderName.isNotEmpty()) "$senderName: $body" else body
+        val isGroup = groupName.isNotEmpty() && groupName != senderName
 
         // ID stable par conversation : notify() avec le même ID met à jour la notif existante
         val notifId = if (groupId.isNotEmpty()) getStableNotifId(groupId) else 0
@@ -921,11 +924,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // MessagingStyle : les messages successifs d'une même conversation s'EMPILENT au lieu
+        // de se remplacer. On reconstruit le style à partir de la notification active (si présente)
+        // en bornant l'historique à MAX_NOTIF_MESSAGES pour éviter une croissance illimitée.
+        val senderPerson = Person.Builder()
+            .setName(senderName.ifEmpty { "Canari" })
+            .setIcon(IconCompat.createWithBitmap(largeIcon))
+            .build()
+        val selfPerson = Person.Builder().setName("Moi").build()
+
+        val existingNotif = try {
+            manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
+        } catch (e: Exception) {
+            Log.w(TAG, "showNotification: activeNotifications indisponible: ${e.message}")
+            null
+        }
+
+        val style = NotificationCompat.MessagingStyle(selfPerson)
+        if (isGroup) {
+            style.conversationTitle = groupName
+            style.isGroupConversation = true
+        }
+        // Réinjecter les messages précédents (bornés) puis ajouter le nouveau.
+        existingNotif
+            ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+            ?.messages
+            ?.takeLast(MAX_NOTIF_MESSAGES - 1)
+            ?.forEach { style.addMessage(it) }
+        style.addMessage(body, System.currentTimeMillis(), senderPerson)
+
         val notif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(notifTitle)
-            .setContentText(notifBody)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(notifBody))
+            .setStyle(style)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
@@ -933,7 +963,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setGroup(GROUP_KEY_MESSAGES)
             .build()
 
-        Log.d(TAG, "showNotification: notifId=$notifId title=$notifTitle body=${notifBody.take(40)}")
+        Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
         manager.notify(notifId, notif)
 
         // La notification de résumé est obligatoire sur Android 7+ pour que le groupement

@@ -34,6 +34,8 @@ pub struct WsFrame {
     pub msg_type: String,
     /// The `groupId` field, or an empty string when absent.
     pub group_id: String,
+    /// The `state` field (used by `typing`: `"start"`/`"stop"`), empty when absent.
+    pub state: String,
 }
 
 impl WsFrame {
@@ -52,7 +54,17 @@ impl WsFrame {
             .unwrap_or_default()
             .to_string();
 
-        Some(WsFrame { msg_type, group_id })
+        let state = json
+            .get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        Some(WsFrame {
+            msg_type,
+            group_id,
+            state,
+        })
     }
 }
 
@@ -122,6 +134,73 @@ pub async fn handle_welcome_request(conn: &WsConn<'_>, frame: &WsFrame) {
 
     let sender_key = format!("{}:{}", conn.user_id, conn.device_id);
     forward_to_one_peer(conn, &frame.group_id, &sender_key, notification).await;
+}
+
+// ── Handler: "typing" ─────────────────────────────────────────────────────
+
+/// Relay an ephemeral typing signal to every other online member of the group.
+///
+/// Best-effort, fire-and-forget: typing is non-critical, never persisted and
+/// never queued. Only used for MLS groups/DMs (channels route typing through
+/// the social-service `chat:channel_events` path, which knows channel members).
+pub async fn handle_typing(conn: &WsConn<'_>, frame: &WsFrame) {
+    if frame.group_id.is_empty() {
+        return;
+    }
+    let state = if frame.state == "stop" {
+        "stop"
+    } else {
+        "start"
+    };
+    let notification = serde_json::json!({
+        "type": "typing",
+        "groupId": frame.group_id,
+        "userId": conn.user_id,
+        "state": state,
+    })
+    .to_string();
+
+    broadcast_to_group_members(conn, &frame.group_id, conn.user_id, notification).await;
+}
+
+/// Send a frame to every online connection of every group member except the
+/// sender's own devices. Looks up `group:members:{group_id}` in Redis.
+async fn broadcast_to_group_members(
+    conn: &WsConn<'_>,
+    group_id: &str,
+    sender_user: &str,
+    notification: String,
+) {
+    use redis::AsyncCommands;
+
+    let Ok(mut con) = conn
+        .state
+        .redis_client
+        .get_multiplexed_async_connection()
+        .await
+    else {
+        return;
+    };
+    let members_key = format!("group:members:{}", group_id);
+    let Ok(members) = con.smembers::<_, Vec<String>>(&members_key).await else {
+        return;
+    };
+
+    // Exclude the sender's own devices (key is `userId:deviceId`).
+    let sender_prefix = format!("{}:", sender_user);
+    let targets: Vec<mpsc::Sender<String>> = {
+        let map = conn.state.connected_users.lock().unwrap();
+        members
+            .iter()
+            .filter(|m| !m.starts_with(&sender_prefix))
+            .filter_map(|m| map.get(m))
+            .flat_map(|senders| senders.values().cloned())
+            .collect()
+    };
+
+    for tx in targets {
+        let _ = tx.try_send(notification.clone());
+    }
 }
 
 // ── Shared helper ─────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
-  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench } from '@lucide/svelte';
+  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench, Building2 } from '@lucide/svelte';
 
   let { children } = $props();
 
@@ -37,11 +37,12 @@
     const items: {
       href: string;
       label: string;
-      icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform';
+      icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform' | 'associations';
     }[] = [{ href: '/admin/agenda', label: 'Agenda en attente', icon: 'agenda' }];
     if (isGlobalAdminUser) {
       items.push(
         { href: '/admin/moderation', label: 'Posts signalés', icon: 'moderation' },
+        { href: '/admin/associations', label: 'Assos / BDE', icon: 'associations' },
         { href: '/admin/status', label: 'Présence & connexions', icon: 'status' },
         { href: '/admin/platform', label: 'Plateforme', icon: 'platform' },
         { href: '/admin/users', label: 'Admins', icon: 'users' }
@@ -104,6 +105,8 @@
             <ShieldAlert size={15} />
           {:else if item.icon === 'users'}
             <UserCog size={15} />
+          {:else if item.icon === 'associations'}
+            <Building2 size={15} />
           {:else if item.icon === 'platform'}
             <Wrench size={15} />
           {:else}

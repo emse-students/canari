@@ -1268,6 +1268,29 @@ export class ChannelService {
     return savedMsg;
   }
 
+  /**
+   * Broadcasts an ephemeral typing signal to the channel's workspace members.
+   * Not persisted and best-effort: a failure to publish is non-critical.
+   */
+  async publishTyping(channelId: string, userId: string, isTyping: boolean): Promise<void> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.typing',
+      { channelId, userId, state: isTyping ? 'start' : 'stop' },
+      workspaceMemberIds
+    );
+  }
+
   /** Returns up to 200 messages from a channel in reverse chronological order (newest first). Access-controlled by canAccessChannel. */
   async listMessages(channelId: string, userId: string, limit = 50) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });

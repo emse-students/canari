@@ -339,6 +339,15 @@ export class WebMlsService extends BaseMlsService {
             }
             return;
           }
+          if (msg.type === 'typing') {
+            // Group/DM typing: normalise the flat gateway frame into the channel-event
+            // shape so the shared handler updates the typing store uniformly.
+            this.onChannelEvent?.({
+              type: 'typing',
+              data: { groupId: msg.groupId, userId: msg.userId, state: msg.state },
+            });
+            return;
+          }
           if (msg.type === 'welcome_request') {
             const requesterUserId = (msg.requesterUserId as string) || '';
             const requesterDeviceId = (msg.requesterDeviceId as string) || '';
@@ -413,6 +422,19 @@ export class WebMlsService extends BaseMlsService {
         this.ws.send(JSON.stringify({ type: 'disconnect' }));
       } catch {
         // Best-effort - ignore if the socket is already closing
+      }
+    }
+  }
+
+  /** Sends an ephemeral typing signal over the browser WebSocket for a DM/group. */
+  sendTyping(groupId: string, isTyping: boolean): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(
+          JSON.stringify({ type: 'typing', groupId, state: isTyping ? 'start' : 'stop' })
+        );
+      } catch {
+        // Best-effort - typing is non-critical
       }
     }
   }

@@ -15,6 +15,8 @@
   import type { PendingMediaFile } from '$lib/media';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
+  import { typingUsersFor } from '$lib/stores/typingStore.svelte';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -27,6 +29,8 @@
     onMessageChange: (value: string) => void;
     /** Callback to submit the composed message. */
     onSend: () => void;
+    /** Optional callback emitting throttled typing start/stop signals. */
+    onTyping?: (isTyping: boolean) => void;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
     /** Callback to navigate back to the conversation list on mobile. */
@@ -107,6 +111,7 @@
     isChannel = false,
     onMessageChange,
     onSend,
+    onTyping,
     onInviteMembers,
     onBack,
     onOpenConversations: _onOpenConversations,
@@ -176,6 +181,26 @@
       top: chatContainer.scrollHeight,
       behavior: smooth ? 'smooth' : 'auto',
     });
+  }
+
+  /**
+   * Robustly pins the view to the latest message when entering a conversation.
+   * A single rAF scroll often fires before late-settling content (images, fonts,
+   * the freshly rendered group window) has finished growing the list, leaving the
+   * view above the bottom. Re-pinning across a few frames and two short delays
+   * guarantees we actually land on the last message.
+   */
+  function scrollToBottomSettled() {
+    if (!chatContainer) return;
+    scrollToBottom(false);
+    let frames = 0;
+    const repin = () => {
+      scrollToBottom(false);
+      if (++frames < 5) requestAnimationFrame(repin);
+    };
+    requestAnimationFrame(repin);
+    setTimeout(() => scrollToBottom(false), 250);
+    setTimeout(() => scrollToBottom(false), 600);
   }
 
   function handleScroll() {
@@ -256,6 +281,19 @@
       isGroup: convType === 'group',
       isDirect: convType === 'direct',
     };
+  });
+
+  /** Reactive "X écrit…" label for the active conversation, excluding the current user. */
+  const typingLabel = $derived.by(() => {
+    const convId = chatView?.conversation.id;
+    if (!convId) return '';
+    const me = currentUserId.trim().toLowerCase();
+    const typers = typingUsersFor(convId).filter((u) => u !== me);
+    if (typers.length === 0) return '';
+    const names = typers.map((u) => getUserDisplayNameSync(u, u));
+    if (names.length === 1) return `${names[0]} écrit…`;
+    if (names.length === 2) return `${names[0]} et ${names[1]} écrivent…`;
+    return 'Plusieurs personnes écrivent…';
   });
 
   // Group messages by date and time gaps
@@ -374,7 +412,7 @@
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = !isChannel;
-        tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+        tick().then(() => scrollToBottomSettled());
         isNearBottom = true;
       } else if (hasNewMessage && !catchupActive) {
         // Always scroll to bottom for own messages; for others only if already near bottom.
@@ -629,9 +667,22 @@
       </div>
     {:else}
       <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
+        {#if typingLabel}
+          <div transition:slide={{ duration: 150, axis: 'y' }} class="px-4 md:px-6 pb-1">
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
+              <span class="flex items-end gap-0.5" aria-hidden="true">
+                <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"></span>
+                <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:150ms"></span>
+                <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:300ms"></span>
+              </span>
+              {typingLabel}
+            </span>
+          </div>
+        {/if}
         <ChatComposer
           {messageText}
           {onMessageChange}
+          {onTyping}
           onFocusChange={(focused) => (_composerFocused = focused)}
           {onSend}
           {replyingTo}

@@ -12,6 +12,7 @@ import {
   Delete,
   HttpCode,
   Res,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { UsersService } from './users.service';
@@ -131,13 +132,26 @@ export class UsersController {
     return this.usersService.listAll();
   }
 
-  /** Sets or clears the global admin flag on a user; requires global admin. */
+  /**
+   * Sets or clears the global admin flag on a user; requires global admin.
+   * An admin cannot revoke their *own* flag - another admin must do it. This guarantees
+   * a sole admin can never lock themselves (and the platform) out, so at least one admin
+   * always remains.
+   */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Patch(':id/admin')
   async setAdmin(
     @Param('id') targetId: string,
+    @Headers('x-user-id') callerId: string,
     @Body() body: { admin: boolean },
   ) {
+    const isSelf =
+      targetId.trim().toLowerCase() === (callerId ?? '').trim().toLowerCase();
+    if (body.admin === false && isSelf) {
+      throw new ForbiddenException(
+        'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.',
+      );
+    }
     await this.usersService.setAdmin(targetId, body.admin);
     return { ok: true, userId: targetId, admin: body.admin };
   }

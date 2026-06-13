@@ -17,7 +17,9 @@ use tokio::sync::mpsc;
 
 use crate::models::{AuthParams, Claims};
 use crate::state::AppState;
-use crate::ws_dispatch::{WsConn, WsFrame, handle_disconnect, handle_welcome_request};
+use crate::ws_dispatch::{
+    WsConn, WsFrame, handle_disconnect, handle_typing, handle_welcome_request,
+};
 
 // ── Cookie helper ─────────────────────────────────────────────────────────
 
@@ -493,6 +495,15 @@ async fn handle_socket(
                                     tx: &tx_for_dispatch,
                                 };
                                 handle_welcome_request(&conn, &frame).await;
+                            }
+                            "typing" => {
+                                let conn = WsConn {
+                                    state: &state,
+                                    user_id: &user_id,
+                                    device_id: &device_id,
+                                    tx: &tx_for_dispatch,
+                                };
+                                handle_typing(&conn, &frame).await;
                             }
                             _ => {}
                         }

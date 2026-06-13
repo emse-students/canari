@@ -224,6 +224,8 @@ export abstract class BaseMlsService implements IMlsService {
   abstract isWsOpen(): boolean;
   abstract sendDisconnect(): void;
 
+  abstract sendTyping(groupId: string, isTyping: boolean): void;
+
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
   onMessage(

@@ -3,6 +3,7 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { setTyping } from '$lib/stores/typingStore.svelte';
 import type { MessageHandlerDeps } from './deps';
 
 /**
@@ -46,6 +47,22 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   } = ctx;
 
   log(`[Channel Event] ${event.type}`);
+
+  // Ephemeral typing signal: `typing` (DM/group, keyed by groupId) and
+  // `channel.typing` (community channel, keyed by channel_<id>). Both update the
+  // shared typing store keyed by `conversation.id`.
+  if (event.type === 'typing' || event.type === 'channel.typing') {
+    const data = event.data || {};
+    const userId = String(data.userId || '');
+    if (!userId) return;
+    const conversationId =
+      event.type === 'channel.typing'
+        ? `channel_${String(data.channelId || '')}`
+        : String(data.groupId || '');
+    if (!conversationId) return;
+    setTyping(conversationId, userId, data.state !== 'stop');
+    return;
+  }
 
   if (event.type === 'channel.member.joined') {
     const data = event.data || {};

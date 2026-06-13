@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Forward, Pencil, Trash2, SmilePlus } from '@lucide/svelte';
+  import { Reply, Forward, Pencil, Trash2, SmilePlus, Copy } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
@@ -32,6 +32,8 @@
     onReply?: () => void;
     /** Called when the user taps the forward button. */
     onForward?: () => void;
+    /** Called when the user taps the copy button. Hidden when undefined (e.g. media-only). */
+    onCopy?: () => void;
     /** Called when the user taps the edit button. */
     onEdit?: () => void;
     /** Called when the user taps the delete button. */
@@ -54,6 +56,7 @@
     onOpenFullPicker,
     onReply,
     onForward,
+    onCopy,
     onEdit,
     onDelete,
     onClose,
@@ -140,6 +143,20 @@
           >
             <Forward size={20} />
             <span class="text-[10px] font-medium text-text-muted">Transférer</span>
+          </button>
+        {/if}
+
+        {#if !isDeleted && onCopy}
+          <button
+            onclick={() => {
+              onCopy?.();
+              onClose?.();
+            }}
+            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
+            aria-label="Copier"
+          >
+            <Copy size={20} />
+            <span class="text-[10px] font-medium text-text-muted">Copier</span>
           </button>
         {/if}
 

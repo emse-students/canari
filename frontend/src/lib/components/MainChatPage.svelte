@@ -5,6 +5,7 @@
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { channelService } from '$lib/services/ChannelService';
   import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
@@ -496,6 +497,25 @@
     }
   }
 
+  /**
+   * Routes a throttled typing signal to the right transport for the active
+   * conversation: gateway WS for DMs/groups (keyed by the MLS groupId), social
+   * HTTP for community channels. Best-effort - failures are ignored.
+   */
+  function handleTyping(isTyping: boolean) {
+    const key = convs.selectedContact;
+    if (!key) return;
+    if (isSelectedChannel) {
+      void channelService.sendTyping(key, isTyping);
+      return;
+    }
+    const convo = convs.conversations.get(key);
+    if (!convo?.id) return;
+    Promise.resolve(session.ensureMls())
+      .then((m) => m?.sendTyping?.(convo.id, isTyping))
+      .catch(() => {});
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -558,6 +578,7 @@
           imageMediaId={activeConversation?.imageMediaId ?? null}
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}
+          onTyping={handleTyping}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
           onBack={() => {
             channels.selectedChannelConversationId = '';
@@ -692,6 +713,8 @@
         open={!!forwardingMessage}
         conversations={[...convs.conversations.entries()]}
         excludeKey={convs.selectedContact}
+        currentUserId={session.userId}
+        channelWorkspaces={channels.channelWorkspaces}
         onClose={() => (forwardingMessage = null)}
         onSelect={doForward}
       />

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from '@lucide/svelte';
-  import { untrack, tick, onMount } from 'svelte';
+  import { untrack, tick, onMount, onDestroy } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import VoiceRecorder from './VoiceRecorder.svelte';
@@ -26,6 +26,8 @@
     onSend: () => void;
     /** Optional callback reporting text-area focus state changes. */
     onFocusChange?: (focused: boolean) => void;
+    /** Optional callback emitting throttled typing start/stop signals. */
+    onTyping?: (isTyping: boolean) => void;
     /** Message being replied to, shown as a preview above the input. */
     replyingTo?: ReplyTo | null;
     /** Callback to cancel the current reply. */
@@ -47,6 +49,7 @@
     onMessageChange,
     onSend,
     onFocusChange,
+    onTyping,
     replyingTo,
     onCancelReply,
     onFilesSelected,
@@ -92,10 +95,15 @@
     typeof MediaRecorder !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
   let isMobileViewport = $state(false);
+  /** True as soon as the user has typed something: used to free up composer width. */
+  const isComposing = $derived(messageText.trim().length > 0);
+
   const isVoiceRecordingSupported = $derived(
     // Show on mobile/coarse-pointer devices AND on Tauri desktop where MediaRecorder is available.
     // Hidden on regular desktop Web browsers to keep the composer uncluttered.
-    hasMediaRecorder && (isMobileViewport || isTauriRuntime())
+    // Also hidden once the user starts typing so the text area gets the extra width
+    // (fewer line wraps → the field grows vertically far less aggressively).
+    hasMediaRecorder && (isMobileViewport || isTauriRuntime()) && !isComposing
   );
 
   const isSendDisabled = $derived(
@@ -103,6 +111,43 @@
       (!messageText.trim() && pendingFiles.length === 0) ||
       isUploading
   );
+
+  // ── Typing signal (throttled) ──────────────────────────────────────────────
+  // Emit `start` at most once per 3s while typing, and `stop` after 4s of
+  // inactivity (or on send/blur/unmount), so the gateway broadcast stays cheap.
+  let typingActive = false;
+  let lastTypingSentAt = 0;
+  let typingIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function stopTyping() {
+    if (typingIdleTimer) {
+      clearTimeout(typingIdleTimer);
+      typingIdleTimer = null;
+    }
+    if (typingActive) {
+      typingActive = false;
+      onTyping?.(false);
+    }
+  }
+
+  function pingTyping() {
+    const now = Date.now();
+    if (!typingActive || now - lastTypingSentAt > 3000) {
+      typingActive = true;
+      lastTypingSentAt = now;
+      onTyping?.(true);
+    }
+    if (typingIdleTimer) clearTimeout(typingIdleTimer);
+    typingIdleTimer = setTimeout(stopTyping, 4000);
+  }
+
+  function handleMessageChange(value: string) {
+    onMessageChange(value);
+    if (!interactionLocked && value.trim().length > 0) pingTyping();
+    else stopTyping();
+  }
+
+  onDestroy(stopTyping);
 
   function toReplyPreview(value: string): string {
     const normalized = value.replace(/\s+/g, ' ').trim();
@@ -143,6 +188,7 @@
       if (!isSendDisabled) {
         mentionComposer?.commitComposition();
         onSend();
+        stopTyping();
         mentionComposer?.clearEditor();
         tick().then(() => mentionComposer?.focusEditor());
       }
@@ -493,14 +539,14 @@
       <MentionComposerInput
         bind:this={mentionComposer}
         value={messageText}
-        onchange={onMessageChange}
+        onchange={handleMessageChange}
         class="flex-1 min-w-0"
         editorClass="chat-composer-textarea"
         placeholder={interactionLocked ? 'Synchronisation MLS…' : 'Écrivez un message...'}
         minHeight="44px"
         disabled={interactionLocked}
         onfocus={() => onFocusChange?.(true)}
-        onblur={() => onFocusChange?.(false)}
+        onblur={() => { onFocusChange?.(false); stopTyping(); }}
         onkeydown={handleComposerKeydown}
         onpaste={handlePaste}
       />
@@ -509,7 +555,7 @@
       <div class="shrink-0 pr-1">
         <button
           onmousedown={(e) => e.preventDefault()}
-          onclick={() => { mentionComposer?.commitComposition(); onSend(); mentionComposer?.clearEditor(); }}
+          onclick={() => { mentionComposer?.commitComposition(); onSend(); stopTyping(); mentionComposer?.clearEditor(); }}
           disabled={isSendDisabled}
           aria-label="Envoyer le message"
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"

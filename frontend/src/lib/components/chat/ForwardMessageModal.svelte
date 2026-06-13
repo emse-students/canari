@@ -1,8 +1,17 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { Search, Forward } from '@lucide/svelte';
+  import { Search, Forward, Hash } from '@lucide/svelte';
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
+  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import type { Conversation } from '$lib/types';
+  import { SvelteMap } from 'svelte/reactivity';
+
+  /** Minimal community-workspace shape needed to resolve a channel's community. */
+  interface WorkspaceLike {
+    name: string;
+    channels: { id: string }[];
+  }
 
   interface Props {
     open: boolean;
@@ -10,28 +19,83 @@
     conversations: [string, Conversation][];
     /** Conversation key to exclude (the source conversation). */
     excludeKey?: string | null;
+    /** Authenticated user ID, used to resolve DM peer display names. */
+    currentUserId: string;
+    /** Community workspaces, used to label channel (salon) targets with their community. */
+    channelWorkspaces?: WorkspaceLike[];
     onClose: () => void;
     /** Called with the target conversation key when the user picks a destination. */
     onSelect: (key: string, conversation: Conversation) => void;
   }
 
-  let { open, conversations, excludeKey = null, onClose, onSelect }: Props = $props();
+  let {
+    open,
+    conversations,
+    excludeKey = null,
+    currentUserId,
+    channelWorkspaces = [],
+    onClose,
+    onSelect,
+  }: Props = $props();
 
   let query = $state('');
 
-  // Discussions seulement (DM + groupes), hors canaux et hors conversation source.
-  const candidates = $derived(
-    conversations
-      .filter(
-        ([key, c]) =>
-          c.conversationType !== 'channel' && key !== excludeKey && (c.name?.trim()?.length ?? 0) > 0
-      )
-      .filter(([, c]) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
-      .sort((a, b) => a[1].name.localeCompare(b[1].name))
-  );
+  /** Channel conversation ID → community (workspace) name, for disambiguating same-named salons. */
+  const channelCommunity = $derived.by(() => {
+    const map = new SvelteMap<string, string>();
+    for (const ws of channelWorkspaces) {
+      for (const ch of ws.channels) map.set(ch.id, ws.name);
+    }
+    return map;
+  });
 
-  function pick(key: string, c: Conversation) {
-    onSelect(key, c);
+  interface Candidate {
+    key: string;
+    conversation: Conversation;
+    /** Resolved human-readable name (peer name for DMs, group/channel name otherwise). */
+    label: string;
+    /** Community name when the target is a channel/salon, else null. */
+    community: string | null;
+  }
+
+  // Toutes les discussions (DM, groupes, salons), hors conversation source. Les noms sont
+  // résolus via resolveConversationListPresentation pour ne jamais afficher d'ID brut, et les
+  // salons sont étiquetés avec leur communauté (plusieurs salons peuvent partager le même nom).
+  const candidates = $derived.by<Candidate[]>(() => {
+    const q = query.trim().toLowerCase();
+    return conversations
+      .filter(([key]) => key !== excludeKey)
+      .map(([key, c]): Candidate => {
+        const community = isChannelConversationId(c.id)
+          ? (channelCommunity.get(c.id) ?? null)
+          : null;
+        const label = resolveConversationListPresentation(
+          {
+            id: c.id,
+            name: c.name,
+            contactName: c.contactName ?? c.id,
+            conversationType: c.conversationType,
+            directPeerId: c.directPeerId,
+          },
+          currentUserId
+        ).displayName;
+        return { key, conversation: c, label, community };
+      })
+      .filter((cand) => cand.label.trim().length > 0)
+      .filter(
+        (cand) =>
+          !q ||
+          cand.label.toLowerCase().includes(q) ||
+          (cand.community?.toLowerCase().includes(q) ?? false)
+      )
+      .sort(
+        (a, b) =>
+          (a.community ?? '').localeCompare(b.community ?? '') || a.label.localeCompare(b.label)
+      );
+  });
+
+  function pick(cand: Candidate) {
+    onSelect(cand.key, cand.conversation);
     query = '';
   }
 </script>
@@ -53,19 +117,29 @@
       {#if candidates.length === 0}
         <p class="py-8 text-center text-sm text-text-muted">Aucune discussion trouvée.</p>
       {:else}
-        {#each candidates as [key, c] (key)}
+        {#each candidates as cand (cand.key)}
           <button
             type="button"
-            onclick={() => pick(key, c)}
+            onclick={() => pick(cand)}
             class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
             <span
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-              style="background-color: {generateAvatarColor(c.name)}"
+              style="background-color: {generateAvatarColor(
+                cand.community ? `${cand.community} ${cand.label}` : cand.label
+              )}"
             >
-              {getInitials(c.name)}
+              {getInitials(cand.label)}
             </span>
-            <span class="min-w-0 flex-1 truncate text-sm font-semibold text-text-main">{c.name}</span>
+            <span class="flex min-w-0 flex-1 flex-col">
+              <span class="truncate text-sm font-semibold text-text-main">{cand.label}</span>
+              {#if cand.community}
+                <span class="flex items-center gap-1 truncate text-xs text-text-muted">
+                  <Hash size={11} class="shrink-0" />
+                  {cand.community}
+                </span>
+              {/if}
+            </span>
             <Forward size={16} class="shrink-0 text-text-muted" />
           </button>
         {/each}

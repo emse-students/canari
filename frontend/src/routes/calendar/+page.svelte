@@ -55,10 +55,14 @@
     loadError = '';
     try {
       const { from, to } = monthRangeISO(focusDate);
+      // includePending : le backend ne renvoie les événements en attente qu'aux
+      // proposeurs / admins BDE / admins globaux (sinon ignoré). On le demande donc
+      // systématiquement et c'est le serveur qui filtre.
       events = await listAggregatedCalendarFeed({
         from,
         to,
         associationId: filterAssociationId || undefined,
+        includePending: true,
       });
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Erreur';

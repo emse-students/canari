@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Reply, Forward, Smile, Pencil, Trash2 } from '@lucide/svelte';
 
+  /** Quick-reaction emojis shown inline in the web hover toolbar (mirrors mobile). */
+  const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡'] as const;
+
   interface Props {
     /** When true, positions the toolbar on the right side. */
     isOwn: boolean;
@@ -16,7 +19,11 @@
     onReply?: () => void;
     /** Called when the forward button is clicked. Omit to hide the button. */
     onForward?: () => void;
-    /** Called when the emoji/react button is clicked. Omit to hide the button. */
+    /** Called when a quick-reaction emoji is clicked. Omit to hide the strip. */
+    onReact?: (emoji: string) => void;
+    /** Emojis the current user already reacted with (highlights them in the strip). */
+    userReactions?: string[];
+    /** Called when the "more reactions" (+) button is clicked. Omit to hide the button. */
     onToggleEmojiPicker?: () => void;
     /** Called when the edit button is clicked. Omit to hide the button. */
     onEdit?: () => void;
@@ -32,6 +39,8 @@
     forceVisible = false,
     onReply,
     onForward,
+    onReact,
+    userReactions = [],
     onToggleEmojiPicker,
     onEdit,
     onDelete,
@@ -49,6 +58,28 @@
     ? 'flex'
     : 'hidden md:flex'} flex-row items-center gap-0.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg px-2 py-1.5 z-10 text-text-muted"
 >
+  <!-- Réactions rapides (web) : même set que mobile, masquées en mode long-press mobile
+       où MessageMobileActions affiche déjà sa propre bande de réactions. -->
+  {#if !isDeleted && onReact && !forceVisible}
+    {#each QUICK_EMOJIS as emoji (emoji)}
+      {@const isActive = userReactions.includes(emoji)}
+      <button
+        onclick={(e) => {
+          e.stopPropagation();
+          onReact?.(emoji);
+        }}
+        class="w-7 h-7 rounded-full text-base leading-none flex items-center justify-center transition-transform hover:scale-125 active:scale-95 {isActive
+          ? 'bg-amber-400/20 ring-1 ring-amber-400'
+          : 'hover:bg-black/5 dark:hover:bg-white/10'}"
+        aria-label="Réagir avec {emoji}"
+        aria-pressed={isActive}
+        title="Réagir avec {emoji}"
+      >
+        {emoji}
+      </button>
+    {/each}
+    <div class="mx-0.5 self-stretch w-px bg-black/10 dark:bg-white/10"></div>
+  {/if}
   {#if !isDeleted && onReply}
     <button
       onclick={() => onReply?.()}
@@ -79,8 +110,8 @@
         onToggleEmojiPicker?.();
       }}
       class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500 transition-colors"
-      aria-label="Réagir"
-      title="Réagir"
+      aria-label={onReact ? 'Plus de réactions' : 'Réagir'}
+      title={onReact ? 'Plus de réactions' : 'Réagir'}
     >
       <Smile size={16} />
     </button>

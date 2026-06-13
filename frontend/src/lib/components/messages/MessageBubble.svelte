@@ -536,7 +536,9 @@
         style:transform={replyDragPx !== 0 || reactDragPx !== 0 ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)` : undefined}
         class="{isMediaOnly || isLinkOnly
           ? 'p-0'
-          : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMediaOnly || isLinkOnly
+          : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
+          ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
+          : ''} {isMediaOnly || isLinkOnly
           ? ''
           : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
           ? 'message-swipe-reply-active'
@@ -606,6 +608,8 @@
         forceVisible={showMobileActions && isMobile}
         onReply={onReply ? () => onReply!(messageId) : undefined}
         onForward={onForward ? () => onForward!(messageId) : undefined}
+        onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
+        userReactions={userOwnReactions}
         onToggleEmojiPicker={onReact
           ? () => {
               showEmojiPicker = !showEmojiPicker;
@@ -689,6 +693,15 @@
       }}
       onReply={onReply && !isDeleted ? () => { onReply!(messageId); showMobileActions = false; } : undefined}
       onForward={onForward && !isDeleted ? () => onForward!(messageId) : undefined}
+      onCopy={textContent && !isDeleted
+        ? () => {
+            navigator.clipboard?.writeText(textContent);
+            showMobileActions = false;
+            if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+              navigator.vibrate(8);
+            }
+          }
+        : undefined}
       onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? () => { startInlineEdit(); showMobileActions = false; } : undefined}
       onDelete={!isDeleted && isOwn && onDelete ? () => { showDeleteModal = true; showMobileActions = false; } : undefined}
       onClose={() => { showMobileActions = false; }}

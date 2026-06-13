@@ -301,7 +301,7 @@ function buildCalendarHtml(
     <div style="position:relative;">
       <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
         ${faviconHtml}
-        <h1 style="position:relative;font-family:'Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${opts.enableTextShadow ? 'text-shadow:0 2px 10px rgba(0,0,0,0.18);' : ''}">${safe(monthLabel)}</h1>
+        <h1 style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${opts.enableTextShadow ? 'text-shadow:0 2px 10px rgba(0,0,0,0.18);' : ''}">${safe(monthLabel)}</h1>
       </div>
       <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
@@ -328,7 +328,7 @@ export function buildPreviewDocument(
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{background:#f0f4f8;font-family:'Nunito','Segoe UI',sans-serif;color:#111;}</style>
+<style>*{box-sizing:border-box;margin:0;padding:0;}body{background:#f0f4f8;font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;}</style>
 </head><body><div style="position:relative;width:1080px;background:#f0f4f8;border-radius:12px;overflow:hidden;">${body}</div></body></html>`;
 }
 
@@ -375,7 +375,7 @@ export async function exportCalendarMonth(
     width: '1080px',
     background: '#f0f4f8',
     color: '#111111',
-    fontFamily: '"Nunito", "Segoe UI", sans-serif',
+    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
     borderRadius: '12px',
     overflow: 'hidden',
@@ -404,6 +404,14 @@ export async function exportCalendarMonth(
       )
     );
 
+    // Force-load the exact families used by the export (the app registers the *Variable*
+    // families) so html2canvas rasterises the real fonts instead of a fallback - otherwise
+    // the PDF font and text positions drift from the live preview.
+    await Promise.all([
+      document.fonts.load("700 30px 'Fredoka Variable'"),
+      document.fonts.load("700 13px 'Nunito Variable'"),
+      document.fonts.load("800 13px 'Nunito Variable'"),
+    ]).catch(() => {});
     await document.fonts.ready;
 
     const canvas = await html2canvas(container, {

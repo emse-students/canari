@@ -366,6 +366,13 @@ export interface IMlsService {
   sendDisconnect(): void;
 
   /**
+   * Send an ephemeral `typing` signal over the WebSocket for a DM/group conversation.
+   * The gateway relays it to other online group members. No-op if the socket is closed.
+   * Community channels route typing via `ChannelService` HTTP instead.
+   */
+  sendTyping(groupId: string, isTyping: boolean): void;
+
+  /**
    * Removes network event listeners (`visibilitychange`, `online`) and clears
    * all internal timers. Must be called before the instance is discarded (e.g.
    * on logout + device wipe) to prevent orphaned handlers keeping a stale

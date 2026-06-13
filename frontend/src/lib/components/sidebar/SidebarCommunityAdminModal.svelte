@@ -241,6 +241,20 @@
     }
   }
 
+  /** Confirms then leaves/removes the selected community, closing the modal on success. */
+  async function leaveCommunity() {
+    if (
+      !(await showConfirm(`Quitter la communauté « ${selectedWorkspace?.name} » ?`, {
+        danger: true,
+        confirmLabel: 'Quitter',
+      }))
+    ) {
+      return;
+    }
+    onLeaveWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
+    onClose();
+  }
+
   async function handleImageFileChange(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -304,11 +318,7 @@
       <div class="hidden md:block mt-auto pt-4 space-y-2">
         <button
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
-          onclick={async () => {
-            if (!await showConfirm(`Quitter la communauté « ${selectedWorkspace?.name} » ?`, { danger: true, confirmLabel: 'Quitter' })) return;
-            onLeaveWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
-            onClose();
-          }}
+          onclick={leaveCommunity}
         >
           <Trash2 size={18} />
           Quitter la communauté
@@ -452,6 +462,18 @@
           </div>
         </div>
       {/if}
+
+      <!-- Action destructive accessible sur mobile : sur desktop elle est dans la barre
+           latérale (hidden sur mobile), d'où l'inaccessibilité signalée. -->
+      <div class="md:hidden mt-8 pt-4 border-t border-cn-border/40">
+        <button
+          class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+          onclick={leaveCommunity}
+        >
+          <Trash2 size={18} />
+          Quitter la communauté
+        </button>
+      </div>
     </div>
   </div>
 </Modal>

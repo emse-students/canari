@@ -48,7 +48,7 @@
     unbindPosition = bindFixedPopover(panelEl, {
       anchor: () => anchor,
       alignEnd: isOwn,
-      estimatedHeight: 360,
+      estimatedHeight: 460,
     });
 
     return () => {
@@ -152,11 +152,17 @@
     {/if}
 
     <!-- Composant Web emoji-picker -->
+    <!-- data-source pointe vers le dataset emojibase FRANÇAIS auto-hébergé : `locale="fr"`
+         ne traduit que l'UI, les mots-clés de recherche viennent du data-source. Sans lui,
+         la recherche ne fonctionnait qu'en anglais ("wing" au lieu de "aile"). -->
     <emoji-picker
       use:attachEmojiPicker
       class="w-full min-h-0 flex-1"
-      style="height: min(20rem, calc(var(--popover-max-h, 20rem) - 7rem));"
+      style="height: min(22rem, calc(var(--popover-max-h, 22rem) - {recentEmojis.length > 0
+        ? '5.5rem'
+        : '3rem'}));"
       locale="fr"
+      data-source="/emoji-data-fr.json"
     ></emoji-picker>
   </div>
 {/if}

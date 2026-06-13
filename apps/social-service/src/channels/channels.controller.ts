@@ -340,6 +340,22 @@ export class ChannelsController {
     }
   }
 
+  /** Broadcasts an ephemeral "typing" signal to channel members (not persisted). */
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/typing')
+  async typing(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: { typing?: boolean }
+  ) {
+    await this.service.publishTyping(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      body?.typing !== false
+    );
+    return { ok: true };
+  }
+
   /** Returns recent messages for a channel accessible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/messages')

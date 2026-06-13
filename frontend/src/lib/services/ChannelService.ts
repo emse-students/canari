@@ -339,6 +339,22 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * Broadcasts an ephemeral typing signal to channel members. Fire-and-forget:
+   * typing is non-critical, so failures are swallowed rather than surfaced.
+   */
+  async sendTyping(channelId: string, isTyping: boolean): Promise<void> {
+    try {
+      const cid = this.normalizeChannelId(channelId);
+      await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/typing`, {
+        method: 'POST',
+        body: JSON.stringify({ typing: isTyping }),
+      });
+    } catch {
+      // Non-critical - ignore.
+    }
+  }
+
   async listMessages(channelId: string, limit = 100) {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(

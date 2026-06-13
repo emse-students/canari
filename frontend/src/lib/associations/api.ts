@@ -268,11 +268,14 @@ export async function listAggregatedCalendarFeed(opts: {
   from: string;
   to: string;
   associationId?: string;
+  /** Opt-in : inclut les événements en attente (honoré seulement pour les proposeurs/BDE/admin). Jamais passé pour l'export PDF. */
+  includePending?: boolean;
 }): Promise<AssociationCalendarFeedEvent[]> {
   const q = new URLSearchParams();
   q.set('from', opts.from);
   q.set('to', opts.to);
   if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
+  if (opts.includePending) q.set('includePending', 'true');
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
 }
 
