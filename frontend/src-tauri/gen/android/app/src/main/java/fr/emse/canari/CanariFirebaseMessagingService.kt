@@ -77,6 +77,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private const val MAX_NOTIF_MESSAGES = 6
 
         /**
+         * Nombre de réessais de déchiffrement quand le 1er message d'une nouvelle conversation
+         * arrive avant que le push Welcome concurrent ait rejoint le groupe (ou pendant qu'il
+         * tient MlsStateLock). Évite d'afficher un fallback "Nouveau message de X" générique.
+         */
+        private const val WELCOME_RACE_RETRIES = 3
+
+        /** Délai entre deux réessais (le JNI process_welcome prend ~5s ; on lui laisse le temps). */
+        private const val WELCOME_RACE_RETRY_DELAY_MS = 1_800L
+
+        /**
          * Annule toutes les notifications de messages affichées (canal [CHANNEL_MESSAGES] + résumé).
          * Appelé quand l'app passe au premier plan (MainActivity.onResume) : ouvrir l'app vide les
          * notifications de messages lus ici ou ailleurs (partie visible de la sync read-state).
@@ -271,10 +281,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
 
-            val decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+            var decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+            // Course Welcome/message : le push Welcome concurrent peut être en train de rejoindre
+            // le groupe (ou de tenir MlsStateLock) quand ce message arrive. On réessaie brièvement
+            // pour que le 1er message d'une nouvelle conversation produise une vraie notification
+            // au lieu d'un fallback générique, plutôt que d'afficher puis corriger la notif.
+            var raceAttempt = 0
+            while (!silent && decrypted == null && !queuedMessageId.isNullOrEmpty() && raceAttempt < WELCOME_RACE_RETRIES) {
+                raceAttempt++
+                try {
+                    Thread.sleep(WELCOME_RACE_RETRY_DELAY_MS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+                Log.d(TAG, "tryDecrypt réessai $raceAttempt/$WELCOME_RACE_RETRIES (course join de groupe) group=$groupId")
+                decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+            }
             val body: String = decrypted?.text
                 ?: run {
-                    // Déchiffrement échoué : groupe probablement pas encore dans l'état MLS.
+                    // Déchiffrement échoué après réessais : groupe pas encore dans l'état MLS.
                     // On enqueue le worker pour réessayer au prochain cycle.
                     if (!queuedMessageId.isNullOrEmpty()) {
                         val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
@@ -288,7 +314,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
 
             if (silent) {
-                Log.d(TAG, "FCM silencieux → MLS state mis à jour, pas de notification affichée")
+                // Un push silencieux dont senderId == mon propre userId signifie que JE viens de
+                // lire ou d'envoyer dans cette conversation depuis un AUTRE appareil (read receipt
+                // ou écho d'envoi). On retire alors la notification de cette conversation sur cet
+                // appareil : c'est la partie "app tuée" de la synchro d'état de lecture multi-appareil.
+                // senderId d'un pair (≠ mon userId) n'annule rien — sa lecture ne me concerne pas.
+                val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+                if (groupId.isNotEmpty() && senderId.isNotEmpty() && senderId.equals(myUserId, ignoreCase = true)) {
+                    cancelConversationNotification(groupId)
+                } else {
+                    Log.d(TAG, "FCM silencieux → MLS state mis à jour, pas de notification affichée")
+                }
                 return@runWithWakeLock
             }
 
@@ -1043,6 +1079,37 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // commit() garantit que le compteur est incrémenté avant la sortie du bloc synchronized.
         prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).commit()
         next
+    }
+
+    /**
+     * Retire la notification d'une conversation (message lu/envoyé depuis un autre appareil).
+     * Ne crée jamais d'ID : si aucune notification n'existe pour ce groupe, ne fait rien.
+     * Retire aussi le résumé de groupe s'il ne reste plus aucune notification de messages.
+     */
+    private fun cancelConversationNotification(groupId: String) {
+        val prefs = getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+        val notifId = prefs.getInt(groupId, -1)
+        if (notifId == -1) {
+            Log.d(TAG, "cancelConversationNotification: aucune notif pour group=${groupId.take(8)}")
+            return
+        }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(notifId)
+        Log.d(TAG, "cancelConversationNotification: notif retirée group=${groupId.take(8)} id=$notifId")
+
+        // Retirer le résumé s'il ne reste plus aucune notification de messages (hors résumé).
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            try {
+                val remaining = manager.activeNotifications.count { sbn ->
+                    sbn.id != GROUP_SUMMARY_ID &&
+                        (android.os.Build.VERSION.SDK_INT < 26 ||
+                            sbn.notification.channelId == CHANNEL_MESSAGES)
+                }
+                if (remaining == 0) manager.cancel(GROUP_SUMMARY_ID)
+            } catch (e: Exception) {
+                Log.w(TAG, "cancelConversationNotification: nettoyage résumé échoué: ${e.message}")
+            }
+        }
     }
 
     /**

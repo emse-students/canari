@@ -99,7 +99,12 @@ describe('purgeOrphanGroup', () => {
 });
 
 describe('discoverMissingGroups orphan cleanup', () => {
-  it('purges UI row when absent from server', async () => {
+  it('marks an established conversation deletedRemotely (not purged) when absent from server', async () => {
+    // A ready conversation absent from the server was deleted by a peer (or by us on
+    // another device). The groupDeleted system message may never arrive (peer offline +
+    // deleteGroup purges the queue), so discovery falls back to a deletedRemotely tombstone
+    // instead of a silent purge: the user keeps the row, sees the banner, and removes it
+    // locally. Purging silently here is what let the user keep typing into a dead group.
     const conversations = new Map<string, Conversation>([
       [
         'orphan-id',
@@ -109,6 +114,43 @@ describe('discoverMissingGroups orphan cleanup', () => {
           name: 'Orphelin',
           messages: [],
           isReady: true,
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getLocalGroups: vi.fn().mockReturnValue([]),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      pin: '1234',
+      conversations,
+      deleteConversation,
+      saveConversation,
+      log: vi.fn(),
+    });
+
+    expect(conversations.has('orphan-id')).toBe(true);
+    expect(conversations.get('orphan-id')?.deletedRemotely).toBe(true);
+    expect(deleteConversation).not.toHaveBeenCalled();
+    expect(saveConversation).toHaveBeenCalledWith('orphan-id');
+  });
+
+  it('purges a placeholder (never-ready) UI row when absent from server', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'orphan-id',
+        {
+          id: 'orphan-id',
+          contactName: 'orphan-id',
+          name: 'Orphelin',
+          messages: [],
+          isReady: false,
           mlsStateHex: null,
         },
       ],

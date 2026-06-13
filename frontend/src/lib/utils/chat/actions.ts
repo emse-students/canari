@@ -407,6 +407,20 @@ export async function discoverMissingGroups(params: {
           );
           continue;
         }
+        // Une conversation établie absente du serveur a été supprimée par un pair (ou par
+        // nous-mêmes sur un autre appareil). Le message système `groupDeleted` peut ne jamais
+        // arriver (le pair était hors-ligne et deleteGroup purge la file du groupe), donc on
+        // se rabat sur l'état serveur : on la marque deletedRemotely au lieu de la retirer
+        // silencieusement. ChatArea affiche alors la bannière « supprimée », verrouille le
+        // composer (plus d'envoi vers un groupe mort) et propose « Supprimer localement ».
+        if (convo.isReady && !convo.deletedRemotely) {
+          conversations.set(key, { ...convo, deletedRemotely: true });
+          await saveConversation?.(key).catch(() => {});
+          log(
+            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur - marqué supprimé`
+          );
+          continue;
+        }
         log(`[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur - retrait`);
         await purgeLocalConversationRecord({
           conversations,
