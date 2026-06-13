@@ -104,6 +104,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         keyPackageB64: String,
     ): String
 
+    /**
+     * Applique un Welcome MLS reçu (côté RECEVEUR) : rejoint le groupe et écrit
+     * {filesDir}/mls.bin. Permet de rejoindre un nouveau groupe app fermée, pour que le
+     * 1er message d'une conversation soit déchiffrable par FCM sans ouvrir l'app.
+     * Retourne true en cas de succès.
+     */
+    external fun nativeProcessWelcomeBackground(
+        filesDir: String,
+        stateBytes: ByteArray,
+        pin: String,
+        userId: String,
+        deviceId: String,
+        welcomeB64: String,
+        ratchetTreeB64: String,
+    ): Boolean
+
     /** Résultat structuré du déchiffrement MLS, extrait depuis le JSON retourné par Rust. */
     data class DecryptedMessage(
         val text: String,
@@ -164,17 +180,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        // Paquet Welcome MLS : les bytes sont dans la file backend, pas déchiffrables via
-        // nativeDecryptMessage (format différent). On enqueue le worker silencieusement sans
-        // tenter un déchiffrement voué à l'échec.
+        // Paquet Welcome MLS reçu : on REJOINT le groupe en arrière-plan (JNI) pour que le
+        // 1er message d'une conversation initiée app fermée soit déchiffrable par FCM, sans
+        // attendre l'ouverture de l'app. Le ratchet tree n'est jamais dans le payload FCM →
+        // il est récupéré via fetch-proto.
         if (data["isWelcome"] == "true") {
             val groupId = data["groupId"] ?: ""
-            Log.d(TAG, "isWelcome=true → groupId=$groupId - enqueue worker, no notification")
-            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-                .build()
-            enqueueWorkerIfHealthy(workRequest)
+            val queuedMessageId = data["queuedMessageId"]
+            val inlineProto = data["proto"]?.takeIf { it.isNotEmpty() }
+            Log.d(TAG, "isWelcome=true → groupId=$groupId qId=$queuedMessageId - join background")
+            if (groupId.isEmpty()) {
+                Log.e(TAG, "isWelcome: groupId manquant → abandon")
+                return
+            }
+            runWithWakeLock("welcome_join", 90_000L) {
+                processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
+            }
             return
         }
 
@@ -689,6 +710,120 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return proto
         } finally {
             conn.disconnect()
+        }
+    }
+
+    // ── Traitement background Welcome reçu (côté receveur) ───────────────────
+
+    /**
+     * Rejoint un groupe via un Welcome reçu en arrière-plan, puis enfile le worker pour
+     * drainer d'éventuels messages déjà en file. MlsStateLock n'est tenu que pendant le JNI
+     * (lecture mls.bin + Argon2 + écriture mls.bin), jamais pendant les appels HTTP.
+     */
+    private fun processReceivedWelcomeBackground(
+        groupId: String,
+        queuedMessageId: String?,
+        inlineProto: String?,
+    ) {
+        val ctx = MlsContextLoader.loadPushContext(this)
+        if (ctx == null) {
+            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json absent → abandon")
+            return
+        }
+
+        // Welcome + ratchet tree : le ratchet tree n'est jamais inclus dans le push FCM,
+        // on le récupère donc toujours via fetch-proto (qui renvoie aussi le proto).
+        var welcomeB64 = inlineProto
+        var ratchetTreeB64 = ""
+        if (queuedMessageId != null) {
+            val secret = retrievePushSecret()
+            if (secret != null) {
+                val bundle = fetchWelcomeBundle(queuedMessageId, ctx, secret)
+                if (bundle != null) {
+                    if (welcomeB64.isNullOrEmpty()) welcomeB64 = bundle.first
+                    ratchetTreeB64 = bundle.second
+                }
+            }
+        }
+        if (welcomeB64.isNullOrEmpty()) {
+            Log.e(TAG, "processReceivedWelcomeBackground: bytes Welcome introuvables → abandon")
+            return
+        }
+
+        val jniLockAcquired = try {
+            MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "processReceivedWelcomeBackground: interrompu pendant tryLock: ${e.message}")
+            return
+        }
+        if (!jniLockAcquired) {
+            Log.w(TAG, "processReceivedWelcomeBackground: MlsStateLock non acquis → abandon")
+            return
+        }
+        val joined: Boolean
+        try {
+            val stateBytes = MlsContextLoader.loadMlsState(this)
+            if (stateBytes == null) {
+                Log.e(TAG, "processReceivedWelcomeBackground: mls.bin absent → abandon")
+                return
+            }
+            val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
+            joined = nativeProcessWelcomeBackground(
+                filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+            )
+        } finally {
+            MlsStateLock.LOCK.unlock()
+        }
+
+        if (joined) {
+            Log.d(TAG, "processReceivedWelcomeBackground: ✓ groupe rejoint group=$groupId")
+            // Le groupe existe désormais : drainer la file pour traiter les messages en attente.
+            val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+                .build()
+            enqueueWorkerIfHealthy(workRequest)
+        } else {
+            Log.e(TAG, "processReceivedWelcomeBackground: échec join group=$groupId")
+        }
+    }
+
+    /** Récupère la paire (proto, ratchetTree) d'un Welcome en file via l'endpoint PushSecret. */
+    private fun fetchWelcomeBundle(
+        queuedMessageId: String,
+        ctx: PushContext,
+        secret: String,
+    ): Pair<String, String>? {
+        return try {
+            val url = URL(
+                "${ctx.baseUrl}/api/mls/push/fetch-proto" +
+                    "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
+                    "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                    "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
+            )
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "GET"
+                setRequestProperty("Authorization", "PushSecret $secret")
+            }
+            try {
+                val code = conn.responseCode
+                if (code != 200) {
+                    Log.e(TAG, "fetchWelcomeBundle: HTTP $code")
+                    null
+                } else {
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(text)
+                    Pair(json.optString("proto"), json.optString("ratchetTree"))
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchWelcomeBundle: exception: ${e.message}")
+            null
         }
     }
 

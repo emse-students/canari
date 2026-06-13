@@ -156,9 +156,14 @@ export class PushController {
     });
     if (!queued) {
       // Message déjà ACKé ou inexistant - retourner vide (pas d'erreur pour éviter retry loops)
-      return { proto: '' };
+      return { proto: '', ratchetTree: '' };
     }
-    return { proto: queued.proto ?? queued.content ?? '' };
+    // ratchetTree is only set on Welcome rows; the background receiver needs it to
+    // join the group (it is never included in the FCM data payload, only here).
+    return {
+      proto: queued.proto ?? queued.content ?? '',
+      ratchetTree: queued.ratchetTree ?? '',
+    };
   }
 
   /**
