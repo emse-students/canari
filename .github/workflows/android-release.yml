@@ -139,6 +139,7 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
@@ -149,6 +150,9 @@ jobs:
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
           echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
           echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          if [ -n "$KLIPY_API_KEY" ]; then
+            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
+          fi
 
       - name: Verify frontend env for Android build
         working-directory: frontend

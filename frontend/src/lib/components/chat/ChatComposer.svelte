@@ -68,8 +68,8 @@
   let fileInput: HTMLInputElement | undefined = $state();
   let isDragOver = $state(false);
   let showGifPicker = $state(false);
-  /** GIF button is only shown when a GIPHY key is configured (Tenor no longer issues keys). */
-  const hasGiphy = !!(import.meta.env as Record<string, string | undefined>).VITE_GIPHY_KEY;
+  /** GIF button is only shown when a KLIPY key is configured (Tenor closed; Giphy free tier too small). */
+  const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
   let previewUrls = $state<Record<string, string>>({});
   /** Index into imageEntries of the currently open lightbox, or null when closed. */
   let lightboxIndex = $state<number | null>(null);
@@ -526,8 +526,8 @@
         </button>
       </div>
 
-      <!-- Bouton GIF (visible si GIPHY configuré) -->
-      {#if hasGiphy && onSendGif && !isComposing}
+      <!-- Bouton GIF (visible si KLIPY configuré) -->
+      {#if hasGifPicker && onSendGif && !isComposing}
         <div class="shrink-0">
           <button
             type="button"

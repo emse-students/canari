@@ -137,6 +137,7 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
+          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
@@ -145,6 +146,9 @@ jobs:
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
           echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
+          if [ -n "$KLIPY_API_KEY" ]; then
+            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
+          fi
 
       - name: Build iOS IPA
         working-directory: frontend

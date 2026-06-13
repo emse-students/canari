@@ -5,15 +5,29 @@
   interface Props {
     open: boolean;
     onClose: () => void;
-    /** Called with the chosen GIF's direct URL (rendered inline by isGifUrl). */
+    /** Called with the chosen GIF's direct .gif URL (rendered inline by isGifUrl). */
     onSelect: (url: string) => void;
   }
 
   let { open, onClose, onSelect }: Props = $props();
 
-  // Tenor stopped accepting new API clients (Jan 2026); GIPHY is used instead. The key is
-  // optional - when absent the GIF button is hidden by the composer, so this stays graceful.
-  const GIPHY_KEY = (import.meta.env as Record<string, string | undefined>).VITE_GIPHY_KEY;
+  // KLIPY: lifetime-free GIF API (Tenor stopped issuing keys; Giphy's free tier is 100/h).
+  // Key is optional - the composer hides the GIF button when absent, so this stays graceful.
+  const KLIPY_KEY = (import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
+
+  /** Stable anonymous id for KLIPY session/analytics (their API expects a customer_id). */
+  function customerId(): string {
+    try {
+      let id = localStorage.getItem('klipy_cid');
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem('klipy_cid', id);
+      }
+      return id;
+    } catch {
+      return 'anonymous';
+    }
+  }
 
   interface GifItem {
     id: string;
@@ -28,36 +42,42 @@
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let fetchSeq = 0;
 
-  function mapData(data: unknown[]): GifItem[] {
-    return (data ?? [])
+  function mapData(items: unknown[]): GifItem[] {
+    return (items ?? [])
       .map((raw) => {
-        const g = raw as { id?: string; images?: Record<string, { url?: string }> };
-        const img = g.images ?? {};
+        const g = raw as {
+          id?: string | number;
+          file?: Record<string, { gif?: { url?: string } }>;
+        };
+        const file = g.file ?? {};
         return {
           id: String(g.id ?? ''),
-          preview:
-            img.fixed_width_small?.url ?? img.fixed_height_small?.url ?? img.preview_gif?.url ?? '',
-          full: img.downsized_medium?.url ?? img.original?.url ?? '',
+          // Small variant for the grid, medium for sending (both are real .gif URLs).
+          preview: file.sm?.gif?.url ?? file.xs?.gif?.url ?? file.md?.gif?.url ?? '',
+          full: file.md?.gif?.url ?? file.hd?.gif?.url ?? file.sm?.gif?.url ?? '',
         };
       })
       .filter((g) => g.id && g.preview && g.full);
   }
 
   async function fetchGifs(q: string) {
-    if (!GIPHY_KEY) return;
+    if (!KLIPY_KEY) return;
     const seq = ++fetchSeq;
     loading = true;
     error = '';
     try {
       const trimmed = q.trim();
+      const cid = encodeURIComponent(customerId());
+      const base = `https://api.klipy.com/api/v1/${KLIPY_KEY}`;
       const url = trimmed
-        ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(trimmed)}&limit=24&rating=pg-13&bundle=messaging_non_clips`
-        : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_KEY}&limit=24&rating=pg-13&bundle=messaging_non_clips`;
+        ? `${base}/gifs/search?q=${encodeURIComponent(trimmed)}&per_page=24&page=1&customer_id=${cid}`
+        : `${base}/gifs/trending?per_page=24&page=1&customer_id=${cid}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (seq !== fetchSeq) return;
-      results = mapData(json.data);
+      // KLIPY wraps the list as { result, data: { data: [...] } }.
+      results = mapData(json?.data?.data ?? []);
     } catch {
       if (seq !== fetchSeq) return;
       error = 'Impossible de charger les GIF.';
@@ -113,9 +133,9 @@
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
-        {#if !GIPHY_KEY}
+        {#if !KLIPY_KEY}
           <p class="py-10 text-center text-sm text-text-muted">
-            Recherche de GIF non configurée (clé GIPHY absente).
+            Recherche de GIF non configurée (clé KLIPY absente).
           </p>
         {:else if loading && results.length === 0}
           <div class="flex justify-center py-10">
@@ -146,8 +166,9 @@
         {/if}
       </div>
 
+      <!-- Attribution "Powered by KLIPY" required by the KLIPY API terms. -->
       <div class="border-t border-cn-border px-3 py-1.5 text-center text-[0.65rem] text-text-muted">
-        Propulsé par GIPHY
+        Powered by KLIPY
       </div>
     </div>
   </div>
