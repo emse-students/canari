@@ -1,4 +1,4 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteSet } from 'svelte/reactivity';
 
 /**
  * Reactive set of pinned message IDs per conversation.
@@ -11,7 +11,12 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
 const storageKey = (conversationId: string) => `canari_pins_${conversationId}`;
 
-const pins = new SvelteMap<string, SvelteSet<string>>();
+// Plain Map for the per-conversation container: it's written lazily by load()
+// which may run inside a $derived (reading pinnedMessageIds). Tracking it would
+// throw state_unsafe_mutation on first access. Reactivity is carried by each
+// inner SvelteSet instead — that's what pin/unpin actually mutate.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional: see comment above
+const pins = new Map<string, SvelteSet<string>>();
 
 /** Lazily loads (and caches) the pinned set for a conversation from localStorage. */
 function load(conversationId: string): SvelteSet<string> {

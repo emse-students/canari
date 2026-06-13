@@ -828,8 +828,22 @@ export class MessagingService {
         `[WELCOME][${traceId}] REALTIME_PUBLISHED key=${redisKey} queuedId=${queuedWelcome.id}`,
       );
     } else {
+      // Device offline (app killed): the realtime WS path can't reach it, so push
+      // the Welcome over FCM. Without this the recipient is never woken for the
+      // Welcome and stays unjoined — the subsequent message push then fails to
+      // decrypt ("Groupe introuvable") and shows a generic "Nouveau message de X".
+      // Routed by data.isWelcome=true to the Android background welcome receiver,
+      // which joins the group; the queue row is reconciled idempotently on next
+      // foreground pull (group already in WASM → ACK, no re-processing).
       this.logger.log(
-        `[WELCOME][${traceId}] OFFLINE_ONLY key=${redisKey} queuedId=${queuedWelcome.id}`,
+        `[WELCOME][${traceId}] OFFLINE_PUSH key=${redisKey} queuedId=${queuedWelcome.id}`,
+      );
+      await this.sendFcmForQueued(
+        queuedWelcome,
+        traceId,
+        safeGroupId,
+        senderUserId,
+        true,
       );
     }
 
