@@ -100,15 +100,23 @@ export class AssociationsService {
       throw new BadRequestException('An association with this slug already exists');
     }
 
-    const asso = this.assoRepo.create({ ...dto, createdBy: userId });
+    const asso = this.assoRepo.create({
+      ...dto,
+      contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
+      createdBy: userId,
+    });
     const saved = await this.assoRepo.save(asso);
 
     return saved;
   }
 
-  /** Returns all associations alphabetically with a memberCount field attached to each. */
-  async list() {
+  /**
+   * Returns associations alphabetically with a memberCount field attached to each.
+   * Pass `type` to restrict to regular associations or promo lists; omit for both.
+   */
+  async list(type?: 'association' | 'list') {
     const associations = await this.assoRepo.find({
+      where: type ? { type } : {},
       order: { name: 'ASC' },
     });
 
@@ -165,6 +173,12 @@ export class AssociationsService {
     }
     if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
       patch.color = null;
+    }
+    if (
+      dto.contactEmail !== undefined &&
+      (dto.contactEmail === null || dto.contactEmail.trim() === '')
+    ) {
+      patch.contactEmail = null;
     }
     // documentQuotaBytes comes in as bigint but must stay a number in TypeORM
     if (patch.documentQuotaBytes !== undefined) {
@@ -546,9 +560,11 @@ export class AssociationsService {
     if (memberships.length === 0) return [];
 
     const assoIds = memberships.map((m) => m.associationId);
+    // Archived associations/lists are hidden from "Mes associations".
     const associations = await this.assoRepo
       .createQueryBuilder('a')
       .where('a.id IN (:...ids)', { ids: assoIds })
+      .andWhere('a.archived = false')
       .getMany();
 
     return associations.map((a) => {

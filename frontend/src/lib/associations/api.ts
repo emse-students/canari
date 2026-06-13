@@ -79,6 +79,16 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
+  /** Discriminates a regular association from a promo list. */
+  type: 'association' | 'list';
+  /** Lists only: the promotion year the list belongs to. */
+  promo?: number | null;
+  /** Lists only: optional parent association (e.g. the owning BDE). */
+  parentAssociationId?: string | null;
+  /** True when archived: shown under "Anciennes", hidden from "Mes associations". */
+  archived: boolean;
+  /** Public contact e-mail, shown on the trombinoscope and the association page. */
+  contactEmail?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -89,6 +99,13 @@ export interface CreateAssociationPayload {
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;
+  contactEmail?: string;
+  /** 'association' (default) or 'list'. */
+  type?: 'association' | 'list';
+  /** Lists only: the promotion year. */
+  promo?: number;
+  /** Lists only: optional parent association. */
+  parentAssociationId?: string;
 }
 
 export interface UpdateAssociationPayload {
@@ -102,6 +119,14 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
+  /** Archive/unarchive the association. */
+  archived?: boolean;
+  /** Public contact e-mail. Pass `""` or `null` to clear. */
+  contactEmail?: string | null;
+  /** Lists only: the promotion year. */
+  promo?: number | null;
+  /** Lists only: optional parent association. */
+  parentAssociationId?: string | null;
 }
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected';
@@ -231,8 +256,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 // ── Public ────────────────────────────────────────────────────────────────
 
-export async function listAssociations(): Promise<Association[]> {
-  return request<Association[]>('/api/associations');
+/** Lists associations. Pass `type` to restrict to regular associations or promo lists. */
+export async function listAssociations(type?: 'association' | 'list'): Promise<Association[]> {
+  const qs = type ? `?type=${type}` : '';
+  return request<Association[]>(`/api/associations${qs}`);
 }
 
 export async function getAssociation(id: string): Promise<Association> {

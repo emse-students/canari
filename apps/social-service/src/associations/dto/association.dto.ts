@@ -51,6 +51,29 @@ export class CreateAssociationDto {
   @IsString()
   @IsOptional()
   logoUrl?: string;
+
+  /** Public contact e-mail shown on the trombinoscope and the association page. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  contactEmail?: string;
+
+  /** 'association' (default) or 'list' (promo list). */
+  @IsIn(['association', 'list'])
+  @IsOptional()
+  type?: 'association' | 'list';
+
+  /** Lists only: the promotion year the list belongs to (e.g. 2027). */
+  @IsInt()
+  @Min(1900)
+  @Max(2100)
+  @IsOptional()
+  promo?: number;
+
+  /** Lists only: optional parent association (e.g. the owning BDE). */
+  @IsUUID()
+  @IsOptional()
+  parentAssociationId?: string;
 }
 
 export class UpdateAssociationDto {
@@ -90,6 +113,30 @@ export class UpdateAssociationDto {
   @IsString()
   @Matches(/^(#[0-9A-Fa-f]{6})?$/)
   color?: string | null;
+
+  /** When true, archives the association (moves it to "Anciennes", hides from "Mes associations"). */
+  @IsBoolean()
+  @IsOptional()
+  archived?: boolean;
+
+  /** Public contact e-mail. Pass `""` to clear; stored as null when blank. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  contactEmail?: string | null;
+
+  /** Lists only: the promotion year. */
+  @IsInt()
+  @Min(1900)
+  @Max(2100)
+  @IsOptional()
+  promo?: number | null;
+
+  /** Lists only: optional parent association. */
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  parentAssociationId?: string | null;
 }
 
 export class AddMemberDto {

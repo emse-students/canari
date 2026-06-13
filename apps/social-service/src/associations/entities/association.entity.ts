@@ -66,6 +66,29 @@ export class Association {
   @Column({ type: 'varchar', length: 7, nullable: true })
   color: string | null;
 
+  /**
+   * Discriminates a regular association from a promo "list". Lists behave like
+   * associations (members, events) minus the banking/shop/vault features.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'association' })
+  type: 'association' | 'list';
+
+  /** Lists only: the promotion year the list belongs to (e.g. 2027). Null for associations. */
+  @Column({ type: 'int', nullable: true })
+  promo: number | null;
+
+  /** Lists only: optional parent association (e.g. the owning BDE). Null otherwise. */
+  @Column({ type: 'uuid', nullable: true })
+  parentAssociationId: string | null;
+
+  /** When true, the association is archived: shown under "Anciennes", hidden from "Mes associations". */
+  @Column({ default: false })
+  archived: boolean;
+
+  /** Public contact e-mail, shown on the trombinoscope export and the association page. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  contactEmail: string | null;
+
   @Column({ type: 'varchar', length: 255 })
   @Index()
   createdBy: string;

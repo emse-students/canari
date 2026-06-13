@@ -61,10 +61,11 @@ export class AssociationsController {
 
   // ── Public ────────────────────────────────────────────────────────────────
 
-  /** Returns all associations. */
+  /** Returns associations. Pass `?type=association|list` to restrict; omit for both. */
   @Get()
-  list() {
-    return this.service.list();
+  list(@Query('type') type?: string) {
+    const filter = type === 'association' || type === 'list' ? type : undefined;
+    return this.service.list(filter);
   }
 
   /** Returns an association looked up by its URL slug. */
