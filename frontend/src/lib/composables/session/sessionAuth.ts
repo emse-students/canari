@@ -47,6 +47,7 @@ import {
   recordCallStarted,
   setCallSystemMessageContext,
 } from '$lib/utils/chat/callSystemMessages';
+import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import type { ICallMsg } from '$lib/proto/codec';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
@@ -445,9 +446,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           getCallSystemMessageContext(),
           senderId,
           groupId,
-          callMsg as ICallMsg
+          callMsg as ICallMsg,
+          ctx.getUserId()
         );
-        ctx.getCallService()?.handleCallSignal(senderId, groupId, callMsg);
+        ctx
+          .getCallService()
+          ?.handleCallSignal(
+            senderId,
+            groupId,
+            callMsg,
+            ctx.getUserId(),
+            ctx.ensureMls().getDeviceId()
+          );
       },
       onGroupReady: (() => {
         let t: ReturnType<typeof setTimeout> | null = null;
@@ -854,6 +864,7 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.setShowBiometricEnrollPrompt(false);
   setCallSystemMessageContext(null);
   ctx.getCallService()?.setChatNotifier(null);
+  resetSiblingCallWarning();
   clearUserLocally();
   clearPinAndKey();
   clearAuth();

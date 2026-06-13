@@ -2203,10 +2203,12 @@ export const canari = $root.canari = (() => {
          * @interface ICallMsg
          * @property {string|null} [callId] CallMsg callId
          * @property {boolean|null} [hasVideo] CallMsg hasVideo
+         * @property {string|null} [deviceId] CallMsg deviceId
          * @property {string|null} [offerSdp] CallMsg offerSdp
          * @property {string|null} [answerSdp] CallMsg answerSdp
          * @property {string|null} [iceCandidate] CallMsg iceCandidate
          * @property {boolean|null} [hangup] CallMsg hangup
+         * @property {boolean|null} [answered] CallMsg answered
          */
 
         /**
@@ -2241,6 +2243,14 @@ export const canari = $root.canari = (() => {
         CallMsg.prototype.hasVideo = false;
 
         /**
+         * CallMsg deviceId.
+         * @member {string} deviceId
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.deviceId = "";
+
+        /**
          * CallMsg offerSdp.
          * @member {string|null|undefined} offerSdp
          * @memberof canari.CallMsg
@@ -2272,17 +2282,25 @@ export const canari = $root.canari = (() => {
          */
         CallMsg.prototype.hangup = null;
 
+        /**
+         * CallMsg answered.
+         * @member {boolean|null|undefined} answered
+         * @memberof canari.CallMsg
+         * @instance
+         */
+        CallMsg.prototype.answered = null;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
         /**
          * CallMsg payload.
-         * @member {"offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|undefined} payload
+         * @member {"offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered"|undefined} payload
          * @memberof canari.CallMsg
          * @instance
          */
         Object.defineProperty(CallMsg.prototype, "payload", {
-            get: $util.oneOfGetter($oneOfFields = ["offerSdp", "answerSdp", "iceCandidate", "hangup"]),
+            get: $util.oneOfGetter($oneOfFields = ["offerSdp", "answerSdp", "iceCandidate", "hangup", "answered"]),
             set: $util.oneOfSetter($oneOfFields)
         });
 
@@ -2322,6 +2340,10 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 5, wireType 0 =*/40).bool(message.hangup);
             if (message.hasVideo != null && Object.hasOwnProperty.call(message, "hasVideo"))
                 writer.uint32(/* id 6, wireType 0 =*/48).bool(message.hasVideo);
+            if (message.answered != null && Object.hasOwnProperty.call(message, "answered"))
+                writer.uint32(/* id 7, wireType 0 =*/56).bool(message.answered);
+            if (message.deviceId != null && Object.hasOwnProperty.call(message, "deviceId"))
+                writer.uint32(/* id 8, wireType 2 =*/66).string(message.deviceId);
             return writer;
         };
 
@@ -2370,6 +2392,10 @@ export const canari = $root.canari = (() => {
                         message.hasVideo = reader.bool();
                         break;
                     }
+                case 8: {
+                        message.deviceId = reader.string();
+                        break;
+                    }
                 case 2: {
                         message.offerSdp = reader.string();
                         break;
@@ -2384,6 +2410,10 @@ export const canari = $root.canari = (() => {
                     }
                 case 5: {
                         message.hangup = reader.bool();
+                        break;
+                    }
+                case 7: {
+                        message.answered = reader.bool();
                         break;
                     }
                 default:
@@ -2432,6 +2462,9 @@ export const canari = $root.canari = (() => {
             if (message.hasVideo != null && message.hasOwnProperty("hasVideo"))
                 if (typeof message.hasVideo !== "boolean")
                     return "hasVideo: boolean expected";
+            if (message.deviceId != null && message.hasOwnProperty("deviceId"))
+                if (!$util.isString(message.deviceId))
+                    return "deviceId: string expected";
             if (message.offerSdp != null && message.hasOwnProperty("offerSdp")) {
                 properties.payload = 1;
                 if (!$util.isString(message.offerSdp))
@@ -2458,6 +2491,13 @@ export const canari = $root.canari = (() => {
                 if (typeof message.hangup !== "boolean")
                     return "hangup: boolean expected";
             }
+            if (message.answered != null && message.hasOwnProperty("answered")) {
+                if (properties.payload === 1)
+                    return "payload: multiple values";
+                properties.payload = 1;
+                if (typeof message.answered !== "boolean")
+                    return "answered: boolean expected";
+            }
             return null;
         };
 
@@ -2481,6 +2521,8 @@ export const canari = $root.canari = (() => {
                 message.callId = String(object.callId);
             if (object.hasVideo != null)
                 message.hasVideo = Boolean(object.hasVideo);
+            if (object.deviceId != null)
+                message.deviceId = String(object.deviceId);
             if (object.offerSdp != null)
                 message.offerSdp = String(object.offerSdp);
             if (object.answerSdp != null)
@@ -2489,6 +2531,8 @@ export const canari = $root.canari = (() => {
                 message.iceCandidate = String(object.iceCandidate);
             if (object.hangup != null)
                 message.hangup = Boolean(object.hangup);
+            if (object.answered != null)
+                message.answered = Boolean(object.answered);
             return message;
         };
 
@@ -2508,6 +2552,7 @@ export const canari = $root.canari = (() => {
             if (options.defaults) {
                 object.callId = "";
                 object.hasVideo = false;
+                object.deviceId = "";
             }
             if (message.callId != null && message.hasOwnProperty("callId"))
                 object.callId = message.callId;
@@ -2533,6 +2578,13 @@ export const canari = $root.canari = (() => {
             }
             if (message.hasVideo != null && message.hasOwnProperty("hasVideo"))
                 object.hasVideo = message.hasVideo;
+            if (message.answered != null && message.hasOwnProperty("answered")) {
+                object.answered = message.answered;
+                if (options.oneofs)
+                    object.payload = "answered";
+            }
+            if (message.deviceId != null && message.hasOwnProperty("deviceId"))
+                object.deviceId = message.deviceId;
             return object;
         };
 

@@ -18,6 +18,7 @@
     globalNotifs as notifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
+  import { openConversationFromId } from '$lib/utils/chat/openConversationFromId';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
@@ -52,29 +53,13 @@
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
   const activeConversation = $derived(convs.currentConvo);
 
-  // ─── Notification click navigation ────────────────────────────────────────
-  // When a system notification is clicked, notifNav.pending is set to the
-  // target conversation ID. This effect consumes it and opens the conversation.
+  // Notification tap → open conversation (also handled globally in ChatBackgroundService).
   $effect(() => {
     const id = notifNav.pending;
     if (!id) return;
-    // Direct key match (web notifications use the conversation map key)
-    if (convs.conversations.has(id)) {
+    if (openConversationFromId(convs, convCtx(), id)) {
       notifNav.clear();
-      convs.selectConversation(id);
-      void convs.loadHistoryForConversation(id, id, convCtx());
-      return;
     }
-    // Search by convo.id (Android deep link uses the MLS groupId)
-    for (const [key, convo] of convs.conversations) {
-      if (convo.id === id) {
-        notifNav.clear();
-        convs.selectConversation(key);
-        void convs.loadHistoryForConversation(key, convo.id, convCtx());
-        return;
-      }
-    }
-    // Conversations not yet loaded - effect re-runs when map changes
   });
 
   // ─── Sync session (local - scoped to /chat, not the global background service) ──

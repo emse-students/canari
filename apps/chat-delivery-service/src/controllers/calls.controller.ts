@@ -79,4 +79,47 @@ export class CallsController {
 
     return this.callsService.getIceServers(userId, safeGroupId, safeCallId);
   }
+
+  /**
+   * Reports whether this device is currently in a call (for sibling-device detection).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('calls/presence')
+  @HttpCode(200)
+  async reportPresence(
+    @Body()
+    body: {
+      deviceId: string;
+      active: boolean;
+      callId?: string;
+      groupId?: string;
+    },
+    @Headers('x-user-id') userId?: string,
+  ) {
+    if (!userId) throw new BadRequestException('Missing X-User-Id header');
+    const deviceId = sanitizeQueryValue(body?.deviceId, 'deviceId');
+    return this.callsService.reportCallPresence(userId, deviceId, {
+      active: !!body?.active,
+      callId: body?.callId
+        ? sanitizeQueryValue(body.callId, 'callId')
+        : undefined,
+      groupId: body?.groupId
+        ? sanitizeQueryValue(body.groupId, 'groupId')
+        : undefined,
+    });
+  }
+
+  /**
+   * Returns whether another device of the same user is currently in a call.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('calls/sibling-status')
+  async getSiblingStatus(
+    @Query('deviceId') deviceId: string,
+    @Headers('x-user-id') userId?: string,
+  ) {
+    if (!userId) throw new BadRequestException('Missing X-User-Id header');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    return this.callsService.getSiblingCallStatus(userId, safeDeviceId);
+  }
 }

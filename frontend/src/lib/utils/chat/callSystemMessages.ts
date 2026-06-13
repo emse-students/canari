@@ -130,16 +130,25 @@ export async function handleCallSignalForChat(
   ctx: CallSystemMessageContext | null,
   senderId: string,
   groupId: string,
-  callMsg: ICallMsg
+  callMsg: ICallMsg,
+  currentUserId: string
 ): Promise<void> {
   if (!ctx || !callMsg?.callId) return;
+
+  const senderNorm = senderId.toLowerCase();
+  const userNorm = currentUserId.toLowerCase();
 
   if (callMsg.hangup) {
     await recordCallEnded(ctx, groupId, callMsg.callId);
     return;
   }
 
+  if (callMsg.answered) {
+    return;
+  }
+
   if (isCallInvite(callMsg)) {
+    if (senderNorm === userNorm) return;
     await recordCallStarted(ctx, groupId, callMsg.callId, senderId);
   }
 }

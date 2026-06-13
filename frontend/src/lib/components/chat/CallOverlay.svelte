@@ -207,7 +207,7 @@
 {/snippet}
 
 <div
-  class="fixed inset-0 z-[100] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
+  class="fixed inset-0 z-[300] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
   transition:fade={{ duration: 300 }}
 >
   <div

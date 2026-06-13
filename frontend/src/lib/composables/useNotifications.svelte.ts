@@ -25,6 +25,7 @@ export function useNotifications() {
   // Prevents notification spam on burst but lets different conversations notify independently.
   const lastNotifAtByConv = new SvelteMap<string, number>();
   let browserPermissionRetryAbort: AbortController | null = null;
+  let incomingCallRingTimer: ReturnType<typeof setInterval> | null = null;
 
   // ---------- Audio ----------
 
@@ -91,6 +92,127 @@ export function useNotifications() {
   /** Alias for playNotificationTone - used when a message is received from another user. */
   function playReceiveTone() {
     playNotificationTone();
+  }
+
+  /** Plays one cycle of a classic dual-tone ring (best-effort; respects soundsEnabled). */
+  function playIncomingCallRingBurst() {
+    if (typeof window === 'undefined') return;
+    if (!settings.soundsEnabled) return;
+
+    try {
+      audioContext = audioContext ?? new AudioContext();
+      const ctx = audioContext;
+      const startAt = ctx.currentTime + 0.01;
+
+      for (const [freq, offset] of [
+        [440, 0],
+        [480, 0.25],
+      ] as const) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startAt + offset);
+        gain.gain.setValueAtTime(0.0001, startAt + offset);
+        gain.gain.exponentialRampToValueAtTime(0.12, startAt + offset + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + offset + 0.22);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startAt + offset);
+        osc.stop(startAt + offset + 0.24);
+      }
+    } catch {
+      /* autoplay restriction */
+    }
+  }
+
+  /** Starts repeating the incoming-call ring until {@link stopIncomingCallRingtone}. */
+  function startIncomingCallRingtone() {
+    if (typeof window === 'undefined') return;
+    stopIncomingCallRingtone();
+    playIncomingCallRingBurst();
+    incomingCallRingTimer = setInterval(playIncomingCallRingBurst, 2_400);
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([400, 200, 400, 200, 400]);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /** Stops the incoming-call ring and cancels pending vibration. */
+  function stopIncomingCallRingtone() {
+    if (incomingCallRingTimer !== null) {
+      clearInterval(incomingCallRingTimer);
+      incomingCallRingTimer = null;
+    }
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate(0);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Shows an OS notification for an incoming call.
+   * Not rate-limited (unlike message notifications). Tap opens the conversation in /chat.
+   */
+  async function notifyIncomingCall(callerName: string, groupId: string) {
+    if (typeof window === 'undefined') return;
+
+    const title = 'Appel entrant';
+    const body = callerName ? `${callerName} vous appelle` : 'Un contact vous appelle';
+    const notifId = stableNotifId(`call:${groupId}`);
+
+    const onTap = async () => {
+      notifNav.navigate(groupId);
+      try {
+        const { goto } = await import('$app/navigation');
+        await goto('/chat');
+      } catch {
+        /* ignore */
+      }
+      try {
+        window.focus();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    if (isTauriRuntime()) {
+      try {
+        const { isPermissionGranted, sendNotification } =
+          await import('@tauri-apps/plugin-notification');
+        if (await isPermissionGranted()) {
+          await sendNotification({ title, body, id: notifId });
+          return;
+        }
+      } catch {
+        /* fallback */
+      }
+    }
+
+    if ('Notification' in window) {
+      if (Notification.permission !== 'granted') {
+        void requestSystemNotificationPermission();
+        return;
+      }
+      try {
+        const n = new Notification(title, {
+          body,
+          tag: `canari-call-${groupId}`,
+          requireInteraction: true,
+        });
+        n.onclick = () => {
+          void onTap();
+          n.close();
+        };
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   /** Plays a subtle descending tick when messages are marked as read (rate-limited to one every 250 ms). */
@@ -306,5 +428,8 @@ export function useNotifications() {
     playReadTone,
     requestSystemNotificationPermission,
     sendSystemNotification,
+    startIncomingCallRingtone,
+    stopIncomingCallRingtone,
+    notifyIncomingCall,
   };
 }

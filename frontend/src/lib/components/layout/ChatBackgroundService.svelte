@@ -46,6 +46,9 @@
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import type { CallParticipant } from '$lib/services/CallService';
+  import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { openConversationFromId } from '$lib/utils/chat/openConversationFromId';
+  import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -84,6 +87,41 @@
   }
 
   let callRemoteParticipants = $derived.by(buildRemoteCallParticipants);
+
+  /** Last call id we started ringing for (dedupes effect re-runs). */
+  let lastIncomingRingCallId = $state<string | null>(null);
+
+  /** Ring + OS notification when an MLS call invite arrives (any route). */
+  $effect(() => {
+    const state = globalSession.callState;
+    const callId = globalSession.callService?.currentCallId ?? null;
+    const groupId = globalSession.callService?.currentGroupId ?? null;
+    const callerId = globalSession.callService?.incomingCallerId ?? null;
+
+    if (state === 'incoming' && callId && groupId) {
+      if (lastIncomingRingCallId !== callId) {
+        lastIncomingRingCallId = callId;
+        const callerName = getUserDisplayNameSync(callerId ?? '');
+        globalNotifs.startIncomingCallRingtone();
+        void globalNotifs.notifyIncomingCall(callerName, groupId);
+      }
+      return;
+    }
+
+    if (lastIncomingRingCallId !== null) {
+      lastIncomingRingCallId = null;
+    }
+    globalNotifs.stopIncomingCallRingtone();
+  });
+
+  /** Opens the conversation targeted by a notification tap (works outside /chat). */
+  $effect(() => {
+    const id = notifNav.pending;
+    if (!id || !globalSession.isLoggedIn) return;
+    if (openConversationFromId(globalConvs, convCtx(), id)) {
+      notifNav.clear();
+    }
+  });
 
   /** Load MLS group members while a group call is active so all avatars can be shown. */
   $effect(() => {
@@ -293,6 +331,15 @@
   }
 
   /**
+   * Warns when another device of the same account is already in a call.
+   */
+  function checkSiblingCallWarning() {
+    const deviceId = globalSession.myDeviceId;
+    if (!deviceId || globalSession.callState !== 'idle') return;
+    void warnIfSiblingDeviceInCall(deviceId);
+  }
+
+  /**
    * Callbacks complets pour globalSession.login() / session callbacks.
    * @param overrides Per-call hooks (e.g. handlePinSubmit step timer).
    */
@@ -403,6 +450,7 @@
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
       onMlsReady: () => {
         dismissAuthPrompts();
+        checkSiblingCallWarning();
         overrides.onMlsReady?.();
       },
     };
@@ -561,6 +609,7 @@
           appendLog('Page visible de nouveau - reconnexion...');
           void globalSession.attemptReconnect(sessionCb());
         }
+        checkSiblingCallWarning();
         // Injecter les messages FCM mis en cache pendant l'arrière-plan
         const { pin, storage } = globalSession;
         if (pin && storage) {

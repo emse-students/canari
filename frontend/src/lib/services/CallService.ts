@@ -1,11 +1,17 @@
 import { writable, get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import { canari } from '../proto/canari.js';
-import { encodeAppMessage, mkCallHangup, mkCallInvite } from '../proto/codec';
+import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
+import {
+  buildCallAudioConstraints,
+  configureCallAudioSenders,
+  logCallAudioTrackSettings,
+} from '$lib/utils/callAudio';
+import { publishCallPresence } from '$lib/utils/callPresence';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -63,6 +69,8 @@ export class CallService {
   public incomingHasVideo = true;
   private callKey: CryptoKey | null = null;
 
+  private callHasVideo = false;
+
   public callState = writable<CallState>('idle');
   /** @deprecated Use remoteStreams for multi-party; kept for single-remote fallback. */
   public remoteStream = writable<MediaStream | null>(null);
@@ -82,11 +90,22 @@ export class CallService {
 
   /**
    * Handles an incoming MLS `CallMsg` for a specific group conversation.
+   * Ignores invites from the same user (other device) and dismisses sibling rings on `answered`.
    */
-  public handleCallSignal(senderId: string, groupId: string, callMsg: canari.ICallMsg) {
+  public handleCallSignal(
+    senderId: string,
+    groupId: string,
+    callMsg: canari.ICallMsg,
+    currentUserId: string,
+    currentDeviceId: string
+  ) {
     if (!callMsg?.callId) return;
 
     appendLog(`[Call] signal from ${senderId} in ${groupId} call=${callMsg.callId}`);
+
+    const senderNorm = senderId.toLowerCase();
+    const userNorm = currentUserId.toLowerCase();
+    const signalDeviceId = (callMsg.deviceId ?? '').trim();
 
     if (callMsg.hangup) {
       if (this.currentCallId === callMsg.callId) {
@@ -95,15 +114,38 @@ export class CallService {
       return;
     }
 
+    if (callMsg.answered) {
+      if (
+        callMsg.callId === this.currentCallId &&
+        signalDeviceId &&
+        signalDeviceId !== currentDeviceId &&
+        senderNorm === userNorm &&
+        get(this.callState) === 'incoming'
+      ) {
+        appendLog('[Call] picked up on another device — stopping ring');
+        this.dismissIncomingCall();
+      }
+      return;
+    }
+
     if (callMsg.offerSdp === 'START' || (callMsg.callId && !this.currentCallId)) {
+      if (senderNorm === userNorm) {
+        appendLog('[Call] ignoring invite from own account on another device');
+        return;
+      }
       if (get(this.callState) !== 'idle') return;
 
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
-      this.incomingCallerId = senderId.toLowerCase();
+      this.incomingCallerId = senderNorm;
       this.incomingHasVideo = callMsg.hasVideo !== false;
       this.callState.set('incoming');
     }
+  }
+
+  /** Stops an incoming ring without notifying the group (sibling device answered). */
+  private dismissIncomingCall() {
+    this.cleanup();
   }
 
   /** Starts an outgoing call in the given MLS group. */
@@ -121,8 +163,10 @@ export class CallService {
       await this.setupMedia(video);
       await this.setupEncryption(groupId, this.currentCallId!);
       await this.connectToSfu(this.currentCallId!);
-      await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video));
+      const deviceId = this.mlsService.getDeviceId();
+      await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video, deviceId));
       void this.chatNotifier?.onCallStarted(groupId, this.currentCallId!);
+      this.syncCallPresence(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog(`[Call] startCall failed: ${msg}`);
@@ -142,11 +186,15 @@ export class CallService {
 
     try {
       this.callState.set('incall');
+      const deviceId = this.mlsService.getDeviceId();
+      // Tell our other devices to stop ringing before joining the SFU.
+      await this.sendMlsNotification(groupId, mkCallAnswered(callId, deviceId));
       // Fetch our own room token before connecting (the initiator already has theirs).
       this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
       await this.setupMedia(useVideo);
       await this.setupEncryption(groupId, callId);
       await this.connectToSfu(callId);
+      this.syncCallPresence(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog(`[Call] acceptCall failed: ${msg}`);
@@ -160,7 +208,9 @@ export class CallService {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
     if (notify && groupId && callId) {
-      this.sendMlsNotification(groupId, mkCallHangup(callId)).catch(console.error);
+      this.sendMlsNotification(groupId, mkCallHangup(callId, this.mlsService.getDeviceId())).catch(
+        console.error
+      );
     }
     if (groupId && callId) {
       void this.chatNotifier?.onCallEnded(groupId, callId);
@@ -168,7 +218,21 @@ export class CallService {
     this.cleanup();
   }
 
+  /** Publishes Redis-backed call presence so sibling devices can detect an active call. */
+  private syncCallPresence(active: boolean): void {
+    const deviceId = this.mlsService.getDeviceId();
+    if (!deviceId?.trim()) return;
+
+    void publishCallPresence({
+      deviceId,
+      active,
+      callId: active ? (this.currentCallId ?? undefined) : undefined,
+      groupId: active ? (this.currentGroupId ?? undefined) : undefined,
+    }).catch(() => {});
+  }
+
   private cleanup() {
+    this.syncCallPresence(false);
     this.callState.set('idle');
     this.currentCallId = null;
     this.currentGroupId = null;
@@ -179,6 +243,7 @@ export class CallService {
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
     this.incomingHasVideo = true;
+    this.callHasVideo = false;
 
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
@@ -321,6 +386,7 @@ export class CallService {
         this.sendSfuMessage({ type: 'Answer', sdp: JSON.stringify(answer) });
         await this.flushPendingRemoteIceCandidates();
         this.attachMediaTransforms();
+        await configureCallAudioSenders(pc, this.callHasVideo);
       }
       return;
     }
@@ -328,6 +394,7 @@ export class CallService {
     if (sdp.type === 'answer' && pc.signalingState === 'have-local-offer') {
       await pc.setRemoteDescription(sdp);
       await this.flushPendingRemoteIceCandidates();
+      await configureCallAudioSenders(pc, this.callHasVideo);
     }
   }
 
@@ -708,6 +775,7 @@ export class CallService {
           void this.setupSenderTransform(sender);
         }
       }
+      await configureCallAudioSenders(this.pc!, this.callHasVideo);
     }
 
     appendLog('[Call] creating SDP offer…');
@@ -910,10 +978,12 @@ export class CallService {
   }
 
   private async setupMedia(video: boolean) {
+    this.callHasVideo = video;
     this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: buildCallAudioConstraints(),
       video: video ? { facingMode: 'user' } : false,
     });
+    logCallAudioTrackSettings(this.localStream, appendLog);
     this.localStreamStore.set(this.localStream);
     this.isMuted.set(false);
     this.isVideoOff.set(!video);

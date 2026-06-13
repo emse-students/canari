@@ -3,12 +3,15 @@ import {
   Logger,
   ForbiddenException,
   ServiceUnavailableException,
+  Inject,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
 import * as jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+import Redis from 'ioredis';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -30,6 +33,28 @@ export interface InitiateCallResponse {
   roomToken: string;
 }
 
+/** Stored in Redis while a user device is actively in a call. */
+export interface UserCallPresence {
+  deviceId: string;
+  callId?: string;
+  groupId?: string;
+  updatedAt: number;
+}
+
+/** Response shape for `GET /api/calls/sibling-status`. */
+export interface SiblingCallStatusResponse {
+  active: boolean;
+  deviceId?: string;
+  callId?: string;
+  groupId?: string;
+}
+
+const USER_CALL_PRESENCE_TTL_SEC = 2 * 60 * 60;
+
+function userCallPresenceKey(userId: string): string {
+  return `call:user_active:${userId}`;
+}
+
 /**
  * Mints short-lived TURN credentials via Cloudflare Calls.
  * Returns HTTP 503 when Cloudflare credentials are not configured.
@@ -41,6 +66,7 @@ export class CallsService {
   constructor(
     @InjectRepository(GroupMember)
     private readonly groupMemberRepo: Repository<GroupMember>,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
   /**
@@ -166,6 +192,87 @@ export class CallsService {
     }
 
     return this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
+  }
+
+  /**
+   * Records whether this device is currently in an active call (Redis, per user).
+   * Used so sibling devices can warn the user on app open.
+   */
+  async reportCallPresence(
+    userId: string,
+    deviceId: string,
+    body: { active: boolean; callId?: string; groupId?: string },
+  ): Promise<{ ok: true }> {
+    if (!deviceId?.trim()) {
+      throw new BadRequestException('deviceId is required');
+    }
+
+    const key = userCallPresenceKey(userId);
+
+    if (!body.active) {
+      const raw = await this.redis.get(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as UserCallPresence;
+          if (parsed.deviceId === deviceId) {
+            await this.redis.del(key);
+            this.logger.debug(
+              `[calls] cleared presence for user=${userId} device=${deviceId}`,
+            );
+          }
+        } catch {
+          await this.redis.del(key);
+        }
+      }
+      return { ok: true };
+    }
+
+    const payload: UserCallPresence = {
+      deviceId,
+      callId: body.callId,
+      groupId: body.groupId,
+      updatedAt: Date.now(),
+    };
+    await this.redis.set(
+      key,
+      JSON.stringify(payload),
+      'EX',
+      USER_CALL_PRESENCE_TTL_SEC,
+    );
+    this.logger.debug(
+      `[calls] presence active user=${userId} device=${deviceId} call=${body.callId ?? '?'}`,
+    );
+    return { ok: true };
+  }
+
+  /**
+   * Returns whether another device of the same user is currently in a call.
+   */
+  async getSiblingCallStatus(
+    userId: string,
+    deviceId: string,
+  ): Promise<SiblingCallStatusResponse> {
+    if (!deviceId?.trim()) {
+      throw new BadRequestException('deviceId is required');
+    }
+
+    const raw = await this.redis.get(userCallPresenceKey(userId));
+    if (!raw) return { active: false };
+
+    try {
+      const parsed = JSON.parse(raw) as UserCallPresence;
+      if (!parsed.deviceId || parsed.deviceId === deviceId) {
+        return { active: false };
+      }
+      return {
+        active: true,
+        deviceId: parsed.deviceId,
+        callId: parsed.callId,
+        groupId: parsed.groupId,
+      };
+    } catch {
+      return { active: false };
+    }
   }
 
   /** Calls Cloudflare Realtime TURN API to generate short-lived credentials. */

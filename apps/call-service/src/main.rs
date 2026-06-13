@@ -315,6 +315,9 @@ async fn handle_signal(
                 *ts = std::time::Instant::now();
             }
 
+            // One SFU participant per user — a new device replaces siblings in the same room.
+            evict_sibling_peers(&room, user_id).await;
+
             let pc = match create_peer_connection().await {
                 Ok(pc) => pc,
                 Err(e) => {
@@ -854,6 +857,34 @@ async fn cleanup_stale_rooms(state: Arc<AppState>) {
         let removed = before.saturating_sub(state.rooms.len());
         if removed > 0 {
             info!("[cleanup] Removed {} stale room(s), {} remaining", removed, state.rooms.len());
+        }
+    }
+}
+
+/// Returns the user id prefix from a peer id (`{user_id}:{uuid}`).
+fn user_id_from_peer(peer_id: &str) -> &str {
+    peer_id.split(':').next().unwrap_or(peer_id)
+}
+
+/// Removes other peers belonging to the same user so only one device is in the room.
+async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
+    let siblings: Vec<String> = room
+        .peers
+        .iter()
+        .filter(|entry| user_id_from_peer(entry.key()) == user_id)
+        .map(|entry| entry.key().clone())
+        .collect();
+
+    for sibling in siblings {
+        if let Some((_, ctx)) = room.peers.remove(&sibling) {
+            if let Err(e) = ctx.pc.close().await {
+                warn!("[multi-device] failed to close sibling peer {}: {}", sibling, e);
+            } else {
+                info!(
+                    "[multi-device] evicted sibling peer {} for user {}",
+                    sibling, user_id
+                );
+            }
         }
     }
 }

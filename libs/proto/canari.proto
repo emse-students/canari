@@ -87,12 +87,15 @@ message AppMessage {
 message CallMsg {
   string call_id = 1; // Unique for the call session
   bool   has_video = 6; // Whether the caller intends to send video
+  /** Originating device id (for multi-device answered / dismiss sibling rings). */
+  string device_id = 8;
 
   oneof payload {
     string offer_sdp     = 2; // SDP offer json string
     string answer_sdp    = 3; // SDP answer json string
     string ice_candidate = 4; // ICE candidate json string
     bool   hangup        = 5; // End call
+    bool   answered      = 7; // Picked up on another device of the same user
   }
 }
 

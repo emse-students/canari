@@ -109,22 +109,39 @@ export function mkSystem(event: string, data?: string): canari.IAppMessage {
 }
 
 /** Builds an MLS call invitation (ring) message. */
-export function mkCallInvite(callId: string, hasVideo: boolean): canari.IAppMessage {
+export function mkCallInvite(
+  callId: string,
+  hasVideo: boolean,
+  deviceId?: string
+): canari.IAppMessage {
   return {
     call: {
       callId,
       hasVideo,
+      deviceId: deviceId ?? '',
       offerSdp: 'START',
     },
   };
 }
 
 /** Builds an MLS call hangup message. */
-export function mkCallHangup(callId: string): canari.IAppMessage {
+export function mkCallHangup(callId: string, deviceId?: string): canari.IAppMessage {
   return {
     call: {
       callId,
+      deviceId: deviceId ?? '',
       hangup: true,
+    },
+  };
+}
+
+/** Notifies other devices of the same user that this device picked up the call. */
+export function mkCallAnswered(callId: string, deviceId: string): canari.IAppMessage {
+  return {
+    call: {
+      callId,
+      deviceId,
+      answered: true,
     },
   };
 }

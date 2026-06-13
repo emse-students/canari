@@ -811,6 +811,9 @@ export namespace canari {
         /** CallMsg hasVideo */
         hasVideo?: (boolean|null);
 
+        /** CallMsg deviceId */
+        deviceId?: (string|null);
+
         /** CallMsg offerSdp */
         offerSdp?: (string|null);
 
@@ -822,6 +825,9 @@ export namespace canari {
 
         /** CallMsg hangup */
         hangup?: (boolean|null);
+
+        /** CallMsg answered */
+        answered?: (boolean|null);
     }
 
     /** Represents a CallMsg. */
@@ -839,6 +845,9 @@ export namespace canari {
         /** CallMsg hasVideo. */
         public hasVideo: boolean;
 
+        /** CallMsg deviceId. */
+        public deviceId: string;
+
         /** CallMsg offerSdp. */
         public offerSdp?: (string|null);
 
@@ -851,8 +860,11 @@ export namespace canari {
         /** CallMsg hangup. */
         public hangup?: (boolean|null);
 
+        /** CallMsg answered. */
+        public answered?: (boolean|null);
+
         /** CallMsg payload. */
-        public payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup");
+        public payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered");
 
         /**
          * Creates a new CallMsg instance using the specified properties.

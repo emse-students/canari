@@ -14,9 +14,22 @@ describe('CallsService', () => {
   const groupMemberRepo = {
     findOne: jest.fn(),
   };
+  const redisStore = new Map<string, string>();
+  const redis = {
+    get: jest.fn((key: string) => Promise.resolve(redisStore.get(key) ?? null)),
+    set: jest.fn((key: string, value: string) => {
+      redisStore.set(key, value);
+      return Promise.resolve('OK');
+    }),
+    del: jest.fn((key: string) => {
+      redisStore.delete(key);
+      return Promise.resolve(1);
+    }),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    redisStore.clear();
     delete process.env.CLOUDFLARE_CALLS_API_TOKEN;
     delete process.env.CLOUDFLARE_TURN_KEY_ID;
 
@@ -26,6 +39,10 @@ describe('CallsService', () => {
         {
           provide: getRepositoryToken(GroupMember),
           useValue: groupMemberRepo,
+        },
+        {
+          provide: 'REDIS_CLIENT',
+          useValue: redis,
         },
       ],
     }).compile();
@@ -48,5 +65,28 @@ describe('CallsService', () => {
     await expect(
       service.getIceServers('user-1', 'group-1', 'call-1'),
     ).rejects.toThrow(ServiceUnavailableException);
+  });
+
+  it('stores and clears call presence per device', async () => {
+    await service.reportCallPresence('user-1', 'device-a', {
+      active: true,
+      callId: 'call-1',
+      groupId: 'group-1',
+    });
+
+    const sibling = await service.getSiblingCallStatus('user-1', 'device-b');
+    expect(sibling).toEqual({
+      active: true,
+      deviceId: 'device-a',
+      callId: 'call-1',
+      groupId: 'group-1',
+    });
+
+    const sameDevice = await service.getSiblingCallStatus('user-1', 'device-a');
+    expect(sameDevice).toEqual({ active: false });
+
+    await service.reportCallPresence('user-1', 'device-a', { active: false });
+    const afterClear = await service.getSiblingCallStatus('user-1', 'device-b');
+    expect(afterClear).toEqual({ active: false });
   });
 });
