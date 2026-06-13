@@ -19,6 +19,7 @@ export interface UserRoleHistoryRow {
   associationId: string;
   associationName: string;
   associationSlug: string;
+  associationLogoUrl: string | null;
   roleTitle: string;
   startYear: number | null;
   endYear: number | null;

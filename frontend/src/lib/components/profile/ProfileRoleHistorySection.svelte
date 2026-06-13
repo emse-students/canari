@@ -7,7 +7,8 @@
   } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { Plus, Trash2, History } from '@lucide/svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import { Plus, Trash2 } from '@lucide/svelte';
 
   interface Props {
     entries: UserRoleHistoryRow[];
@@ -103,7 +104,13 @@
         <li
           class="flex items-start gap-3 rounded-xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 px-4 py-3"
         >
-          <History size={18} class="shrink-0 mt-0.5 text-text-muted" />
+          <div class="shrink-0 mt-0.5">
+            <AssociationAvatar
+              name={entry.associationName}
+              logoUrl={entry.associationLogoUrl}
+              size="sm"
+            />
+          </div>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-bold text-text-main">
               {entry.roleTitle}

@@ -53,6 +53,9 @@
     Download,
     ScanLine,
     RefreshCw,
+    UserRound,
+    History,
+    Info,
   } from '@lucide/svelte';
 
   async function changeProfilePhoto() {
@@ -455,7 +458,12 @@
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-extrabold text-text-main">À propos de moi</h2>
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <UserRound size={22} strokeWidth={2.5} />
+          </div>
+          <h2 class="text-lg font-extrabold text-text-main">À propos de moi</h2>
+        </div>
         {#if !editingBio}
           <button
             onclick={startEditBio}
@@ -546,7 +554,10 @@
       class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
       style="animation-fill-mode: backwards;"
     >
-      <div class="flex items-center gap-2.5 mb-5">
+      <div class="flex items-center gap-3 mb-5">
+        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <History size={22} strokeWidth={2.5} />
+        </div>
         <h2 class="text-lg font-extrabold text-text-main">Parcours associatif</h2>
         {#if roleHistoryLoading}
           <Loader2 size={16} class="animate-spin text-amber-500" />
@@ -564,7 +575,12 @@
       class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
       style="animation-fill-mode: backwards;"
     >
-      <h2 class="text-lg font-extrabold text-text-main mb-6">Informations du compte</h2>
+      <div class="flex items-center gap-3 mb-6">
+        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <Info size={22} strokeWidth={2.5} />
+        </div>
+        <h2 class="text-lg font-extrabold text-text-main">Informations du compte</h2>
+      </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div

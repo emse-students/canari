@@ -29,6 +29,7 @@ export interface UserRoleHistoryRow {
   associationId: string;
   associationName: string;
   associationSlug: string;
+  associationLogoUrl: string | null;
   roleTitle: string;
   startYear: number | null;
   endYear: number | null;
@@ -104,6 +105,7 @@ export class UserProfileService {
         associationId: r.associationId,
         associationName: a?.name ?? 'Association',
         associationSlug: a?.slug ?? '',
+        associationLogoUrl: a?.logoUrl ?? null,
         roleTitle: r.roleTitle,
         startYear: r.startYear,
         endYear: r.endYear,
