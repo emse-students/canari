@@ -7,6 +7,10 @@
 
 @theme {
   --color-cn-dark: var(--cn-dark);
+  /* Fixed brand ink: stays navy in BOTH themes. Use for text/icons sitting on the
+     (always-light) amber brand surface, where `cn-dark` would wrongly flip to near-white
+     in dark mode and wreck contrast. */
+  --color-cn-ink: #151b2c;
   --color-cn-yellow: var(--cn-yellow);
   --color-cn-yellow-hover: var(--cn-yellow-hover);
   --color-cn-bg: var(--cn-bg);

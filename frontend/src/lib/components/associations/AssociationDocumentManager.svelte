@@ -240,7 +240,7 @@
         type="button"
         onclick={() => fileInput?.click()}
         disabled={uploading}
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
       >
         <FileUp size={16} />
         {uploading ? 'Chiffrement et upload…' : 'Ajouter un document'}

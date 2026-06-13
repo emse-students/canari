@@ -24,7 +24,7 @@ export async function exportTrombinoscope(
     background: '#ffffff',
     padding: '40px',
     color: '#111111',
-    fontFamily: '"Nunito", "Segoe UI", sans-serif',
+    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
   });
 
@@ -60,7 +60,7 @@ export async function exportTrombinoscope(
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;padding-bottom:18px;border-bottom:2.5px solid #d9e0ea;">
       ${logoHtml}
-      <h1 style="font-family:'Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
+      <h1 style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:flex-start;">
       ${cards}
@@ -83,6 +83,12 @@ export async function exportTrombinoscope(
       )
     );
 
+    // Force-load the app's *Variable* families so html2canvas rasterises the real Canari
+    // fonts instead of a fallback (otherwise the PDF font differs from the app).
+    await Promise.all([
+      document.fonts.load("700 28px 'Fredoka Variable'"),
+      document.fonts.load("700 12px 'Nunito Variable'"),
+    ]).catch(() => {});
     await document.fonts.ready;
 
     const canvas = await html2canvas(container, {

@@ -613,7 +613,7 @@
     <button
       onclick={handleSave}
       disabled={isSubmitting || titleMissing}
-      class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
+      class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
     >
       <Save size={16} />
       {isSubmitting ? 'Enregistrement…' : 'Enregistrer le formulaire'}

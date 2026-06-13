@@ -62,7 +62,7 @@
         <p class="text-sm text-red-600">{error}</p>
         <button
           onclick={() => goto('/login', { replaceState: true })}
-          class="mt-4 px-6 py-3 bg-cn-yellow text-cn-dark rounded-2xl font-bold hover:bg-cn-yellow-hover transition-all"
+          class="mt-4 px-6 py-3 bg-cn-yellow text-cn-ink rounded-2xl font-bold hover:bg-cn-yellow-hover transition-all"
         >
           Réessayer
         </button>

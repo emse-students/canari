@@ -179,7 +179,7 @@
       <button
         onclick={handlePay}
         disabled={!selectedMethodId || paying}
-        class="w-full rounded-xl bg-cn-yellow py-3 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        class="w-full rounded-xl bg-cn-yellow py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
       >
         {#if paying}
           <Loader2 size={16} class="animate-spin" />

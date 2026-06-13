@@ -487,7 +487,7 @@
     <div class="relative w-fit max-w-full">
       {#if replyDragPx !== 0 && onReply}
         <div
-          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 text-cn-dark shadow-md transition-opacity
+          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 text-cn-ink shadow-md transition-opacity
           {isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'}"
           style:opacity={replyHintOpacity}
           aria-hidden="true"
@@ -546,7 +546,7 @@
         {isMediaOnly || isLinkOnly
           ? ''
           : isOwn
-            ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-dark shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
+            ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-ink shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
             : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
         {isHighlighted
           ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'

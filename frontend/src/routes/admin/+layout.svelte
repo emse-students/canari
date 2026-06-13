@@ -86,7 +86,7 @@
         href="/admin"
         class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
         {path === '/admin'
-          ? 'bg-cn-yellow text-cn-dark shadow-sm'
+          ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'border border-cn-border text-text-muted hover:text-text-main'}"
       >
         Accueil
@@ -96,7 +96,7 @@
           href={item.href}
           class="inline-flex items-center gap-1.5 shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
           {path.startsWith(item.href)
-            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border border-cn-border text-text-muted hover:text-text-main'}"
         >
           {#if item.icon === 'agenda'}

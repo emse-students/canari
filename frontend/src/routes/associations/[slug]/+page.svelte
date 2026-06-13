@@ -164,7 +164,7 @@
           {#if canManage}
             <a
               href="/associations/{encodeURIComponent(slug)}/edit"
-              class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+              class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
             >
               <Settings size={16} />
               Gestion de l'asso
@@ -188,7 +188,7 @@
           onclick={() => (activeSection = 'about')}
           class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {activeSection === 'about'
-            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <Building2 size={17} />
@@ -199,7 +199,7 @@
           onclick={() => (activeSection = 'calendar')}
           class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {activeSection === 'calendar'
-            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <CalendarDays size={17} />
@@ -210,7 +210,7 @@
           onclick={() => (activeSection = 'members')}
           class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {activeSection === 'members'
-            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <Users size={17} />
@@ -222,7 +222,7 @@
             onclick={() => (activeSection = 'shop')}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {activeSection === 'shop'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <ShoppingBag size={17} />

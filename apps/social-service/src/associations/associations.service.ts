@@ -420,7 +420,23 @@ export class AssociationsService {
       throw new BadRequestException('User is already a member');
     }
 
-    const membership = this.memberRepo.create({ associationId, userId, role, permissions });
+    // Append new members at the END of the ordered list (not the top): take the current
+    // max sortOrder + 1. `listMembers` orders by sortOrder ASC, so without this a new
+    // member (default sortOrder 0) would jump ahead of already-reordered members.
+    const maxRow = await this.memberRepo
+      .createQueryBuilder('m')
+      .select('MAX(m."sortOrder")', 'max')
+      .where('m."associationId" = :associationId', { associationId })
+      .getRawOne<{ max: number | null }>();
+    const sortOrder = (maxRow?.max ?? -1) + 1;
+
+    const membership = this.memberRepo.create({
+      associationId,
+      userId,
+      role,
+      permissions,
+      sortOrder,
+    });
     return this.memberRepo.save(membership);
   }
 

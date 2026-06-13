@@ -184,7 +184,7 @@
       <button
         type="button"
         onclick={exportBlob}
-        class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover"
+        class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover"
       >
         Utiliser cette image
       </button>

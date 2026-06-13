@@ -588,7 +588,7 @@
             <button
               type="button"
               onclick={() => validateEvent(ev.id)}
-              class="inline-flex items-center gap-1 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover"
+              class="inline-flex items-center gap-1 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover"
               title="Valider et publier"
             >
               <Check size={14} />
@@ -859,7 +859,7 @@
           type="button"
           onclick={submitForm}
           disabled={saving}
-          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
         >
           {saving ? 'Enregistrement…' : 'Enregistrer'}
         </button>

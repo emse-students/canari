@@ -862,7 +862,7 @@
           onclick={() => (editSection = 'profile')}
           class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {editSection === 'profile'
-            ? 'bg-cn-yellow text-cn-dark shadow-sm'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <Building2 size={17} />
@@ -877,7 +877,7 @@
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'members'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <Users size={17} />
@@ -894,7 +894,7 @@
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <CreditCard size={17} />
@@ -907,7 +907,7 @@
             onclick={() => (editSection = 'documents')}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'documents'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <FolderLock size={17} />
@@ -923,7 +923,7 @@
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'achats'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <UsersIcon size={17} />
@@ -939,7 +939,7 @@
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'formulaires'
-              ? 'bg-cn-yellow text-cn-dark shadow-sm'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <ClipboardList size={17} />
@@ -1075,7 +1075,7 @@
               type="button"
               onclick={handleSaveProfile}
               disabled={saving}
-              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
             >
               {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
             </button>
@@ -1161,7 +1161,7 @@
                       type="button"
                       onclick={() => void handleOpenStripeDashboard()}
                       disabled={stripeDashboardLoading}
-                      class="inline-flex items-center justify-center gap-2 w-full sm:w-auto rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+                      class="inline-flex items-center justify-center gap-2 w-full sm:w-auto rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
                     >
                       {#if stripeDashboardLoading}
                         <RefreshCw size={16} class="animate-spin" />
@@ -1236,7 +1236,7 @@
                   type="button"
                   onclick={handleStripeOnboarding}
                   disabled={stripeLoading}
-                  class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+                  class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
                 >
                   {stripeLoading
                     ? 'Redirection…'
@@ -1387,7 +1387,7 @@
             <button
               type="submit"
               disabled={addingMember || !newMemberUserId.trim()}
-              class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+              class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
             >
               {addingMember ? '…' : 'Ajouter'}
             </button>
@@ -1521,7 +1521,7 @@
           <button
             type="submit"
             disabled={grantingProduct || !grantUserId.trim() || !grantProductId}
-            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
           >
             {grantingProduct ? 'Attribution…' : 'Attribuer comme acheté'}
           </button>
@@ -1609,7 +1609,7 @@
           <button
             type="button"
             onclick={() => (showProductForm = !showProductForm)}
-            class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+            class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
           >
             <Plus size={16} />
             Nouveau produit
@@ -1864,7 +1864,7 @@
               <button
                 type="submit"
                 disabled={savingProduct || !newProductName.trim()}
-                class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+                class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
               >
                 {savingProduct ? 'Création…' : 'Créer le produit'}
               </button>

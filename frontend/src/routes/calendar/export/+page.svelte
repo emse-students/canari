@@ -273,7 +273,7 @@
           type="button"
           onclick={handleExport}
           disabled={loading || exporting}
-          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:pointer-events-none"
         >
           <FileDown size={18} />
           {exporting ? 'Génération…' : 'Télécharger le PDF'}

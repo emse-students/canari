@@ -138,7 +138,7 @@
     <button
       type="submit"
       disabled={loading}
-      class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-50"
+      class="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
     >
       {#if loading}
         <Loader2 size={16} class="animate-spin" />

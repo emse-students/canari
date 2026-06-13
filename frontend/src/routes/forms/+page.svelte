@@ -155,7 +155,7 @@
     </div>
     <a
       href="/forms/create"
-      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors self-start sm:self-auto"
+      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors self-start sm:self-auto"
     >
       <Plus size={16} />
       Nouveau formulaire
@@ -183,7 +183,7 @@
       </p>
       <a
         href="/forms/create"
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
       >
         <Plus size={16} />
         Créer un formulaire
@@ -211,7 +211,7 @@
             <div class="flex flex-wrap gap-2 flex-shrink-0">
               <a
                 href="/forms/{form.id}/edit"
-                class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3.5 py-2 text-xs font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors"
+                class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3.5 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
               >
                 <Pencil size={14} />
                 Modifier

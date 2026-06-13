@@ -86,7 +86,7 @@
     <button
       onclick={handlePayment}
       disabled={isProcessing}
-      class="w-full rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+      class="w-full rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
     >
       {isProcessing ? 'Génération de la transaction…' : 'Aller au paiement sécurisé 🔒'}
     </button>

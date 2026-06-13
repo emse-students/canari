@@ -71,7 +71,7 @@
     {#snippet footer()}
       <button
         type="button"
-        class="inline-flex items-center gap-2 rounded-lg bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark hover:bg-cn-yellow-hover disabled:opacity-60 shadow-sm w-full justify-center"
+        class="inline-flex items-center gap-2 rounded-lg bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-60 shadow-sm w-full justify-center"
         disabled={updating}
         onclick={() => void handleUpdate()}
       >

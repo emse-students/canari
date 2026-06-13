@@ -454,7 +454,7 @@
               <h1 class="text-2xl font-extrabold text-white leading-tight">{form.title}</h1>
               {#if effectiveBasePrice(form) > 0}
                 <span
-                  class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full"
+                  class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
                 >
                   À partir de {formatCurrency(effectiveBasePrice(form), form.currency)}
                   {#if memberPricing}(cotisant){/if}
@@ -479,7 +479,7 @@
             <h1 class="text-2xl font-extrabold text-text-main leading-tight">{form.title}</h1>
             {#if effectiveBasePrice(form) > 0}
               <span
-                class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-dark px-2.5 py-1 rounded-full"
+                class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
               >
                 À partir de {formatCurrency(effectiveBasePrice(form), form.currency)}
                 {#if memberPricing}(cotisant){/if}
