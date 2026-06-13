@@ -30,6 +30,19 @@
   let formStartYear = $state<number | ''>('');
   let formEndYear = $state<number | ''>('');
 
+  /** Regular associations, alphabetical. */
+  const assoOptions = $derived(
+    associations
+      .filter((a) => a.type !== 'list')
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+  );
+  /** Promo lists, most recent promo first (nulls last), then by name. */
+  const listOptions = $derived(
+    associations
+      .filter((a) => a.type === 'list')
+      .sort((a, b) => (b.promo ?? -Infinity) - (a.promo ?? -Infinity) || a.name.localeCompare(b.name, 'fr'))
+  );
+
   async function ensureAssociations() {
     if (associations.length > 0) return;
     try {
@@ -161,9 +174,20 @@
               class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
             >
               <option value="">Choisir…</option>
-              {#each associations as a (a.id)}
-                <option value={a.id}>{a.name}</option>
-              {/each}
+              {#if assoOptions.length > 0}
+                <optgroup label="Associations">
+                  {#each assoOptions as a (a.id)}
+                    <option value={a.id}>{a.name}</option>
+                  {/each}
+                </optgroup>
+              {/if}
+              {#if listOptions.length > 0}
+                <optgroup label="Listes">
+                  {#each listOptions as a (a.id)}
+                    <option value={a.id}>{a.name}{a.promo ? ` (${a.promo})` : ''}</option>
+                  {/each}
+                </optgroup>
+              {/if}
             </select>
           </div>
           <div class="sm:col-span-2">
