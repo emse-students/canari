@@ -7,6 +7,7 @@
   let name = $state('');
   let slug = $state('');
   let description = $state('');
+  let contactEmail = $state('');
   let submitting = $state(false);
   let error = $state('');
 
@@ -32,6 +33,7 @@
         name: name.trim(),
         slug: slug.trim(),
         description: description.trim() || undefined,
+        contactEmail: contactEmail.trim() || undefined,
       });
       await goto(`/associations/${asso.slug}`);
     } catch (err) {
@@ -77,6 +79,13 @@
       bind:value={description}
       placeholder="Décrivez l'association en quelques mots…"
       rows={3}
+    />
+
+    <Input
+      label="E-mail de contact (optionnel)"
+      type="email"
+      bind:value={contactEmail}
+      placeholder="contact@asso.fr"
     />
 
     {#if error}

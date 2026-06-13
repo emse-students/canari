@@ -57,10 +57,17 @@ export async function exportTrombinoscope(
     })
     .join('');
 
+  const contactHtml = asso.contactEmail?.trim()
+    ? `<p style="font-size:13px;color:#607188;margin:4px 0 0 0;">${safe(asso.contactEmail.trim())}</p>`
+    : '';
+
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;padding-bottom:18px;border-bottom:2.5px solid #d9e0ea;">
       ${logoHtml}
-      <h1 style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
+      <div>
+        <h1 style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
+        ${contactHtml}
+      </div>
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:20px;justify-content:flex-start;">
       ${cards}

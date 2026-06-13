@@ -104,6 +104,9 @@
   let editBioMarkdown = $state('');
   /** Hex color for calendar display, or "" to use auto-generated color. */
   let editColor = $state('');
+  /** Public contact e-mail, or "" when none. */
+  let editContactEmail = $state('');
+  let archiving = $state(false);
 
   /** Material You–inspired tonal palette (tone ~60, moderate saturation). */
   const PRESET_COLORS = [
@@ -291,6 +294,7 @@
       editDescription = a.description ?? '';
       editBioMarkdown = a.bioMarkdown ?? '';
       editColor = a.color ?? '';
+      editContactEmail = a.contactEmail ?? '';
 
       const uid = currentUserId();
       const mine = members.find((m) => m.userId === uid);
@@ -317,16 +321,41 @@
         description: editDescription.trim(),
         bioMarkdown: editBioMarkdown.trim(),
         color: editColor.trim() || null,
+        contactEmail: editContactEmail.trim() || null,
       });
       editDescription = asso.description ?? '';
       editBioMarkdown = asso.bioMarkdown ?? '';
       editColor = asso.color ?? '';
+      editContactEmail = asso.contactEmail ?? '';
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
       settingsError = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
     } finally {
       saving = false;
+    }
+  }
+
+  /** Archives or unarchives the association (global admin only). */
+  async function handleToggleArchive() {
+    if (!asso) return;
+    const next = !asso.archived;
+    if (
+      next &&
+      !(await showConfirm(
+        'Archiver cette association ? Elle passera dans « Anciennes » et disparaîtra des « Mes associations » de ses membres.',
+        { confirmLabel: 'Archiver' }
+      ))
+    )
+      return;
+    archiving = true;
+    error = '';
+    try {
+      asso = await updateAssociation(asso.id, { archived: next });
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Erreur';
+    } finally {
+      archiving = false;
     }
   }
 
@@ -1001,6 +1030,12 @@
         {/if}
 
         <Input label="Nom" bind:value={editName} />
+        <Input
+          label="E-mail de contact"
+          type="email"
+          bind:value={editContactEmail}
+          placeholder="contact@asso.fr"
+        />
         <div class="space-y-2">
           <span class="block text-sm font-bold text-text-main ml-1"
             >Description (sous le titre)</span
@@ -2234,6 +2269,30 @@
     {/if}
 
     {#if editSection === 'danger' && isGlobalAdminUser}
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm">
+        <h2 class="text-base font-bold text-text-main flex items-center gap-2">
+          <Building2 size={18} />
+          {asso.archived ? 'Association archivée' : 'Archiver l’association'}
+        </h2>
+        <p class="text-sm text-text-muted">
+          {asso.archived
+            ? 'Cette association est archivée : elle apparaît sous « Anciennes » et n’est plus listée dans les « Mes associations » de ses membres. Vous pouvez la réactiver.'
+            : 'Déplace l’association vers « Anciennes » sans rien supprimer. Réversible à tout moment.'}
+        </p>
+        <button
+          type="button"
+          onclick={handleToggleArchive}
+          disabled={archiving}
+          class="rounded-xl border border-cn-border px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
+        >
+          {archiving
+            ? '…'
+            : asso.archived
+              ? 'Réactiver l’association'
+              : 'Archiver l’association'}
+        </button>
+      </div>
+
       <div class="rounded-2xl border border-red-200 bg-red-50/60 p-6 space-y-3">
         <h2 class="text-base font-bold text-red-700 flex items-center gap-2">
           <Trash2 size={18} />

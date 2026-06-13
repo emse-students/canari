@@ -15,7 +15,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Bell, BellOff, Settings, Building2, CalendarDays, Users, ShoppingBag, Download } from '@lucide/svelte';
+  import { Bell, BellOff, Settings, Building2, CalendarDays, Users, ShoppingBag, Download, Mail } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { listAssociationProducts, type AssociationProduct } from '$lib/associations/api';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -244,6 +244,15 @@
           <ProfileBioMarkdown source={asso.bioMarkdown} />
         {:else if !asso.description?.trim()}
           <p class="text-sm text-text-muted">Aucune description pour le moment.</p>
+        {/if}
+        {#if asso.contactEmail?.trim()}
+          <a
+            href="mailto:{asso.contactEmail}"
+            class="inline-flex items-center gap-2 text-sm font-semibold text-cn-dark hover:underline pt-1"
+          >
+            <Mail size={15} />
+            {asso.contactEmail}
+          </a>
         {/if}
       </div>
     {:else if activeSection === 'calendar'}
