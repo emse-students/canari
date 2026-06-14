@@ -5,19 +5,12 @@
   import {
     getAssociationBySlug,
     listMembers,
-    updateAssociation,
-    deleteAssociation,
-    addMember,
-    removeMember,
-    updateMemberRole,
     startStripeOnboarding,
     fetchStripeConnectStatus,
     openStripeConnectDashboard,
     formatStripeConnectAmount,
     isStripeConnectReady,
     type StripeConnectStatusResult,
-    uploadAssociationLogo,
-    deleteAssociationLogo,
     listAssociationProductsForManage,
     listAssociationPurchases,
     grantProductPurchase,
@@ -27,15 +20,12 @@
     listWebhookFailures,
     retryWebhookDelivery,
     listAssociationForms,
-    listAssociationTags,
-    reorderMembers,
     type Association,
     type AssociationMember,
     type AssociationProduct,
     type AssociationPurchase,
     type WebhookDelivery,
     type AssociationForm,
-    type UserTag,
   } from '$lib/associations/api';
   import {
     listPendingCashSubmissions,
@@ -44,13 +34,11 @@
     type PendingCashSubmission,
   } from '$lib/forms/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
-  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     Users,
     CreditCard,
     Trash2,
-    UserPlus,
     ArrowLeft,
     Building2,
     AlertTriangle,
@@ -59,35 +47,23 @@
     Plus,
     RefreshCw,
     Clock,
-    Check,
-    Download,
     ClipboardList,
-    GripVertical,
     Wallet,
     ArrowUpRight,
     Users as UsersIcon,
     ChevronDown,
     Gift,
-    Tag,
   } from '@lucide/svelte';
-  import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
-  import {
-    ASSOCIATION_ADMIN_PRESET,
-    hasPermissionFlag,
-    AssociationPermissionFlag,
-  } from '$lib/associations/api';
-  import Input from '$lib/components/ui/Input.svelte';
+  import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
+  import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
+  import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
+  import { hasPermissionFlag, AssociationPermissionFlag } from '$lib/associations/api';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import AssociationTagAutocomplete from '$lib/components/shared/AssociationTagAutocomplete.svelte';
-  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
-  import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
-  import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
-  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
-  import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -99,41 +75,6 @@
   let myMembership = $derived(members.find((m) => m.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
 
-  let editName = $state('');
-  let editDescription = $state('');
-  let editBioMarkdown = $state('');
-  /** Hex color for calendar display, or "" to use auto-generated color. */
-  let editColor = $state('');
-  /** Public contact e-mail, or "" when none. */
-  let editContactEmail = $state('');
-  let archiving = $state(false);
-
-  /** Material You–inspired tonal palette (tone ~60, moderate saturation). */
-  const PRESET_COLORS = [
-    '#6B92D1',
-    '#5BA8A0',
-    '#5EA86C',
-    '#8BAC5A',
-    '#ACA05A',
-    '#AC7A5A',
-    '#AC5E5E',
-    '#AC5E8C',
-    '#8C5EAC',
-    '#6E7EAC',
-    '#5EA8A8',
-    '#7CAC7C',
-  ] as const;
-  let saving = $state(false);
-  let saveSuccess = $state(false);
-  let settingsError = $state('');
-
-  let newMemberUserId = $state('');
-  let newMemberRole = $state('Membre');
-  /** 0 = simple member; ASSOCIATION_ADMIN_PRESET = full association admin. */
-  let newMemberPermissions = $state(0);
-  let addingMember = $state(false);
-  let memberError = $state('');
-
   let stripeLoading = $state(false);
   let stripeDashboardLoading = $state(false);
   let stripeConnectStatus = $state<StripeConnectStatusResult | null>(null);
@@ -142,8 +83,6 @@
   let stripePaymentsReady = $derived(
     isStripeConnectReady(stripeConnectStatus) || !!asso?.stripeOnboardingComplete
   );
-  let logoBusy = $state(false);
-  let showCropper = $state(false);
 
   let editSection = $state<
     | 'profile'
@@ -238,10 +177,6 @@
       : purchases
   );
 
-  let assoTags = $state<UserTag[]>([]);
-  let assoTagsLoading = $state(false);
-  let assoTagsError = $state('');
-
   // ── Formulaires state ────────────────────────────────────────────────────
   let forms = $state<AssociationForm[]>([]);
   let formsLoading = $state(false);
@@ -290,12 +225,6 @@
           if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
         });
       }
-      editName = a.name;
-      editDescription = a.description ?? '';
-      editBioMarkdown = a.bioMarkdown ?? '';
-      editColor = a.color ?? '';
-      editContactEmail = a.contactEmail ?? '';
-
       const uid = currentUserId();
       const mine = members.find((m) => m.userId === uid);
       const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
@@ -307,124 +236,6 @@
       error = err instanceof Error ? err.message : 'Association introuvable';
     } finally {
       loading = false;
-    }
-  }
-
-  async function handleSaveProfile() {
-    if (!asso) return;
-    saving = true;
-    settingsError = '';
-    saveSuccess = false;
-    try {
-      asso = await updateAssociation(asso.id, {
-        name: editName.trim() || undefined,
-        description: editDescription.trim(),
-        bioMarkdown: editBioMarkdown.trim(),
-        color: editColor.trim() || null,
-        contactEmail: editContactEmail.trim() || null,
-      });
-      editDescription = asso.description ?? '';
-      editBioMarkdown = asso.bioMarkdown ?? '';
-      editColor = asso.color ?? '';
-      editContactEmail = asso.contactEmail ?? '';
-      saveSuccess = true;
-      setTimeout(() => (saveSuccess = false), 3500);
-    } catch (err) {
-      settingsError = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
-    } finally {
-      saving = false;
-    }
-  }
-
-  /** Archives or unarchives the association (global admin only). */
-  async function handleToggleArchive() {
-    if (!asso) return;
-    const next = !asso.archived;
-    if (
-      next &&
-      !(await showConfirm(
-        'Archiver cette association ? Elle passera dans « Anciennes » et disparaîtra des « Mes associations » de ses membres.',
-        { confirmLabel: 'Archiver' }
-      ))
-    )
-      return;
-    archiving = true;
-    error = '';
-    try {
-      asso = await updateAssociation(asso.id, { archived: next });
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur';
-    } finally {
-      archiving = false;
-    }
-  }
-
-  async function handleDelete() {
-    if (
-      !asso ||
-      !(await showConfirm('Supprimer cette association ? Cette action est irréversible.', {
-        danger: true,
-        confirmLabel: 'Supprimer',
-      }))
-    )
-      return;
-    try {
-      await deleteAssociation(asso.id);
-      await goto('/associations');
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur lors de la suppression';
-    }
-  }
-
-  async function handleAddMember() {
-    if (!asso || !newMemberUserId.trim()) return;
-    addingMember = true;
-    memberError = '';
-    try {
-      const member = await addMember(
-        asso.id,
-        newMemberUserId.trim(),
-        newMemberRole,
-        newMemberPermissions
-      );
-      members = [...members, member];
-      resolvedMemberNames = {
-        ...resolvedMemberNames,
-        [member.userId]:
-          getUserDisplayNameSync(member.userId) || member.displayName?.trim() || member.userId,
-      };
-      resolveUserDisplayName(member.userId).then((resolved) => {
-        if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [member.userId]: resolved };
-      });
-      newMemberUserId = '';
-      newMemberRole = 'Membre';
-      newMemberPermissions = 0;
-    } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
-    } finally {
-      addingMember = false;
-    }
-  }
-
-  async function handleRemoveMember(targetId: string) {
-    if (!asso) return;
-    try {
-      await removeMember(asso.id, targetId);
-      members = members.filter((m) => m.userId !== targetId);
-    } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
-    }
-  }
-
-  async function handleChangeRole(targetId: string, role: string, permissions: number) {
-    if (!asso) return;
-    try {
-      await updateMemberRole(asso.id, targetId, role, permissions);
-      members = members.map((m) =>
-        m.userId === targetId ? { ...m, role, permissions, isAdmin: permissions > 0 } : m
-      );
-    } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
     }
   }
 
@@ -526,40 +337,6 @@
     );
   }
 
-  async function onLogoExported(blob: Blob) {
-    if (!asso) return;
-    logoBusy = true;
-    memberError = '';
-    try {
-      const file = new File([blob], 'logo.jpg', { type: 'image/jpeg' });
-      asso = await uploadAssociationLogo(asso.id, file);
-      showCropper = false;
-    } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Envoi du logo échoué';
-    } finally {
-      logoBusy = false;
-    }
-  }
-
-  async function handleRemoveLogo() {
-    if (
-      !asso ||
-      !(await showConfirm('Retirer le logo affiché sur le fil et la page publique ?', {
-        danger: true,
-        confirmLabel: 'Retirer',
-      }))
-    )
-      return;
-    logoBusy = true;
-    try {
-      asso = await deleteAssociationLogo(asso.id);
-    } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
-    } finally {
-      logoBusy = false;
-    }
-  }
-
   async function loadPurchases() {
     if (!asso) return;
     purchasesLoading = true;
@@ -576,27 +353,6 @@
     } finally {
       purchasesLoading = false;
     }
-  }
-
-  /** Loads active cotisation tags issued by this association. */
-  async function loadAssociationTags() {
-    if (!asso) return;
-    assoTagsLoading = true;
-    assoTagsError = '';
-    try {
-      assoTags = await listAssociationTags(asso.id);
-    } catch (e) {
-      assoTagsError = e instanceof Error ? e.message : 'Erreur';
-    } finally {
-      assoTagsLoading = false;
-    }
-  }
-
-  function tagHolderName(tag: UserTag): string {
-    return (
-      resolvedMemberNames[tag.userId]?.trim() ||
-      getUserDisplayNameSync(tag.userId, tag.userId.slice(0, 8) + '…')
-    );
   }
 
   function purchaseBuyerName(purchase: AssociationPurchase): string {
@@ -802,54 +558,6 @@
     }
   }
 
-  let exportingPdf = $state(false);
-
-  async function handleExportTrombinoscope() {
-    if (!asso || exportingPdf) return;
-    exportingPdf = true;
-    try {
-      await exportTrombinoscope(asso, members, resolvedMemberNames);
-    } finally {
-      exportingPdf = false;
-    }
-  }
-
-  // ── Member drag-and-drop reorder ──────────────────────────────────────────
-
-  let draggedIdx = $state(-1);
-  let dragOverIdx = $state(-1);
-
-  function onDragStart(idx: number) {
-    draggedIdx = idx;
-  }
-
-  function onDragOver(e: DragEvent, idx: number) {
-    e.preventDefault();
-    dragOverIdx = idx;
-  }
-
-  async function onDrop(targetIdx: number) {
-    if (draggedIdx < 0 || draggedIdx === targetIdx || !asso) return;
-    const reordered = [...members];
-    const [moved] = reordered.splice(draggedIdx, 1);
-    reordered.splice(targetIdx, 0, moved);
-    members = reordered;
-    draggedIdx = -1;
-    dragOverIdx = -1;
-    try {
-      await reorderMembers(
-        asso.id,
-        reordered.map((m) => m.userId)
-      );
-    } catch {
-      // Non-fatal: local order already updated; backend will reflect on next load
-    }
-  }
-
-  function onDragEnd() {
-    draggedIdx = -1;
-    dragOverIdx = -1;
-  }
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
@@ -900,10 +608,7 @@
         {#if canManageMembers}
           <button
             type="button"
-            onclick={() => {
-              editSection = 'members';
-              void loadAssociationTags();
-            }}
+            onclick={() => (editSection = 'members')}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'members'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
@@ -992,141 +697,7 @@
     </nav>
 
     {#if editSection === 'profile'}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
-      >
-        <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
-        <div class="flex flex-wrap items-start gap-4">
-          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-          {#if canManageMembers}
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onclick={() => (showCropper = !showCropper)}
-                disabled={logoBusy}
-                class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
-              >
-                {showCropper ? 'Fermer le recadrage' : 'Changer le logo'}
-              </button>
-              {#if asso.logoUrl}
-                <button
-                  type="button"
-                  onclick={handleRemoveLogo}
-                  disabled={logoBusy}
-                  class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
-                >
-                  Retirer le logo
-                </button>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
-        {#if showCropper}
-          <AssociationLogoCropper
-            onExport={onLogoExported}
-            onCancel={() => (showCropper = false)}
-          />
-        {/if}
-
-        <Input label="Nom" bind:value={editName} />
-        <Input
-          label="E-mail de contact"
-          type="email"
-          bind:value={editContactEmail}
-          placeholder="contact@asso.fr"
-        />
-        <div class="space-y-2">
-          <span class="block text-sm font-bold text-text-main ml-1"
-            >Description (sous le titre)</span
-          >
-          <MarkdownComposerField
-            bind:value={editDescription}
-            maxlength={2000}
-            minHeight="72px"
-            class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
-            editorClass="min-h-[72px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
-            placeholder="Courte présentation de l'association…"
-          />
-        </div>
-        <div class="space-y-2">
-          <span class="block text-sm font-bold text-text-main ml-1">Bio détaillée</span>
-          <MarkdownComposerField
-            bind:value={editBioMarkdown}
-            maxlength={16000}
-            minHeight="160px"
-            class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
-            editorClass="min-h-[160px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
-            placeholder="Présentation complète, liens, listes…"
-          />
-        </div>
-        <div class="flex flex-col gap-3">
-          <span class="block text-sm font-bold text-text-main ml-1">Couleur de l'agenda</span>
-          <div class="flex flex-wrap gap-1.5">
-            {#each PRESET_COLORS as c (c)}
-              <button
-                type="button"
-                onclick={() => (editColor = c)}
-                title={c}
-                class="h-7 w-7 rounded-full border-2 transition-all hover:scale-110 focus:outline-none shrink-0
-                       {editColor === c
-                  ? 'border-cn-dark ring-2 ring-offset-1 ring-cn-yellow/70 scale-110'
-                  : 'border-transparent hover:border-white/60'}"
-                style="background:{c};"
-              ></button>
-            {/each}
-          </div>
-          <div class="flex items-center gap-2 ml-0.5">
-            <span class="text-xs text-text-muted">Personnalisée</span>
-            <ColorPicker bind:value={editColor} label="Couleur personnalisée" />
-          </div>
-        </div>
-
-        <div
-          class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3"
-        >
-          <p class="font-semibold text-text-main">Aperçu</p>
-          {#if editDescription.trim()}
-            <div>
-              <p class="font-medium text-text-main mb-1">Description</p>
-              <ProfileBioMarkdown source={editDescription} class="text-sm" />
-            </div>
-          {/if}
-          {#if editBioMarkdown.trim()}
-            <div>
-              <p class="font-medium text-text-main mb-1">Bio</p>
-              <ProfileBioMarkdown source={editBioMarkdown} />
-            </div>
-          {:else if !editDescription.trim()}
-            <p>(vide)</p>
-          {/if}
-        </div>
-        {#if settingsError}
-          <div class="text-sm text-red-600">{settingsError}</div>
-        {/if}
-        {#if canManageMembers}
-          <div class="flex items-center gap-3 flex-wrap">
-            <button
-              type="button"
-              onclick={handleSaveProfile}
-              disabled={saving}
-              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
-            >
-              {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
-            </button>
-            {#if saveSuccess}
-              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
-                <Check size={15} />
-                Modifications enregistrées
-              </span>
-            {/if}
-          </div>
-        {:else}
-          <p class="text-sm text-text-muted">
-            Vous n'avez pas le droit de modifier le profil (flag MANAGE_MEMBERS requis).
-          </p>
-        {/if}
-      </div>
+      <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
     {/if}
 
     {#if editSection === 'payments' && canManagePaymentsSection && asso}
@@ -1287,151 +858,7 @@
     {/if}
 
     {#if editSection === 'members' && canManageMembers}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
-      >
-        <div class="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
-            <p class="text-sm text-text-muted mt-1">
-              Rôles affichés sur la page publique. Gérez les droits d’accès de chaque membre.
-            </p>
-          </div>
-          <button
-            type="button"
-            onclick={handleExportTrombinoscope}
-            disabled={exportingPdf}
-            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg transition-colors shrink-0 disabled:opacity-50"
-          >
-            <Download size={15} />
-            {exportingPdf ? 'Génération…' : 'Trombinoscope PDF'}
-          </button>
-        </div>
-        <div class="space-y-2">
-          {#each members as member, idx (member.id)}
-            <div
-              role="listitem"
-              draggable={true}
-              ondragstart={() => onDragStart(idx)}
-              ondragover={(e) => onDragOver(e, idx)}
-              ondrop={() => onDrop(idx)}
-              ondragend={onDragEnd}
-              class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx
-                ? 'opacity-40'
-                : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-2 ring-cn-yellow/60' : ''}"
-            >
-              <button
-                type="button"
-                aria-label="Déplacer ce membre"
-                class="mt-3.5 cursor-grab touch-none text-text-muted hover:text-text-main transition-colors shrink-0"
-              >
-                <GripVertical size={18} />
-              </button>
-              <div class="flex-1 min-w-0">
-                <AssociationMemberRow
-                  {member}
-                  displayName={resolvedMemberNames[member.userId] ??
-                    member.displayName ??
-                    member.userId}
-                  manage={true}
-                  onRoleChange={handleChangeRole}
-                  onRemove={handleRemoveMember}
-                />
-              </div>
-            </div>
-          {/each}
-        </div>
-
-        <div class="border-t border-cn-border pt-5 space-y-3">
-          <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
-            <Tag size={16} />
-            Statuts cotisants actifs
-          </h3>
-          <p class="text-xs text-text-muted">
-            Tags accordés via la boutique ou attribution manuelle. Les achats passent aussi par
-            l'onglet Achats.
-          </p>
-          {#if assoTagsLoading}
-            <p class="text-sm text-text-muted">Chargement…</p>
-          {:else if assoTagsError}
-            <p class="text-sm text-red-600">{assoTagsError}</p>
-          {:else if assoTags.length === 0}
-            <p class="text-sm text-text-muted">Aucun statut actif pour le moment.</p>
-          {:else}
-            <ul class="space-y-2">
-              {#each assoTags as tag (tag.id)}
-                <li
-                  class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3"
-                >
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-semibold text-text-main">{tag.tagName}</p>
-                    <p class="text-xs text-text-muted mt-0.5">
-                      {tagHolderName(tag)}
-                      {#if tag.expiresAt}
-                        · expire le {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
-                      {:else}
-                        · sans expiration
-                      {/if}
-                    </p>
-                  </div>
-                  <span
-                    class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-2.5 py-0.5 text-xs font-bold"
-                  >
-                    Actif
-                  </span>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-
-        <div class="border-t border-cn-border pt-5">
-          <h3 class="text-sm font-bold text-text-main mb-3 flex items-center gap-2">
-            <UserPlus size={17} />
-            Ajouter un membre
-          </h3>
-          <form
-            class="flex flex-col lg:flex-row gap-3"
-            onsubmit={(e) => {
-              e.preventDefault();
-              handleAddMember();
-            }}
-          >
-            <div class="flex-1 min-w-0">
-              <UserAutocomplete
-                value={newMemberUserId}
-                onValueChange={(v) => (newMemberUserId = v)}
-                placeholder="Rechercher un utilisateur…"
-                inputId="edit-add-member-autocomplete"
-                onSubmit={handleAddMember}
-              />
-            </div>
-            <input
-              type="text"
-              bind:value={newMemberRole}
-              placeholder="Rôle affiché"
-              class="w-full lg:w-36 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
-            />
-            <select
-              bind:value={newMemberPermissions}
-              class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-full lg:w-auto"
-            >
-              <option value={0}>Membre</option>
-              <option value={ASSOCIATION_ADMIN_PRESET}>Admin</option>
-            </select>
-            <button
-              type="submit"
-              disabled={addingMember || !newMemberUserId.trim()}
-              class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
-            >
-              {addingMember ? '…' : 'Ajouter'}
-            </button>
-          </form>
-          {#if memberError}
-            <p class="text-sm text-red-600 mt-3">{memberError}</p>
-          {/if}
-        </div>
-      </div>
+      <EditMembersTab {asso} bind:members bind:resolvedMemberNames />
     {/if}
 
     {#if editSection === 'documents' && canManageDocuments && asso}
@@ -2269,47 +1696,11 @@
     {/if}
 
     {#if editSection === 'danger' && isGlobalAdminUser}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm">
-        <h2 class="text-base font-bold text-text-main flex items-center gap-2">
-          <Building2 size={18} />
-          {asso.archived ? 'Association archivée' : 'Archiver l’association'}
-        </h2>
-        <p class="text-sm text-text-muted">
-          {asso.archived
-            ? 'Cette association est archivée : elle apparaît sous « Anciennes » et n’est plus listée dans les « Mes associations » de ses membres. Vous pouvez la réactiver.'
-            : 'Déplace l’association vers « Anciennes » sans rien supprimer. Réversible à tout moment.'}
-        </p>
-        <button
-          type="button"
-          onclick={handleToggleArchive}
-          disabled={archiving}
-          class="rounded-xl border border-cn-border px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
-        >
-          {archiving
-            ? '…'
-            : asso.archived
-              ? 'Réactiver l’association'
-              : 'Archiver l’association'}
-        </button>
-      </div>
-
-      <div class="rounded-2xl border border-red-200 bg-red-50/60 p-6 space-y-3">
-        <h2 class="text-base font-bold text-red-700 flex items-center gap-2">
-          <Trash2 size={18} />
-          Zone de danger
-        </h2>
-        <p class="text-sm text-red-800/90">
-          Supprime définitivement l’association et ses liens (membres, événements d’agenda). Les
-          messages du fil peuvent rester visibles selon la politique serveur.
-        </p>
-        <button
-          type="button"
-          onclick={handleDelete}
-          class="rounded-xl bg-white border border-red-300 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100"
-        >
-          Supprimer l’association
-        </button>
-      </div>
+      <EditDangerTab
+        {asso}
+        onUpdated={(a) => (asso = a)}
+        onDeleted={() => goto('/associations')}
+      />
     {/if}
   {/if}
 </div>
