@@ -79,6 +79,7 @@ message AppMessage {
     MediaMsg    media    = 4;
     SystemMsg   system   = 5;
     CallMsg     call     = 7;
+    PollMsg     poll     = 9;
   }
 }
 
@@ -123,6 +124,24 @@ message ReplyMsg {
 message ReactionMsg {
   string message_id = 1; // UUID of the reacted-to message
   string emoji      = 2;
+}
+
+// ── Poll (community channels) ─────────────────────────────────────────────
+//
+// The question and option labels are end-to-end encrypted here. Only the
+// opaque option ids are mirrored server-side (metadata.poll) so votes can be
+// tallied without the server ever seeing the plaintext.
+
+message PollOption {
+  string id    = 1; // opaque id, mirrored in the server-side tally
+  string label = 2;
+}
+
+message PollMsg {
+  string              question        = 1;
+  repeated PollOption options         = 2;
+  bool                multiple_choice = 3;
+  int64               ends_at         = 4; // epoch ms; 0 = no deadline
 }
 
 // ── Encrypted media attachment ───────────────────────────────────────────

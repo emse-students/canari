@@ -30,6 +30,8 @@ export type IReactionMsg = canari.IReactionMsg;
 export type IMediaMsg = canari.IMediaMsg;
 export type ISystemMsg = canari.ISystemMsg;
 export type ICallMsg = canari.ICallMsg;
+export type IPollMsg = canari.IPollMsg;
+export type IPollOption = canari.IPollOption;
 
 export const MediaKind = canari.MediaKind;
 
@@ -106,6 +108,15 @@ export function mkMedia(media: canari.IMediaMsg): canari.IAppMessage {
 
 export function mkSystem(event: string, data?: string): canari.IAppMessage {
   return { system: { event, data: data ?? '' } };
+}
+
+/**
+ * Builds a community poll message. The question and option labels are carried
+ * here (end-to-end encrypted); only the option ids are also sent in clear to the
+ * server so it can tally votes without seeing the labels.
+ */
+export function mkPoll(poll: canari.IPollMsg): canari.IAppMessage {
+  return { poll };
 }
 
 /** Builds an MLS call invitation (ring) message. */
