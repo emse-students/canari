@@ -3,14 +3,41 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
+import { PushService } from '../push/push.service';
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {
   constructor(
     @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
-    @InjectRepository(Post) private readonly postRepo: Repository<Post>
+    @InjectRepository(Post) private readonly postRepo: Repository<Post>,
+    private readonly push: PushService
   ) {}
+
+  /** Builds the FCM push title/body for a notification type (mirrors the in-app wording). */
+  private pushContent(
+    type: string,
+    actorName: string,
+    text: string
+  ): { title: string; body: string } {
+    switch (type) {
+      case 'mention':
+        return { title: `${actorName} vous a mentionné`, body: 'Vous avez été mentionné' };
+      case 'reply':
+        return { title: actorName, body: 'a répondu à votre commentaire' };
+      case 'reaction':
+        return { title: actorName, body: 'a réagi à votre publication' };
+      case 'comment':
+        return {
+          title: actorName,
+          body: text.trim()
+            ? `a commenté : ${text.trim().slice(0, 120)}`
+            : 'a commenté votre publication',
+        };
+      default:
+        return { title: actorName, body: 'Nouvelle notification' };
+    }
+  }
 
   /** `@[userId]` - 64 lowercase hex chars (OIDC sub, no dashes). */
   private static readonly MENTION_UUID_RE = /@\[([0-9a-f]{64})\]/gi;
@@ -61,6 +88,11 @@ export class PostNotificationsService {
     if (data.recipientId === data.actorId) return;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
+
+    // Push FCM (data-only) pour que toute notification visible dans l'onglet « Notifications »
+    // déclenche aussi une notif système, même appli fermée. Fire-and-forget.
+    const { title, body } = this.pushContent(data.type, actorName, data.text);
+    void this.push.notify(data.recipientId, title, body, { type: 'social', postId: data.postId });
   }
 
   /** Returns the most recent notifications for a user, newest first. */

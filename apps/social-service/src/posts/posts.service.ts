@@ -12,7 +12,6 @@ import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import { PostNotificationsService } from './post-notifications.service';
-import { PushService } from '../push/push.service';
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
 @Injectable()
@@ -31,8 +30,7 @@ export class PostsService {
     private readonly redis: RedisService,
     private readonly followsService: FollowsService,
     private readonly associationsService: AssociationsService,
-    private readonly notifications: PostNotificationsService,
-    private readonly push: PushService
+    private readonly notifications: PostNotificationsService
   ) {}
 
   private listPostsCacheKey(
@@ -158,19 +156,15 @@ export class PostsService {
         try {
           const actorName = await this.notifications.resolveActorName(authorId);
           for (const recipientId of mentionedIds) {
+            // createNotification envoie aussi le push FCM (type 'social').
             await this.notifications.createNotification({
               recipientId,
               type: 'mention',
               postId: entity.id,
               actorId: authorId,
               text: markdown.slice(0, 60),
+              actorName,
             });
-            await this.push.notify(
-              recipientId,
-              `${actorName} vous a mentionné`,
-              'Vous avez été mentionné dans une publication',
-              { type: 'social', postId: entity.id }
-            );
           }
         } catch {
           /* non-fatal */
