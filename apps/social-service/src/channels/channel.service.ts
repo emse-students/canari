@@ -33,6 +33,7 @@ import {
   type ChannelBootstrapDto,
   type ChannelHistoryKeysDto,
   type ChannelKeyDistributionPayloadDto,
+  type ChannelPollMeta,
 } from './dto/channel.dto';
 
 /** Manages workspaces, channels, roles, members, key distribution, and encrypted messages. */
@@ -1342,6 +1343,33 @@ export class ChannelService {
 
   // ================= MESSAGES =================
 
+  /**
+   * Validates a poll descriptor and returns the initial server-side poll state.
+   * Rejects fewer than 2 options, duplicate IDs, or a deadline already in the past.
+   */
+  private buildPollMeta(input: NonNullable<SendChannelMessageDto['poll']>): ChannelPollMeta {
+    const optionIds = Array.isArray(input.optionIds) ? input.optionIds : [];
+    if (optionIds.length < 2) {
+      throw new BadRequestException('A poll needs at least 2 options');
+    }
+    if (new Set(optionIds).size !== optionIds.length) {
+      throw new BadRequestException('Poll option IDs must be unique');
+    }
+    let endsAt: string | null = null;
+    if (input.endsAt) {
+      const ts = new Date(input.endsAt).getTime();
+      if (Number.isNaN(ts)) throw new BadRequestException('Invalid poll endsAt');
+      if (ts <= Date.now()) throw new BadRequestException('Poll deadline must be in the future');
+      endsAt = new Date(ts).toISOString();
+    }
+    return {
+      optionIds,
+      multipleChoice: input.multipleChoice === true,
+      endsAt,
+      votesByUser: {},
+    };
+  }
+
   /** Persists a client-encrypted message after validating keyVersion against the current channel epoch, then publishes the ciphertext to all workspace members via Redis. */
   async sendMessage(channelId: string, input: SendChannelMessageDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
@@ -1363,6 +1391,12 @@ export class ChannelService {
       );
     }
 
+    // A poll is just an encrypted message carrying a label-free descriptor: we
+    // store its option IDs/deadline server-side (for tallying + auto-pin) while
+    // the question and labels stay in the ciphertext. Auto-pinned so it stays
+    // reachable via the channel's pin list instead of drowning in the feed.
+    const pollMeta = input.poll ? this.buildPollMeta(input.poll) : null;
+
     const msg = this.messageRepo.create({
       // Never use a client-supplied ID as the DB primary key - the server
       // always generates a fresh UUID to prevent IDOR / row-overwrite attacks.
@@ -1372,9 +1406,16 @@ export class ChannelService {
       content: input.ciphertext,
       nonce: input.nonce,
       keyVersion: input.keyVersion ?? null,
+      metadata: pollMeta ? { poll: pollMeta } : {},
+      pinned: pollMeta !== null,
     });
 
     const savedMsg = await this.messageRepo.save(msg);
+    if (pollMeta) {
+      this.logger.log(
+        `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? 'none'}`
+      );
+    }
 
     // Publish event fire-and-forget - do not block the HTTP response
     this.getWorkspaceMemberIds(channel.workspaceId)
@@ -1389,6 +1430,9 @@ export class ChannelService {
             nonce: input.nonce,
             keyVersion: input.keyVersion,
             createdAt: savedMsg.createdAt,
+            // Poll descriptor (no labels) so peers render the card live without refetch.
+            poll: pollMeta,
+            pinned: savedMsg.pinned,
           },
           workspaceMemberIds
         )
@@ -1501,6 +1545,9 @@ export class ChannelService {
       keyVersion: m.keyVersion ?? null,
       replyTo: m.replyTo ?? null,
       createdAt: m.createdAt,
+      pinned: m.pinned,
+      // Poll state (label-free) so the client can render results on load.
+      poll: (m.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null,
     }));
   }
 }
