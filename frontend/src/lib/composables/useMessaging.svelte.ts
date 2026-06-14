@@ -426,8 +426,6 @@ export function useMessaging() {
       const id = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
       const existingMsg = convo.messages.find((m) => m.id === id);
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
-        const isOwn = isOwnMessage(pm.senderId, ctx.userId);
-        const resolvedTimestamp = resolveMessageTimestamp(pm, convo.messages, isOwn);
         const upgraded = mergeMessageUpgrade(existingMsg, {
           content: pm.content,
           replyTo: pm.replyTo,

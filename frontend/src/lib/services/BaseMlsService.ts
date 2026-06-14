@@ -17,7 +17,6 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
-import { ackMessagesWithRetry } from '$lib/mls-client/ackRetry';
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
