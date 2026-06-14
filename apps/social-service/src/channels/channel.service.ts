@@ -1497,6 +1497,83 @@ export class ChannelService {
     );
   }
 
+  /**
+   * Records a vote on a channel poll. Clears the caller's previous selection then
+   * stores the new one in `metadata.poll.votesByUser` (empty array = retract vote).
+   * A pessimistic write lock serialises concurrent voters on the same row.
+   * Rejects votes on a closed poll or on options outside the poll.
+   */
+  async votePoll(
+    channelId: string,
+    messageId: string,
+    userId: string,
+    optionIds: string[]
+  ): Promise<ChannelPollMeta> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const selected = Array.isArray(optionIds) ? [...new Set(optionIds)] : [];
+
+    let poll!: ChannelPollMeta;
+    await this.messageRepo.manager.transaction(async (manager) => {
+      const msg = await manager
+        .createQueryBuilder(ChannelMessage, 'm')
+        .where('m.id = :messageId AND m.channelId = :channelId', { messageId, channelId })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!msg) throw new NotFoundException('Message not found');
+
+      const meta = (msg.metadata as { poll?: ChannelPollMeta } | null)?.poll;
+      if (!meta) throw new BadRequestException('This message is not a poll');
+
+      if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
+        throw new ForbiddenException('This poll is closed');
+      }
+      const unknown = selected.filter((id) => !meta.optionIds.includes(id));
+      if (unknown.length > 0) {
+        throw new BadRequestException('Vote references unknown option(s)');
+      }
+      if (!meta.multipleChoice && selected.length > 1) {
+        throw new BadRequestException('This poll is single-choice');
+      }
+
+      // Null-prototype map prevents prototype pollution via a crafted userId key.
+      if (!meta.votesByUser || Object.getPrototypeOf(meta.votesByUser) !== null) {
+        meta.votesByUser = Object.assign(Object.create(null), meta.votesByUser);
+      }
+      if (selected.length === 0) {
+        delete meta.votesByUser[userId];
+      } else {
+        meta.votesByUser[userId] = selected;
+      }
+
+      msg.metadata = { ...(msg.metadata ?? {}), poll: meta };
+      await manager.save(msg);
+      poll = meta;
+    });
+
+    this.logger.log(
+      `[POLL] vote channel=${channelId} message=${messageId} user=${userId} options=${selected.length}`
+    );
+
+    // Broadcast the updated tally so every member's card refreshes live.
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.poll.vote',
+      { channelId, messageId, poll },
+      workspaceMemberIds
+    );
+
+    return poll;
+  }
+
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
   async listPinnedMessageIds(channelId: string, userId: string): Promise<string[]> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });

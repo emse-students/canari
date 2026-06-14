@@ -31,6 +31,10 @@ describe('ChannelService security hardening', () => {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       find: jest.fn(),
+      findOne: jest.fn(),
+      manager: {
+        transaction: jest.fn(),
+      },
     };
     const keyDistributionRepo = {
       findOne: jest.fn(),
@@ -69,6 +73,108 @@ describe('ChannelService security hardening', () => {
       redis,
     };
   }
+
+  /** Wires messageRepo.manager.transaction to run the callback against a locked `msg`. */
+  function lockMessage(
+    messageRepo: { manager: { transaction: jest.Mock } },
+    msg: Partial<ChannelMessage> | null
+  ) {
+    const manager = {
+      createQueryBuilder: () => ({
+        where: () => ({
+          setLock: () => ({ getOne: () => Promise.resolve(msg) }),
+        }),
+      }),
+      save: (m: unknown) => Promise.resolve(m),
+    };
+    messageRepo.manager.transaction.mockImplementation((cb: (m: typeof manager) => Promise<void>) =>
+      cb(manager)
+    );
+  }
+
+  /** Common channel + member access mocks for poll voting tests. */
+  function arrangePollAccess(
+    channelRepo: { findOne: jest.Mock },
+    memberRepo: { findOne: jest.Mock; find: jest.Mock }
+  ) {
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: false,
+      allowedRoles: [],
+      keyVersion: 1,
+    });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+    memberRepo.find.mockResolvedValue([]);
+  }
+
+  it('votePoll rejects a message that is not a poll', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    lockMessage(messageRepo, { id: 'm1', channelId: 'ch1', metadata: {} });
+
+    await expect(service.votePoll('ch1', 'm1', 'u1', ['a'])).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+  });
+
+  it('votePoll rejects a closed poll', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    lockMessage(messageRepo, {
+      id: 'm1',
+      channelId: 'ch1',
+      metadata: {
+        poll: {
+          optionIds: ['a', 'b'],
+          multipleChoice: false,
+          endsAt: new Date(Date.now() - 1000).toISOString(),
+          votesByUser: {},
+        },
+      },
+    });
+
+    await expect(service.votePoll('ch1', 'm1', 'u1', ['a'])).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+  });
+
+  it('votePoll rejects multiple selections on a single-choice poll', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    lockMessage(messageRepo, {
+      id: 'm1',
+      channelId: 'ch1',
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    });
+
+    await expect(service.votePoll('ch1', 'm1', 'u1', ['a', 'b'])).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+  });
+
+  it('votePoll records the vote and broadcasts the updated tally', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = {
+      id: 'm1',
+      channelId: 'ch1',
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    };
+    lockMessage(messageRepo, msg);
+
+    const result = await service.votePoll('ch1', 'm1', 'u1', ['b']);
+    expect(result.votesByUser).toEqual({ u1: ['b'] });
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.poll.vote',
+      expect.objectContaining({ channelId: 'ch1', messageId: 'm1' }),
+      expect.any(Array)
+    );
+  });
 
   it('rejects listMessages for private channel without allowed role', async () => {
     const { service, channelRepo, memberRepo } = makeService();

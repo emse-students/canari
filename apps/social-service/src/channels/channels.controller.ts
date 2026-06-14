@@ -403,6 +403,23 @@ export class ChannelsController {
     return { ok: true };
   }
 
+  /** Records the caller's vote on a poll message (empty optionIds retracts the vote). */
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/messages/:messageId/poll/vote')
+  votePoll(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('messageId') messageId: string,
+    @Body() body: { optionIds?: string[] }
+  ) {
+    return this.service.votePoll(
+      channelId,
+      messageId,
+      xUserId.trim().toLowerCase(),
+      Array.isArray(body?.optionIds) ? body.optionIds : []
+    );
+  }
+
   /** Returns the IDs of the pinned messages in a channel. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/pins')
