@@ -40,9 +40,26 @@
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
 
-  /** Blocks the messaging UI until MLS unlock and queue catch-up complete. */
+  /** True while MLS unlock / queue catch-up is running. */
+  const isSyncing = $derived(
+    session.isMessagingInitializing || messaging.isMessageCatchupActive
+  );
+
+  /** True once at least one conversation is restored from local cache. */
+  const hasCachedConversations = $derived(convs.conversations.size > 0);
+
+  /**
+   * Block the whole UI only on a cold start (nothing cached yet). Once cached
+   * conversations are available we show them immediately and sync in the
+   * background — the per-group scheduler serializes sends safely meanwhile.
+   */
   const isMessagingBlocked = $derived(
-    !session.isLoggedIn || session.isMessagingInitializing || messaging.isMessageCatchupActive
+    !session.isLoggedIn || (isSyncing && !hasCachedConversations)
+  );
+
+  /** Non-blocking "still syncing" indicator shown over already-displayed cached data. */
+  const isBackgroundSyncing = $derived(
+    session.isLoggedIn && isSyncing && hasCachedConversations
   );
 
   const messagingOverlayMessage = $derived(
@@ -636,6 +653,11 @@
       <div class="flex items-center justify-center gap-1.5 py-1.5 px-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20">
         <WifiOff size={11} strokeWidth={2.5} class="shrink-0" />
         En attente de connexion…
+      </div>
+    {:else if isBackgroundSyncing}
+      <div class="flex items-center justify-center gap-2 py-1.5 px-4 bg-cn-yellow/10 text-text-muted text-xs font-medium border-b border-cn-border/60">
+        <span class="h-3 w-3 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent shrink-0"></span>
+        Synchronisation des messages…
       </div>
     {/if}
 
