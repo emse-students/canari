@@ -166,6 +166,43 @@ export class ChannelService {
     return res.json() as Promise<WorkspaceDto[]>;
   }
 
+  /** Creates a shareable invite-link token for a community. */
+  async createWorkspaceInvite(
+    workspaceId: string,
+    opts?: { expiresAt?: string | null; maxUses?: number | null }
+  ): Promise<{ token: string }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/invites`,
+      { method: 'POST', body: JSON.stringify(opts ?? {}) }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<{ token: string }>;
+  }
+
+  /** Previews an invite link (community name/image) before joining. */
+  async getInvitePreview(token: string): Promise<{
+    valid: boolean;
+    workspaceName: string | null;
+    workspaceSlug: string | null;
+    imageMediaId: string | null;
+  }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/invites/${encodeURIComponent(token)}`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /** Joins the calling user into the community behind an invite link. */
+  async acceptInvite(token: string): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/invites/${encodeURIComponent(token)}/accept`,
+      { method: 'POST' }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<{ workspaceSlug: string; alreadyMember: boolean }>;
+  }
+
   async createChannel(dto: CreateChannelDto): Promise<CreateChannelResultDto> {
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/`, {
       method: 'POST',

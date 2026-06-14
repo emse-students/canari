@@ -30,6 +30,8 @@
   interface ChannelSidebarWorkspace {
     id: string;
     name: string;
+    /** Real workspace UUID (the sidebar `id` is a slug-based local id). */
+    workspaceDbId?: string | null;
     channels: ChannelSidebarItem[];
   }
 
@@ -110,6 +112,39 @@
   let permissionRole = $state<'member' | 'moderator' | 'admin'>('member');
   let inviteLoading = $state(false);
   let inviteError = $state('');
+
+  // ── Shareable community invite link ────────────────────────────────────────
+  let shareLink = $state('');
+  let shareLoading = $state(false);
+  let shareError = $state('');
+  let shareCopied = $state(false);
+
+  /** Generates a shareable community invite link and copies it to the clipboard. */
+  async function generateShareLink() {
+    const wsId = selectedWorkspace?.workspaceDbId;
+    if (!wsId) {
+      shareError = 'Communauté introuvable.';
+      return;
+    }
+    shareLoading = true;
+    shareError = '';
+    shareCopied = false;
+    try {
+      const { channelService } = await import('$lib/services/ChannelService');
+      const { token } = await channelService.createWorkspaceInvite(wsId);
+      shareLink = `${window.location.origin}/c/join/${token}`;
+      try {
+        await navigator.clipboard.writeText(shareLink);
+        shareCopied = true;
+      } catch {
+        // Clipboard may be blocked; the link is shown for manual copy.
+      }
+    } catch (e) {
+      shareError = e instanceof Error ? e.message : 'Échec de la génération du lien';
+    } finally {
+      shareLoading = false;
+    }
+  }
 
   async function handleInviteAction() {
     const id = permissionMembersId.trim();
@@ -593,6 +628,51 @@
             <p class="text-sm font-medium text-text-muted leading-relaxed">
               Invitez de nouveaux membres dans le canal ou modifiez le rôle d'un membre existant.
             </p>
+          </div>
+
+          <!-- Lien d'invitation partageable (communauté entière) -->
+          <div
+            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-3 shadow-sm backdrop-blur-md"
+          >
+            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+              Lien d'invitation à la communauté
+            </p>
+            <p class="text-sm text-text-muted leading-relaxed">
+              Partagez ce lien (même hors de Canari) : toute personne qui l'ouvre et se connecte
+              rejoint automatiquement la communauté.
+            </p>
+            {#if shareLink}
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  readonly
+                  value={shareLink}
+                  class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+                />
+                <button
+                  type="button"
+                  onclick={generateShareLink}
+                  class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+                >
+                  Régénérer
+                </button>
+              </div>
+              {#if shareCopied}
+                <p class="text-xs font-semibold text-emerald-600">Lien copié dans le presse-papiers ✓</p>
+              {/if}
+            {:else}
+              <button
+                type="button"
+                onclick={generateShareLink}
+                disabled={shareLoading}
+                class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+              >
+                {shareLoading ? 'Génération…' : 'Générer un lien d’invitation'}
+              </button>
+            {/if}
+            {#if shareError}
+              <p class="text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
+            {/if}
           </div>
 
           <div
