@@ -5,11 +5,44 @@
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { reactionTypeToEmoji } from '$lib/posts/reactions';
   import { formatRelative } from '$lib/utils/time';
+  import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
+  import { MENTION_USER_ID_PATTERN, normalizeMentionUserId } from '$lib/utils/mentions';
+  import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { PostNotification } from '$lib/posts/api';
 
   onMount(() => {
     void postNotifStore.load(50);
     void postNotifStore.markAllRead();
+  });
+
+  /** Bumped once async name resolution completes, to re-render resolved mentions. */
+  let resolveVersion = $state(0);
+
+  /** Replaces `@[id]` tokens in a notification body with `@DisplayName`. */
+  function renderNotifText(text: string): string {
+    void resolveVersion; // reactive dependency: re-run after names resolve
+    return formatMentionsForPreview(text);
+  }
+
+  // Warm the display-name cache for any user mentioned in a notification body,
+  // then trigger a re-render so the resolved names appear (instead of @[id]).
+  $effect(() => {
+    const re = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
+    const idMap: Record<string, true> = {};
+    for (const n of postNotifStore.notifications) {
+      if (!n.text) continue;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(n.text)) !== null) idMap[normalizeMentionUserId(m[1])] = true;
+    }
+    const ids = Object.keys(idMap);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void Promise.all(ids.map((id) => resolveUserDisplayName(id))).then(() => {
+      if (!cancelled) resolveVersion++;
+    });
+    return () => {
+      cancelled = true;
+    };
   });
 
   function openNotification(notif: PostNotification) {
@@ -90,7 +123,7 @@
                   <span class="text-text-muted"> {notif.text}</span>
                 {:else}
                   <span class="text-text-muted">
-                    a commenté : <span class="italic">{notif.text}</span></span
+                    a commenté : <span class="italic">{renderNotifText(notif.text)}</span></span
                   >
                 {/if}
               </p>
