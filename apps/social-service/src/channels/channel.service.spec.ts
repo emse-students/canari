@@ -7,6 +7,7 @@ import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
+import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 
 describe('ChannelService security hardening', () => {
@@ -36,6 +37,13 @@ describe('ChannelService security hardening', () => {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       create: jest.fn((x: unknown) => x),
     };
+    const inviteRepo = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      create: jest.fn((x: unknown) => x),
+      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      increment: jest.fn(() => Promise.resolve()),
+    };
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
     };
@@ -47,6 +55,7 @@ describe('ChannelService security hardening', () => {
       memberRepo as unknown as Repository<ChannelMember>,
       messageRepo as unknown as Repository<ChannelMessage>,
       keyDistributionRepo as unknown as Repository<ChannelKeyDistribution>,
+      inviteRepo as unknown as Repository<WorkspaceInvite>,
       redis as unknown as RedisService
     );
 

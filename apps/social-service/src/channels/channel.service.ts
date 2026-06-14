@@ -17,6 +17,7 @@ import {
   ChannelKeyDistribution,
   type ChannelKeyDistributionStatus,
 } from './entities/channel-key-distribution.entity';
+import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 
 import {
@@ -139,8 +140,137 @@ export class ChannelService {
     @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
     @InjectRepository(ChannelKeyDistribution)
     private readonly keyDistributionRepo: Repository<ChannelKeyDistribution>,
+    @InjectRepository(WorkspaceInvite)
+    private readonly inviteRepo: Repository<WorkspaceInvite>,
     private readonly redis: RedisService
   ) {}
+
+  // ================= INVITES (shareable community links) =================
+
+  /** True when the actor holds a workspace permission allowing invite-link creation. */
+  private async actorCanInvite(workspaceId: string, actorUserId: string): Promise<boolean> {
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId: actorUserId } });
+    if (!member?.roleIds?.length) return false;
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return roles.some(
+      (r) => r.permissions.includes('INVITE_USERS') || r.permissions.includes('MANAGE_WORKSPACE')
+    );
+  }
+
+  /** Whether an invite is still usable (not revoked/expired/exhausted). */
+  private inviteIsValid(invite: WorkspaceInvite): boolean {
+    if (invite.revoked) return false;
+    if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) return false;
+    if (invite.maxUses != null && invite.uses >= invite.maxUses) return false;
+    return true;
+  }
+
+  /**
+   * Creates (or returns) a shareable invite link token for a community.
+   * Requires the actor to hold INVITE_USERS or MANAGE_WORKSPACE in the workspace.
+   */
+  async createWorkspaceInvite(
+    workspaceId: string,
+    actorUserId: string,
+    opts?: { expiresAt?: string | null; maxUses?: number | null }
+  ): Promise<{ token: string }> {
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    if (!(await this.actorCanInvite(workspaceId, actorUserId))) {
+      throw new ForbiddenException('Missing INVITE_USERS permission');
+    }
+    const invite = this.inviteRepo.create({
+      workspaceId,
+      token: crypto.randomBytes(18).toString('base64url'),
+      createdBy: actorUserId,
+      expiresAt: opts?.expiresAt ? new Date(opts.expiresAt) : null,
+      maxUses: opts?.maxUses ?? null,
+      uses: 0,
+      revoked: false,
+    });
+    const saved = await this.inviteRepo.save(invite);
+    this.logger.log(`[INVITE] created workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`);
+    return { token: saved.token };
+  }
+
+  /** Public-ish preview of an invite (community name/image) shown before the user joins. */
+  async getWorkspaceInvitePreview(token: string): Promise<{
+    valid: boolean;
+    workspaceName: string | null;
+    workspaceSlug: string | null;
+    imageMediaId: string | null;
+  }> {
+    const invite = await this.inviteRepo.findOne({ where: { token } });
+    if (!invite || !this.inviteIsValid(invite)) {
+      return { valid: false, workspaceName: null, workspaceSlug: null, imageMediaId: null };
+    }
+    const ws = await this.workspaceRepo.findOne({ where: { id: invite.workspaceId } });
+    if (!ws) return { valid: false, workspaceName: null, workspaceSlug: null, imageMediaId: null };
+    return {
+      valid: true,
+      workspaceName: ws.name,
+      workspaceSlug: ws.slug,
+      imageMediaId: ws.imageMediaId,
+    };
+  }
+
+  /**
+   * Joins the caller into the invite's community: adds a workspace member with the base role.
+   * The client fetches channel keys via the existing bootstrap once it loads the workspace.
+   */
+  async acceptWorkspaceInvite(
+    token: string,
+    userId: string
+  ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
+    const invite = await this.inviteRepo.findOne({ where: { token } });
+    if (!invite || !this.inviteIsValid(invite)) {
+      throw new NotFoundException('Invitation invalide ou expirée');
+    }
+    const ws = await this.workspaceRepo.findOne({ where: { id: invite.workspaceId } });
+    if (!ws) throw new NotFoundException('Workspace not found');
+
+    const existing = await this.memberRepo.findOne({
+      where: { workspaceId: ws.id, userId },
+    });
+    if (existing) return { workspaceSlug: ws.slug, alreadyMember: true };
+
+    // Base member role = lowest priority role of the workspace (e.g. "Membre").
+    const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
+    const baseRole = roles.slice().sort((a, b) => a.priority - b.priority)[0] ?? null;
+    await this.memberRepo.save(
+      this.memberRepo.create({
+        workspaceId: ws.id,
+        userId,
+        roleIds: baseRole ? [baseRole.id] : [],
+      })
+    );
+
+    await this.inviteRepo.increment({ id: invite.id }, 'uses', 1);
+
+    // Notify connected clients (the joining user's devices + existing members) to refresh.
+    const repChannel = await this.channelRepo.findOne({
+      where: { workspaceId: ws.id, isPrivate: false },
+    });
+    if (repChannel) {
+      const memberIds = await this.getWorkspaceMemberIds(ws.id);
+      await this.redis.publishChannelEvent(
+        'channel.member.joined',
+        {
+          channelId: repChannel.id,
+          channelName: repChannel.name,
+          workspaceId: ws.id,
+          workspaceSlug: ws.slug,
+          workspaceName: ws.name,
+          visibility: 'public',
+          roleName: baseRole?.name ?? 'Membre',
+          joinedBy: userId,
+        },
+        memberIds
+      );
+    }
+    this.logger.log(`[INVITE] accepted workspace=${ws.id} user=${userId.slice(0, 8)}`);
+    return { workspaceSlug: ws.slug, alreadyMember: false };
+  }
 
   /**
    * Get all user IDs in a workspace for event broadcasting.

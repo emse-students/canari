@@ -9,6 +9,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
 import { Workspace } from './entities/workspace.entity';
+import { WorkspaceInvite } from './entities/workspace-invite.entity';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { Workspace } from './entities/workspace.entity';
       ChannelMember,
       ChannelMessage,
       ChannelKeyDistribution,
+      WorkspaceInvite,
     ]),
     HttpModule,
   ],

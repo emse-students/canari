@@ -66,6 +66,35 @@ export class ChannelsController {
     return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
   }
 
+  /** Creates a shareable invite link for a community (requires INVITE_USERS / MANAGE_WORKSPACE). */
+  @UseGuards(NginxAuthGuard)
+  @Post('workspaces/:workspaceId/invites')
+  createWorkspaceInvite(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: { expiresAt?: string | null; maxUses?: number | null }
+  ) {
+    return this.service.createWorkspaceInvite(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      body ?? {}
+    );
+  }
+
+  /** Preview of an invite link (community name/image) shown before joining. */
+  @UseGuards(NginxAuthGuard)
+  @Get('invites/:token')
+  getInvitePreview(@Param('token') token: string) {
+    return this.service.getWorkspaceInvitePreview(token);
+  }
+
+  /** Joins the calling user into the community behind an invite link. */
+  @UseGuards(NginxAuthGuard)
+  @Post('invites/:token/accept')
+  acceptInvite(@Headers('x-user-id') xUserId: string, @Param('token') token: string) {
+    return this.service.acceptWorkspaceInvite(token, xUserId.trim().toLowerCase());
+  }
+
   /** Creates a new role in a workspace on behalf of the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post('roles')
