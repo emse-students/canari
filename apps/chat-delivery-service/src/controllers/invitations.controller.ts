@@ -10,12 +10,14 @@ import {
   UseGuards,
   Headers,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { GroupMember } from '../entities/group-member.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -30,6 +32,8 @@ export class InvitationsController {
   constructor(
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
+    @InjectRepository(GroupMember)
+    private groupMemberRepo: Repository<GroupMember>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
     @InjectRepository(RevokedDevice)
@@ -39,6 +43,21 @@ export class InvitationsController {
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+
+  /** Caller must belong to the group unless they are a global admin. */
+  private async assertCallerIsGroupMember(
+    callerUserId: string,
+    groupId: string,
+    headerGlobalAdmin?: string,
+  ): Promise<void> {
+    if (headerGlobalAdmin === 'true') return;
+    const membership = await this.groupMemberRepo.findOne({
+      where: { userId: callerUserId, groupId },
+    });
+    if (!membership) {
+      throw new ForbiddenException('Not a member of this group');
+    }
   }
 
   /**
@@ -169,10 +188,18 @@ export class InvitationsController {
       groupId: string;
       status: 'pending' | 'active';
     },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot update invitation status for another user',
+    );
 
     const validStatuses = ['pending', 'active'];
     if (!validStatuses.includes(body.status)) {
@@ -210,9 +237,21 @@ export class InvitationsController {
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/kick-stale-user')
-  async kickStaleUser(@Body() body: { userId: string; groupId: string }) {
+  async kickStaleUser(
+    @Body() body: { userId: string; groupId: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ) {
+    if (!headerUserId)
+      throw new BadRequestException('Missing X-User-Id header');
+    const callerUserId = sanitizeQueryValue(headerUserId, 'userId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+    await this.assertCallerIsGroupMember(
+      callerUserId,
+      safeGroupId,
+      headerGlobalAdmin,
+    );
 
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, groupId: safeGroupId },
@@ -244,10 +283,20 @@ export class InvitationsController {
   /** Resets a single device membership in a group back to `pending` so it can be re-invited. */
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
   ) {
+    if (!headerUserId)
+      throw new BadRequestException('Missing X-User-Id header');
+    const callerUserId = sanitizeQueryValue(headerUserId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
+    await this.assertCallerIsGroupMember(
+      callerUserId,
+      safeGroupId,
+      headerGlobalAdmin,
+    );
 
     const membership = await this.deviceGroupRepo.findOne({
       where: {

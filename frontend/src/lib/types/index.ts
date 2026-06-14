@@ -18,6 +18,8 @@ export interface AddMessageToChatOptions {
   messageId?: string;
   timestamp?: Date;
   status?: 'sending' | 'sent' | 'error';
+  /** True when content came from FCM preview cache (plain text, upgradeable by MLS envelope). */
+  isFcmPreview?: boolean;
   /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
   skipDbSave?: boolean;
   /** Monotonic catch-up index (MLS queue / history replay order); used for in-session ordering only. */
@@ -54,6 +56,8 @@ export interface ChatMessage {
    * when two messages share the same client `sentAt` timestamp.
    */
   serverTimestamp?: number;
+  /** True when displayed from FCM preview before full MLS envelope arrives. */
+  isFcmPreview?: boolean;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   BadRequestException,
   UseGuards,
   Headers,
+  HttpCode,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
@@ -18,6 +19,7 @@ import {
   sanitizeQueryValue,
   parsePositiveInt,
   hashJoinToken,
+  assertCallerOwnsUserId,
 } from '../utils/sanitize';
 import {
   SyncSessionState,
@@ -33,6 +35,22 @@ import {
 export class SyncController {
   constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
 
+  /** Ensures the authenticated user matches the body `userId`. */
+  private assertBodyUser(
+    headerUserId: string | undefined,
+    bodyUserId: string,
+  ): string {
+    const safeBodyUserId = sanitizeQueryValue(bodyUserId, 'userId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      undefined,
+      safeBodyUserId,
+      'Cannot act on behalf of another user',
+    );
+    return safeBodyUserId;
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/sync/session/start')
   /** Creates a new QR sync session (offer side) and returns the session ID. */
   async startSyncSession(
@@ -43,8 +61,9 @@ export class SyncController {
       offerPublicKey: string;
       ttlSeconds?: number;
     },
+    @Headers('x-user-id') headerUserId?: string,
   ) {
-    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const userId = this.assertBodyUser(headerUserId, body.userId);
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const offerPublicKey = sanitizeQueryValue(
       body.offerPublicKey,
@@ -83,6 +102,7 @@ export class SyncController {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/sync/session/join')
   /** Joins an existing QR sync session (answer side) and stores the answer key. */
   async joinSyncSession(
@@ -94,10 +114,11 @@ export class SyncController {
       deviceId: string;
       answerPublicKey: string;
     },
+    @Headers('x-user-id') headerUserId?: string,
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
     const joinToken = sanitizeQueryValue(body.joinToken, 'joinToken');
-    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const userId = this.assertBodyUser(headerUserId, body.userId);
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const answerPublicKey = sanitizeQueryValue(
       body.answerPublicKey,
@@ -167,6 +188,7 @@ export class SyncController {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/sync/session/manifest')
   /** Uploads the local message ID manifest for a sync round so the peer can compute the diff. */
   async uploadSyncManifest(
@@ -177,9 +199,10 @@ export class SyncController {
       deviceId: string;
       manifest: SyncManifestPayload;
     },
+    @Headers('x-user-id') headerUserId?: string,
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
-    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const userId = this.assertBodyUser(headerUserId, body.userId);
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const manifest = sanitizeSyncManifest(body.manifest);
 
@@ -217,6 +240,7 @@ export class SyncController {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/sync/session/diff')
   /** Computes and returns the set of message IDs the calling peer is missing compared to the stored manifest. */
   async computeSyncDiff(
@@ -226,9 +250,10 @@ export class SyncController {
       userId: string;
       deviceId: string;
     },
+    @Headers('x-user-id') headerUserId?: string,
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
-    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const userId = this.assertBodyUser(headerUserId, body.userId);
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
 
     const baseKey = `sync:session:${sessionId}`;
@@ -293,6 +318,7 @@ export class SyncController {
     };
   }
 
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/sync/session/chunks/upload')
   /** Uploads a batch of encrypted message chunks to the sync session for the peer to pull. */
   async uploadSyncChunks(
@@ -304,9 +330,10 @@ export class SyncController {
       toDeviceId: string;
       chunks: SyncSerializedChunk[];
     },
+    @Headers('x-user-id') headerUserId?: string,
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
-    const userId = sanitizeQueryValue(body.userId, 'userId');
+    const userId = this.assertBodyUser(headerUserId, body.userId);
     const fromDeviceId = sanitizeQueryValue(body.fromDeviceId, 'fromDeviceId');
     const toDeviceId = sanitizeQueryValue(body.toDeviceId, 'toDeviceId');
     const chunks = sanitizeSerializedChunks(body.chunks);
@@ -387,16 +414,41 @@ export class SyncController {
           )
         : [];
 
-    // One-shot pull acts as ACK.
-    if (rawItems.length > 0) {
-      await this.redis.del(key);
-    }
-
     return {
       sessionId,
       toDeviceId,
       fromDeviceId,
       chunks,
     };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/sync/session/:sessionId/chunks/ack')
+  @HttpCode(200)
+  /** Deletes pulled sync chunks after the client has persisted them locally. */
+  async ackSyncChunks(
+    @Param('sessionId') sessionIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string,
+    @Body()
+    body: {
+      toDeviceId: string;
+      fromDeviceId: string;
+    },
+  ) {
+    const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const toDeviceId = sanitizeQueryValue(body.toDeviceId, 'toDeviceId');
+    const fromDeviceId = sanitizeQueryValue(body.fromDeviceId, 'fromDeviceId');
+
+    const raw = await this.redis.get(`sync:session:${sessionId}`);
+    if (!raw)
+      throw new BadRequestException('Sync session not found or expired');
+    const session = JSON.parse(raw) as SyncSessionState;
+    if (session.userId !== userId)
+      throw new BadRequestException('Session user mismatch');
+
+    const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
+    await this.redis.del(key);
+    return { status: 'acknowledged' };
   }
 }

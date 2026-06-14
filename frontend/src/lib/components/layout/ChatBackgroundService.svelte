@@ -30,6 +30,7 @@
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import BiometricBottomSheet from '$lib/components/auth/BiometricBottomSheet.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
+  import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import { Fingerprint } from '@lucide/svelte';
@@ -41,14 +42,15 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
-  import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
-  import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import type { CallParticipant } from '$lib/services/CallService';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { openConversationFromId } from '$lib/utils/chat/openConversationFromId';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
+  import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
+  import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
+  import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -471,20 +473,44 @@
    * rechargement de l'historique (poll 5 s et retour au premier plan).
    */
   async function flushFcmCache(pin: string, storage: IStorage) {
+    if (globalMessaging.isMessageCatchupActive) return;
     const injected = await consumeFcmCache(pin, storage).catch(() => [] as StoredMessage[]);
     if (injected.length === 0 || !globalSession.userId) return;
-    for (const msg of injected) {
-      const convo = globalConvs.conversations.get(msg.conversationId);
-      if (!convo) continue; // conversation pas encore chargée en mémoire
-      if (convo.messages.some((m) => m.id === msg.id)) continue; // déjà présent
-      // msg.content est le texte brut de la notification FCM, pas un MessageEnvelope JSON.
-      // Le pipeline MLS réécrit l'entrée avec les données complètes (replyTo, média…)
-      // dès que la delivery queue livre le même message. Pour les textes simples,
-      // l'affichage est identique ; pour les médias le placeholder est acceptable.
-      const chatMsg = mapStoredMessagesToChatMessages([msg], globalSession.userId)[0];
-      const messages = [...convo.messages, chatMsg].sort(compareMessageOrder);
-      globalConvs.conversations.set(msg.conversationId, { ...convo, messages });
+    mergeFcmMessagesIntoConversations(injected, globalConvs.conversations, globalSession.userId);
+  }
+
+  /** Applies leader-tab message broadcasts to follower tab UI state. */
+  function applyTabMessageEvent(
+    event: import('$lib/mls-client/tabMessageSync').TabMessageEvent
+  ) {
+    if (globalSession.isTabLeader) return;
+    const convo = globalConvs.conversations.get(event.conversationId);
+    if (!convo) return;
+
+    if (event.type === 'message_added') {
+      if (convo.messages.some((m) => m.id === event.message.id)) return;
+      globalConvs.conversations.set(event.conversationId, {
+        ...convo,
+        messages: insertMessageOrdered(convo.messages, event.message),
+        lastMessageAt: event.lastMessageAt,
+        unreadCount: event.unreadCount,
+      });
+      return;
     }
+
+    const existingIds = new Set(convo.messages.map((m) => m.id));
+    const toAdd = event.messages.filter((m) => !existingIds.has(m.id));
+    if (toAdd.length === 0) return;
+    let merged = convo.messages;
+    for (const msg of toAdd) {
+      merged = insertMessageOrdered(merged, msg);
+    }
+    globalConvs.conversations.set(event.conversationId, {
+      ...convo,
+      messages: merged,
+      lastMessageAt: event.lastMessageAt,
+      unreadCount: event.unreadCount,
+    });
   }
 
   /**
@@ -620,6 +646,8 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
+
     // ── FCM cache polling (Tauri/Android only) ────────────────────────────
     // Messages received via FCM while the app is in the foreground are written
     // to fcm_message_cache.ndjson by the Kotlin service but the visibility-change
@@ -629,7 +657,7 @@
     const isTauri = isTauriRuntime();
     const fcmPollTimer = isTauri
       ? setInterval(() => {
-          if (document.hidden) return;
+          if (document.hidden || globalMessaging.isMessageCatchupActive) return;
           const { pin, storage } = globalSession;
           if (!pin || !storage) return;
           void flushFcmCache(pin, storage);
@@ -654,6 +682,7 @@
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
     };
@@ -804,6 +833,8 @@
     }
   });
 </script>
+
+<TabFollowerBanner />
 
 <!-- Biometric choice sheet (shown before OS biometric prompt) -->
 <BiometricBottomSheet open={showBiometricSheet} onSkip={onBiometricSkip} />

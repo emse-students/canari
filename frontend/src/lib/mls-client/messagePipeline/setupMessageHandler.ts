@@ -299,8 +299,9 @@ async function handleWelcome({
     // Enregistrement côté serveur (idempotent - safety net si l'invitant n'a pas encore
     // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
     await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
-    // Note : updateInvitationStatus(active) supprimé - le serveur le fait déjà dans
-    // sendWelcome (messaging.service.ts) avant même que le client reçoive le message.
+    await mlsService
+      .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
+      .catch(() => {});
 
     // groupMeta déjà récupéré par resolveTerminalGroup - pas de second appel HTTP.
     await upsertConversation(joinedGroupId, groupMeta, sender, userId, deps);
@@ -507,7 +508,10 @@ async function handleKnownGroup({
 
   const convoKey = groupId;
   const convo = conversations.get(convoKey);
-  if (!convo) return true; // ACK - conversation inconnue
+  if (!convo) {
+    log(`[MLS] Message pour conversation absente ${convoKey.slice(0, 8)}… - retry après restore`);
+    return false;
+  }
 
   try {
     resetWasmDuplicateDeliveryFlag();

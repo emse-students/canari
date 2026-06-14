@@ -1,4 +1,5 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
+import { ackMessagesWithRetry } from './ackRetry';
 import type { GroupMeta, UserGroupRow } from './IMlsService';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -47,18 +48,46 @@ export class MlsDeliveryApi {
     );
   }
 
+  /** ACKs queue message ids with retry/backoff and sessionStorage persistence. */
+  async ackMessages(messageIds: string[]): Promise<void> {
+    await ackMessagesWithRetry(
+      this.historyUrl,
+      await this.auth({ 'Content-Type': 'application/json' }),
+      { userId: this.userId, deviceId: this.deviceId, messageIds }
+    );
+  }
+
   /** Raw JSON rows from `GET /api/mls/messages/:userId/:deviceId` (pending queue). */
   async pullPendingMessagesJson(signal?: AbortSignal): Promise<unknown[]> {
     if (this.userId === 'unknown') return [];
-    const res = await this.f(
-      `${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`,
-      {
+
+    const all: unknown[] = [];
+    const pageLimit = 500;
+    let afterCreatedAt: string | undefined;
+
+    while (true) {
+      const url = new URL(`${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`);
+      url.searchParams.set('limit', String(pageLimit));
+      if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
+
+      const res = await this.f(url.toString(), {
         headers: await this.auth(),
         signal,
-      }
-    );
-    if (!res.ok) return [];
-    return await res.json();
+      });
+      if (!res.ok) break;
+
+      const batch = (await res.json()) as Array<{ createdAt?: string }>;
+      if (!Array.isArray(batch) || batch.length === 0) break;
+
+      all.push(...batch);
+      if (batch.length < pageLimit) break;
+
+      const lastCreatedAt = batch[batch.length - 1]?.createdAt;
+      if (!lastCreatedAt || lastCreatedAt === afterCreatedAt) break;
+      afterCreatedAt = lastCreatedAt;
+    }
+
+    return all;
   }
 
   private decodeKeyPackageBase64(keyPackageB64: string): Uint8Array {

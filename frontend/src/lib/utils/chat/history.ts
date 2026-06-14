@@ -82,6 +82,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       serverTimestamp: m.serverTimestamp,
       ...(m.isDeleted ? { isDeleted: true } : {}),
       ...(m.isEdited ? { isEdited: true } : {}),
+      ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
     } satisfies ChatMessage;
   });
 }
@@ -180,20 +181,17 @@ export async function replayConversationHistory(params: {
     let historyIngestSeq = 0;
 
     for (const msg of history) {
-      // Update latest stream ID (Redis stream IDs sort lexicographically)
-      if (msg.id && (!latestStreamId || msg.id > latestStreamId)) {
-        latestStreamId = msg.id;
-      }
-
-      // Use the Redis stream ID as fingerprint - globally unique, no collision risk.
-      // Fall back to timestamp+content prefix for entries without an ID.
       const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
       if (seenCipherHashes.has(cipherFingerprint)) {
+        if (msg.id && (!latestStreamId || msg.id > latestStreamId)) {
+          latestStreamId = msg.id;
+        }
         continue;
       }
 
       // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
       let skipSeenHash = false;
+      let advanceStreamCursor = false;
       try {
         const bytesStr = atob(msg.content);
         const bytes = new Uint8Array(bytesStr.length);
@@ -426,7 +424,12 @@ export async function replayConversationHistory(params: {
         if (!skipSeenHash) {
           seenCipherHashes.add(cipherFingerprint);
           seenUpdated = true;
+          advanceStreamCursor = true;
         }
+      }
+
+      if (advanceStreamCursor && msg.id && (!latestStreamId || msg.id > latestStreamId)) {
+        latestStreamId = msg.id;
       }
 
       if (historyIngestSeq > 0 && historyIngestSeq % 8 === 0) {

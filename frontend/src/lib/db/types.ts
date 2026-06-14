@@ -40,6 +40,8 @@ export interface StoredMessage {
   isDeleted?: boolean;
   /** Set to true when the message body has been edited by the sender. */
   isEdited?: boolean;
+  /** True when stored from FCM notification preview (plain text). */
+  isFcmPreview?: boolean;
 }
 
 /**

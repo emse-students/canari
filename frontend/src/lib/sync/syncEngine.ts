@@ -481,6 +481,32 @@ export async function pullSyncChunks(
   return (await response.json()) as PullSyncChunksResponse;
 }
 
+/** Confirms that pulled sync chunks were persisted locally (allows server to delete relay). */
+export async function ackSyncChunks(
+  historyBaseUrl: string,
+  payload: {
+    sessionId: string;
+    toDeviceId: string;
+    fromDeviceId: string;
+  }
+): Promise<void> {
+  const response = await fetch(
+    `${historyBaseUrl}/api/mls/sync/session/${encodeURIComponent(payload.sessionId)}/chunks/ack`,
+    {
+      method: 'POST',
+      headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        toDeviceId: payload.toDeviceId,
+        fromDeviceId: payload.fromDeviceId,
+      }),
+    }
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(detail || `Sync chunk ack failed (${response.status})`);
+  }
+}
+
 /**
  * Writes the chunks received from the peer device into the local encrypted DB.
  * Existing conversations are merged (upserted) and duplicate message IDs are skipped.
@@ -607,6 +633,14 @@ export async function executeBidirectionalSyncRound(params: {
 
   const incomingChunks = deserializeChunks(pulled.chunks);
   const imported = await applyIncomingSyncChunks(storage, incomingChunks);
+
+  if (incomingChunks.length > 0) {
+    await ackSyncChunks(historyBaseUrl, {
+      sessionId,
+      toDeviceId: myDeviceId,
+      fromDeviceId: peerDeviceId,
+    });
+  }
 
   return {
     uploadedMessageCount: outgoingChunks.reduce((acc, chunk) => acc + chunk.rows.length, 0),

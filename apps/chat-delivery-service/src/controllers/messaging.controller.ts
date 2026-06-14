@@ -95,14 +95,19 @@ export class MessagingController {
   async fetchMessages(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
+    @Query('limit') limitRaw?: string,
+    @Query('after') after?: string,
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string,
   ): Promise<QueuedMessage[]> {
+    const limit = limitRaw ? parseInt(limitRaw, 10) : 500;
     return this.messagingService.fetchMessages(
       userId,
       deviceId,
       headerUserId,
       headerGlobalAdmin,
+      Number.isFinite(limit) ? limit : 500,
+      after,
     );
   }
 

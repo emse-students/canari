@@ -34,6 +34,7 @@ import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
@@ -371,6 +372,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     const fcmInjected = await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(
       () => [] as []
     );
+    if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
+      const mergedCount = mergeFcmMessagesIntoConversations(
+        fcmInjected,
+        cb.conversations,
+        ctx.getUserId()
+      );
+      cb.log(`[FCM_CACHE] ${mergedCount} message(s) fusionné(s) en mémoire au login`);
+    }
     endStartupCatchupPhase({
       messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
     });

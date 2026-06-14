@@ -54,6 +54,8 @@ import {
 } from '$lib/utils/chat/channelCrypto';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
+import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -271,9 +273,55 @@ export function useMessaging() {
       replyTo: options.replyTo,
       isSystem: options.isSystem ?? false,
       status: options.status,
+      isFcmPreview: options.isFcmPreview,
+      serverTimestamp: options.serverTimestamp,
     };
 
-    if (convo.messages.some((m) => m.id === newMsg.id)) {
+    const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
+    if (dupIdx !== -1) {
+      const existing = convo.messages[dupIdx];
+      if (shouldUpgradeMessage(existing, content)) {
+        const upgraded = mergeMessageUpgrade(existing, newMsg);
+        const nextMessages = insertMessageOrdered(
+          convo.messages.filter((m) => m.id !== newMsg.id),
+          upgraded
+        );
+        ctx.conversations.set(normalized, {
+          ...convo,
+          messages: nextMessages,
+          lastMessageAt: Math.max(convo.lastMessageAt ?? 0, upgraded.timestamp.getTime()),
+        });
+        if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
+          try {
+            await ctx.storage.saveMessage(
+              {
+                id: upgraded.id,
+                conversationId: normalized,
+                senderId: upgraded.senderId,
+                content: upgraded.content,
+                timestamp: upgraded.timestamp.getTime(),
+                serverTimestamp: upgraded.serverTimestamp,
+                isFcmPreview: false,
+              },
+              ctx.pin
+            );
+          } catch (e) {
+            console.error('[DB] Failed to upgrade message:', e);
+          }
+        }
+        const updatedConvo = ctx.conversations.get(normalized);
+        if (updatedConvo) {
+          publishTabMessageUpdate({
+            type: 'message_added',
+            conversationId: normalized,
+            message: upgraded,
+            lastMessageAt: updatedConvo.lastMessageAt ?? upgraded.timestamp.getTime(),
+            unreadCount: updatedConvo.unreadCount ?? 0,
+          });
+        }
+        console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}...`);
+        return;
+      }
       console.log(`[ADD_MSG] Doublon ignoré id=${newMsg.id}...`);
       return;
     }
@@ -293,6 +341,14 @@ export function useMessaging() {
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
     });
     console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}...`);
+
+    publishTabMessageUpdate({
+      type: 'message_added',
+      conversationId: normalized,
+      message: newMsg,
+      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+      unreadCount: nextUnreadCount,
+    });
 
     if (!isOwn && !options.isSystem && !isStaleInboundMessage(resolvedTimestamp)) {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
@@ -324,6 +380,7 @@ export function useMessaging() {
             content,
             timestamp: newMsg.timestamp.getTime(),
             serverTimestamp: options.serverTimestamp,
+            ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
             ...(options.isSystem ? { readBy: [] } : {}),
           },
           ctx.pin
@@ -357,7 +414,8 @@ export function useMessaging() {
 
     const existingIds = new SvelteSet(convo.messages.map((m) => m.id));
     const toStore: StoredMessage[] = [];
-    const newMessages: ChatMessage[] = [];
+    const upgradedById = new SvelteMap<string, ChatMessage>();
+    const brandNew: ChatMessage[] = [];
 
     let processedCount = 0;
     for (const pm of messages) {
@@ -366,6 +424,30 @@ export function useMessaging() {
       if (processedCount % 50 === 0) await yieldToMainThread();
 
       const id = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
+      const existingMsg = convo.messages.find((m) => m.id === id);
+      if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
+        const isOwn = isOwnMessage(pm.senderId, ctx.userId);
+        const resolvedTimestamp = resolveMessageTimestamp(pm, convo.messages, isOwn);
+        const upgraded = mergeMessageUpgrade(existingMsg, {
+          content: pm.content,
+          replyTo: pm.replyTo,
+          isSystem: pm.isSystem,
+          serverTimestamp: pm.serverTimestamp,
+        });
+        upgradedById.set(id, upgraded);
+        if (ctx.storage) {
+          toStore.push({
+            id,
+            conversationId: normalized,
+            senderId: upgraded.senderId,
+            content: pm.content,
+            timestamp: upgraded.timestamp.getTime(),
+            serverTimestamp: pm.serverTimestamp,
+            isFcmPreview: false,
+          });
+        }
+        continue;
+      }
       if (existingIds.has(id)) continue;
       existingIds.add(id);
 
@@ -381,7 +463,7 @@ export function useMessaging() {
         isSystem: pm.isSystem,
         ingestSequence: pm.ingestSequence,
       };
-      newMessages.push(newMsg);
+      brandNew.push(newMsg);
 
       if (ctx.storage) {
         toStore.push({
@@ -399,21 +481,29 @@ export function useMessaging() {
       }
     }
 
-    if (newMessages.length === 0) return;
+    if (upgradedById.size === 0 && brandNew.length === 0) return;
 
     const isConversationOpen = ctx.selectedContact === normalized;
-    const addedFromOthers = newMessages.filter((m) => !m.isOwn && !m.isSystem).length;
+    const addedFromOthers = brandNew.filter((m) => !m.isOwn && !m.isSystem).length;
     const nextUnreadCount = isConversationOpen ? 0 : (convo.unreadCount ?? 0) + addedFromOthers;
 
-    // Merge in MLS / replay input order (timestamps + ingestSequence), single reactive update
-    const merged = mergeMessagesInInputOrder(convo.messages, newMessages);
-    const batchMaxTs = newMessages.reduce((max, m) => Math.max(max, messageTime(m)), 0);
+    const withUpgrades = convo.messages.map((m) => upgradedById.get(m.id) ?? m);
+    const merged = mergeMessagesInInputOrder(withUpgrades, brandNew);
+    const batchMaxTs = merged.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 
     ctx.conversations.set(normalized, {
       ...convo,
       unreadCount: nextUnreadCount,
       messages: merged,
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
+    });
+
+    publishTabMessageUpdate({
+      type: 'messages_batch',
+      conversationId: normalized,
+      messages: brandNew,
+      lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
+      unreadCount: nextUnreadCount,
     });
 
     // Single batch DB write (community channels are server-authoritative)

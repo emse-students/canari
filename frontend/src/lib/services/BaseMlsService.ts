@@ -17,6 +17,7 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
+import { ackMessagesWithRetry } from '$lib/mls-client/ackRetry';
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
@@ -433,11 +434,9 @@ export abstract class BaseMlsService implements IMlsService {
         onDrainEnd: async () => {
           if (ackIds.length > 0) {
             logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
-            void this.delivery.deliveryPost('messages/ack', {
-              userId: this.userId,
-              deviceId: this.deviceId,
-              messageIds: ackIds,
-            });
+            void this.delivery
+              .ackMessages(ackIds)
+              .catch((e) => console.warn('[ACK] drain ack failed:', e));
           }
 
           // In-session retry: if a message was not ACKed, reschedule fetchPendingMessages
@@ -469,6 +468,8 @@ export abstract class BaseMlsService implements IMlsService {
   /** Fetches offline-queued messages from the delivery service and routes each through the priority queue. */
   async fetchPendingMessages(): Promise<void> {
     if (this.userId === 'unknown') return;
+
+    void this.delivery.ackMessages([]).catch(() => {});
 
     const FETCH_TIMEOUT = 10_000;
 

@@ -1,8 +1,8 @@
 // ─── Multi-tab coordination ───────────────────────────────────────────────
 // Only one browser tab should hold the WebSocket connection and run MLS
-// operations. Other tabs run in read-only mode and receive UI updates via
-// BroadcastChannel. This prevents two tabs from advancing the same MLS
-// ratchet concurrently (which would cause WrongEpoch / AeadError).
+// operations. Other tabs run in read-only mode and receive message updates via
+// BroadcastChannel (`canari-tab-messages`). Tab leadership uses `canari-mls-tab`.
+// This prevents two tabs from advancing the same MLS ratchet concurrently.
 //
 // Strategy: prefer the Web Locks API (navigator.locks) which guarantees
 // mutual exclusion at the browser level - no read-modify-write race on

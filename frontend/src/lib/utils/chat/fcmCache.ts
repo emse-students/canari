@@ -6,8 +6,8 @@
  * dans fcm_message_cache.ndjson. Au boot de l'app, consumeFcmCache() lit ce fichier et injecte
  * les messages dans le stockage local AVANT la sync MLS complète (~10s) → affichage immédiat.
  *
- * Les messages complets provenant du pipeline MLS normal écraseront ensuite les entrées de
- * cache via .put() - garantissant des données complètes (replyTo, media key, etc.) à terme.
+ * Les messages complets provenant du pipeline MLS remplacent les previews FCM via
+ * shouldUpgradeMessage() dans useMessaging (merge à l'arrivée de l'enveloppe JSON).
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -65,6 +65,7 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
       senderId: entry.senderId.toLowerCase(),
       content: entry.content,
       timestamp: entry.timestamp,
+      isFcmPreview: true,
     };
     try {
       // .saveMessage() utilise .put() - le pipeline MLS peut écraser avec les données complètes

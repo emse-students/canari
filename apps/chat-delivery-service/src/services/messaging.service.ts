@@ -3,6 +3,7 @@ import {
   Logger,
   ForbiddenException,
   BadRequestException,
+  ServiceUnavailableException,
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -602,16 +603,23 @@ export class MessagingService {
             body.senderId ?? '',
             body.isWelcome ? true : (body.silent ?? false),
           );
+        } else {
+          this.scheduleDeferredPush(
+            queued,
+            traceId,
+            body.groupId ?? '',
+            body.senderId ?? '',
+            true,
+          );
         }
-      } else if (!body.isCommit) {
-        // Offline recipient: immediate FCM push.
-        // Welcome packages get a silent push so the app syncs without showing a notif.
+      } else {
+        // Offline recipient: FCM push (silent for commits/welcomes).
         await this.sendFcmForQueued(
           queued,
           traceId,
           body.groupId ?? '',
           body.senderId ?? '',
-          body.isWelcome ? true : (body.silent ?? false),
+          body.isCommit || body.isWelcome ? true : (body.silent ?? false),
         );
       }
     }
@@ -857,7 +865,7 @@ export class MessagingService {
         deviceId: targetDeviceId,
         groupId: safeGroupId,
         userId: deviceInfo.userId,
-        status: 'active' as const,
+        status: 'pending' as const,
       },
       {
         conflictPaths: ['deviceId', 'groupId'],
@@ -1203,7 +1211,7 @@ export class MessagingService {
       });
     } catch (e) {
       this.logger.error(`[HISTORY] group=${groupId} error=${e}`);
-      return [];
+      throw new ServiceUnavailableException('History stream unavailable');
     }
   }
 
@@ -1216,6 +1224,8 @@ export class MessagingService {
     deviceId: string,
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
+    limit = 500,
+    after?: string,
   ): Promise<QueuedMessage[]> {
     const traceId = this.makeTraceId('fetch-msg');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -1227,14 +1237,24 @@ export class MessagingService {
       'Cannot fetch messages for another user',
     );
 
+    const safeLimit = Math.min(Math.max(limit, 1), 1000);
+
     this.logger.log(
-      `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
+      `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId} limit=${safeLimit} after=${after ?? 'none'}`,
     );
 
-    const messages = await this.queuedMessageRepo.find({
-      where: { recipientId: safeUserId, deviceId: safeDeviceId },
-      order: { createdAt: 'ASC' },
-    });
+    const qb = this.queuedMessageRepo
+      .createQueryBuilder('q')
+      .where('q.recipientId = :userId', { userId: safeUserId })
+      .andWhere('q.deviceId = :deviceId', { deviceId: safeDeviceId })
+      .orderBy('q.createdAt', 'ASC')
+      .take(safeLimit);
+
+    if (after?.trim()) {
+      qb.andWhere('q.createdAt > :after', { after: new Date(after) });
+    }
+
+    const messages = await qb.getMany();
 
     // Écarte les messages adressés à un groupe disparu de dm_groups : orphelins
     // jamais déchiffrables ni ACK par le client, ils provoqueraient sinon une
