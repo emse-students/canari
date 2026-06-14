@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ShieldCheck, TriangleAlert, Loader2 } from '@lucide/svelte';
-  import { ArrowDown, Search, ChevronUp, ChevronDown, X, ChevronLeft, Pin } from '@lucide/svelte';
+  import { ArrowDown, Search, ChevronUp, ChevronDown, X, ChevronLeft, Pin, ChartColumn } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -321,6 +321,21 @@
   /** Pinned message IDs for the active conversation (reactive). */
   const pinnedIds = $derived(chatView ? pinnedMessageIds(chatView.conversation.id) : []);
   let showPinned = $state(false);
+
+  /** Open polls in the active channel (no deadline, or deadline not yet reached). */
+  let showPolls = $state(false);
+  const activePolls = $derived.by<{ id: string; question: string }[]>(() => {
+    if (!chatView || !isChannel) return [];
+    const now = Date.now();
+    const out: { id: string; question: string }[] = [];
+    for (const m of chatView.conversation.messages) {
+      const env = parseEnvelope(m.content);
+      if (env.kind !== 'poll') continue;
+      if (env.endsAt && new Date(env.endsAt).getTime() <= now) continue;
+      out.push({ id: m.id, question: env.question });
+    }
+    return out;
+  });
 
   /** Resolves a short preview for a pinned message, or null when it isn't loaded in memory. */
   function pinnedPreview(messageId: string): string | null {
@@ -682,6 +697,44 @@
             Recherche limitée aux messages chargés. Faites défiler vers le haut pour en charger
             davantage.
           </p>
+        {/if}
+      </div>
+    {/if}
+
+    {#if activePolls.length > 0}
+      <div class="px-3 md:px-6 pt-1">
+        <button
+          type="button"
+          onclick={() => (showPolls = !showPolls)}
+          class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+        >
+          <ChartColumn size={14} class="shrink-0 text-cn-yellow" />
+          <span class="font-semibold"
+            >{activePolls.length} sondage{activePolls.length > 1 ? 's' : ''} actif{activePolls.length >
+            1
+              ? 's'
+              : ''}</span
+          >
+          <ChevronDown size={15} class="ml-auto transition-transform {showPolls ? 'rotate-180' : ''}" />
+        </button>
+        {#if showPolls}
+          <div
+            transition:slide={{ duration: 150 }}
+            class="mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border border-cn-border bg-[var(--cn-surface)] p-1"
+          >
+            {#each activePolls as poll (poll.id)}
+              <button
+                type="button"
+                class="truncate rounded-lg px-2 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5"
+                onclick={() => {
+                  showPolls = false;
+                  void navigateToMessageEnsureLoaded(poll.id);
+                }}
+              >
+                📊 {poll.question}
+              </button>
+            {/each}
+          </div>
         {/if}
       </div>
     {/if}

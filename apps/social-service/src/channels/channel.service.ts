@@ -1613,6 +1613,24 @@ export class ChannelService {
       order: { createdAt: 'DESC' },
       take: safeLimit,
     });
+
+    // Lazily auto-unpin polls past their deadline so closed polls stop cluttering
+    // the pin list (no scheduler: this runs opportunistically on channel open).
+    const now = Date.now();
+    const expiredPollIds = msgs
+      .filter((m) => {
+        const poll = (m.metadata as { poll?: ChannelPollMeta } | null)?.poll;
+        return m.pinned && poll?.endsAt && new Date(poll.endsAt).getTime() <= now;
+      })
+      .map((m) => m.id);
+    if (expiredPollIds.length > 0) {
+      await this.messageRepo.update({ id: In(expiredPollIds) }, { pinned: false });
+      for (const m of msgs) if (expiredPollIds.includes(m.id)) m.pinned = false;
+      this.logger.log(
+        `[POLL] auto-unpinned ${expiredPollIds.length} closed poll(s) in channel=${channelId}`
+      );
+    }
+
     return msgs.map((m) => ({
       id: m.id,
       channelId: m.channelId,
