@@ -118,7 +118,7 @@
 <div class="px-4 py-8 sm:px-6 max-w-3xl mx-auto space-y-6 md:space-y-8">
   {#if loading}
     <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
-      <Loader2 size={32} class="animate-spin text-amber-500" strokeWidth={2.5} />
+      <Loader2 size={32} class="animate-spin text-cn-yellow" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">Chargement du profil...</span>
     </div>
   {:else if error}
@@ -149,7 +149,7 @@
         </h1>
         {#if profile.formation}
           <div
-            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cn-yellow/10 border border-cn-yellow/20 text-cn-dark text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
           >
             <GraduationCap size={14} strokeWidth={2.5} />
             {profile.formation}
@@ -162,10 +162,10 @@
         <button
           onclick={handleFollowToggle}
           disabled={followLoading}
-          class="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 disabled:opacity-60
+          class="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50 disabled:opacity-60
             {following
             ? 'bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main hover:bg-red-500/10 hover:text-red-600 hover:border-red-500/20'
-            : 'bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'}"
+            : 'bg-cn-yellow/10 border border-cn-yellow/20 text-amber-700 dark:text-cn-yellow hover:bg-cn-yellow/20'}"
         >
           {#if following}
             <UserCheck size={18} strokeWidth={2.5} /> Suivi
@@ -175,7 +175,7 @@
         </button>
         <button
           onclick={handleSendMessage}
-          class="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 transition-all active:scale-95 shadow-md shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all active:scale-95 shadow-md shadow-cn-yellow/20 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
         >
           <MessageCircle size={18} strokeWidth={2.5} /> Message
         </button>
@@ -185,7 +185,7 @@
     <!-- Section Bio -->
     {#if profile.bio}
       <div
-        class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
         style="animation-fill-mode: backwards;"
       >
         <h2 class="text-lg font-extrabold text-text-main mb-4">À propos</h2>
@@ -195,7 +195,7 @@
 
     {#if memberships.length > 0 || extrasLoading}
       <div
-        class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl"
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
       >
         <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
           <Building2 size={20} />
@@ -207,7 +207,7 @@
 
     {#if roleHistory.length > 0 || extrasLoading}
       <div
-        class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl"
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
       >
         <h2 class="text-lg font-extrabold text-text-main mb-5">Parcours associatif</h2>
         <ProfileRoleHistorySection entries={roleHistory} />
@@ -216,7 +216,7 @@
 
     <!-- Section Informations -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
       style="animation-fill-mode: backwards;"
     >
       <h2 class="text-lg font-extrabold text-text-main mb-6">Informations</h2>

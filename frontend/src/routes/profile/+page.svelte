@@ -391,7 +391,7 @@
 <div class="px-4 py-8 sm:px-6 max-w-3xl mx-auto space-y-6 md:space-y-8">
   {#if loading}
     <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
-      <Loader2 size={32} class="animate-spin text-amber-500" strokeWidth={2.5} />
+      <Loader2 size={32} class="animate-spin text-cn-yellow" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">Chargement du profil...</span>
     </div>
   {:else if error}
@@ -422,8 +422,8 @@
           title="Changer la photo de profil"
           aria-label="Changer la photo de profil"
           class="absolute bottom-0 right-0 flex items-center justify-center w-8 h-8 rounded-full
-                 bg-amber-500 hover:bg-amber-400 text-[#151B2C]
-                 shadow-md shadow-amber-500/30 ring-2 ring-white dark:ring-[#151B2C]
+                 bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink
+                 shadow-md shadow-cn-yellow/30 ring-2 ring-white dark:ring-[var(--cn-bg)]
                  transition-all active:scale-95"
         >
           <Camera size={15} strokeWidth={2.5} />
@@ -435,7 +435,7 @@
         </h1>
         {#if profile.formation}
           <div
-            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cn-yellow/10 border border-cn-yellow/20 text-cn-dark text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
           >
             <GraduationCap size={14} strokeWidth={2.5} />
             {profile.formation}
@@ -446,12 +446,12 @@
 
     <!-- Section Bio -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <UserRound size={22} strokeWidth={2.5} />
           </div>
           <h2 class="text-lg font-extrabold text-text-main">À propos de moi</h2>
@@ -459,7 +459,7 @@
         {#if !editingBio}
           <button
             onclick={startEditBio}
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold text-text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold text-text-muted hover:text-cn-dark hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-95"
           >
             <Edit3 size={16} strokeWidth={2.5} /> Modifier
           </button>
@@ -472,7 +472,7 @@
             bind:value={bioInput}
             maxlength={500}
             minHeight="100px"
-            class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-amber-500/50 focus-within:ring-2 focus-within:ring-amber-500/30 transition-all overflow-hidden"
+            class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-cn-yellow/50 focus-within:ring-2 focus-within:ring-cn-yellow/30 transition-all overflow-hidden"
             editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
             placeholder="Décris-toi en quelques mots…"
           />
@@ -494,7 +494,7 @@
               <button
                 onclick={saveBio}
                 disabled={saving || bioInput.trim() === profile.bio}
-                class="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-[#151B2C] hover:bg-amber-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-amber-500/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-cn-yellow/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
               >
                 {#if saving}
                   <Loader2 size={16} class="animate-spin" strokeWidth={3} /> Enregistrement...
@@ -520,12 +520,12 @@
 
     <!-- Section Associations -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center justify-between mb-5">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <Building2 size={22} strokeWidth={2.5} />
           </div>
           <h2 class="text-lg font-extrabold text-text-main">Mes associations</h2>
@@ -543,16 +543,16 @@
 
     <!-- Section Parcours associatif -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center gap-3 mb-5">
-        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <History size={22} strokeWidth={2.5} />
         </div>
         <h2 class="text-lg font-extrabold text-text-main">Parcours associatif</h2>
         {#if roleHistoryLoading}
-          <Loader2 size={16} class="animate-spin text-amber-500" />
+          <Loader2 size={16} class="animate-spin text-cn-yellow" />
         {/if}
       </div>
       <ProfileRoleHistorySection
@@ -564,11 +564,11 @@
 
     <!-- Section Informations -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center gap-3 mb-6">
-        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <Info size={22} strokeWidth={2.5} />
         </div>
         <h2 class="text-lg font-extrabold text-text-main">Informations du compte</h2>
@@ -616,11 +616,11 @@
 
     <!-- Section Sécurité & appareils -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center gap-3 mb-6">
-        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <Shield size={22} strokeWidth={2.5} />
         </div>
         <h2 class="text-lg font-extrabold text-text-main">Sécurité &amp; appareils</h2>
@@ -704,11 +704,11 @@
 
     <!-- Section Sauvegarde & synchronisation -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center gap-3 mb-2">
-        <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <RefreshCw size={22} strokeWidth={2.5} />
         </div>
         <h2 class="text-lg font-extrabold text-text-main">Sauvegarde &amp; synchronisation</h2>
@@ -724,7 +724,7 @@
             type="button"
             onclick={() => sync.handleStartSyncSession(syncCtx())}
             disabled={sync.isSyncSessionBusy}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
             title="Démarrer une synchronisation QR"
           >
             <ScanLine size={22} class="text-text-muted" />
@@ -736,7 +736,7 @@
             type="button"
             onclick={() => sync.openJoinSyncModal()}
             disabled={sync.isSyncSessionBusy}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
             title="Rejoindre une synchronisation QR"
           >
             <Smartphone size={22} class="text-text-muted" />
@@ -748,7 +748,7 @@
             type="button"
             onclick={triggerImport}
             disabled={session.isImporting}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
             title="Importer une sauvegarde (.canari)"
           >
             <Upload size={22} class="text-text-muted" />
@@ -760,7 +760,7 @@
             type="button"
             onclick={() => session.handleExport(appendLog)}
             disabled={session.isExporting}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 hover:border-amber-500/40 transition-all active:scale-95 disabled:opacity-50"
+            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
             title="Exporter les conversations"
           >
             <Download size={22} class="text-text-muted" />
@@ -777,12 +777,12 @@
 
     <!-- Section Paiements -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center justify-between mb-6">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <CreditCard size={22} strokeWidth={2.5} />
           </div>
           <h2 class="text-lg font-extrabold text-text-main">Moyens de paiement</h2>
@@ -837,9 +837,9 @@
                 <div class="flex items-center gap-4">
                   <!-- Petite puce visuelle -->
                   <div
-                    class="w-8 h-6 rounded bg-amber-500/20 border border-amber-500/30 flex items-center justify-center opacity-80"
+                    class="w-8 h-6 rounded bg-cn-yellow/20 border border-cn-yellow/30 flex items-center justify-center opacity-80"
                   >
-                    <div class="w-4 h-3 border border-amber-500/40 rounded-sm"></div>
+                    <div class="w-4 h-3 border border-cn-yellow/40 rounded-sm"></div>
                   </div>
 
                   <div class="flex flex-col">
@@ -897,7 +897,7 @@
 
     <!-- Section Cotisations et achats -->
     <div
-      class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-250"
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-250"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-center justify-between mb-6">
@@ -933,7 +933,7 @@
         <ul class="space-y-2 mb-4">
           {#each activeTags as tag (tag.id)}
             <li
-              class="flex items-center gap-3 rounded-xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 px-4 py-3"
+              class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3"
             >
               <div class="min-w-0 flex-1">
                 <p class="text-sm font-bold text-text-main">{tag.tagName}</p>
@@ -967,7 +967,7 @@
 
     <!-- Section Suppression de compte -->
     <div
-      class="rounded-[2rem] border border-red-500/20 bg-red-500/5 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300"
+      class="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300"
       style="animation-fill-mode: backwards;"
     >
       <div class="flex items-start gap-4">

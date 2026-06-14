@@ -26,7 +26,7 @@
         <li>
           <a
             href="/associations/{encodeURIComponent(m.slug)}"
-            class="flex items-center gap-3 rounded-xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 px-4 py-3 hover:border-amber-500/30 transition-colors"
+            class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3 hover:border-cn-yellow/30 transition-colors"
           >
             <AssociationAvatar name={m.name} logoUrl={m.logoUrl} size="sm" />
             <div class="min-w-0 flex-1">

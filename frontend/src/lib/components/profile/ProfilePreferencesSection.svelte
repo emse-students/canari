@@ -12,11 +12,11 @@
 </script>
 
 <div
-  class="rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-6 md:p-8 shadow-sm backdrop-blur-xl animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
   style="animation-fill-mode: backwards;"
 >
   <div class="flex items-center gap-3 mb-6">
-    <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+    <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
       <Settings size={22} strokeWidth={2.5} />
     </div>
     <h2 class="text-lg font-extrabold text-text-main">Préférences</h2>
@@ -45,8 +45,8 @@
         aria-checked={settings.soundsEnabled}
         aria-label="Activer ou désactiver les bruitages"
         onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
-        class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-          {settings.soundsEnabled ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/15'}"
+        class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
+          {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
       >
         <span
           class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -78,8 +78,8 @@
           aria-checked={settings.vibrationsEnabled}
           aria-label="Activer ou désactiver les vibrations"
           onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
-          class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2
-            {settings.vibrationsEnabled ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/15'}"
+          class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
+            {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -120,9 +120,9 @@
             aria-label={opt.label}
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
-            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-amber-500
+            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-cn-yellow
               {themeStore.preference === opt.value
-              ? 'bg-amber-500 text-white shadow'
+              ? 'bg-cn-yellow text-cn-ink shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
