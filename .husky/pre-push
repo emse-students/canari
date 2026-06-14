@@ -8,7 +8,10 @@ if ! git diff --cached --quiet; then
   exit 1
 fi
 
-UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+# `|| true` : sans upstream (push -u d'une branche neuve) git rev-parse sort en 128.
+# Le wrapper husky exécute ce hook sous `sh -e`, donc une substitution qui échoue
+# tuerait le script avant tout check. On retombe alors sur le diff-tree de HEAD.
+UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
 if [ -n "$UPSTREAM" ]; then
   CHANGED_FILES=$(git diff --name-only "$UPSTREAM"...HEAD)
 else
