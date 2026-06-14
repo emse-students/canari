@@ -16,6 +16,7 @@ import type {
   ChatMessage,
 } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -341,6 +342,9 @@ export function useConversations() {
             ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
           }
           if (content === undefined) continue;
+
+          // Seed the live poll tally from the server row, keyed by the server id.
+          if (msg.poll) setPollMeta(String(msg.id), msg.poll);
 
           const senderId = String(msg.senderId || 'unknown').toLowerCase();
           loaded.push({

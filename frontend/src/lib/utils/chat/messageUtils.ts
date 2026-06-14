@@ -1,5 +1,5 @@
 import { messageTime } from '$lib/utils/chat/messageOrder';
-import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope, mkPollEnvelope } from '$lib/envelope';
 
 /** Returns true if the message was sent by the current user (case-insensitive). */
 export function isOwnMessage(senderId: string, userId: string): boolean {
@@ -148,6 +148,24 @@ export function appMsgToEnvelope(
             height: msg.media.height && msg.media.height > 0 ? msg.media.height : undefined,
           },
           msg.media.caption || undefined
+        )
+      ),
+      options: { messageId: msg.messageId || undefined, timestamp },
+    };
+  }
+
+  if (msg.poll) {
+    const options = (msg.poll.options ?? [])
+      .map((o) => ({ id: o.id ?? '', label: o.label ?? '' }))
+      .filter((o) => o.id);
+    const endsAtMs = typeof msg.poll.endsAt === 'number' ? msg.poll.endsAt : 0;
+    return {
+      content: serializeEnvelope(
+        mkPollEnvelope(
+          msg.poll.question ?? '',
+          options,
+          msg.poll.multipleChoice === true,
+          endsAtMs > 0 ? new Date(endsAtMs).toISOString() : null
         )
       ),
       options: { messageId: msg.messageId || undefined, timestamp },

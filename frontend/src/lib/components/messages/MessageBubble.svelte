@@ -173,7 +173,9 @@
   let textContent = $derived(
     envelope.kind === 'text' || envelope.kind === 'system'
       ? envelope.text
-      : (envelope.caption ?? '')
+      : envelope.kind === 'media'
+        ? (envelope.caption ?? '')
+        : ''
   );
   let effectiveReplyTo = $derived(
     replyTo ??

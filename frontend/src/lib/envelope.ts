@@ -49,7 +49,21 @@ export interface SystemEnvelope {
   };
 }
 
-export type MessageEnvelope = TextEnvelope | MediaEnvelope | SystemEnvelope;
+/**
+ * Community poll. Holds only the end-to-end-encrypted definition (question +
+ * option labels); the live tally is tracked separately in the poll store, keyed
+ * by message id, since it changes after the message is serialized.
+ */
+export interface PollEnvelope {
+  kind: 'poll';
+  question: string;
+  options: { id: string; label: string }[];
+  multipleChoice: boolean;
+  /** ISO date or null for no deadline. */
+  endsAt: string | null;
+}
+
+export type MessageEnvelope = TextEnvelope | MediaEnvelope | SystemEnvelope | PollEnvelope;
 
 // ---------------------------------------------------------------------------
 // Serialization helpers
@@ -71,6 +85,8 @@ export function getPreviewText(env: MessageEnvelope): string {
       return env.caption ? `[Media] ${formatMentionsForPreview(env.caption)}` : '[Media]';
     case 'system':
       return `[Info] ${formatMentionsForPreview(env.text)}`;
+    case 'poll':
+      return `[Sondage] ${env.question}`;
   }
 }
 
@@ -177,6 +193,26 @@ export function parseEnvelope(content: string): MessageEnvelope {
         }
       }
 
+      if (obj.kind === 'poll' && typeof obj.question === 'string' && Array.isArray(obj.options)) {
+        const options = (obj.options as unknown[])
+          .map((o) => {
+            const r = o as Record<string, unknown>;
+            return typeof r?.id === 'string' && typeof r?.label === 'string'
+              ? { id: r.id, label: r.label }
+              : null;
+          })
+          .filter((o): o is { id: string; label: string } => o !== null);
+        if (options.length >= 2) {
+          return {
+            kind: 'poll',
+            question: obj.question,
+            options,
+            multipleChoice: obj.multipleChoice === true,
+            endsAt: typeof obj.endsAt === 'string' ? obj.endsAt : null,
+          };
+        }
+      }
+
       // Fallthrough to legacy on valid JSON that isn't a known envelope
       result = { kind: 'text', text: content };
     } catch {
@@ -217,6 +253,16 @@ export function mkMediaEnvelope(
 /** Build a system / group-event envelope (e.g. "Alice renamed the group"). These are never user-authored. */
 export function mkSystemEnvelope(text: string): MessageEnvelope {
   return { kind: 'system', text };
+}
+
+/** Build a poll envelope from a decoded PollMsg (the live tally is stored separately). */
+export function mkPollEnvelope(
+  question: string,
+  options: { id: string; label: string }[],
+  multipleChoice: boolean,
+  endsAt: string | null
+): PollEnvelope {
+  return { kind: 'poll', question, options, multipleChoice, endsAt };
 }
 
 /** Build a channel-invite system envelope that the UI renders as an actionable Join card. */

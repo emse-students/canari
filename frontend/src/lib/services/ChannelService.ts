@@ -436,6 +436,21 @@ export class ChannelService {
     await this.handleError(res);
   }
 
+  /** Records the caller's vote on a poll message (empty optionIds retracts). Returns the updated tally. */
+  async votePoll(
+    channelId: string,
+    messageId: string,
+    optionIds: string[]
+  ): Promise<ChannelPollMeta> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/messages/${encodeURIComponent(messageId)}/poll/vote`,
+      { method: 'POST', body: JSON.stringify({ optionIds }) }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<ChannelPollMeta>;
+  }
+
   /** Returns the IDs of the pinned messages in a channel. */
   async listPinnedMessageIds(channelId: string): Promise<string[]> {
     const cid = this.normalizeChannelId(channelId);

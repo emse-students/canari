@@ -78,11 +78,11 @@ export async function sendChatMessage(
       // Extract the display text from the envelope for the reply preview.
       const replyEnv = parseEnvelope(replyingTo.content);
       const replyPreview =
-        replyEnv.kind === 'text'
+        replyEnv.kind === 'text' || replyEnv.kind === 'system'
           ? replyEnv.text.slice(0, 100)
           : replyEnv.kind === 'media'
             ? (replyEnv.caption?.slice(0, 100) ?? '[media]')
-            : replyEnv.text.slice(0, 100);
+            : `[Sondage] ${replyEnv.question}`.slice(0, 100);
       payload = encodeAppMessage({
         ...mkReply(text, {
           id: replyingTo.id,

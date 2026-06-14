@@ -5,6 +5,8 @@ import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
+import { setPollMeta } from '$lib/stores/pollStore.svelte';
+import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 
 /**
@@ -70,6 +72,16 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const channelId = String(data.channelId || '');
     const messageId = String(data.messageId || '');
     if (channelId && messageId) applyPin(`channel_${channelId}`, messageId, !!data.pinned);
+    return;
+  }
+
+  // Live poll tally update broadcast after a member votes. Keyed by the server
+  // message id (same id used for the bubble + the vote endpoint).
+  if (event.type === 'channel.poll.vote') {
+    const data = event.data || {};
+    const messageId = String(data.messageId || '');
+    const poll = data.poll as ChannelPollMeta | undefined;
+    if (messageId && poll) setPollMeta(messageId, poll);
     return;
   }
 
@@ -210,8 +222,16 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // will replay it cleanly after a fresh key hydration.
       if (content === undefined) return;
 
+      // Polls are keyed by the server message id (not the AppMessage id) so the
+      // bubble, the vote endpoint and the live vote events all agree on one id.
+      const poll = data.poll as ChannelPollMeta | undefined;
+      const renderedId = poll
+        ? String(data.messageId || data.id)
+        : appMessageId || data.messageId || data.id;
+      if (poll && renderedId) setPollMeta(renderedId, poll);
+
       addMessageToChat(sender, content, convoKey, {
-        messageId: appMessageId || data.messageId || data.id,
+        messageId: renderedId,
         timestamp: channelServerMs !== undefined ? new Date(channelServerMs) : undefined,
         skipDbSave: true,
       }).catch((e) => console.error(e));
