@@ -46,7 +46,7 @@
       opensAt = draft.scheduledAt;
     }
     try {
-      const all = await listAssociations();
+      const all = await listAssociations('association');
       associations = all.filter((a) => canAssociationReceiveFormPayments(a));
     } catch {
       // Ignore - user may not have access

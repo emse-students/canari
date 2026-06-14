@@ -99,7 +99,7 @@
       return;
     }
     try {
-      const [f, all] = await Promise.all([getForm(id), listAssociations()]);
+      const [f, all] = await Promise.all([getForm(id), listAssociations('association')]);
       form = f;
       const eligible = all.filter((a) => canAssociationReceiveFormPayments(a));
       if (f.associationId && !eligible.some((a) => a.id === f.associationId)) {

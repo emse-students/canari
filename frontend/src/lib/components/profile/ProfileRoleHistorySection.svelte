@@ -6,6 +6,7 @@
     type UserRoleHistoryRow,
   } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
+  import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { Plus, Trash2 } from '@lucide/svelte';
@@ -30,18 +31,9 @@
   let formStartYear = $state<number | ''>('');
   let formEndYear = $state<number | ''>('');
 
-  /** Regular associations, alphabetical. */
-  const assoOptions = $derived(
-    associations
-      .filter((a) => a.type !== 'list')
-      .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
-  );
-  /** Promo lists, most recent promo first (nulls last), then by name. */
-  const listOptions = $derived(
-    associations
-      .filter((a) => a.type === 'list')
-      .sort((a, b) => (b.promo ?? -Infinity) - (a.promo ?? -Infinity) || a.name.localeCompare(b.name, 'fr'))
-  );
+  const grouped = $derived(groupAssociationsForSelect(associations));
+  const assoOptions = $derived(grouped.assos);
+  const listOptions = $derived(grouped.lists);
 
   async function ensureAssociations() {
     if (associations.length > 0) return;
@@ -184,7 +176,7 @@
               {#if listOptions.length > 0}
                 <optgroup label="Listes">
                   {#each listOptions as a (a.id)}
-                    <option value={a.id}>{a.name}{a.promo ? ` (${a.promo})` : ''}</option>
+                    <option value={a.id}>{listOptionLabel(a)}</option>
                   {/each}
                 </optgroup>
               {/if}

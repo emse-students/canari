@@ -34,6 +34,7 @@
     type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
+  import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PollSection from './PollSection.svelte';
@@ -86,6 +87,8 @@
   let postAsAssociations = $derived(
     isGlobalAdmin() ? myAssociations : myAssociations.filter((a) => a.isAdmin)
   );
+  /** Same set split into Associations / Listes groups for the picker. */
+  let postAsGroups = $derived(groupAssociationsForSelect(postAsAssociations));
   /** Associations with completed Stripe onboarding (eligible for payment collection). */
   let payableAssociations = $derived(postAsAssociations.filter((a) => a.stripeOnboardingComplete));
 
@@ -384,9 +387,23 @@
               <option value="" class="bg-white dark:bg-zinc-900 font-medium"
                 >Profil personnel</option
               >
-              {#each postAsAssociations as a (a.id)}
-                <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option>
-              {/each}
+              {#if postAsGroups.assos.length > 0}
+                <optgroup label="Associations">
+                  {#each postAsGroups.assos as a (a.id)}
+                    <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option
+                    >
+                  {/each}
+                </optgroup>
+              {/if}
+              {#if postAsGroups.lists.length > 0}
+                <optgroup label="Listes">
+                  {#each postAsGroups.lists as a (a.id)}
+                    <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
+                      >{listOptionLabel(a)}</option
+                    >
+                  {/each}
+                </optgroup>
+              {/if}
             </select>
             <div
               class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors"
