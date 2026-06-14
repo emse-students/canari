@@ -125,8 +125,14 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
 
   // 2. Groupes du serveur
   let groups: UserGroupRow[] = [];
+  // `getUserGroups` jette sur erreur HTTP (502/503/timeout pendant un redeploy CD).
+  // On distingue "fetch en échec" de "0 groupe réel" pour ne JAMAIS purger l'état WASM
+  // sur la foi d'une liste vide transitoire - sinon tous les groupes seraient oubliés,
+  // chaque conversation deviendrait non-prête et le SYNC_WATCHDOG les rebooterait toutes.
+  let serverFetchOk = false;
   try {
     groups = await mlsService.getUserGroups(userId);
+    serverFetchOk = true;
   } catch (e) {
     log(`[SYNC] Échec récupération user groups: ${e}`);
     console.error('[SYNC] Failed to fetch user groups:', e);
@@ -216,12 +222,26 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // `serverIds`) : évite de purger des groupes créés par REBOOT pendant les opérations
   // async de l'étape 2, ce qui déclencherait une boucle infinie (migrateConversation
   // pointe vers un groupe absent du WASM).
-  for (const localId of localGroups) {
-    if (!serverIds.has(localId)) {
-      mlsService.forgetGroup(localId);
-      stateMutated = true;
-      log(`[SYNC] WASM retiré (absent du serveur) : ${localId.slice(0, 8)}…`);
+  //
+  // Garde-fou anti-reboot-storm : ne JAMAIS purger si la liste serveur n'est pas fiable.
+  //  - `serverFetchOk` faux : getUserGroups a échoué (serveur indisponible pendant un
+  //    redeploy) → serverIds est vide, on oublierait tous les groupes.
+  //  - liste vide alors qu'on détient des groupes localement : réponse vide quasi
+  //    certainement transitoire (un compte avec des arbres MLS actifs a forcément des
+  //    lignes dm_group_members côté serveur). Même garde que discoverMissingGroups.
+  const serverListReliable = serverFetchOk && (groups.length > 0 || localGroups.size === 0);
+  if (serverListReliable) {
+    for (const localId of localGroups) {
+      if (!serverIds.has(localId)) {
+        mlsService.forgetGroup(localId);
+        stateMutated = true;
+        log(`[SYNC] WASM retiré (absent du serveur) : ${localId.slice(0, 8)}…`);
+      }
     }
+  } else if (localGroups.size > 0) {
+    log(
+      `[SYNC] Purge WASM ignorée - liste serveur non fiable (fetchOk=${serverFetchOk}, ${groups.length} groupe(s))`
+    );
   }
 
   if (stateMutated) {

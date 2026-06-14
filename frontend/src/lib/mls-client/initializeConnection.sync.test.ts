@@ -50,4 +50,58 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     expect(mls.saveState).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Skip recovery'));
   });
+
+  it('does not purge local WASM groups when getUserGroups fails (server unavailable)', async () => {
+    // Régression : un redeploy CD rend getUserGroups indisponible. Sans garde-fou,
+    // l'étape 3 oubliait tous les groupes locaux → reboot-storm via SYNC_WATCHDOG.
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi.fn().mockRejectedValue(new Error('getUserGroups failed: 503')),
+      getLocalGroups: vi.fn().mockReturnValue(['g-live-1', 'g-live-2']),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+    };
+    const log = vi.fn();
+
+    const done = syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      pin: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
+    });
+    await vi.advanceTimersByTimeAsync(600);
+    await done;
+
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Purge WASM ignorée'));
+  });
+
+  it('does not purge when getUserGroups returns empty but local groups exist (transient)', async () => {
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-live-1']),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+    };
+    const log = vi.fn();
+
+    const done = syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      pin: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+    await vi.advanceTimersByTimeAsync(600);
+    await done;
+
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+  });
 });
