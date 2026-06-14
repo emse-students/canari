@@ -5,6 +5,7 @@
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
+  import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
@@ -312,6 +313,8 @@
   {/if}
 
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
+    <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
+    <TabFollowerBanner />
     {#if !isLoginPage && !isKeyboardOpen}
       <Navbar />
       {#if !isMobileConvoOpen}

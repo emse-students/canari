@@ -27,7 +27,6 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import TabFollowerBanner from './chat/TabFollowerBanner.svelte';
   import type { ChatMessage, Conversation } from '$lib/types';
   import { WifiOff } from '@lucide/svelte';
 
@@ -614,9 +613,6 @@
 
 <div class="app-layout" in:fade>
     {#if session.isLoggedIn}
-    <!-- Bandeau onglet follower (multi-onglets) -->
-    <TabFollowerBanner />
-
     {#if !session.isWsConnected}
       <div class="flex items-center justify-center gap-1.5 py-1.5 px-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20">
         <WifiOff size={11} strokeWidth={2.5} class="shrink-0" />

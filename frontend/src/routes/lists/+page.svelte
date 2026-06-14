@@ -83,7 +83,7 @@
     <section>
       {#if activeLists.length === 0}
         <div
-          class="text-center py-16 bg-white/50 backdrop-blur-xl rounded-2xl border-2 border-dashed border-cn-border"
+          class="text-center py-16 bg-[var(--cn-surface)]/60 rounded-2xl border-2 border-dashed border-cn-border"
         >
           <div class="text-5xl mb-3">📋</div>
           <h3 class="text-lg font-bold text-text-main mb-1">Aucune liste</h3>
@@ -94,7 +94,7 @@
           {#each activeLists as list (list.id)}
             <a
               href="/lists/{list.slug}"
-              class="rounded-2xl border border-cn-border bg-white/80 p-5 hover:shadow-md transition-shadow block"
+              class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 hover:shadow-md transition-shadow block"
             >
               <div class="flex items-start gap-3">
                 <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
@@ -143,7 +143,7 @@
             {#each archivedLists as list (list.id)}
               <a
                 href="/lists/{list.slug}"
-                class="rounded-2xl border border-cn-border bg-white/50 p-5 opacity-75 hover:opacity-100 hover:shadow-md transition-all block"
+                class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 opacity-75 hover:opacity-100 hover:shadow-md transition-all block"
               >
                 <div class="flex items-start gap-3">
                   <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />

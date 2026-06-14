@@ -30,7 +30,6 @@
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import BiometricBottomSheet from '$lib/components/auth/BiometricBottomSheet.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
-  import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import { Fingerprint } from '@lucide/svelte';
@@ -833,8 +832,6 @@
     }
   });
 </script>
-
-<TabFollowerBanner />
 
 <!-- Biometric choice sheet (shown before OS biometric prompt) -->
 <BiometricBottomSheet open={showBiometricSheet} onSkip={onBiometricSkip} />
