@@ -27,6 +27,7 @@ import { IsNull } from 'typeorm';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
 import { In } from 'typeorm';
+import { MessagingService } from '../services/messaging.service';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -47,6 +48,7 @@ export class InvitationsController {
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly messagingService: MessagingService,
   ) {}
 
   /** Whether an invite is still usable (not revoked/expired/exhausted). */
@@ -215,6 +217,27 @@ export class InvitationsController {
     this.logger.log(
       `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`,
     );
+
+    // Trigger the add immediately instead of waiting for a member's next sync:
+    // notifyWelcomeRequest forwards a welcome_request to an online member (who runs
+    // addMember + Welcome at once) and, if none is online, wakes them via FCM.
+    // Best-effort - the pending rows above remain the durable fallback.
+    for (const deviceId of deviceIds) {
+      try {
+        await this.messagingService.notifyWelcomeRequest({
+          groupId: group.id,
+          requesterUserId: callerId,
+          requesterDeviceId: deviceId,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `[GROUP_INVITE] notifyWelcomeRequest failed group=${group.id} device=${deviceId} err=${
+            e instanceof Error ? e.message : 'unknown'
+          }`,
+        );
+      }
+    }
+
     return { groupId: group.id, alreadyMember: false };
   }
 
