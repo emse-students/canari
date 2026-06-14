@@ -435,7 +435,12 @@
       onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
         globalChannels.handleWorkspaceUpdated(event);
       },
-      onReadReceiptReceived: () => {
+      onReadReceiptReceived: (e: { conversationKey: string; senderId: string; messageIds: string[] }) => {
+        // Son uniquement quand un autre utilisateur lit MON message, dans la conversation
+        // ouverte et l'onglet visible (jamais pour mes propres lectures cross-device).
+        if (e.senderId === globalSession.userId) return;
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+        if (e.conversationKey !== globalConvs.selectedContact) return;
         globalNotifs.playReadTone();
       },
       onSendError: (msg: string) => {

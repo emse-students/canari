@@ -92,13 +92,11 @@ describe('processPendingInvitations - leaf déjà dans l’arbre', () => {
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
-      addMember: vi
-        .fn()
-        .mockResolvedValue({
-          welcome: new Uint8Array([2]),
-          commit: new Uint8Array([3]),
-          ratchetTree: new Uint8Array([4]),
-        }),
+      addMember: vi.fn().mockResolvedValue({
+        welcome: new Uint8Array([2]),
+        commit: new Uint8Array([3]),
+        ratchetTree: new Uint8Array([4]),
+      }),
     });
     const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
     const log = vi.fn();
