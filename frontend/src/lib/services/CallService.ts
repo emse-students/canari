@@ -1008,12 +1008,59 @@ export class CallService {
     this.isMuted.set(muted);
   }
 
-  /** Toggles local video track on/off. */
-  public toggleVideo() {
+  /**
+   * Toggles the local camera. When the call started audio-only there is no video
+   * track yet, so enabling it acquires the camera, adds the track (with the E2E
+   * sender transform) and renegotiates with the SFU. Otherwise it just flips the
+   * existing track's `enabled` flag.
+   */
+  public async toggleVideo() {
     const off = !get(this.isVideoOff);
-    this.localStream?.getVideoTracks().forEach((t) => {
+
+    const existing = this.localStream?.getVideoTracks() ?? [];
+    if (!off && existing.length === 0) {
+      // Enabling video on a call that started audio-only: acquire the camera now.
+      if (!this.localStream || !this.pc) return;
+      try {
+        const camStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+        });
+        const videoTrack = camStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+        this.localStream.addTrack(videoTrack);
+        this.callHasVideo = true;
+        const sender = this.pc.addTrack(videoTrack, this.localStream);
+        if (this.callKey && this.isE2eMediaEnabled() && canUseRtpScriptTransform()) {
+          void this.setupSenderTransform(sender);
+        }
+        this.localStreamStore.set(this.localStream);
+        await this.renegotiate();
+        this.isVideoOff.set(false);
+        appendLog('[Call] camera acquired and added mid-call (renegotiated)');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        appendLog(`[Call] enabling camera failed: ${msg}`);
+      }
+      return;
+    }
+
+    existing.forEach((t) => {
       t.enabled = !off;
     });
     this.isVideoOff.set(off);
+  }
+
+  /**
+   * Client-initiated renegotiation: creates a fresh offer reflecting the current
+   * senders and sends it to the SFU, which replies with an Answer handled by
+   * {@link applyRemoteSdp}. Used after adding a track mid-call.
+   */
+  private async renegotiate(): Promise<void> {
+    const pc = this.pc;
+    if (!pc || pc.signalingState !== 'stable') return;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    appendLog(`[Call] renegotiation offer (${offer.sdp?.length ?? 0} bytes) → SFU`);
+    this.sendSfuMessage({ type: 'Offer', sdp: JSON.stringify(pc.localDescription) });
   }
 }

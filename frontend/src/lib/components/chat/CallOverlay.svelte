@@ -426,7 +426,7 @@
         class="p-4 rounded-full transition-all {isVideoOff
           ? 'bg-white text-[#151B2C]'
           : 'bg-white/10 text-white hover:bg-white/20'}"
-        onclick={() => callService.toggleVideo()}
+        onclick={() => void callService.toggleVideo()}
         aria-label={isVideoOff ? 'Activer la caméra' : 'Couper la caméra'}
       >
         {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
