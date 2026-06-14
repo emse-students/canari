@@ -245,7 +245,8 @@
           class="w-full h-full object-cover"
         ></video>
         {#if primaryParticipant}
-          <div class="absolute top-4 left-4 z-10">
+          <!-- Bottom-left to avoid the top-left status badge and the bottom-right self PiP. -->
+          <div class="absolute bottom-4 left-4 z-10 max-w-[60%]">
             {@render participantLabel(primaryParticipant)}
           </div>
         {/if}
