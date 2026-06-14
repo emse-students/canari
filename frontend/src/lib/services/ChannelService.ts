@@ -85,11 +85,45 @@ export interface ChannelUpdateRoleDto {
   roleName: string;
 }
 
+/**
+ * Label-free poll descriptor sent alongside the encrypted poll message.
+ * Only opaque option IDs and timing reach the server; labels stay in `ciphertext`.
+ */
+export interface ChannelPollInput {
+  optionIds: string[];
+  multipleChoice?: boolean;
+  endsAt?: string | null;
+}
+
 export interface SendChannelMessageDto {
   ciphertext: string;
   nonce: string;
   keyVersion?: number;
   messageId?: string;
+  /** When set, the message is a poll: auto-pinned server-side and votable. */
+  poll?: ChannelPollInput;
+}
+
+/** Server-visible poll state (no labels) carried on a channel message. */
+export interface ChannelPollMeta {
+  optionIds: string[];
+  multipleChoice: boolean;
+  endsAt: string | null;
+  /** userId -> selected optionIds. */
+  votesByUser: Record<string, string[]>;
+}
+
+/**
+ * Decrypted poll definition embedded in the message plaintext. The labels never
+ * leave the client unencrypted; only the matching {@link ChannelPollMeta.optionIds}
+ * are visible to the server.
+ */
+export interface ChannelPollSpec {
+  kind: 'poll';
+  question: string;
+  options: { id: string; label: string }[];
+  multipleChoice?: boolean;
+  endsAt?: string | null;
 }
 
 export interface ChannelMemberDto {
