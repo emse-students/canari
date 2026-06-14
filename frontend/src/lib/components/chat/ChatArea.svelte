@@ -570,6 +570,7 @@
     <div>
       <ChatHeader
         contactName={chatView?.contactName ?? ''}
+        groupId={chatView?.conversation.id ?? ''}
         displayName={chatView?.displayName ?? ''}
         isReady={chatView?.isReady ?? false}
         {isChannel}

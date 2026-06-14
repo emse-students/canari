@@ -30,6 +30,8 @@
     effectiveDisplayName: string;
     /** Raw user/contact ID used for the DM avatar. */
     contactName: string;
+    /** MLS group id (used to generate shareable invite links for group chats). */
+    groupId?: string;
     /** Whether the MLS session is fully established. */
     isReady: boolean;
     /** Whether this is a group conversation (vs. a direct message). */
@@ -56,6 +58,7 @@
     showPanel,
     effectiveDisplayName,
     contactName,
+    groupId = '',
     isReady,
     isGroupConversation,
     currentUserId,
@@ -73,6 +76,38 @@
   let showInviteModal = $state(false);
   let newMembers = $state<string[]>([]);
   let renameInput = $state('');
+
+  // ── Shareable invite link ──────────────────────────────────────────────────
+  let shareLink = $state('');
+  let shareLoading = $state(false);
+  let shareError = $state('');
+  let shareCopied = $state(false);
+
+  /** Generates a shareable group invite link and copies it to the clipboard. */
+  async function generateShareLink() {
+    if (!groupId) {
+      shareError = 'Groupe introuvable.';
+      return;
+    }
+    shareLoading = true;
+    shareError = '';
+    shareCopied = false;
+    try {
+      const { createGroupInvite } = await import('$lib/mls/groupInvites');
+      const { token } = await createGroupInvite(groupId);
+      shareLink = `${window.location.origin}/g/join/${token}`;
+      try {
+        await navigator.clipboard.writeText(shareLink);
+        shareCopied = true;
+      } catch {
+        /* clipboard blocked; link shown for manual copy */
+      }
+    } catch (e) {
+      shareError = e instanceof Error ? e.message : 'Échec de la génération du lien';
+    } finally {
+      shareLoading = false;
+    }
+  }
 
   // Reset internal state each time the panel is opened.
   $effect(() => {
@@ -220,6 +255,53 @@
                 Valider
               </button>
             </div>
+          </div>
+        {/if}
+
+        <!-- Section Lien d'invitation -->
+        {#if isGroupConversation && groupId}
+          <div class="flex flex-col gap-2">
+            <span
+              class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider px-1"
+            >
+              Lien d'invitation
+            </span>
+            <p class="text-[0.8rem] text-text-muted leading-relaxed px-1">
+              Partagez ce lien : la personne qui l'ouvre et se connecte sera ajoutée au groupe dès
+              qu'un membre est en ligne.
+            </p>
+            {#if shareLink}
+              <div class="flex items-center gap-2 px-1">
+                <input
+                  type="text"
+                  readonly
+                  value={shareLink}
+                  class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-[0.8rem] text-text-main"
+                />
+                <button
+                  type="button"
+                  onclick={generateShareLink}
+                  class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+                >
+                  Régénérer
+                </button>
+              </div>
+              {#if shareCopied}
+                <p class="text-xs font-semibold text-emerald-600 px-1">Lien copié ✓</p>
+              {/if}
+            {:else}
+              <button
+                type="button"
+                onclick={generateShareLink}
+                disabled={shareLoading}
+                class="self-start rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 px-3 py-1.5 text-[0.75rem] font-bold transition-colors disabled:opacity-50 mx-1"
+              >
+                {shareLoading ? 'Génération…' : 'Générer un lien'}
+              </button>
+            {/if}
+            {#if shareError}
+              <p class="text-xs font-medium text-red-600 dark:text-red-400 px-1">{shareError}</p>
+            {/if}
           </div>
         {/if}
 

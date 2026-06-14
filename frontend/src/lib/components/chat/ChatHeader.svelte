@@ -18,6 +18,8 @@
   interface Props {
     /** Raw contact/user ID used for presence lookup and avatar resolution. */
     contactName: string;
+    /** MLS group id of the conversation (used to generate shareable invite links). */
+    groupId?: string;
     /** Human-readable name displayed in the header. */
     displayName: string;
     /** Whether the MLS session is fully established. */
@@ -63,6 +65,7 @@
 
   let {
     contactName,
+    groupId = '',
     displayName,
     isReady,
     isGroupConversation = true,
@@ -271,6 +274,7 @@
     {showPanel}
     {effectiveDisplayName}
     {contactName}
+    {groupId}
     {isReady}
     {isGroupConversation}
     currentUserId={currentUserId ?? ''}

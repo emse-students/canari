@@ -23,6 +23,7 @@ import { GroupMember } from './entities/group-member.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
+import { GroupInvite } from './entities/group-invite.entity';
 import { PushToken } from './entities/push-token.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import Redis from 'ioredis';
@@ -58,6 +59,7 @@ const RedisProvider: Provider = {
         DeviceGroupMembership,
         PushToken,
         RevokedDevice,
+        GroupInvite,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
@@ -71,6 +73,7 @@ const RedisProvider: Provider = {
       DeviceGroupMembership,
       PushToken,
       RevokedDevice,
+      GroupInvite,
     ]),
   ],
   controllers: [

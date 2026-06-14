@@ -7,6 +7,7 @@ import {
   Param,
   Inject,
   BadRequestException,
+  NotFoundException,
   UseGuards,
   Headers,
   Logger,
@@ -18,8 +19,11 @@ import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
+import { Group } from '../entities/group.entity';
+import { GroupInvite } from '../entities/group-invite.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { IsNull } from 'typeorm';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
 import { In } from 'typeorm';
@@ -34,12 +38,25 @@ export class InvitationsController {
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
+    @InjectRepository(Group)
+    private groupRepo: Repository<Group>,
+    @InjectRepository(GroupInvite)
+    private groupInviteRepo: Repository<GroupInvite>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
+
+  /** Whether an invite is still usable (not revoked/expired/exhausted). */
+  private groupInviteIsValid(invite: GroupInvite): boolean {
+    if (invite.revoked) return false;
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now())
+      return false;
+    if (invite.maxUses != null && invite.uses >= invite.maxUses) return false;
+    return true;
+  }
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
@@ -58,6 +75,147 @@ export class InvitationsController {
     if (!membership) {
       throw new ForbiddenException('Not a member of this group');
     }
+  }
+
+  // ── Shareable group invite links ───────────────────────────────────────────
+
+  /** Creates a shareable invite link for an MLS group chat (caller must be a member). */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/groups/:groupId/invites')
+  async createGroupInvite(
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Body() body?: { expiresAt?: string | null; maxUses?: number | null },
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
+    await this.assertCallerIsGroupMember(
+      callerId,
+      safeGroupId,
+      headerGlobalAdmin,
+    );
+    const group = await this.groupRepo.findOne({
+      where: { id: safeGroupId, deletedAt: IsNull() },
+    });
+    if (!group) throw new NotFoundException('Group not found');
+    if (!group.isGroup) {
+      throw new BadRequestException(
+        'Invites are only available for group chats',
+      );
+    }
+    const invite = this.groupInviteRepo.create({
+      groupId: safeGroupId,
+      token: crypto.randomBytes(18).toString('base64url'),
+      createdBy: callerId,
+      expiresAt: body?.expiresAt ? new Date(body.expiresAt) : null,
+      maxUses: body?.maxUses ?? null,
+      uses: 0,
+      revoked: false,
+    });
+    const saved = await this.groupInviteRepo.save(invite);
+    this.logger.log(
+      `[GROUP_INVITE] created group=${safeGroupId} by=${callerId.slice(0, 8)}`,
+    );
+    return { token: saved.token };
+  }
+
+  /** Preview of a group invite (group name) shown before joining. */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/group-invites/:token')
+  async getGroupInvitePreview(@Param('token') token: string) {
+    const invite = await this.groupInviteRepo.findOne({ where: { token } });
+    if (!invite || !this.groupInviteIsValid(invite)) {
+      return { valid: false, groupId: null, groupName: null };
+    }
+    const group = await this.groupRepo.findOne({
+      where: { id: invite.groupId, deletedAt: IsNull() },
+    });
+    if (!group || !group.isGroup)
+      return { valid: false, groupId: null, groupName: null };
+    return { valid: true, groupId: group.id, groupName: group.name ?? null };
+  }
+
+  /**
+   * Accepts a group invite: creates the caller's GroupMember + `pending`
+   * DeviceGroupMembership rows so the existing pipeline (any online member,
+   * add-lock, addMember + Welcome) adds them. No crypto happens here.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/group-invites/:token/accept')
+  async acceptGroupInvite(
+    @Param('token') token: string,
+    @Headers('x-user-id') headerUserId?: string,
+  ) {
+    const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
+    const invite = await this.groupInviteRepo.findOne({ where: { token } });
+    if (!invite || !this.groupInviteIsValid(invite)) {
+      throw new NotFoundException('Invitation invalide ou expirée');
+    }
+    const group = await this.groupRepo.findOne({
+      where: { id: invite.groupId, deletedAt: IsNull() },
+    });
+    if (!group || !group.isGroup)
+      throw new NotFoundException('Group not found');
+
+    const existing = await this.groupMemberRepo.findOne({
+      where: { groupId: group.id, userId: callerId },
+    });
+    if (existing) return { groupId: group.id, alreadyMember: true };
+
+    // The invitee needs at least one non-revoked KeyPackage so a member can add them.
+    const keyPackages = await this.keyPackageRepo.find({
+      where: { userId: callerId },
+    });
+    const revoked = await this.revokedDeviceRepo.find({
+      where: { userId: callerId },
+    });
+    const revokedKeys = new Set(
+      revoked.map((r) => `${r.userId}:${r.deviceId}`),
+    );
+    const deviceIds = [
+      ...new Set(
+        keyPackages
+          .filter((kp) => !revokedKeys.has(`${kp.userId}:${kp.deviceId}`))
+          .map((kp) => kp.deviceId),
+      ),
+    ];
+    if (deviceIds.length === 0) {
+      throw new BadRequestException(
+        'Aucun appareil actif - ouvrez Canari sur un appareil puis réessayez',
+      );
+    }
+
+    // 1. User-level membership (authoritative "who belongs to the group").
+    await this.groupMemberRepo
+      .createQueryBuilder()
+      .insert()
+      .into(GroupMember)
+      .values({ groupId: group.id, userId: callerId, role: 'member' as const })
+      .orIgnore()
+      .execute();
+
+    // 2. Pending device memberships → fulfilled by processPendingInvitations on members.
+    await this.deviceGroupRepo
+      .createQueryBuilder()
+      .insert()
+      .into(DeviceGroupMembership)
+      .values(
+        deviceIds.map((deviceId) => ({
+          userId: callerId,
+          deviceId,
+          groupId: group.id,
+          status: 'pending' as const,
+        })),
+      )
+      .orIgnore()
+      .execute();
+
+    await this.groupInviteRepo.increment({ id: invite.id }, 'uses', 1);
+    this.logger.log(
+      `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`,
+    );
+    return { groupId: group.id, alreadyMember: false };
   }
 
   /**
