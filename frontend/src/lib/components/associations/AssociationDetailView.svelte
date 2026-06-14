@@ -199,7 +199,7 @@
           {/if}
           {#if canManage}
             <a
-              href="/associations/{encodeURIComponent(slug)}/edit"
+              href="{basePath}/{encodeURIComponent(slug)}/edit"
               class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
             >
               <Settings size={16} />
