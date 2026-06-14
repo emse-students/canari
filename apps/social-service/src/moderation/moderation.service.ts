@@ -8,6 +8,9 @@ import { sanitizeLog } from '../common/log.utils';
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
 
+/** Handled reports (reviewed/dismissed) are purged this many days after being handled. */
+const HANDLED_REPORT_RETENTION_DAYS = 7;
+
 export interface CreateReportData {
   reporterId: string;
   contentType: 'post' | 'comment' | 'message';
@@ -78,8 +81,28 @@ export class ModerationService {
     return saved;
   }
 
+  /**
+   * Deletes reports handled (reviewed/dismissed) more than HANDLED_REPORT_RETENTION_DAYS ago,
+   * so the moderation queue and DB don't accumulate stale entries. Lazy: run on each list call.
+   * Falls back to createdAt for rows handled before reviewedAt existed.
+   */
+  private async purgeExpiredHandledReports(): Promise<void> {
+    try {
+      await this.reportRepo.manager.query(
+        `DELETE FROM content_reports
+         WHERE status <> 'pending'
+           AND COALESCE("reviewedAt", "createdAt") < NOW() - INTERVAL '${HANDLED_REPORT_RETENTION_DAYS} days'`
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Purge des signalements traités échouée: ${e instanceof Error ? e.message : 'erreur inconnue'}`
+      );
+    }
+  }
+
   /** Returns all pending content reports, newest first. */
   async listPendingReports(limit = 50, offset = 0): Promise<ContentReport[]> {
+    await this.purgeExpiredHandledReports();
     return this.reportRepo.find({
       where: { status: 'pending' },
       order: { createdAt: 'DESC' },
@@ -97,6 +120,7 @@ export class ModerationService {
     limit = 50,
     offset = 0
   ): Promise<Array<ContentReport & { contentPreview: string | null; postId: string | null }>> {
+    await this.purgeExpiredHandledReports();
     const reports = await this.reportRepo.find({
       order: { createdAt: 'DESC' },
       take: Math.min(limit, 200),
@@ -155,6 +179,7 @@ export class ModerationService {
 
     report.status = action;
     report.reviewedBy = moderatorId;
+    report.reviewedAt = new Date();
     return this.reportRepo.save(report);
   }
 
