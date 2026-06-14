@@ -86,6 +86,6 @@
   {/each}
 </p>
 {/if}
-{#if firstLink}
+{#if firstLink && !isGifUrl(firstLink)}
   <LinkPreviewCard url={firstLink} standalone={isLinkOnly} />
 {/if}

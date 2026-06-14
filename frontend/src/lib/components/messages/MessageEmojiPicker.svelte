@@ -83,7 +83,41 @@
     persistRecentEmoji(emoji);
   }
 
+  /**
+   * French UI strings for emoji-picker-element. The `locale` attribute alone does NOT
+   * translate the interface (only the data-source provides localized search keywords),
+   * so the `i18n` property must be set explicitly — otherwise the search box reads "Search".
+   */
+  const EMOJI_PICKER_FR_I18N = {
+    categoriesLabel: 'Catégories',
+    emojiUnsupportedMessage: "Votre navigateur ne supporte pas les emojis en couleur.",
+    favoritesLabel: 'Favoris',
+    loadingMessage: 'Chargement…',
+    networkErrorMessage: 'Impossible de charger les emojis.',
+    regionLabel: "Sélecteur d'emoji",
+    searchDescription: 'Quand des résultats sont disponibles, utilisez les flèches haut/bas et Entrée pour sélectionner.',
+    searchLabel: 'Recherche',
+    searchResultsLabel: 'Résultats de recherche',
+    skinToneDescription: 'Quand le sélecteur est ouvert, utilisez les flèches haut/bas et Entrée pour sélectionner.',
+    skinTonesLabel: 'Tons de peau',
+    skinTones: ['Défaut', 'Clair', 'Moyen-clair', 'Moyen', 'Moyen-foncé', 'Foncé'],
+    categories: {
+      custom: 'Personnalisé',
+      'smileys-emotion': 'Smileys et émotions',
+      'people-body': 'Personnes et corps',
+      'animals-nature': 'Animaux et nature',
+      'food-drink': 'Nourriture et boissons',
+      'travel-places': 'Voyages et lieux',
+      activities: 'Activités',
+      objects: 'Objets',
+      symbols: 'Symboles',
+      flags: 'Drapeaux',
+    },
+  };
+
   function attachEmojiPicker(node: HTMLElement) {
+    // Set as a JS property (not an attribute) so the web component picks up the translations.
+    (node as unknown as { i18n: typeof EMOJI_PICKER_FR_I18N }).i18n = EMOJI_PICKER_FR_I18N;
     const handleEmoji = (event: any) => {
       handleEmojiClick(event.detail.unicode);
     };
@@ -114,6 +148,7 @@
 {#if visible}
   <div
     bind:this={panelEl}
+    data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
     class="fixed z-[200] w-[min(92vw,22rem)] bg-white/85 dark:bg-black/60 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-[1.5rem] shadow-2xl shadow-black/10 dark:shadow-black/40 overflow-hidden flex flex-col origin-[var(--popover-origin)]"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}

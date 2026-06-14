@@ -8,8 +8,6 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { currentUserId } from '$lib/stores/user';
 
-  const isLoggedIn = $derived(!!currentUserId());
-
   let query = $state('');
   let promoFilter = $state<number | ''>('');
   let formationFilter = $state('');
