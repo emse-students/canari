@@ -2,7 +2,9 @@ import type { ChatMessage } from '$lib/types';
 
 /** Returns true when `content` is a serialized MessageEnvelope JSON object. */
 export function isEnvelopeContent(content: string): boolean {
-  if (!content.startsWith('{')) return false;
+  // Cheap pre-filter: every envelope is a JSON object carrying a `kind` field.
+  // Skips JSON.parse for plain previews and non-envelope `{` strings.
+  if (!content.startsWith('{') || !content.includes('"kind"')) return false;
   try {
     const obj = JSON.parse(content) as { kind?: unknown };
     return typeof obj.kind === 'string';

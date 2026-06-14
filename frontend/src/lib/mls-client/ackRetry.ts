@@ -28,6 +28,14 @@ function persistPendingAcks(payload: PendingAckPayload | null): void {
   sessionStorage.setItem(PENDING_ACK_STORAGE_KEY, JSON.stringify(payload));
 }
 
+/**
+ * Drops any persisted pending ACKs. Call on logout / user switch so a different
+ * user can't have the previous user's message ids ACKed under their identity.
+ */
+export function clearPersistedPendingAcks(): void {
+  persistPendingAcks(null);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

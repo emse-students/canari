@@ -15,6 +15,7 @@ import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -356,6 +357,8 @@ export async function clearAuth(): Promise<void> {
   alog('clear');
   _accessToken = null;
   clearWsSessionCookie();
+  // Drop persisted message ACKs so a next user on this tab can't ACK the previous user's ids.
+  clearPersistedPendingAcks();
   // Tell the backend to clear the HttpOnly cookie
   await fetch(`${coreUrl()}/api/auth/logout`, {
     method: 'POST',
