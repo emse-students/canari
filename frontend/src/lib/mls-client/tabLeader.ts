@@ -13,6 +13,7 @@ const TAB_ID = crypto.randomUUID();
 let isTabLeader = false;
 let tabChannel: BroadcastChannel | null = null;
 let leaderPromotedHandler: (() => void) | null = null;
+let leaderDemotedHandler: (() => void) | null = null;
 /** Stored resolve from holdLeaderLockUntilUnload - permet de libérer explicitement le lock. */
 let releaseLeaderLock: (() => void) | null = null;
 
@@ -31,6 +32,15 @@ export function setTabLeaderPromotedHandler(handler: (() => void) | null): void 
 
 function notifyTabLeaderPromoted(): void {
   leaderPromotedHandler?.();
+}
+
+/**
+ * Registers a callback invoked when this tab loses leadership (another tab took over).
+ * The handler should tear down this tab's WebSocket so the MLS ratchet only ever
+ * advances in one tab.
+ */
+export function setTabLeaderDemotedHandler(handler: (() => void) | null): void {
+  leaderDemotedHandler = handler;
 }
 
 function holdLeaderLockUntilUnload(): Promise<void> {
@@ -74,6 +84,9 @@ export function releaseLeadership(): void {
   // Libère le Web Lock si actif (le tab suivant dans la queue l'acquiert automatiquement)
   releaseLeaderLock?.();
   releaseLeaderLock = null;
+  // Avertit la session pour qu'elle ferme son WebSocket (sinon le ratchet MLS
+  // tournerait dans deux onglets en même temps).
+  leaderDemotedHandler?.();
 }
 
 /**
@@ -346,6 +359,7 @@ export function resetTabLeaderStateForTests(): void {
   }
   tabChannel = null;
   leaderPromotedHandler = null;
+  leaderDemotedHandler = null;
   isTabLeader = false;
   try {
     localStorage.removeItem(LEADER_KEY);

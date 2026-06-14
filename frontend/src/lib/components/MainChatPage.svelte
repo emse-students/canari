@@ -52,6 +52,20 @@
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
   const activeConversation = $derived(convs.currentConvo);
 
+  /**
+   * Debounced WS-disconnect banner: only shown after the socket has been down for a
+   * few seconds, to avoid flicker on brief reconnects / startup.
+   */
+  let showWsBanner = $state(false);
+  $effect(() => {
+    if (session.isWsConnected) {
+      showWsBanner = false;
+      return;
+    }
+    const t = setTimeout(() => (showWsBanner = true), 3000);
+    return () => clearTimeout(t);
+  });
+
   // Notification tap → open conversation (also handled globally in ChatBackgroundService).
   $effect(() => {
     const id = notifNav.pending;
@@ -613,7 +627,7 @@
 
 <div class="app-layout" in:fade>
     {#if session.isLoggedIn}
-    {#if !session.isWsConnected}
+    {#if showWsBanner}
       <div class="flex items-center justify-center gap-1.5 py-1.5 px-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20">
         <WifiOff size={11} strokeWidth={2.5} class="shrink-0" />
         En attente de connexion…

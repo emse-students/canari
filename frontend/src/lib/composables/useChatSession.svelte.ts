@@ -10,7 +10,11 @@ import { MlsService } from '$lib/mlsService';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import { SvelteMap } from 'svelte/reactivity';
-import { setTabLeaderPromotedHandler, getIsTabLeader } from '$lib/utils/chat/connection';
+import {
+  setTabLeaderPromotedHandler,
+  setTabLeaderDemotedHandler,
+  getIsTabLeader,
+} from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
@@ -255,6 +259,17 @@ export function useChatSession() {
     isTabLeaderState = true;
     cb.log('[TAB] Promotion leader - connexion WebSocket...');
     void attemptReconnectImpl(ctx, cb);
+  });
+
+  // Cet onglet vient de céder le leadership à un autre onglet : on recharge pour
+  // fermer proprement le WebSocket et repartir en mode follower (le ratchet MLS
+  // ne doit jamais avancer dans deux onglets simultanément).
+  setTabLeaderDemotedHandler(() => {
+    isTabLeaderState = false;
+    tabLeaderSessionCb?.log('[TAB] Leadership cédé - rechargement en mode follower.');
+    if (typeof window !== 'undefined') {
+      setTimeout(() => window.location.reload(), 50);
+    }
   });
 
   // ── Exposed API ───────────────────────────────────────────────────────────

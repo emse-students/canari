@@ -7,6 +7,7 @@ export {
   initTabLeadershipAsync,
   getIsTabLeader,
   setTabLeaderPromotedHandler,
+  setTabLeaderDemotedHandler,
   requestLeadershipTakeover,
   releaseLeadership,
   type MessageHandlerDeps,

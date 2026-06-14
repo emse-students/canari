@@ -152,26 +152,24 @@ export async function processPendingInvitations(params: {
             log(`[PENDING] KeyPackage récupéré via fallback pour ${inv.deviceId} (> 30 jours)`);
           }
 
-          // Idempotency check: if device is already in the MLS tree, check server status.
-          // If active → already welcomed, skip. Otherwise leaf is stale → kick then retry
-          // immediately in this same pass (S2 : pas de continue, B2 : saveState après kick).
+          // Idempotence : si le leaf du device est déjà dans l'arbre MLS, l'invitation est
+          // remplie - on SKIP, quel que soit le statut serveur. On ne kicke JAMAIS ici.
+          //
+          // Un device hors-ligne rejoindra via son Welcome déjà en file quand il reviendra ;
+          // un device qui a réellement perdu son état émettra lui-même un welcome_request
+          // (chemin signal-driven, avec limiteur anti-livelock dans handleWelcomeRequest).
+          // Kicker proactivement un leaf valide est purement nuisible : ça inflate l'epoch à
+          // chaque sync, invalide le Welcome en file (le device reçoit alors un Welcome périmé
+          // → re-welcome_request → churn) et renvoie le bundle historique pour rien. C'est la
+          // cause des cycles kick+re-add répétés à chaque reconnexion sur les devices pairs
+          // hors-ligne (statut figé à 'pending' car ils ne confirment jamais 'active').
           try {
             const members = await mlsService.getGroupMembers(groupId);
             if (members.some((m) => m.deviceId === inv.deviceId)) {
-              const memberships = await mlsService
-                .getDeviceMemberships(inv.userId, inv.deviceId)
-                .catch(() => []);
-              const memberStatus = memberships.find((x) => x.groupId === groupId)?.status;
-              if (memberStatus === 'active') {
-                log(`[PENDING] ${inv.deviceId} déjà membre (actif) - skip`);
-                continue;
-              }
-              // Leaf stale : retirer du WASM, persister l'état (crash-safety) puis laisser
-              // le flux continuer vers addMember dans cette même passe sans attendre le prochain cycle.
-              await kickStaleLeaf(groupId, inv.userId, inv.deviceId, mlsService, log);
-              const kickState = await mlsService.saveState(pin);
-              await saveMlsState(userId, kickState);
-              // Le kick ne change pas le KP du device - targetDevice.keyPackage reste valide.
+              log(
+                `[PENDING] ${inv.deviceId} déjà dans l'arbre de ${groupId} - skip (rejoint via Welcome en file)`
+              );
+              continue;
             }
           } catch {
             /* proceed with add attempt */

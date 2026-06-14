@@ -41,6 +41,7 @@ export {
   initTabLeadershipAsync,
   getIsTabLeader,
   setTabLeaderPromotedHandler,
+  setTabLeaderDemotedHandler,
   releaseLeadership,
   requestLeadershipTakeover,
 } from './tabLeader';
