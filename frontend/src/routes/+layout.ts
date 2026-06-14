@@ -36,9 +36,10 @@ export const load = async (event: LoadEvent) => {
       // refresh failed - session truly expired
     }
     if (!userId) {
-      return goto(`/login?returnTo=${encodeURIComponent(event.url.pathname)}`, {
-        replaceState: true,
-      }).catch(() => {});
+      return goto(
+        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + event.url.hash)}`,
+        { replaceState: true }
+      ).catch(() => {});
     }
   }
 
@@ -52,9 +53,10 @@ export const load = async (event: LoadEvent) => {
   } catch (error) {
     const message = String(error);
     if (message.includes('(404)')) {
-      return goto(`/login?returnTo=${encodeURIComponent(event.url.pathname)}`, {
-        replaceState: true,
-      }).catch(() => {});
+      return goto(
+        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + event.url.hash)}`,
+        { replaceState: true }
+      ).catch(() => {});
     }
   }
 };

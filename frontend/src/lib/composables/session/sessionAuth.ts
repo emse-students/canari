@@ -691,7 +691,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (cb.onLoginFailed) {
       cb.onLoginFailed(msg);
     } else {
-      const cur = window.location.pathname + window.location.search;
+      const cur = window.location.pathname + window.location.search + window.location.hash;
       void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
     }
   } finally {
