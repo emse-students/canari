@@ -6,7 +6,9 @@
   import ChatHeader from './ChatHeader.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
+  import PollComposerModal from '../channels/PollComposerModal.svelte';
   import ConversationMediaPanel from './ConversationMediaPanel.svelte';
+  import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
   import EmptyState from '../shared/EmptyState.svelte';
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
@@ -36,6 +38,8 @@
     onTyping?: (isTyping: boolean) => void;
     /** Optional callback to send a picked GIF by direct URL. */
     onSendGif?: (url: string) => void;
+    /** Optional callback to create a poll (channels only). Enables the "Sondage" button. */
+    onCreatePoll?: (draft: ChannelPollDraft) => void | Promise<void>;
     /** Loads the conversation's shared media/links/files from the local history. */
     onLoadSharedContent?: (conversationId: string) => Promise<SharedContent>;
     /**
@@ -128,6 +132,7 @@
     onSend,
     onTyping,
     onSendGif,
+    onCreatePoll,
     onLoadSharedContent,
     onSearchAll,
     onTogglePin,
@@ -167,6 +172,9 @@
     onLoadOlderMessages,
     onMessagesScrollEl,
   }: Props = $props();
+
+  /** Whether the poll composer modal is open (channels only). */
+  let showPollComposer = $state(false);
 
   const INITIAL_RENDER_GROUPS = 180;
   const RENDER_GROUPS_STEP = 140;
@@ -829,6 +837,7 @@
           {onMessageChange}
           {onTyping}
           {onSendGif}
+          onCreatePoll={isChannel && onCreatePoll ? () => (showPollComposer = true) : undefined}
           {typingLabel}
           onFocusChange={(focused) => (_composerFocused = focused)}
           {onSend}
@@ -841,6 +850,14 @@
           interactionLocked={isCatchingUpMessages}
         />
       </div>
+    {/if}
+
+    {#if isChannel && onCreatePoll}
+      <PollComposerModal
+        open={showPollComposer}
+        onClose={() => (showPollComposer = false)}
+        onCreate={onCreatePoll}
+      />
     {/if}
 
     {#if isCatchingUpMessages}

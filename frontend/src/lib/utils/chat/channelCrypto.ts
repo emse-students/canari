@@ -1,7 +1,21 @@
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
-import { ChannelService, type ChannelBootstrapDto } from '$lib/services/ChannelService';
+import {
+  ChannelService,
+  type ChannelBootstrapDto,
+  type ChannelPollInput,
+} from '$lib/services/ChannelService';
+import { encodeAppMessage, mkPoll } from '$lib/proto/codec';
 
 const channelService = new ChannelService();
+
+/** Author-supplied poll definition (labels stay client-side, encrypted in the message). */
+export interface ChannelPollDraft {
+  question: string;
+  options: { id: string; label: string }[];
+  multipleChoice: boolean;
+  /** ISO date or null for no deadline. */
+  endsAt: string | null;
+}
 
 /** Strip the `channel_` prefix from a channel ID so the raw UUID is passed to the backend. */
 function normalizeChannelId(channelId: string): string {
@@ -65,7 +79,8 @@ export async function hydrateChannelBootstrap(
 export async function sendEncryptedChannelMessage(
   channelId: string,
   payloadBytes: Uint8Array,
-  messageId?: string
+  messageId?: string,
+  poll?: ChannelPollInput
 ): Promise<void> {
   const rawChannelId = normalizeChannelId(channelId);
 
@@ -76,6 +91,7 @@ export async function sendEncryptedChannelMessage(
       nonce: encrypted.nonce,
       keyVersion: encrypted.keyVersion,
       ...(messageId ? { messageId } : {}),
+      ...(poll ? { poll } : {}),
     });
   };
 
@@ -89,4 +105,33 @@ export async function sendEncryptedChannelMessage(
     await hydrateChannelBootstrap(rawChannelId);
     await attempt();
   }
+}
+
+/**
+ * Encrypts a poll definition into a PollMsg and sends it to a channel, attaching
+ * the label-free descriptor (option ids + deadline) the server needs to tally.
+ * The server auto-pins poll messages so they stay reachable in the pin list.
+ */
+export async function sendChannelPoll(
+  channelId: string,
+  draft: ChannelPollDraft,
+  messageId: string = crypto.randomUUID()
+): Promise<void> {
+  const endsAtMs = draft.endsAt ? new Date(draft.endsAt).getTime() : 0;
+  const protoBytes = encodeAppMessage({
+    ...mkPoll({
+      question: draft.question,
+      options: draft.options,
+      multipleChoice: draft.multipleChoice,
+      endsAt: Number.isFinite(endsAtMs) ? endsAtMs : 0,
+    }),
+    messageId,
+    sentAt: Date.now(),
+  });
+
+  await sendEncryptedChannelMessage(channelId, protoBytes, messageId, {
+    optionIds: draft.options.map((o) => o.id),
+    multipleChoice: draft.multipleChoice,
+    endsAt: draft.endsAt,
+  });
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Send, Paperclip, X, FileText, UploadCloud, Loader2 } from '@lucide/svelte';
+  import { Send, Paperclip, X, FileText, UploadCloud, Loader2, ChartColumn } from '@lucide/svelte';
   import { untrack, tick, onMount, onDestroy } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -31,6 +31,8 @@
     onTyping?: (isTyping: boolean) => void;
     /** Optional callback to send a picked GIF (by direct URL). Enables the GIF button. */
     onSendGif?: (url: string) => void;
+    /** Optional callback to open the poll composer. Enables the "Sondage" button (channels only). */
+    onCreatePoll?: () => void;
     /** "X écrit…" label shown just above the input, or empty when nobody is typing. */
     typingLabel?: string;
     /** Message being replied to, shown as a preview above the input. */
@@ -56,6 +58,7 @@
     onFocusChange,
     onTyping,
     onSendGif,
+    onCreatePoll,
     typingLabel,
     replyingTo,
     onCancelReply,
@@ -541,6 +544,22 @@
           {/if}
         </button>
       </div>
+
+      <!-- Bouton Sondage (communautés uniquement : le parent fournit onCreatePoll) -->
+      {#if onCreatePoll && !isComposing}
+        <div class="shrink-0">
+          <button
+            type="button"
+            onclick={() => onCreatePoll()}
+            disabled={interactionLocked}
+            title="Créer un sondage"
+            aria-label="Créer un sondage"
+            class="chat-composer-icon-button"
+          >
+            <ChartColumn size={20} strokeWidth={2} />
+          </button>
+        </div>
+      {/if}
 
       <!-- Bouton GIF (visible si KLIPY configuré) -->
       {#if hasGifPicker && onSendGif && !isComposing}

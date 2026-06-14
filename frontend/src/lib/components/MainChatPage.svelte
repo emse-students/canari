@@ -4,7 +4,11 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
-  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import {
+    isChannelConversationId,
+    sendChannelPoll,
+    type ChannelPollDraft,
+  } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -624,6 +628,13 @@
     void messaging.handleSendChat(msgCtx(), url);
   }
 
+  /** Encrypts and sends a community poll in the currently selected channel. */
+  async function handleCreatePoll(draft: ChannelPollDraft) {
+    const channelId = convs.selectedContact;
+    if (!channelId) return;
+    await sendChannelPoll(channelId, draft);
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -690,6 +701,7 @@
           onSend={handleSendChat}
           onTyping={handleTyping}
           onSendGif={handleSendGif}
+          onCreatePoll={isSelectedChannel ? handleCreatePoll : undefined}
           onLoadSharedContent={loadSharedContent}
           onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
