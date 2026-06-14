@@ -10,6 +10,7 @@
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
+  import { applyLocalVote, setPollMeta } from '$lib/stores/pollStore.svelte';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { isMessagePinned, applyPin, setPinnedSet } from '$lib/stores/pinStore.svelte';
@@ -635,6 +636,19 @@
     await sendChannelPoll(channelId, draft);
   }
 
+  /** Casts (or retracts) the user's vote on a channel poll, optimistically then authoritatively. */
+  async function handleVotePoll(messageId: string, optionIds: string[]) {
+    const channelId = convs.selectedContact;
+    if (!channelId) return;
+    applyLocalVote(messageId, session.userId, optionIds);
+    try {
+      const meta = await channelService.votePoll(channelId, messageId, optionIds);
+      setPollMeta(messageId, meta);
+    } catch (e) {
+      showToast(`Vote impossible : ${e instanceof Error ? e.message : 'erreur'}`, 'warning');
+    }
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -702,6 +716,7 @@
           onTyping={handleTyping}
           onSendGif={handleSendGif}
           onCreatePoll={isSelectedChannel ? handleCreatePoll : undefined}
+          onVotePoll={isSelectedChannel ? handleVotePoll : undefined}
           onLoadSharedContent={loadSharedContent}
           onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}

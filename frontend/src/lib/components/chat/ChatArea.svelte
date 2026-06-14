@@ -88,6 +88,8 @@
     onNavigateToMessage?: (messageId: string) => void;
     /** Callback fired when the user adds an emoji reaction to a message. */
     onReact?: (messageId: string, emoji: string) => void;
+    /** Callback fired when the user votes on a poll message (channels only). */
+    onVotePoll?: (messageId: string, optionIds: string[]) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
     /** Callback to edit a message by ID with new text. */
@@ -133,6 +135,7 @@
     onTyping,
     onSendGif,
     onCreatePoll,
+    onVotePoll,
     onLoadSharedContent,
     onSearchAll,
     onTogglePin,
@@ -770,6 +773,7 @@
             {onForward}
             onNavigateToMessage={navigateToMessage}
             {onReact}
+            {onVotePoll}
             {onDelete}
             {onEdit}
             {onTogglePin}

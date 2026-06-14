@@ -7,6 +7,9 @@
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import MessageMediaRenderer from './MessageMediaRenderer.svelte';
+  import ChannelPoll from '../channels/ChannelPoll.svelte';
+  import { getPollMeta } from '$lib/stores/pollStore.svelte';
+  import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageEditForm from './MessageEditForm.svelte';
   import MessageReactions from './MessageReactions.svelte';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
@@ -86,6 +89,8 @@
     onNavigateToMessage?: (messageId: string) => void;
     /** Called when the user selects an emoji reaction. */
     onReact?: (messageId: string, emoji: string) => void;
+    /** Called when the user votes on a poll message (channels only). */
+    onVotePoll?: (messageId: string, optionIds: string[]) => void;
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
     /** Whether this message is currently pinned in the conversation. */
@@ -131,6 +136,7 @@
     onForward,
     onNavigateToMessage,
     onReact,
+    onVotePoll,
     onDelete,
     onEdit,
     pinned = false,
@@ -184,6 +190,34 @@
   let mediaRef = $derived(envelope.kind === 'media' ? envelope.media : null);
   // Image/video with no caption and no reply quote - render naked (no bubble background)
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
+
+  // Poll message: rendered as a self-contained card (no bubble chrome). The live
+  // tally comes from the poll store (keyed by message id); falls back to an empty
+  // tally derived from the envelope until the server state arrives.
+  let pollEnvelope = $derived(envelope.kind === 'poll' && !isDeleted ? envelope : null);
+  const isPollOnly = $derived(!!pollEnvelope);
+  let pollSpec = $derived(
+    pollEnvelope
+      ? {
+          kind: 'poll' as const,
+          question: pollEnvelope.question,
+          options: pollEnvelope.options,
+          multipleChoice: pollEnvelope.multipleChoice,
+          endsAt: pollEnvelope.endsAt,
+        }
+      : null
+  );
+  let pollMeta = $derived.by<ChannelPollMeta | null>(() => {
+    if (!pollEnvelope) return null;
+    return (
+      getPollMeta(messageId) ?? {
+        optionIds: pollEnvelope.options.map((o) => o.id),
+        multipleChoice: pollEnvelope.multipleChoice,
+        endsAt: pollEnvelope.endsAt,
+        votesByUser: {},
+      }
+    );
+  });
   let firstLink = $derived(!mediaRef && !isDeleted ? extractFirstUrl(textContent) : null);
   let textSegments = $derived(splitTextWithLinks(textContent));
   // Link-only message (no surrounding text, no reply, not a GIF) - also renders naked
@@ -542,16 +576,16 @@
           }
         }}
         style:transform={replyDragPx !== 0 || reactDragPx !== 0 ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)` : undefined}
-        class="{isMediaOnly || isLinkOnly
+        class="{isMediaOnly || isLinkOnly || isPollOnly
           ? 'p-0'
           : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
           ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
-          : ''} {isMediaOnly || isLinkOnly
+          : ''} {isMediaOnly || isLinkOnly || isPollOnly
           ? ''
           : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
           ? 'message-swipe-reply-active'
           : 'transition-shadow duration-200'}
-        {isMediaOnly || isLinkOnly
+        {isMediaOnly || isLinkOnly || isPollOnly
           ? ''
           : isOwn
             ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-ink shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
@@ -571,27 +605,36 @@
           />
         {/if}
 
-        <MessageMediaRenderer
-          {mediaRef}
-          {blobUrl}
-          {loadError}
-          {mediaPurgedByRetention}
-          {textContent}
-          {isOwn}
-          {textSegments}
-        />
-
-        {#if !mediaRef}
-          <MessageEditForm
-            editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
-            {editText}
-            onEditChange={(text) => (editText = text)}
-            onConfirm={confirmEdit}
-            onCancel={cancelInlineEdit}
+        {#if pollEnvelope && pollSpec && pollMeta}
+          <ChannelPoll
+            spec={pollSpec}
+            meta={pollMeta}
+            {currentUserId}
+            onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
+          />
+        {:else}
+          <MessageMediaRenderer
+            {mediaRef}
+            {blobUrl}
+            {loadError}
+            {mediaPurgedByRetention}
+            {textContent}
+            {isOwn}
+            {textSegments}
           />
 
-          {#if !isEditingInline}
-            <MessageTextBody {textSegments} {searchTerm} {isDeleted} {firstLink} />
+          {#if !mediaRef}
+            <MessageEditForm
+              editing={!!(isEditingInline && !isDeleted && isOwn && !mediaRef && onEdit)}
+              {editText}
+              onEditChange={(text) => (editText = text)}
+              onConfirm={confirmEdit}
+              onCancel={cancelInlineEdit}
+            />
+
+            {#if !isEditingInline}
+              <MessageTextBody {textSegments} {searchTerm} {isDeleted} {firstLink} />
+            {/if}
           {/if}
         {/if}
 
