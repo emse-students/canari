@@ -99,4 +99,12 @@ describe('MlsPerGroupScheduler', () => {
     await expect(idle).resolves.toBeUndefined();
     expect(scheduler.isIdle()).toBe(true);
   });
+
+  it('allows reentrant MLS lock acquire (nested history under queue drain)', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    const releaseOuter = await scheduler.acquireMlsLock();
+    const releaseInner = await scheduler.acquireMlsLock();
+    releaseInner();
+    releaseOuter();
+  });
 });

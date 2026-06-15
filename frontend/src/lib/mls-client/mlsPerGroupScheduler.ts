@@ -46,6 +46,9 @@ export class MlsPerGroupScheduler {
   private readonly pendingWelcomeGroups = new Map<string, MlsQueuedMessage[]>();
   private readonly queueIdleWaiters: Array<() => void> = [];
   private mlsLock: Promise<void> = Promise.resolve();
+  /** Reentrancy depth for {@link acquireMlsLock} (history catch-up under queue drain). */
+  private mlsLockDepth = 0;
+  private mlsLockRelease: (() => void) | null = null;
 
   constructor(private readonly mode: MlsPerGroupQueueMode) {}
 
@@ -95,17 +98,39 @@ export class MlsPerGroupScheduler {
    * The returned release is idempotent; the caller MUST call it (typically in `finally`).
    */
   async acquireMlsLock(): Promise<() => void> {
+    if (this.mlsLockDepth > 0) {
+      this.mlsLockDepth += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        this.mlsLockDepth -= 1;
+        if (this.mlsLockDepth === 0 && this.mlsLockRelease) {
+          const release = this.mlsLockRelease;
+          this.mlsLockRelease = null;
+          release();
+        }
+      };
+    }
+
     const prev = this.mlsLock;
     let release!: () => void;
     this.mlsLock = new Promise<void>((r) => {
       release = r;
     });
     await prev;
+    this.mlsLockDepth = 1;
+    this.mlsLockRelease = release;
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      release();
+      this.mlsLockDepth -= 1;
+      if (this.mlsLockDepth === 0 && this.mlsLockRelease) {
+        const releaseOuter = this.mlsLockRelease;
+        this.mlsLockRelease = null;
+        releaseOuter();
+      }
     };
   }
 

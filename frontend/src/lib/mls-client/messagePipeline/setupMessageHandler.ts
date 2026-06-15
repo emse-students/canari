@@ -184,7 +184,6 @@ async function handleWelcome({
     mlsService,
     userId,
     saveConversation,
-    loadHistoryForConversation,
     onGroupReady,
     log,
     batchAddMessages,
@@ -332,10 +331,8 @@ async function handleWelcome({
       statePersister.persistNow();
     }
 
-    // Historique en arrière-plan
-    await loadHistoryForConversation(joinedGroupId, joinedGroupId).catch(() => {});
-
-    // Notifier que ce groupe est prêt (déclenche processDeviceInvitations)
+    // Historique : délégué à onWelcomeProcessed (après reinject) pour ne pas bloquer
+    // la queue sous le verrou MLS (createDecryptSession ré-acquiert le même mutex).
     onGroupReady?.(joinedGroupId);
     log(`[WELCOME] Groupe ${joinedGroupId.slice(0, 8)}… prêt`);
   } catch (e) {
