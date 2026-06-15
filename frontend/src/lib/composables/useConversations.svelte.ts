@@ -81,6 +81,10 @@ export function useConversations() {
   let isChannelSettingsModalOpen = $state(false);
   let groupMembers = $state<string[]>([]);
   let isLoadingHistory = $state(false);
+  // True once the initial IndexedDB restore has populated the map, so consumers (e.g. the
+  // /posts mini-panel) can treat the live map as authoritative and reflect deletions
+  // instead of resurrecting stale rows from their own snapshot.
+  let conversationsRestored = $state(false);
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
@@ -385,18 +389,22 @@ export function useConversations() {
   /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
   async function loadAndRestoreConversations(ctx: ConversationContext) {
     if (!ctx.storage) return;
-    await loadExistingConversations({
-      userId: ctx.userId,
-      pin: ctx.pin,
-      storage: ctx.storage,
-      mlsService: ctx.ensureMls(),
-      conversations,
-      messageReactions: ctx.messageReactions,
-      archivedConversationIds: [],
-      historyBaseUrl: ctx.historyBaseUrl,
-      log: ctx.log,
-      onArchivedIdsChange: () => {},
-    });
+    try {
+      await loadExistingConversations({
+        userId: ctx.userId,
+        pin: ctx.pin,
+        storage: ctx.storage,
+        mlsService: ctx.ensureMls(),
+        conversations,
+        messageReactions: ctx.messageReactions,
+        archivedConversationIds: [],
+        historyBaseUrl: ctx.historyBaseUrl,
+        log: ctx.log,
+        onArchivedIdsChange: () => {},
+      });
+    } finally {
+      conversationsRestored = true;
+    }
   }
 
   /**
@@ -854,6 +862,10 @@ export function useConversations() {
   return {
     /** Reactive SvelteMap of all conversations keyed by conversation name. */
     conversations,
+    /** True once the initial IndexedDB restore finished; the map is then authoritative. */
+    get conversationsRestored() {
+      return conversationsRestored;
+    },
 
     // UI state
     /** Currently selected conversation name (null when no conversation is open). */

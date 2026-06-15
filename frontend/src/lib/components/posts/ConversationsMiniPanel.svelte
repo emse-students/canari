@@ -90,14 +90,25 @@
     };
   }
 
-  /** Merge IndexedDB baseline with live globalConvs - avoids a flash when login reloads conversations. */
+  /**
+   * Merge the IndexedDB baseline with the live globalConvs map.
+   *
+   * The baseline only seeds the list before the live map is authoritative (avoids a flash on
+   * a cold /posts load). Once conversations have been restored, the live map is the sole
+   * source of membership, so deletions disappear immediately instead of being resurrected
+   * from the stale onMount snapshot.
+   */
   const displayItems = $derived.by(() => {
     const uid = globalSession.userId ?? getSavedUserId() ?? '';
     if (!uid) return [];
 
+    const liveAuthoritative = globalSession.isLoggedIn && globalConvs.conversationsRestored;
     const byId = new SvelteMap<string, ConvItem>();
-    for (const item of idbItems) {
-      byId.set(item.meta.id, item);
+
+    if (!liveAuthoritative) {
+      for (const item of idbItems) {
+        byId.set(item.meta.id, item);
+      }
     }
 
     if (globalSession.isLoggedIn) {
