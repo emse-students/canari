@@ -89,15 +89,31 @@ export class MlsPerGroupScheduler {
   }
 
   /**
-   * Runs `fn` under the global MLS client mutex so WASM/native state is never mutated concurrently.
+   * Acquires the global MLS client mutex and resolves with its release function.
+   * Use when a single logical operation spans several awaits (e.g. a paged catch-up
+   * decrypt session) and must keep exclusive access to the client the whole time.
+   * The returned release is idempotent; the caller MUST call it (typically in `finally`).
    */
-  async runUnderMlsLock<T>(fn: () => Promise<T>): Promise<T> {
+  async acquireMlsLock(): Promise<() => void> {
     const prev = this.mlsLock;
     let release!: () => void;
     this.mlsLock = new Promise<void>((r) => {
       release = r;
     });
     await prev;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+    };
+  }
+
+  /**
+   * Runs `fn` under the global MLS client mutex so WASM/native state is never mutated concurrently.
+   */
+  async runUnderMlsLock<T>(fn: () => Promise<T>): Promise<T> {
+    const release = await this.acquireMlsLock();
     try {
       return await fn();
     } finally {

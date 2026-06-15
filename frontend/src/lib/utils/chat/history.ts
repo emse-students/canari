@@ -1,8 +1,4 @@
 import { fromBase64 } from '$lib/utils/hex';
-import {
-  MLS_HISTORY_PAGE_SIZE,
-  scheduleOutboundMlsPersist,
-} from '$lib/mls-client/mlsStatePersister';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type {
   AddMessageToChatOptions,
@@ -11,6 +7,7 @@ import type {
   MessageReaction,
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import type { MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
@@ -91,7 +88,23 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
   });
 }
 
-/** Replays stored ciphertext messages for a conversation by decrypting them via the MLS service and writing the results to local DB and the reactive conversation state. */
+/**
+ * Makes a replay's durable progress markers (Redis stream cursor + seen ciphertext hashes)
+ * persistent. The caller MUST run this only AFTER the encrypted MLS checkpoint has flushed,
+ * so durable progress can never move ahead of the durable ratchet state (otherwise a crash
+ * would skip messages whose ratchet advance was lost, forcing a costly re-add).
+ */
+export type MlsReplayCommit = () => void;
+
+/**
+ * Replays stored ciphertext messages for a conversation: decrypts them via a paged MLS
+ * decrypt session, writes the results to local DB and the reactive conversation state.
+ *
+ * Decryption advances the MLS ratchet but this function does NOT persist progress markers
+ * itself. It returns a {@link MlsReplayCommit} thunk (or `undefined` if there is nothing to
+ * commit / on failure); the caller runs the thunk after the bulk-ingest window has flushed
+ * the encrypted checkpoint. Wrap calls in {@link withMlsBulkIngest} to drive that flush.
+ */
 export async function replayConversationHistory(params: {
   mlsService: IMlsService;
   id: string;
@@ -104,7 +117,7 @@ export async function replayConversationHistory(params: {
   setConversation: (contactName: string, next: Conversation) => void;
   messageReactions: Map<string, MessageReaction[]>;
   log: (msg: string) => void;
-}) {
+}): Promise<MlsReplayCommit | undefined> {
   const {
     mlsService,
     id,
@@ -118,6 +131,7 @@ export async function replayConversationHistory(params: {
     log,
   } = params;
 
+  let session: MlsDecryptSession | null = null;
   try {
     // Incremental fetch: only retrieve messages after the last processed stream ID.
     // This avoids re-delivering messages whose ratchet keys have already been consumed
@@ -184,10 +198,13 @@ export async function replayConversationHistory(params: {
     > = [];
     let historyIngestSeq = 0;
 
+    // Paged decrypt session: the ratchet advances worker-side across pages and is committed
+    // to the live client once by session.finish() (run in the outer `finally`, always).
+    session = await mlsService.createDecryptSession(id);
+
     while (true) {
       const history = await mlsService.fetchHistory(id, fetchCursor);
       if (history.length === 0) {
-        if (!fetchedAnyPage) return;
         break;
       }
       fetchedAnyPage = true;
@@ -215,10 +232,7 @@ export async function replayConversationHistory(params: {
 
       const batchResults =
         pageDecryptWork.length > 0
-          ? await mlsService.processIncomingMessageBatch(
-              id,
-              pageDecryptWork.map((w) => w.bytes)
-            )
+          ? await session.decryptPage(pageDecryptWork.map((w) => w.bytes))
           : [];
 
       for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
@@ -476,18 +490,11 @@ export async function replayConversationHistory(params: {
         }
       }
 
-      if (latestStreamId) {
-        saveLastStreamId(userId, id, latestStreamId);
-      }
-
-      if (history.length < MLS_HISTORY_PAGE_SIZE) break;
+      // Cursor + seen hashes are NOT persisted per page here: they are deferred to the
+      // returned commit thunk so they only become durable after the encrypted checkpoint.
       const pageLastId = history[history.length - 1]?.id;
       if (!pageLastId || pageLastId === fetchCursor) break;
       fetchCursor = pageLastId;
-    }
-
-    if (seenUpdated) {
-      saveSeenCipherHashes(userId, id, seenCipherHashes);
     }
 
     // Flush all decoded messages in a single batch DB write.
@@ -603,14 +610,26 @@ export async function replayConversationHistory(params: {
     }
 
     if (mlsUpdated) {
-      scheduleOutboundMlsPersist();
       log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
     }
+
+    if (!fetchedAnyPage) return undefined;
+
+    // Durable progress is committed by the caller AFTER the encrypted checkpoint flush,
+    // so the stream cursor / seen hashes never run ahead of the persisted ratchet state.
+    return () => {
+      if (latestStreamId) saveLastStreamId(userId, id, latestStreamId);
+      if (seenUpdated) saveSeenCipherHashes(userId, id, seenCipherHashes);
+    };
   } catch (err) {
     // Non-blocking: log the error and continue so other conversations still load
     log(
       `[WARN] Echec replay historique pour ${contactName}: ${err instanceof Error ? err.message : String(err)}`
     );
+    return undefined;
+  } finally {
+    // Commit the accumulated ratchet to the live client and release the worker / mutex.
+    await session?.finish();
   }
 }
 

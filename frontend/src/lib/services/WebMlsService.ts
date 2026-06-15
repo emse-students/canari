@@ -1,11 +1,11 @@
-import { runMlsCryptoWorkerBatch } from '$lib/mls-client/mlsCryptoWorkerBridge';
+import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
+import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import {
   loadAndInitWasm,
   detectRuntimeDeviceOs,
   commitBaseEpochForValidation,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
-  type MlsBatchProcessResult,
 } from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -532,13 +532,6 @@ export class WebMlsService extends BaseMlsService {
     return stateBytes;
   }
 
-  /** WASM client wrapper - plain CBOR snapshot in memory only (worker bootstrap, not persisted). */
-  async saveStatePlain(): Promise<Uint8Array> {
-    const stateBytes = this.client.save_state(undefined) as Uint8Array;
-    this.lastKnownState = stateBytes.slice();
-    return stateBytes;
-  }
-
   /**
    * Re-encrypts the in-memory MLS state with the new PIN and writes it to storage.
    * The in-memory client state is unchanged; only the persisted blob is re-encrypted.
@@ -704,40 +697,76 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /**
-   * Decrypts a batch off the main thread when the crypto worker is enabled.
-   * Falls back to sequential main-thread decrypt on failure or single-message batches.
+   * Off-thread decrypt session for history catch-up.
+   *
+   * Holds the MLS client mutex from snapshot to commit so the live client is never mutated
+   * concurrently, runs a persistent worker that accumulates the ratchet across pages, and
+   * reloads the live client a single time on {@link MlsDecryptSession.finish}. If the worker
+   * cannot start, falls back to the sequential live-client session under the same held lock.
    */
-  override async processIncomingMessageBatch(
-    groupId: string,
-    messageBytesList: Uint8Array[]
-  ): Promise<MlsBatchProcessResult[]> {
-    if (
-      messageBytesList.length === 0 ||
-      !this.useCryptoWorker ||
-      typeof Worker === 'undefined' ||
-      messageBytesList.length < 2
-    ) {
-      return super.processIncomingMessageBatch(groupId, messageBytesList);
+  override async createDecryptSession(groupId: string): Promise<MlsDecryptSession> {
+    if (!this.useCryptoWorker || typeof Worker === 'undefined') {
+      return super.createDecryptSession(groupId);
     }
 
-    return this.messageScheduler.runUnderMlsLock(async () => {
-      try {
-        const snapshot = (this.client.save_state(undefined) as Uint8Array).slice();
-        const workerResult = await runMlsCryptoWorkerBatch({
-          userId: this.userId,
-          deviceId: this.deviceId,
-          groupId,
-          state: snapshot,
-          messages: messageBytesList,
-        });
-        await this.reloadClientFromPlainState(workerResult.state);
-        this.lastKnownState = workerResult.state.slice();
-        return workerResult.results;
-      } catch (e) {
-        console.warn('[MLS] crypto worker batch failed, fallback to main thread:', e);
-        return super.processIncomingMessageBatch(groupId, messageBytesList);
-      }
-    });
+    const release = await this.messageScheduler.acquireMlsLock();
+
+    let workerSession: Awaited<ReturnType<typeof createMlsCryptoWorkerSession>> | null;
+    try {
+      const snapshot = (this.client.save_state(undefined) as Uint8Array).slice();
+      workerSession = await createMlsCryptoWorkerSession({
+        userId: this.userId,
+        deviceId: this.deviceId,
+        groupId,
+        state: snapshot,
+      });
+    } catch (e) {
+      // Worker bootstrap failed - degrade to the sequential live-client path for this session.
+      console.warn('[MLS] crypto worker session bootstrap failed, sequential fallback:', e);
+      workerSession = null;
+    }
+
+    if (!workerSession) {
+      const seq = await super.createDecryptSession(groupId);
+      return {
+        decryptPage: (msgs) => seq.decryptPage(msgs),
+        finish: async () => {
+          try {
+            await seq.finish();
+          } finally {
+            release();
+          }
+        },
+      };
+    }
+
+    const session = workerSession;
+    let usedWorker = false;
+    return {
+      async decryptPage(messageBytesList: Uint8Array[]) {
+        if (messageBytesList.length === 0) return [];
+        usedWorker = true;
+        // Page failure rejects: the caller stops feeding pages and calls finish(),
+        // which restores the live client from the untouched snapshot (state discarded).
+        return session.decryptPage(messageBytesList);
+      },
+      finish: async () => {
+        try {
+          if (usedWorker) {
+            const finalState = await session.finalize();
+            await this.reloadClientFromPlainState(finalState);
+            this.lastKnownState = finalState.slice();
+          }
+        } catch (e) {
+          // A page or finalize failed: leave the live client at the untouched snapshot
+          // (worker mode never mutates it). The conversation is retried on the next catch-up.
+          console.warn('[MLS] decrypt session finalize failed, live client left at snapshot:', e);
+        } finally {
+          session.dispose();
+          release();
+        }
+      },
+    };
   }
 
   /** WASM client wrapper - calls `this.client.export_secret` to derive keying material for channel encryption. */

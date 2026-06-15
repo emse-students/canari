@@ -1,97 +1,119 @@
 import { loadAndInitWasm } from '$lib/mls-client/mlsWasmLoader';
 
 /**
- * Some generated WASM glue paths still reference `window` unconditionally.
- * In worker context we alias it to globalThis to keep those paths functional.
+ * Some generated WASM glue paths still reference `window` unconditionally
+ * (see `frontend/src/lib/wasm/mls_wasm.js`). In worker scope there is no `window`,
+ * so we alias it to `globalThis` to keep those paths functional.
  */
 const workerGlobal = globalThis as any;
 if (typeof workerGlobal.window === 'undefined') {
   workerGlobal.window = workerGlobal;
 }
 
-/** Request to decrypt a batch of MLS ciphertexts off the main thread. */
-interface ProcessMessagesRequest {
-  type: 'processMessages';
-  payload: {
-    userId: string;
-    deviceId: string;
-    state: ArrayBuffer;
-    groupId: string;
-    messages: ArrayBuffer[];
-  };
+/** Bootstraps the worker-side MLS client from a plain CBOR snapshot. */
+interface InitRequest {
+  type: 'init';
+  userId: string;
+  deviceId: string;
+  groupId: string;
+  state: ArrayBuffer;
 }
 
-interface ProcessMessagesOk {
-  type: 'processMessages:ok';
-  payload: {
-    results: Array<{ ok: true; data: ArrayBuffer | null } | { ok: false; error: string }>;
-    state: ArrayBuffer;
-  };
+/** Decrypts one page of ciphertexts against the warm worker client (ratchet advances). */
+interface DecryptPageRequest {
+  type: 'decryptPage';
+  messages: ArrayBuffer[];
 }
 
-interface ProcessMessagesErr {
-  type: 'processMessages:error';
-  error: string;
+/** Reads back the accumulated plain CBOR state after all pages. */
+interface FinalizeRequest {
+  type: 'finalize';
 }
+
+type WorkerRequest = InitRequest | DecryptPageRequest | FinalizeRequest;
+
+type PageResult = { ok: true; data: ArrayBuffer | null } | { ok: false; error: string };
+
+type WorkerResponse =
+  | { type: 'init:ok' }
+  | { type: 'decryptPage:ok'; results: PageResult[] }
+  | { type: 'finalize:ok'; state: ArrayBuffer }
+  | { type: 'error'; error: string };
+
+type CryptoWorkerScope = typeof self & {
+  onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null;
+  postMessage: (message: WorkerResponse, transfer?: Transferable[]) => void;
+};
+
+const workerScope = self as CryptoWorkerScope;
+
+/** The warm MLS client for the current session, kept across `decryptPage` requests. */
+let client: any = null;
+/** The group this session decrypts for (single group per catch-up session). */
+let sessionGroupId = '';
 
 /** Returns a detached ArrayBuffer copy suitable for transferable postMessage payloads. */
 function asTransferBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer;
 }
 
-type CryptoWorkerScope = typeof self & {
-  onmessage: ((event: MessageEvent<ProcessMessagesRequest>) => void) | null;
-  postMessage: (message: ProcessMessagesOk | ProcessMessagesErr, transfer?: Transferable[]) => void;
-};
+async function handleInit(msg: InitRequest): Promise<void> {
+  const initialState = new Uint8Array(msg.state);
+  client = await loadAndInitWasm(msg.userId, msg.deviceId, initialState, undefined);
+  sessionGroupId = msg.groupId;
+  workerScope.postMessage({ type: 'init:ok' });
+}
 
-const workerScope = self as CryptoWorkerScope;
+function handleDecryptPage(msg: DecryptPageRequest): void {
+  if (!client) throw new Error('decryptPage before init');
+  // Single JS<->WASM crossing: the per-message loop runs in Rust (process_incoming_messages_batch).
+  const inputs = msg.messages.map((buf) => new Uint8Array(buf));
+  const raw = client.process_incoming_messages_batch(sessionGroupId, inputs) as Array<{
+    ok: boolean;
+    data?: Uint8Array | null;
+    error?: string;
+  }>;
 
-/** Worker-side handler for sequential MLS decrypt during catch-up. */
-workerScope.onmessage = async (event: MessageEvent<ProcessMessagesRequest>) => {
-  if (event.origin && event.origin !== self.location.origin) return;
+  const results: PageResult[] = [];
+  const transfers: Transferable[] = [];
+  for (const r of raw) {
+    if (!r.ok) {
+      results.push({ ok: false, error: String(r.error ?? 'decrypt error') });
+    } else if (r.data && r.data.length > 0) {
+      const buf = asTransferBuffer(r.data);
+      results.push({ ok: true, data: buf });
+      transfers.push(buf);
+    } else {
+      results.push({ ok: true, data: null });
+    }
+  }
+  workerScope.postMessage({ type: 'decryptPage:ok', results }, transfers);
+}
+
+function handleFinalize(): void {
+  if (!client) throw new Error('finalize before init');
+  const state = asTransferBuffer(client.save_state(undefined) as Uint8Array);
+  workerScope.postMessage({ type: 'finalize:ok', state }, [state]);
+}
+
+/** Stateful worker handler driving one MLS catch-up session (init -> decryptPage* -> finalize). */
+workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const msg = event.data;
-  if (!msg || msg.type !== 'processMessages') return;
-
-  const { userId, deviceId, state, groupId, messages } = msg.payload;
+  if (!msg) return;
   try {
-    const initialState = new Uint8Array(state);
-    const client = await loadAndInitWasm(userId, deviceId, initialState, undefined);
-
-    const results: ProcessMessagesOk['payload']['results'] = [];
-    for (const cipherBuf of messages) {
-      const cipherBytes = new Uint8Array(cipherBuf);
-      try {
-        const decrypted = client.process_incoming_message_bytes(groupId, cipherBytes) as
-          | Uint8Array
-          | null
-          | undefined;
-        if (decrypted && decrypted.length > 0) {
-          results.push({ ok: true, data: asTransferBuffer(decrypted) });
-        } else {
-          results.push({ ok: true, data: null });
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        results.push({ ok: false, error: message });
-      }
+    switch (msg.type) {
+      case 'init':
+        await handleInit(msg);
+        break;
+      case 'decryptPage':
+        handleDecryptPage(msg);
+        break;
+      case 'finalize':
+        handleFinalize();
+        break;
     }
-
-    const nextState = client.save_state(undefined) as Uint8Array;
-    const response: ProcessMessagesOk = {
-      type: 'processMessages:ok',
-      payload: {
-        results,
-        state: asTransferBuffer(nextState),
-      },
-    };
-
-    const transfers: Transferable[] = [response.payload.state];
-    for (const r of results) {
-      if (r.ok && r.data) transfers.push(r.data);
-    }
-    workerScope.postMessage(response, transfers);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    workerScope.postMessage({ type: 'processMessages:error', error: message });
+    workerScope.postMessage({ type: 'error', error: message });
   }
 };

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createMlsStatePersister } from './mlsStatePersister';
 import {
-  createMlsStatePersister,
   registerMlsStatePersister,
   unregisterMlsStatePersister,
   scheduleOutboundMlsPersist,
-} from './mlsStatePersister';
+} from './mlsStatePersisterRegistry';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsStateEncrypted: vi.fn().mockResolvedValue(undefined),
@@ -27,13 +27,12 @@ describe('createMlsStatePersister', () => {
 
   function makePersister() {
     const saveState = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
-    const saveStatePlain = vi.fn().mockResolvedValue(new Uint8Array([4, 5, 6]));
     const persister = createMlsStatePersister({
-      mlsService: { saveState, saveStatePlain } as any,
+      mlsService: { saveState } as any,
       pin: '1234',
       userId: 'user-1',
     });
-    return { saveState, saveStatePlain, persister };
+    return { saveState, persister };
   }
 
   it('scheduleDeferred marks dirty without writing to disk', async () => {

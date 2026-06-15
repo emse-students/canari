@@ -477,11 +477,6 @@ export class TauriMlsService extends BaseMlsService {
     return bytes;
   }
 
-  /** Plain CBOR snapshot for in-memory use; native path matches encrypted persist. */
-  async saveStatePlain(): Promise<Uint8Array> {
-    return this.saveState(this._pin);
-  }
-
   /**
    * Re-encrypts the MLS state with the new PIN via the native Tauri command and updates
    * the cached PIN used for background saves. Must be called after a successful PIN change.

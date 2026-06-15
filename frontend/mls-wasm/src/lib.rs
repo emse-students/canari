@@ -368,6 +368,55 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Decrypts a batch of MLS ciphertexts for one group in ratchet order, in a single
+    /// JS<->WASM crossing. Per-message failures are captured instead of aborting the whole
+    /// batch, so the caller can map each outcome independently (history catch-up path).
+    ///
+    /// `messages` is a JS Array of `Uint8Array`. Returns a JS Array of plain objects, one
+    /// per input, preserving order:
+    /// - `{ ok: true, data: Uint8Array }` decrypted application plaintext,
+    /// - `{ ok: true, data: null }` control message with no plaintext,
+    /// - `{ ok: false, error: string }` recoverable per-message decrypt error.
+    #[wasm_bindgen]
+    pub fn process_incoming_messages_batch(
+        &mut self,
+        group_id: String,
+        messages: js_sys::Array,
+    ) -> js_sys::Array {
+        log::debug!(
+            "process_incoming_messages_batch for group: {} ({} messages)",
+            group_id,
+            messages.length()
+        );
+        let ok_key = JsValue::from_str("ok");
+        let data_key = JsValue::from_str("data");
+        let error_key = JsValue::from_str("error");
+        let results = js_sys::Array::new();
+
+        for entry in messages.iter() {
+            let bytes = js_sys::Uint8Array::new(&entry).to_vec();
+            let obj = js_sys::Object::new();
+            match self.manager.process_incoming_message(&group_id, &bytes) {
+                Ok(Some(plaintext)) => {
+                    let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
+                    let data = js_sys::Uint8Array::from(plaintext.as_slice());
+                    let _ = js_sys::Reflect::set(&obj, &data_key, &data);
+                }
+                Ok(None) => {
+                    let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
+                    let _ = js_sys::Reflect::set(&obj, &data_key, &JsValue::NULL);
+                }
+                Err(e) => {
+                    let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::FALSE);
+                    let _ =
+                        js_sys::Reflect::set(&obj, &error_key, &JsValue::from_str(&e.to_string()));
+                }
+            }
+            results.push(&obj);
+        }
+        results
+    }
+
     /// Remove all devices of one or more users from a group.
     /// `user_ids` is a JS Array of strings (usernames/identities).
     /// Returns the serialized commit bytes to broadcast to remaining group members.

@@ -1,8 +1,9 @@
 import type { IncomingDeliveryMeta } from './incomingDelivery';
+import type { MlsDecryptSession } from './mlsDecryptSession';
 
 export type { IncomingDeliveryMeta };
 
-/** Per-message outcome from {@link IMlsService.processIncomingMessageBatch}. */
+/** Per-message outcome from a {@link MlsDecryptSession} page decrypt. */
 export type MlsBatchProcessResult =
   | { ok: true; plaintext: Uint8Array | null }
   | { ok: false; error: string };
@@ -54,8 +55,6 @@ export interface IMlsService {
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
   saveState(pin: string): Promise<Uint8Array>;
-  /** Serialises MLS state as plain CBOR in memory (worker snapshots — never persisted to disk). */
-  saveStatePlain(): Promise<Uint8Array>;
   /**
    * Re-encrypts the in-memory MLS state with a new PIN and persists it.
    * Must be called after the user successfully changes their PIN on the server,
@@ -122,13 +121,11 @@ export interface IMlsService {
   /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
   /**
-   * Decrypts multiple MLS ciphertexts for one group sequentially (ratchet order preserved).
-   * Web uses an off-thread worker when enabled; Tauri falls back to sequential native calls.
+   * Opens a paged decrypt session for one group's history catch-up (ratchet order preserved).
+   * Web runs it off-thread via a persistent worker; Tauri / disabled-worker decrypt sequentially
+   * on the live client. The caller feeds pages then calls {@link MlsDecryptSession.finish}.
    */
-  processIncomingMessageBatch(
-    groupId: string,
-    messageBytesList: Uint8Array[]
-  ): Promise<MlsBatchProcessResult[]>;
+  createDecryptSession(groupId: string): Promise<MlsDecryptSession>;
   /** Exports a derived secret from a group's epoch key material using the given label and context. */
   exportSecret(
     groupId: string,
@@ -350,6 +347,16 @@ export interface IMlsService {
     onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
     onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
   ): void;
+
+  /**
+   * Opens a bulk-ingest window (UI buffering + deferred persistence). Pair with
+   * {@link endBulkIngest}; prefer the {@link withMlsBulkIngest} helper which is exception-safe.
+   * Windows nest via an internal depth counter, so the encrypted checkpoint coalesces to one
+   * flush at the outermost close.
+   */
+  beginBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): void;
+  /** Closes a bulk-ingest window; resolves only after the encrypted checkpoint (if any) completes. */
+  endBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): Promise<void>;
 
   /**
    * Announce to all online members of `groupId` that this device needs a Welcome.

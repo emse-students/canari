@@ -18,7 +18,7 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   unregisterMlsStatePersister,
   flushActiveMlsStateEncrypted,
-} from '$lib/mls-client/mlsStatePersister';
+} from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   setupMessageHandler,
   initializeConnection,

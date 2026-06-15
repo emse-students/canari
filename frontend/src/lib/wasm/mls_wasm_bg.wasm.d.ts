@@ -20,6 +20,7 @@ export const wasmmlsclient_key_package_has_private: (a: number, b: number, c: nu
 export const wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_process_incoming_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const wasmmlsclient_process_incoming_messages_batch: (a: number, b: number, c: number, d: any) => any;
 export const wasmmlsclient_process_welcome: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_remove_members: (a: number, b: number, c: number, d: any) => [number, number, number, number];
 export const wasmmlsclient_remove_members_by_device: (a: number, b: number, c: number, d: any) => [number, number, number, number];

@@ -11,7 +11,8 @@ import {
   resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
-import { createMlsStatePersister, registerMlsStatePersister } from '../mlsStatePersister';
+import { createMlsStatePersister } from '../mlsStatePersister';
+import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
 export type { MessageHandlerDeps } from './deps';
 

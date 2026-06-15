@@ -10,34 +10,6 @@ export interface MlsStatePersisterConfig {
   log?: (msg: string) => void;
 }
 
-/** Redis stream page size returned by `GET /api/mls/history/:groupId` (matches server COUNT). */
-export const MLS_HISTORY_PAGE_SIZE = 1000;
-
-let activePersister: MlsStatePersister | null = null;
-
-/** Registers the session MLS state persister (called from `setupMessageHandler`). */
-export function registerMlsStatePersister(persister: MlsStatePersister): void {
-  activePersister = persister;
-}
-
-/** Clears the active persister on logout so outbound hooks become no-ops. */
-export function unregisterMlsStatePersister(): void {
-  activePersister = null;
-}
-
-/**
- * Marks MLS ratchet state dirty in RAM after outbound traffic.
- * Disk is touched only on encrypted checkpoint (background, logout, commits, bulk end).
- */
-export function scheduleOutboundMlsPersist(): void {
-  activePersister?.scheduleDeferred();
-}
-
-/** Flushes the encrypted MLS checkpoint if a persister is registered (logout / background). */
-export async function flushActiveMlsStateEncrypted(): Promise<void> {
-  await activePersister?.flushEncrypted();
-}
-
 /**
  * Coalesced MLS state writer.
  * Routine ratchet advances stay in WASM memory; only PIN-encrypted checkpoints hit disk.

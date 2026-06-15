@@ -233,6 +233,26 @@ export class WasmMlsClient {
         return v3;
     }
     /**
+     * Decrypts a batch of MLS ciphertexts for one group in ratchet order, in a single
+     * JS<->WASM crossing. Per-message failures are captured instead of aborting the whole
+     * batch, so the caller can map each outcome independently (history catch-up path).
+     *
+     * `messages` is a JS Array of `Uint8Array`. Returns a JS Array of plain objects, one
+     * per input, preserving order:
+     * - `{ ok: true, data: Uint8Array }` decrypted application plaintext,
+     * - `{ ok: true, data: null }` control message with no plaintext,
+     * - `{ ok: false, error: string }` recoverable per-message decrypt error.
+     * @param {string} group_id
+     * @param {Array<any>} messages
+     * @returns {Array<any>}
+     */
+    process_incoming_messages_batch(group_id, messages) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_process_incoming_messages_batch(this.__wbg_ptr, ptr0, len0, messages);
+        return ret;
+    }
+    /**
      * @param {Uint8Array} welcome_bytes
      * @param {Uint8Array | null} [ratchet_tree_bytes]
      * @returns {string}
@@ -465,8 +485,16 @@ function __wbg_get_imports() {
             const ret = new Array();
             return ret;
         },
+        __wbg_new_20b778a4c5c691c3: function() {
+            const ret = new Object();
+            return ret;
+        },
         __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();
+            return ret;
+        },
+        __wbg_new_b06772b280cc6e52: function(arg0) {
+            const ret = new Uint8Array(arg0);
             return ret;
         },
         __wbg_new_from_slice_bb2d1778c0b87eb1: function(arg0, arg1) {
@@ -503,6 +531,10 @@ function __wbg_get_imports() {
             const ret = module.require;
             return ret;
         }, arguments); },
+        __wbg_set_a6ba3ac0e634b822: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = Reflect.set(arg0, arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
             const ret = arg1.stack;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -534,7 +566,7 @@ function __wbg_get_imports() {
             const ret = arg0.versions;
             return ret;
         },
-        __wbg_wasm_bindings_log_b4288d6034d0152a: function(arg0, arg1, arg2, arg3) {
+        __wbg_wasm_bindings_log_5e732fdf39d94cef: function(arg0, arg1, arg2, arg3) {
             window.wasm_bindings_log(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
         },
         __wbindgen_cast_0000000000000001: function(arg0) {

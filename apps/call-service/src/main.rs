@@ -143,6 +143,37 @@ fn forward_pli_from_subscriber(
             }
             match publisher_pc.upgrade() {
                 Some(pc) => {
+                    info!("[keyframe] relaying subscriber PLI to publisher ssrc={}", media_ssrc);
+                    let _ = pc
+                        .write_rtcp(&[Box::new(PictureLossIndication {
+                            sender_ssrc: 0,
+                            media_ssrc,
+                        })])
+                        .await;
+                }
+                None => break,
+            }
+        }
+        info!("[keyframe] PLI forward loop ended for ssrc={}", media_ssrc);
+    });
+}
+
+/// Slow recovery net: nudges one video keyframe from the publisher every few seconds.
+/// On-demand PLI forwarding (forward_pli_from_subscriber) is the primary mechanism, but a
+/// relayed PLI can itself be dropped on the lossy TURN path - leaving a subscriber frozen
+/// on its last decodable frame indefinitely (the classic "video freezes after ~2 s" on a
+/// constrained mobile uplink). A low-frequency timer bounds any freeze to a few seconds
+/// without the bandwidth cost or starvation of a fast periodic PLI. Spawned once per
+/// published video track; stops when the publisher's PeerConnection is gone.
+fn periodic_keyframe_recovery(publisher_pc: std::sync::Weak<RTCPeerConnection>, media_ssrc: u32) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+        // First tick fires immediately; skip it (the initial keyframe burst already covers t=0).
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match publisher_pc.upgrade() {
+                Some(pc) => {
                     let _ = pc
                         .write_rtcp(&[Box::new(PictureLossIndication {
                             sender_ssrc: 0,
@@ -528,9 +559,13 @@ async fn handle_signal(
                             }
                         });
 
-                        // Keyframes are requested on demand (forward_pli_from_subscriber below)
-                        // rather than on a blind timer: a periodic PLI would force a keyframe
-                        // every couple of seconds and saturate the relay, degrading quality.
+                        // Keyframes are mostly requested on demand (forward_pli_from_subscriber,
+                        // when a subscriber attaches below). A slow recovery timer additionally
+                        // guards against a relayed PLI being lost on the TURN path, which would
+                        // otherwise freeze the picture indefinitely on a lossy mobile uplink.
+                        if is_video {
+                            periodic_keyframe_recovery(pc_weak.clone(), media_ssrc);
+                        }
 
                         for peer_entry in room_clone.peers.iter() {
                             let other_pid = peer_entry.key();

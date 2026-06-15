@@ -38,6 +38,18 @@ export class WasmMlsClient {
      * Returns the raw decrypted bytes of an MLS application message (proto-encoded AppMessage).
      */
     process_incoming_message_bytes(group_id: string, message_bytes: Uint8Array): Uint8Array | undefined;
+    /**
+     * Decrypts a batch of MLS ciphertexts for one group in ratchet order, in a single
+     * JS<->WASM crossing. Per-message failures are captured instead of aborting the whole
+     * batch, so the caller can map each outcome independently (history catch-up path).
+     *
+     * `messages` is a JS Array of `Uint8Array`. Returns a JS Array of plain objects, one
+     * per input, preserving order:
+     * - `{ ok: true, data: Uint8Array }` decrypted application plaintext,
+     * - `{ ok: true, data: null }` control message with no plaintext,
+     * - `{ ok: false, error: string }` recoverable per-message decrypt error.
+     */
+    process_incoming_messages_batch(group_id: string, messages: Array<any>): Array<any>;
     process_welcome(welcome_bytes: Uint8Array, ratchet_tree_bytes?: Uint8Array | null): string;
     /**
      * Remove all devices of one or more users from a group.
@@ -87,6 +99,7 @@ export interface InitOutput {
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_incoming_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly wasmmlsclient_process_incoming_messages_batch: (a: number, b: number, c: number, d: any) => any;
     readonly wasmmlsclient_process_welcome: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_remove_members: (a: number, b: number, c: number, d: any) => [number, number, number, number];
     readonly wasmmlsclient_remove_members_by_device: (a: number, b: number, c: number, d: any) => [number, number, number, number];

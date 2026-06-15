@@ -1,11 +1,9 @@
-import type {
-  IMlsService,
-  GroupMeta,
-  UserGroupRow,
-  MlsInitOptions,
-  MlsBatchProcessResult,
-} from '$lib/mls-client';
+import type { IMlsService, GroupMeta, UserGroupRow, MlsInitOptions } from '$lib/mls-client';
 import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
+import {
+  type MlsDecryptSession,
+  createSequentialDecryptSession,
+} from '$lib/mls-client/mlsDecryptSession';
 import type { MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
@@ -284,6 +282,14 @@ export abstract class BaseMlsService implements IMlsService {
         await onEnd(enableBulkBuffer, showOverlay);
       };
     }
+  }
+
+  beginBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): void {
+    this.bulkIngestStart?.(enableBulkBuffer, showOverlay);
+  }
+
+  async endBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): Promise<void> {
+    await this.bulkIngestEnd?.(enableBulkBuffer, showOverlay);
   }
 
   // ── Message queue ─────────────────────────────────────────────────────────
@@ -851,29 +857,16 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.deleteDevice(userId, deviceId);
   }
 
-  // ── Shared MLS batch decrypt (overridable on Web for worker path) ─────────
+  // ── Shared MLS decrypt session (overridden on Web for the worker path) ─────
 
-  /** Sequential decrypt fallback used by Tauri and when the crypto worker is disabled. */
-  async processIncomingMessageBatch(
-    groupId: string,
-    messageBytesList: Uint8Array[]
-  ): Promise<MlsBatchProcessResult[]> {
-    const results: MlsBatchProcessResult[] = [];
-    for (const bytes of messageBytesList) {
-      try {
-        const plaintext = await this.processIncomingMessage(groupId, bytes);
-        results.push({ ok: true, plaintext });
-      } catch (e) {
-        results.push({ ok: false, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    return results;
+  /** Sequential, in-place session used by Tauri and when the crypto worker is disabled. */
+  async createDecryptSession(groupId: string): Promise<MlsDecryptSession> {
+    return createSequentialDecryptSession(this, groupId);
   }
 
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   abstract saveState(pin: string): Promise<Uint8Array>;
-  abstract saveStatePlain(): Promise<Uint8Array>;
   abstract changePIN(newPin: string): Promise<void>;
   abstract generateKeyPackage(pin: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;

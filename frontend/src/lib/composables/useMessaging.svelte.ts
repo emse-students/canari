@@ -9,7 +9,7 @@
 import { tick } from 'svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
-import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersister';
+import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { getToken } from '$lib/stores/auth';
 import {
   sendChatMessage,

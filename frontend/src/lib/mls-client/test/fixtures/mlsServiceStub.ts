@@ -11,7 +11,6 @@ export function createMlsServiceStub(
     forceCreateGroup: vi.fn().mockResolvedValue(undefined),
     createRemoteGroup: vi.fn().mockResolvedValue('group-uuid'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
-    saveStatePlain: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
     addMember: vi.fn().mockResolvedValue({ commit: new Uint8Array([1]) }),
     addMembersBulk: vi.fn().mockResolvedValue({
@@ -21,7 +20,10 @@ export function createMlsServiceStub(
     processWelcome: vi.fn().mockResolvedValue('gid'),
     sendMessage: vi.fn().mockResolvedValue(new Uint8Array()),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
-    processIncomingMessageBatch: vi.fn().mockResolvedValue([]),
+    createDecryptSession: vi.fn().mockResolvedValue({
+      decryptPage: vi.fn().mockResolvedValue([]),
+      finish: vi.fn().mockResolvedValue(undefined),
+    }),
     exportSecret: vi.fn().mockResolvedValue(new Uint8Array(32)),
     connect: vi.fn().mockResolvedValue(undefined),
     isWsOpen: vi.fn().mockReturnValue(true),
@@ -84,6 +86,8 @@ export function createMlsServiceStub(
     sendTyping: vi.fn(),
     onChannelEvent: undefined,
     setBulkIngestHooks: vi.fn(),
+    beginBulkIngest: vi.fn(),
+    endBulkIngest: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn(),
     ...overrides,
   };

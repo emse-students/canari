@@ -16,6 +16,7 @@ import type {
   ChatMessage,
 } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import {
   fetchUniqueGroupMembers,
@@ -214,19 +215,24 @@ export function useConversations() {
     const isSelected = selectedContact === contactName;
     if (isSelected) isLoadingHistory = true;
     try {
-      // Fetch from network → decrypt → save to DB (no direct UI update)
-      await replayConversationHistory({
-        mlsService: ctx.ensureMls(),
-        id,
-        contactName,
-        userId: ctx.userId,
-        pin: ctx.pin,
-        storage: ctx.storage,
-        getConversation: (name) => conversations.get(name),
-        setConversation: (name, next) => conversations.set(name, next),
-        messageReactions: ctx.messageReactions,
-        log: ctx.log,
-      });
+      // Fetch from network → decrypt → save to DB (no direct UI update).
+      // The replay runs in a bulk-ingest window so an encrypted checkpoint flushes on close;
+      // its progress markers are committed only afterwards (never ahead of persisted state).
+      const commit = await withMlsBulkIngest(ctx.ensureMls(), () =>
+        replayConversationHistory({
+          mlsService: ctx.ensureMls(),
+          id,
+          contactName,
+          userId: ctx.userId,
+          pin: ctx.pin,
+          storage: ctx.storage,
+          getConversation: (name) => conversations.get(name),
+          setConversation: (name, next) => conversations.set(name, next),
+          messageReactions: ctx.messageReactions,
+          log: ctx.log,
+        })
+      );
+      commit?.();
       // Reload from DB so display reflects the latest saved state
       if (ctx.storage) {
         const refreshed = await ctx.storage.getMessagesPage(id, ctx.pin, INITIAL_MESSAGES_PAGE);

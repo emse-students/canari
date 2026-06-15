@@ -639,6 +639,14 @@ export class CallService {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
       this.publishRemoteStream();
     };
+    // Watchdog: a remote track that never unmutes means the SFU never forwarded media to
+    // us (ICE/relay issue or the publisher's track never reached the SFU) - the usual cause
+    // of "no audio on this call". Logged so a failing call is diagnosable from the console.
+    setTimeout(() => {
+      if (track.readyState === 'live' && track.muted) {
+        appendLog(`[Call] WARN remote ${track.kind} still muted after 5s - no media forwarded`);
+      }
+    }, 5000);
     track.onended = () => {
       appendLog(`[Call] remote track ended kind=${track.kind}`);
       this.mergedRemoteStream?.removeTrack(track);
