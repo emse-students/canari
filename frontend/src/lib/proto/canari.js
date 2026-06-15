@@ -354,6 +354,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.WsEnvelope";
         };
 
+        var C = WsEnvelope;
+
         return WsEnvelope;
     })();
 
@@ -627,6 +629,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.Recipient";
         };
+
+        var C = Recipient;
 
         return Recipient;
     })();
@@ -958,6 +962,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.MlsFrame";
         };
 
+        var C = MlsFrame;
+
         return MlsFrame;
     })();
 
@@ -1288,6 +1294,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.WelcomeFrame";
         };
 
+        var C = WelcomeFrame;
+
         return WelcomeFrame;
     })();
 
@@ -1531,6 +1539,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.ReadAck";
         };
+
+        var C = ReadAck;
 
         return ReadAck;
     })();
@@ -1930,6 +1940,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.InboundMsg";
         };
+
+        var C = InboundMsg;
 
         return InboundMsg;
     })();
@@ -2500,6 +2512,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.AppMessage";
         };
 
+        var C = AppMessage;
+
         return AppMessage;
     })();
 
@@ -2976,6 +2990,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.CallMsg";
         };
 
+        var C = CallMsg;
+
         return CallMsg;
     })();
 
@@ -3219,6 +3235,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.TextMsg";
         };
+
+        var C = TextMsg;
 
         return TextMsg;
     })();
@@ -3523,6 +3541,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.ReplyRef";
         };
 
+        var C = ReplyRef;
+
         return ReplyRef;
     })();
 
@@ -3798,6 +3818,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.ReplyMsg";
         };
 
+        var C = ReplyMsg;
+
         return ReplyMsg;
     })();
 
@@ -4072,6 +4094,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.ReactionMsg";
         };
 
+        var C = ReactionMsg;
+
         return ReactionMsg;
     })();
 
@@ -4345,6 +4369,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.PollOption";
         };
+
+        var C = PollOption;
 
         return PollOption;
     })();
@@ -4711,6 +4737,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.PollMsg";
         };
+
+        var C = PollMsg;
 
         return PollMsg;
     })();
@@ -5283,6 +5311,8 @@ export const canari = $root.canari = (() => {
             return typeUrlPrefix + "/canari.MediaMsg";
         };
 
+        var C = MediaMsg;
+
         return MediaMsg;
     })();
 
@@ -5556,6 +5586,8 @@ export const canari = $root.canari = (() => {
             }
             return typeUrlPrefix + "/canari.SystemMsg";
         };
+
+        var C = SystemMsg;
 
         return SystemMsg;
     })();

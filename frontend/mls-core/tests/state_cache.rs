@@ -61,7 +61,9 @@ fn save_state_rebuilds_after_mutation() {
 #[test]
 fn loaded_state_seeds_cache_without_reserialize() {
     let mut manager = make_manager("seed-user", "seed-device");
-    manager.create_group("seed-group".to_string()).expect("create");
+    manager
+        .create_group("seed-group".to_string())
+        .expect("create");
     manager.generate_key_packages(3).expect("generate kps");
 
     let snapshot = manager.save_state().expect("initial snapshot");
@@ -82,18 +84,17 @@ fn cold_serialize_round_trips_through_load_or_create() {
 
     manager.invalidate_persisted_snapshot();
     let snapshot = manager.save_state().expect("cold save_state");
-    let restored = MlsManager::load_or_create(
-        "roundtrip-user",
-        "roundtrip-device",
-        Some(snapshot),
-    )
-    .expect("restore from cold snapshot");
+    let restored = MlsManager::load_or_create("roundtrip-user", "roundtrip-device", Some(snapshot))
+        .expect("restore from cold snapshot");
 
     let mut manager_groups = manager.get_known_groups();
     manager_groups.sort();
     let mut restored_groups = restored.get_known_groups();
     restored_groups.sort();
-    assert_eq!(manager_groups, restored_groups, "group ids must match after round-trip");
+    assert_eq!(
+        manager_groups, restored_groups,
+        "group ids must match after round-trip"
+    );
 
     manager.invalidate_persisted_snapshot();
     restored.invalidate_persisted_snapshot();

@@ -17,7 +17,7 @@ vi.mock('$lib/wasm/mls_wasm_bg.wasm?url', () => ({
   default: 'https://cdn.test/mls.wasm',
 }));
 
-import { loadAndInitWasm } from './mlsWasmLoader';
+import { loadAndInitWasm, resetMlsWasmModuleCacheForTests } from './mlsWasmLoader';
 
 function wasmMagicResponse(): Response {
   const buf = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -26,6 +26,7 @@ function wasmMagicResponse(): Response {
 
 describe('loadAndInitWasm', () => {
   beforeEach(() => {
+    resetMlsWasmModuleCacheForTests();
     wasmInitFn.mockClear();
     WasmMlsClient.mockClear();
   });

@@ -104,11 +104,14 @@ impl StateSnapshotCache {
     where
         F: FnOnce() -> Result<Vec<u8>, MlsError>,
     {
-        if !self.dirty {
-            if let Some(ref cached) = self.cached_cbor {
-                log::debug!("save_state: returning cached CBOR snapshot ({} bytes)", cached.len());
-                return Ok(cached.clone());
-            }
+        if !self.dirty
+            && let Some(ref cached) = self.cached_cbor
+        {
+            log::debug!(
+                "save_state: returning cached CBOR snapshot ({} bytes)",
+                cached.len()
+            );
+            return Ok(cached.clone());
         }
 
         let bytes = build()?;

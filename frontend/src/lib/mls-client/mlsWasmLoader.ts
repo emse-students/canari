@@ -96,6 +96,11 @@ export async function loadMlsWasmModule(): Promise<MlsWasmBindings> {
   return wasmModulePromise;
 }
 
+/** Clears the WASM module singleton (test-only). */
+export function resetMlsWasmModuleCacheForTests(): void {
+  wasmModulePromise = null;
+}
+
 /** Argon2 + ChaCha20 on the current thread (fallback when workers are unavailable). */
 export async function encryptMlsStateOnMainThread(
   plain: Uint8Array,

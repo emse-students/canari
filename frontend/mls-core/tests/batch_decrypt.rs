@@ -40,7 +40,11 @@ fn process_incoming_messages_matches_sequential_decrypt() {
 
     assert_eq!(batch.len(), 5);
     for (i, outcome) in batch.iter().enumerate() {
-        let plain = outcome.as_ref().expect("batch outcome ok").as_ref().expect("app msg");
+        let plain = outcome
+            .as_ref()
+            .expect("batch outcome ok")
+            .as_ref()
+            .expect("app msg");
         assert_eq!(plain, format!("batch-msg-{i}").as_bytes());
     }
 }

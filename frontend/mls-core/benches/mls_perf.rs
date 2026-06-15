@@ -54,10 +54,7 @@ fn bench_save_state_cached_hit(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(fixture.plain_bytes_len as u64));
     group.bench_function("groups/20_kp_50", |b| {
         b.iter(|| {
-            let bytes = fixture
-                .manager
-                .save_state()
-                .expect("cached save_state");
+            let bytes = fixture.manager.save_state().expect("cached save_state");
             black_box(bytes);
         });
     });
@@ -97,11 +94,8 @@ fn bench_send_message(c: &mut Criterion) {
     let (_c, welcome, _, rt) = alice
         .add_members_bulk(&group_id, &[&kp])
         .expect("add_members_bulk");
-    bob.process_welcome(
-        welcome.as_deref().expect("welcome"),
-        rt.as_deref(),
-    )
-    .expect("process_welcome");
+    bob.process_welcome(welcome.as_deref().expect("welcome"), rt.as_deref())
+        .expect("process_welcome");
 
     let payload = b"bench outbound payload";
 
@@ -129,22 +123,26 @@ fn bench_process_incoming(c: &mut Criterion) {
         let group_id = fixture.group_id.clone();
 
         group.throughput(Throughput::Elements(msg_count as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(msg_count), &msg_count, |b, _| {
-            b.iter(|| {
-                let mut receiver = MlsManager::load_or_create(
-                    "bench-alice",
-                    "dev-a",
-                    Some(plain_state.clone()),
-                )
-                .expect("restore receiver state");
-                for ct in &ciphertexts {
-                    let plain = receiver
-                        .process_incoming_message(&group_id, black_box(ct.as_slice()))
-                        .expect("process_incoming_message");
-                    black_box(plain);
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(msg_count),
+            &msg_count,
+            |b, _| {
+                b.iter(|| {
+                    let mut receiver = MlsManager::load_or_create(
+                        "bench-alice",
+                        "dev-a",
+                        Some(plain_state.clone()),
+                    )
+                    .expect("restore receiver state");
+                    for ct in &ciphertexts {
+                        let plain = receiver
+                            .process_incoming_message(&group_id, black_box(ct.as_slice()))
+                            .expect("process_incoming_message");
+                        black_box(plain);
+                    }
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -164,18 +162,22 @@ fn bench_process_incoming_batch(c: &mut Criterion) {
         let group_id = fixture.group_id.clone();
 
         group.throughput(Throughput::Elements(msg_count as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(msg_count), &msg_count, |b, _| {
-            b.iter(|| {
-                let mut receiver = MlsManager::load_or_create(
-                    "bench-alice",
-                    "dev-a",
-                    Some(plain_state.clone()),
-                )
-                .expect("restore receiver state");
-                let outcomes = receiver.process_incoming_messages(&group_id, &message_refs);
-                black_box(outcomes);
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(msg_count),
+            &msg_count,
+            |b, _| {
+                b.iter(|| {
+                    let mut receiver = MlsManager::load_or_create(
+                        "bench-alice",
+                        "dev-a",
+                        Some(plain_state.clone()),
+                    )
+                    .expect("restore receiver state");
+                    let outcomes = receiver.process_incoming_messages(&group_id, &message_refs);
+                    black_box(outcomes);
+                });
+            },
+        );
     }
     group.finish();
 }

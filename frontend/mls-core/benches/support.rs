@@ -23,7 +23,10 @@ pub fn make_manager(user_id: &str, device_id: &str) -> MlsManager {
 }
 
 /// Builds a realistic in-memory state: `group_count` solo groups + `key_package_pool` OTKPs.
-pub fn build_persistence_fixture(group_count: usize, key_package_pool: usize) -> PersistenceFixture {
+pub fn build_persistence_fixture(
+    group_count: usize,
+    key_package_pool: usize,
+) -> PersistenceFixture {
     let mut manager = make_manager("bench-user", "bench-device");
 
     for i in 0..group_count {
