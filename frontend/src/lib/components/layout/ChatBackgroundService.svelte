@@ -113,6 +113,9 @@
       lastIncomingRingCallId = null;
     }
     globalNotifs.stopIncomingCallRingtone();
+    // Call left the "incoming" state (answered on any device, declined, or ended):
+    // close the lingering "X vous appelle" OS notification.
+    void globalNotifs.dismissIncomingCall();
   });
 
   /** Opens the conversation targeted by a notification tap (works outside /chat). */

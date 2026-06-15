@@ -26,6 +26,10 @@ export function useNotifications() {
   const lastNotifAtByConv = new SvelteMap<string, number>();
   let browserPermissionRetryAbort: AbortController | null = null;
   let incomingCallRingTimer: ReturnType<typeof setInterval> | null = null;
+  /** Active incoming-call OS notification, kept so it can be dismissed on answer/hangup. */
+  let incomingCallNotification: Notification | null = null;
+  /** Tauri notification id of the active incoming-call notification, for cancellation. */
+  let incomingCallNotifId: number | null = null;
 
   // ---------- Audio ----------
 
@@ -187,6 +191,7 @@ export function useNotifications() {
           await import('@tauri-apps/plugin-notification');
         if (await isPermissionGranted()) {
           await sendNotification({ title, body, id: notifId });
+          incomingCallNotifId = notifId;
           return;
         }
       } catch {
@@ -205,12 +210,41 @@ export function useNotifications() {
           tag: `canari-call-${groupId}`,
           requireInteraction: true,
         });
+        // Keep the ref so dismissIncomingCall() can close it once the call is
+        // answered or ends (requireInteraction keeps it on screen otherwise).
+        incomingCallNotification = n;
         n.onclick = () => {
           void onTap();
           n.close();
+          incomingCallNotification = null;
+        };
+        n.onclose = () => {
+          if (incomingCallNotification === n) incomingCallNotification = null;
         };
       } catch {
         /* ignore */
+      }
+    }
+  }
+
+  /** Dismisses the incoming-call OS notification (call answered, declined, or ended). */
+  async function dismissIncomingCall() {
+    if (incomingCallNotification) {
+      try {
+        incomingCallNotification.close();
+      } catch {
+        /* ignore */
+      }
+      incomingCallNotification = null;
+    }
+    if (incomingCallNotifId !== null && isTauriRuntime()) {
+      const id = incomingCallNotifId;
+      incomingCallNotifId = null;
+      try {
+        const { removeActive } = await import('@tauri-apps/plugin-notification');
+        await removeActive([{ id }]);
+      } catch {
+        /* plugin/API unavailable - ignore */
       }
     }
   }
@@ -431,5 +465,6 @@ export function useNotifications() {
     startIncomingCallRingtone,
     stopIncomingCallRingtone,
     notifyIncomingCall,
+    dismissIncomingCall,
   };
 }
