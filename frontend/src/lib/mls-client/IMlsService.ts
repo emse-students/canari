@@ -54,7 +54,7 @@ export interface IMlsService {
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
   saveState(pin: string): Promise<Uint8Array>;
-  /** Serialises MLS state as plain CBOR without Argon2 (fast session autosave). */
+  /** Serialises MLS state as plain CBOR in memory (worker snapshots — never persisted to disk). */
   saveStatePlain(): Promise<Uint8Array>;
   /**
    * Re-encrypts the in-memory MLS state with a new PIN and persists it.
