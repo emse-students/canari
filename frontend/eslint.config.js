@@ -13,6 +13,7 @@ export default [
       'node_modules/**',
       'src/lib/proto/**',
       'src/lib/wasm/**',
+      'src/lib/paraglide/**',
     ],
   },
   {

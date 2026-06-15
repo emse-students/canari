@@ -32,8 +32,10 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     exit 1
   }
   git diff --name-only -- frontend/ | xargs -r git add
-  (cd frontend && bun run check -- --threshold warning) || {
-    echo "❌ Frontend svelte-check échoué."
+  # Mirror exactly the CI lint job (lint + check + format:check) so nothing
+  # broken can reach CD. Auto-fix already ran above; these are the strict gates.
+  (cd frontend && bun run check -- --threshold warning && bun run lint -- --no-cache --quiet && bun run format:check) || {
+    echo "❌ Frontend checks échoué (svelte-check / lint / format:check)."
     exit 1
   }
 fi

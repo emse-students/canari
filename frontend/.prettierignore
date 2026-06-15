@@ -9,6 +9,8 @@ target
 **/.kotlin
 src/lib/proto
 src/lib/wasm
+src/lib/paraglide
+project.inlang
 src-tauri/tauri.conf.json
 *.tsbuildinfo
 .env
