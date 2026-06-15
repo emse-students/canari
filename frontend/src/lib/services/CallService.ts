@@ -644,7 +644,14 @@ export class CallService {
     }
   }
 
-  /** Asks local encoders to emit an IDR frame so remote decoders can start after E2E attach. */
+  /** Whether we've already logged that generateKeyFrame is unsupported (Firefox), to avoid spam. */
+  private loggedKeyframeUnsupported = false;
+
+  /**
+   * Asks local encoders to emit an IDR frame so remote decoders can start after E2E attach.
+   * No-op on Firefox (no generateKeyFrame): there the encoder's periodic GOP keyframes are
+   * the only recovery, and the SFU/peer must drive them.
+   */
   private async requestVideoKeyframes(): Promise<void> {
     const pc = this.pc;
     if (!pc) return;
@@ -655,7 +662,10 @@ export class CallService {
 
       const ext = sender as RTCRtpSender & { generateKeyFrame?: () => Promise<void> };
       if (typeof ext.generateKeyFrame !== 'function') {
-        appendLog('[Call] generateKeyFrame unavailable in this browser');
+        if (!this.loggedKeyframeUnsupported) {
+          appendLog('[Call] generateKeyFrame unavailable in this browser (Firefox) - skipping');
+          this.loggedKeyframeUnsupported = true;
+        }
         continue;
       }
       try {
@@ -844,9 +854,11 @@ export class CallService {
         } else if (type === 'warn') {
           appendLog(`[Call] E2E worker: ${detail ?? 'warn'}`);
         } else if (type === 'encryptOk') {
-          appendLog(`[Call] E2E encrypting (${count} frame(s))`);
+          appendLog(`[Call] E2E encrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         } else if (type === 'decryptOk') {
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
+        } else if (type === 'videoKeyframeIn') {
+          appendLog(`[Call] remote video keyframe received (#${count})`);
         }
       };
     }

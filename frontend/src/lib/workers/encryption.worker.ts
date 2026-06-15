@@ -12,8 +12,11 @@ interface TransformEventLike {
 let callKey: CryptoKey | null = null;
 const ivLength = 12;
 let decryptFailures = 0;
-let encryptedFrames = 0;
-let decryptedFrames = 0;
+// Per-kind counters so the logs unambiguously show whether *video* (not just audio)
+// frames flow through the E2E transform - critical for diagnosing black remote video.
+const encrypted = { audio: 0, video: 0 };
+const decrypted = { audio: 0, video: 0 };
+let videoKeyframesIn = 0;
 let droppedNoKey = 0;
 /** `onrtctransform` is the standard handler (Firefox 117+); typed explicitly for workers. */
 type RtcTransformWorkerScope = typeof self & {
@@ -62,18 +65,26 @@ workerScope.onrtctransform = (event: Event) => {
         return;
       }
       try {
+        const mediaKind = frameTypeLabel(frame);
         if (side === 'sender') {
           await encryptFrame(frame, controller);
-          encryptedFrames++;
-          if (encryptedFrames === 1 || encryptedFrames % 300 === 0) {
-            self.postMessage({ type: 'encryptOk', count: encryptedFrames });
+          encrypted[mediaKind]++;
+          if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
+            self.postMessage({ type: 'encryptOk', count: encrypted[mediaKind], mediaKind });
           }
         } else {
-          const mediaKind = frameTypeLabel(frame);
+          // Track the first decodable video keyframe arrival: a remote video that
+          // never receives a keyframe stays black even though delta frames flow.
+          if (mediaKind === 'video' && isVideoKeyframe(frame)) {
+            videoKeyframesIn++;
+            if (videoKeyframesIn <= 3) {
+              self.postMessage({ type: 'videoKeyframeIn', count: videoKeyframesIn });
+            }
+          }
           await decryptFrame(frame, controller);
-          decryptedFrames++;
-          if (decryptedFrames === 1 || decryptedFrames % 300 === 0) {
-            self.postMessage({ type: 'decryptOk', count: decryptedFrames, mediaKind });
+          decrypted[mediaKind]++;
+          if (decrypted[mediaKind] === 1 || decrypted[mediaKind] % 300 === 0) {
+            self.postMessage({ type: 'decryptOk', count: decrypted[mediaKind], mediaKind });
           }
         }
       } catch (e) {
@@ -87,8 +98,22 @@ workerScope.onrtctransform = (event: Event) => {
     .pipeTo(transformEvent.transformer.writable);
 };
 
-function frameTypeLabel(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): string {
+function frameTypeLabel(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): 'audio' | 'video' {
   return frame.constructor.name.includes('Video') ? 'video' : 'audio';
+}
+
+/** True when an encoded video frame is a keyframe (IDR). Browser support varies. */
+function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): boolean {
+  const f = frame as unknown as {
+    type?: string;
+    getMetadata?: () => Record<string, unknown> | undefined;
+  };
+  if (typeof f.type === 'string') return f.type === 'key';
+  try {
+    return f.getMetadata?.()?.frameType === 'key';
+  } catch {
+    return false;
+  }
 }
 
 async function encryptFrame(
