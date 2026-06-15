@@ -1,13 +1,15 @@
+import { runMlsCryptoWorkerBatch } from '$lib/mls-client/mlsCryptoWorkerBridge';
 import {
   loadAndInitWasm,
   detectRuntimeDeviceOs,
   commitBaseEpochForValidation,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
+  type MlsBatchProcessResult,
 } from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
-import { saveMlsState } from '$lib/utils/hex';
+import { saveMlsState, toBase64, fromBase64 } from '$lib/utils/hex';
 import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
 
@@ -35,6 +37,8 @@ export class WebMlsService extends BaseMlsService {
   private keyPackageWorker: Worker | null = null;
   /** Feature flag for workerized key package generation (enabled by default). */
   private readonly useKeyPackageWorker = import.meta.env.VITE_MLS_KEYPACKAGE_WORKER !== 'false';
+  /** Feature flag for off-thread MLS decrypt during catch-up (enabled by default). */
+  private readonly useCryptoWorker = import.meta.env.VITE_MLS_CRYPTO_WORKER !== 'false';
 
   constructor() {
     super('web');
@@ -51,6 +55,11 @@ export class WebMlsService extends BaseMlsService {
   /** Rebuilds the in-memory WASM client from a trusted persisted state snapshot. */
   private async reloadClientFromState(state: Uint8Array, pin: string): Promise<void> {
     this.client = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
+  }
+
+  /** Rebuilds WASM from a plain CBOR snapshot (no PIN) after worker catch-up. */
+  private async reloadClientFromPlainState(state: Uint8Array): Promise<void> {
+    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, undefined);
   }
 
   /**
@@ -372,13 +381,10 @@ export class WebMlsService extends BaseMlsService {
             return;
           }
           if (msg.proto && this.messageCallback) {
-            const binaryString = atob(msg.proto as string);
-            const ciphertext = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++)
-              ciphertext[i] = binaryString.charCodeAt(i);
+            const ciphertext = fromBase64(msg.proto as string);
             const ratchetTreeBytes =
               typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
+                ? fromBase64(msg.ratchetTree as string)
                 : undefined;
 
             if (ciphertext.length > 0) {
@@ -522,6 +528,13 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - calls `this.client.save_state(pin)` to encrypt and return the current MLS state as bytes. */
   async saveState(pin: string): Promise<Uint8Array> {
     const stateBytes = this.client.save_state(pin) as Uint8Array;
+    this.lastKnownState = stateBytes.slice();
+    return stateBytes;
+  }
+
+  /** WASM client wrapper - plain CBOR snapshot without Argon2 (fast session autosave). */
+  async saveStatePlain(): Promise<Uint8Array> {
+    const stateBytes = this.client.save_state(undefined) as Uint8Array;
     this.lastKnownState = stateBytes.slice();
     return stateBytes;
   }
@@ -676,7 +689,7 @@ export class WebMlsService extends BaseMlsService {
     silent = false
   ): Promise<Uint8Array> {
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
-    const proto = btoa(Array.from(encryptedBytes, (b) => String.fromCharCode(b)).join(''));
+    const proto = toBase64(encryptedBytes);
     await this.delivery.postApplicationMessage(groupId, proto, silent);
     return encryptedBytes;
   }
@@ -688,6 +701,43 @@ export class WebMlsService extends BaseMlsService {
   ): Promise<Uint8Array | null> {
     const result = this.client.process_incoming_message_bytes(groupId, messageBytes);
     return result ?? null;
+  }
+
+  /**
+   * Decrypts a batch off the main thread when the crypto worker is enabled.
+   * Falls back to sequential main-thread decrypt on failure or single-message batches.
+   */
+  override async processIncomingMessageBatch(
+    groupId: string,
+    messageBytesList: Uint8Array[]
+  ): Promise<MlsBatchProcessResult[]> {
+    if (
+      messageBytesList.length === 0 ||
+      !this.useCryptoWorker ||
+      typeof Worker === 'undefined' ||
+      messageBytesList.length < 2
+    ) {
+      return super.processIncomingMessageBatch(groupId, messageBytesList);
+    }
+
+    return this.messageScheduler.runUnderMlsLock(async () => {
+      try {
+        const snapshot = (this.client.save_state(undefined) as Uint8Array).slice();
+        const workerResult = await runMlsCryptoWorkerBatch({
+          userId: this.userId,
+          deviceId: this.deviceId,
+          groupId,
+          state: snapshot,
+          messages: messageBytesList,
+        });
+        await this.reloadClientFromPlainState(workerResult.state);
+        this.lastKnownState = workerResult.state.slice();
+        return workerResult.results;
+      } catch (e) {
+        console.warn('[MLS] crypto worker batch failed, fallback to main thread:', e);
+        return super.processIncomingMessageBatch(groupId, messageBytesList);
+      }
+    });
   }
 
   /** WASM client wrapper - calls `this.client.export_secret` to derive keying material for channel encryption. */
@@ -703,7 +753,7 @@ export class WebMlsService extends BaseMlsService {
 
   /** WASM client wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-    const base64 = btoa(Array.from(keyPackageBytes, (b) => String.fromCharCode(b)).join(''));
+    const base64 = toBase64(keyPackageBytes);
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     await this.delivery.registerDeviceKeyPackage({
@@ -719,7 +769,7 @@ export class WebMlsService extends BaseMlsService {
     groupId: string,
     excludeDeviceIds?: string[]
   ): Promise<void> {
-    const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
+    const proto = toBase64(commitBytes);
     // WASM getEpoch() reads from in-memory state - always up-to-date at send time.
     const currentEpoch = this.getEpoch(groupId);
     const baseEpoch = commitBaseEpochForValidation(currentEpoch);

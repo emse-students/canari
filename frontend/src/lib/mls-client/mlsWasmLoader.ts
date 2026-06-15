@@ -13,7 +13,7 @@ export async function loadAndInitWasm(
   userId: string,
   deviceId: string,
   state: Uint8Array | undefined,
-  pin: string
+  pin?: string
 ): Promise<any> {
   const [initWasm, wasmAsset] = await Promise.all([
     import('$lib/wasm/mls_wasm.js'),
