@@ -27,8 +27,10 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
+use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::track::track_remote::TrackRemote;
@@ -102,6 +104,42 @@ fn request_keyframe_burst(publisher_pc: std::sync::Weak<RTCPeerConnection>, medi
         for delay_ms in [0u64, 300, 800, 1500] {
             if delay_ms > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            match publisher_pc.upgrade() {
+                Some(pc) => {
+                    let _ = pc
+                        .write_rtcp(&[Box::new(PictureLossIndication {
+                            sender_ssrc: 0,
+                            media_ssrc,
+                        })])
+                        .await;
+                }
+                None => break,
+            }
+        }
+    });
+}
+
+/// Forwards a subscriber's keyframe requests (PLI/FIR) to the track's publisher.
+/// On-demand keyframe generation: when a subscriber's decoder needs an IDR (packet
+/// loss, late join), its browser sends RTCP feedback on the SFU's sender; we relay a
+/// PLI to the publisher so it emits a keyframe only when actually needed - far cheaper
+/// than blindly forcing keyframes on a timer (which wastes relay bandwidth and degrades
+/// quality). The SFU can't read the encrypted media, but RTCP feedback is unencrypted.
+fn forward_pli_from_subscriber(
+    sender: Arc<RTCRtpSender>,
+    publisher_pc: std::sync::Weak<RTCPeerConnection>,
+    media_ssrc: u32,
+) {
+    tokio::spawn(async move {
+        while let Ok((packets, _)) = sender.read_rtcp().await {
+            let wants_keyframe = packets.iter().any(|p| {
+                let any = p.as_any();
+                any.downcast_ref::<PictureLossIndication>().is_some()
+                    || any.downcast_ref::<FullIntraRequest>().is_some()
+            });
+            if !wants_keyframe {
+                continue;
             }
             match publisher_pc.upgrade() {
                 Some(pc) => {
@@ -377,16 +415,24 @@ async fn handle_signal(
 
             let tracks = room.tracks.lock().await;
             for track in tracks.iter() {
-                if let Err(e) = pc
+                match pc
                     .add_track(Arc::clone(&track.local) as Arc<dyn TrackLocal + Send + Sync>)
                     .await
                 {
-                    error!("Failed to add existing track: {}", e);
-                } else if track.is_video {
-                    // This peer is subscribing to a video track published before it joined,
-                    // so it missed the last keyframe: ask the publisher for a fresh IDR now,
-                    // otherwise it only receives undecodable delta frames (black video).
-                    request_keyframe_burst(track.publisher_pc.clone(), track.media_ssrc);
+                    Err(e) => error!("Failed to add existing track: {}", e),
+                    Ok(sender) if track.is_video => {
+                        // This peer subscribes to a video track published before it joined,
+                        // so it missed the last keyframe: ask the publisher for a fresh IDR now
+                        // (otherwise it only gets undecodable delta frames = black video)...
+                        request_keyframe_burst(track.publisher_pc.clone(), track.media_ssrc);
+                        // ...and relay its future keyframe requests to the publisher on demand.
+                        forward_pli_from_subscriber(
+                            sender,
+                            track.publisher_pc.clone(),
+                            track.media_ssrc,
+                        );
+                    }
+                    Ok(_) => {}
                 }
             }
             drop(tracks);
@@ -482,36 +528,9 @@ async fn handle_signal(
                             }
                         });
 
-                        // Separate keyframe-request loop for video. The SFU forwards opaque
-                        // (E2E-encrypted) RTP and can't detect keyframe needs, so it periodically
-                        // asks the publisher for an IDR. Without this a subscriber that can't
-                        // self-request one (Firefox has no generateKeyFrame) only gets delta
-                        // frames and shows black video while audio plays. Runs in its own task
-                        // so it never cancels the RTP read above (which would drop packets).
-                        if is_video {
-                            tokio::spawn(async move {
-                                let mut ticker =
-                                    tokio::time::interval(std::time::Duration::from_secs(2));
-                                loop {
-                                    ticker.tick().await;
-                                    match pc_weak.upgrade() {
-                                        Some(pc) => {
-                                            if pc
-                                                .write_rtcp(&[Box::new(PictureLossIndication {
-                                                    sender_ssrc: 0,
-                                                    media_ssrc,
-                                                })])
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        None => break,
-                                    }
-                                }
-                            });
-                        }
+                        // Keyframes are requested on demand (forward_pli_from_subscriber below)
+                        // rather than on a blind timer: a periodic PLI would force a keyframe
+                        // every couple of seconds and saturate the relay, degrading quality.
 
                         for peer_entry in room_clone.peers.iter() {
                             let other_pid = peer_entry.key();
@@ -520,15 +539,24 @@ async fn handle_signal(
                             }
 
                             let other_ctx = peer_entry.value();
-                            if let Err(e) = other_ctx
+                            match other_ctx
                                 .pc
                                 .add_track(
                                     Arc::clone(&local_track) as Arc<dyn TrackLocal + Send + Sync>,
                                 )
                                 .await
                             {
-                                error!("Failed to add track to peer {}: {}", other_pid, e);
-                                continue;
+                                Err(e) => {
+                                    error!("Failed to add track to peer {}: {}", other_pid, e);
+                                    continue;
+                                }
+                                Ok(sender) if is_video => {
+                                    // Existing subscriber gets this freshly-published video track:
+                                    // nudge a keyframe now and relay its later requests on demand.
+                                    request_keyframe_burst(pc_weak.clone(), media_ssrc);
+                                    forward_pli_from_subscriber(sender, pc_weak.clone(), media_ssrc);
+                                }
+                                Ok(_) => {}
                             }
 
                             schedule_renegotiate(room_clone.clone(), other_pid.clone());
