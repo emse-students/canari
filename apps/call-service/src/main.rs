@@ -27,6 +27,7 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
@@ -394,10 +395,14 @@ async fn handle_signal(
 
             let room_clone = room.clone();
             let peer_id_clone = peer_id.clone();
+            // Weak ref (not a clone) so the PLI task below doesn't keep the publisher's
+            // PeerConnection alive in a reference cycle (pc owns the on_track callback).
+            let pc_weak = Arc::downgrade(&pc);
             pc.on_track(Box::new(
                 move |track: Arc<TrackRemote>, _receiver, _transceiver| {
                     let room_clone = room_clone.clone();
                     let peer_id_clone = peer_id_clone.clone();
+                    let pc_weak = pc_weak.clone();
 
                     Box::pin(async move {
                         let remote_track = track;
@@ -419,11 +424,42 @@ async fn handle_signal(
                         }
 
                         let local_track_clone = local_track.clone();
+                        let is_video = remote_track.kind() == RTPCodecType::Video;
+                        let media_ssrc = remote_track.ssrc();
                         tokio::spawn(async move {
                             let mut buf = vec![0u8; 1500];
-                            while let Ok((parsed, _)) = remote_track.read(&mut buf).await {
-                                if local_track_clone.write_rtp(&parsed).await.is_err() {
-                                    break;
+                            // Periodically ask the publisher for a keyframe. The SFU forwards
+                            // opaque (E2E-encrypted) RTP, so it can't detect keyframe needs;
+                            // without this a subscriber that can't self-request one (Firefox
+                            // has no generateKeyFrame) only gets delta frames and shows black
+                            // video while audio plays. Browser-agnostic fix.
+                            let mut keyframe_tick =
+                                tokio::time::interval(std::time::Duration::from_secs(2));
+                            loop {
+                                tokio::select! {
+                                    read = remote_track.read(&mut buf) => {
+                                        match read {
+                                            Ok((parsed, _)) => {
+                                                if local_track_clone.write_rtp(&parsed).await.is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            Err(_) => break,
+                                        }
+                                    }
+                                    _ = keyframe_tick.tick(), if is_video => {
+                                        match pc_weak.upgrade() {
+                                            Some(pc) => {
+                                                let _ = pc
+                                                    .write_rtcp(&[Box::new(PictureLossIndication {
+                                                        sender_ssrc: 0,
+                                                        media_ssrc,
+                                                    })])
+                                                    .await;
+                                            }
+                                            None => break,
+                                        }
+                                    }
                                 }
                             }
                         });
