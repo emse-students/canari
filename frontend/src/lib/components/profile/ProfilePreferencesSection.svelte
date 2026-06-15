@@ -1,7 +1,19 @@
 <script lang="ts">
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
-  import { Settings, Volume2, VolumeX, Vibrate, VibrateOff, Sun, Moon, Monitor } from '@lucide/svelte';
+  import {
+    Settings,
+    Volume2,
+    VolumeX,
+    Vibrate,
+    VibrateOff,
+    Sun,
+    Moon,
+    Monitor,
+    Languages,
+  } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
 
   interface Props {
     /** Whether the device is touch-capable (shows the vibration toggle). */
@@ -127,6 +139,41 @@
           >
             <Icon size={15} strokeWidth={2.5} />
             <span class="hidden sm:inline">{opt.label}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3.5">
+        <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+          <Languages size={20} strokeWidth={2.5} />
+        </div>
+        <div>
+          <p class="text-sm font-bold text-text-main">{m.settings_language_label()}</p>
+          <p class="text-xs font-medium text-text-muted mt-0.5">{m.settings_language_desc()}</p>
+        </div>
+      </div>
+
+      <div
+        role="radiogroup"
+        aria-label={m.settings_language_label()}
+        class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
+      >
+        {#each locales as locale (locale)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={getLocale() === locale}
+            aria-label={LOCALE_LABELS[locale]}
+            title={LOCALE_LABELS[locale]}
+            onclick={() => changeLocale(locale)}
+            class="rounded-lg px-3 py-1.5 text-xs font-semibold uppercase outline-none transition-colors focus-visible:ring-2 focus-visible:ring-cn-yellow
+              {getLocale() === locale
+              ? 'bg-cn-yellow text-cn-ink shadow'
+              : 'text-text-muted hover:text-text-main'}"
+          >
+            {locale}
           </button>
         {/each}
       </div>

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appPackage = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
@@ -65,7 +66,21 @@ export default defineConfig(async () => ({
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
   },
-  plugins: [mlsWasmStub(), tailwindcss(), sveltekit(), protobufPatch()],
+  plugins: [
+    mlsWasmStub(),
+    tailwindcss(),
+    // Paraglide must compile before SvelteKit so the generated runtime in
+    // src/lib/paraglide is available to the app. SPA mode (ssr=false): locale
+    // detection is client-side via localStorage then the browser's preferred
+    // language, falling back to the base locale (fr).
+    paraglideVitePlugin({
+      project: './project.inlang',
+      outdir: './src/lib/paraglide',
+      strategy: ['localStorage', 'preferredLanguage', 'baseLocale'],
+    }),
+    sveltekit(),
+    protobufPatch(),
+  ],
 
   // Pre-bundle Tauri/heavy deps at startup so Vite never re-optimizes them
   // mid-session - which triggers an HMR full-reload that Android WebView

@@ -1,0 +1,5 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "settings_language_label": "Language",
+  "settings_language_desc": "Interface language"
+}
