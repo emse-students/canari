@@ -532,7 +532,7 @@ export class WebMlsService extends BaseMlsService {
     return stateBytes;
   }
 
-  /** WASM client wrapper - plain CBOR snapshot without Argon2 (fast session autosave). */
+  /** WASM client wrapper - plain CBOR snapshot in memory only (worker bootstrap, not persisted). */
   async saveStatePlain(): Promise<Uint8Array> {
     const stateBytes = this.client.save_state(undefined) as Uint8Array;
     this.lastKnownState = stateBytes.slice();
