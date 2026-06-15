@@ -88,6 +88,21 @@ describe('createMlsCryptoWorkerSession', () => {
     expect(worker.terminated).toBe(true);
   });
 
+  it('faults after a worker error so later requests fail fast (no hang)', async () => {
+    const worker = new FakeWorker((msg) => {
+      if (msg.type === 'init') return { type: 'init:ok' };
+      if (msg.type === 'decryptPage') return { type: 'error', error: 'worker crashed' };
+      return undefined; // finalize would never get a reply → would hang without the fault guard
+    });
+    const session = await createMlsCryptoWorkerSession(
+      { userId: 'u', deviceId: 'd', groupId: 'g', state: new Uint8Array([1]) },
+      () => worker as unknown as Worker
+    );
+
+    await expect(session.decryptPage([new Uint8Array([1])])).rejects.toThrow('worker crashed');
+    await expect(session.finalize()).rejects.toThrow('faulted');
+  });
+
   it('dispose terminates the worker', async () => {
     const { session, worker } = await makeSession(okResponder);
     session.dispose();
