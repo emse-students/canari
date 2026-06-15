@@ -14,6 +14,8 @@
     Minimize2,
     Maximize2,
     PictureInPicture2,
+    ShieldCheck,
+    ShieldAlert,
   } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
   import type { CallState } from '$lib/services/CallService';
@@ -37,6 +39,7 @@
   let localStreamVal = $state<MediaStream | null>(null);
   let isMuted = $state(false);
   let isVideoOff = $state(false);
+  let e2eActive = $state(true);
 
   $effect(() => {
     const unsubs = [
@@ -46,6 +49,7 @@
       callService.localStreamStore.subscribe((v) => (localStreamVal = v)),
       callService.isMuted.subscribe((v) => (isMuted = v)),
       callService.isVideoOff.subscribe((v) => (isVideoOff = v)),
+      callService.e2eActive.subscribe((v) => (e2eActive = v)),
     ];
     return () => unsubs.forEach((u) => u());
   });
@@ -285,6 +289,30 @@
   </div>
 {/snippet}
 
+{#snippet e2eBadge(small: boolean)}
+  {#if e2eActive}
+    <span
+      class="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 font-bold text-emerald-300 {small
+        ? 'px-1.5 py-0.5 text-[10px]'
+        : 'px-2 py-1 text-xs'}"
+      title="Appel chiffré de bout en bout"
+    >
+      <ShieldCheck size={small ? 12 : 14} strokeWidth={2.5} />
+      {#if !small}Chiffré{/if}
+    </span>
+  {:else}
+    <span
+      class="inline-flex items-center gap-1 rounded-full bg-amber-500/20 font-bold text-amber-300 {small
+        ? 'px-1.5 py-0.5 text-[10px]'
+        : 'px-2 py-1 text-xs'}"
+      title="Appel NON chiffré de bout en bout — chiffrement de transport uniquement (le serveur peut voir le flux)"
+    >
+      <ShieldAlert size={small ? 12 : 14} strokeWidth={2.5} />
+      Non chiffré E2E
+    </span>
+  {/if}
+{/snippet}
+
 {#if compact}
   <!-- Docked, non-blocking widget: the rest of the app stays interactive. -->
   <div
@@ -340,6 +368,7 @@
           {/if}
         </p>
       </div>
+      <div class="shrink-0">{@render e2eBadge(true)}</div>
       <button
         class="rounded-full p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
         onclick={() => (userMinimized = false)}
@@ -578,6 +607,11 @@
           class="text-white/90 font-bold truncate max-w-[10rem] sm:max-w-xs"
         />
       {/if}
+    </div>
+
+    <!-- End-to-end encryption status (warns when degraded to transport-only). -->
+    <div class="absolute top-[4.25rem] left-6 z-10">
+      {@render e2eBadge(false)}
     </div>
   </div>
 

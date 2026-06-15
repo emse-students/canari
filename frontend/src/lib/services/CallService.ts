@@ -80,6 +80,12 @@ export class CallService {
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
+  /**
+   * Whether the media is end-to-end encrypted (insertable-stream transforms active).
+   * Goes false when E2E is disabled by flag or unsupported by the browser, so the UI
+   * can warn that the call degraded to transport-only (SFU-visible) encryption.
+   */
+  public e2eActive = writable<boolean>(true);
 
   private chatNotifier: CallChatNotifier | null = null;
 
@@ -244,6 +250,7 @@ export class CallService {
     this.currentRoomToken = null;
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
+    this.e2eActive.set(true);
     for (const t of this.keyframeBurstTimers) clearTimeout(t);
     this.keyframeBurstTimers = [];
     this.incomingHasVideo = true;
@@ -562,12 +569,14 @@ export class CallService {
     if (!this.pc || !this.callKey) return;
     if (!this.isE2eMediaEnabled()) {
       appendLog('[Call] E2E media encryption disabled (VITE_CALL_E2E_ENCRYPTION=false)');
+      this.e2eActive.set(false);
       return;
     }
     if (!canUseRtpScriptTransform()) {
       appendLog(
         '[Call] RTCRtpScriptTransform indisponible - E2E désactivé (Firefox ≥ 117 : vérifier media.peerconnection.scripttransform.enabled)'
       );
+      this.e2eActive.set(false);
       return;
     }
     appendLog('[Call] attaching E2E media transforms');
@@ -590,6 +599,7 @@ export class CallService {
         receivers++;
       }
       appendLog(`[Call] E2E transforms attached (${senders} sender(s), ${receivers} receiver(s))`);
+      this.e2eActive.set(true);
       this.scheduleKeyframeBursts();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
