@@ -66,7 +66,7 @@ struct AppState {
 }
 
 struct Room {
-    tracks: Mutex<Vec<Arc<TrackLocalStaticRTP>>>,
+    tracks: Mutex<Vec<PublishedTrack>>,
     peers: DashMap<PeerId, PeerContext>,
     /// Per-peer generation counter to debounce renegotiation (audio + video = one offer).
     renegotiate_gen: DashMap<PeerId, u64>,
@@ -79,6 +79,43 @@ struct PeerContext {
     notify_tx: mpsc::Sender<SignalMessage>,
     /// Trickle ICE from the browser may arrive before the Offer is applied.
     pending_ice_candidates: Mutex<Vec<RTCIceCandidateInit>>,
+}
+
+/// A track being forwarded by the SFU, kept with a handle to its publisher so we can
+/// request keyframes on demand (the SFU forwards opaque E2E-encrypted RTP and cannot
+/// detect when a keyframe is needed).
+struct PublishedTrack {
+    local: Arc<TrackLocalStaticRTP>,
+    /// Publisher's PeerConnection (Weak to avoid a reference cycle with its callbacks).
+    publisher_pc: std::sync::Weak<RTCPeerConnection>,
+    /// SSRC of the publisher's remote track, used as the PLI media ssrc.
+    media_ssrc: u32,
+    is_video: bool,
+}
+
+/// Asks a publisher for a video keyframe a few times over ~1.5 s. Needed when a new
+/// subscriber attaches to an already-running video track (it joined after the last
+/// keyframe and would otherwise only get undecodable delta frames). No-op once the
+/// publisher's PeerConnection is gone.
+fn request_keyframe_burst(publisher_pc: std::sync::Weak<RTCPeerConnection>, media_ssrc: u32) {
+    tokio::spawn(async move {
+        for delay_ms in [0u64, 300, 800, 1500] {
+            if delay_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            match publisher_pc.upgrade() {
+                Some(pc) => {
+                    let _ = pc
+                        .write_rtcp(&[Box::new(PictureLossIndication {
+                            sender_ssrc: 0,
+                            media_ssrc,
+                        })])
+                        .await;
+                }
+                None => break,
+            }
+        }
+    });
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -341,13 +378,15 @@ async fn handle_signal(
             let tracks = room.tracks.lock().await;
             for track in tracks.iter() {
                 if let Err(e) = pc
-                    .add_track(Arc::clone(track) as Arc<dyn TrackLocal + Send + Sync>)
+                    .add_track(Arc::clone(&track.local) as Arc<dyn TrackLocal + Send + Sync>)
                     .await
                 {
                     error!("Failed to add existing track: {}", e);
-                }
-                if track.kind() == RTPCodecType::Video {
-                    tokio::spawn(async move {});
+                } else if track.is_video {
+                    // This peer is subscribing to a video track published before it joined,
+                    // so it missed the last keyframe: ask the publisher for a fresh IDR now,
+                    // otherwise it only receives undecodable delta frames (black video).
+                    request_keyframe_burst(track.publisher_pc.clone(), track.media_ssrc);
                 }
             }
             drop(tracks);
@@ -418,14 +457,20 @@ async fn handle_signal(
                             "canari-sfu".to_owned(),
                         ));
 
+                        let is_video = remote_track.kind() == RTPCodecType::Video;
+                        let media_ssrc = remote_track.ssrc();
+
                         {
                             let mut room_tracks = room_clone.tracks.lock().await;
-                            room_tracks.push(local_track.clone());
+                            room_tracks.push(PublishedTrack {
+                                local: local_track.clone(),
+                                publisher_pc: pc_weak.clone(),
+                                media_ssrc,
+                                is_video,
+                            });
                         }
 
                         let local_track_clone = local_track.clone();
-                        let is_video = remote_track.kind() == RTPCodecType::Video;
-                        let media_ssrc = remote_track.ssrc();
 
                         // RTP forwarding loop - never interrupted, so no packet is dropped.
                         tokio::spawn(async move {
