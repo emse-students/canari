@@ -13,6 +13,7 @@
     Minimize,
     Minimize2,
     Maximize2,
+    PictureInPicture2,
   } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
   import type { CallState } from '$lib/services/CallService';
@@ -197,6 +198,23 @@
   function handlePipPointerUp(e: PointerEvent) {
     isDragging = false;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  }
+
+  /** Native (out-of-browser) Picture-in-Picture for the remote video. */
+  let pipSupported = $derived(
+    typeof document !== 'undefined' && !!document.pictureInPictureEnabled
+  );
+
+  async function togglePictureInPicture() {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (remoteVideo) {
+        await remoteVideo.requestPictureInPicture();
+      }
+    } catch {
+      /* user gesture / unsupported - ignore */
+    }
   }
 
   let isFullscreen = $state(false);
@@ -607,6 +625,16 @@
       >
         {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
       </button>
+      {#if remoteHasVideo && pipSupported}
+        <button
+          class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
+          onclick={() => void togglePictureInPicture()}
+          title="Lecteur flottant (Picture-in-Picture)"
+          aria-label="Ouvrir la vidéo dans un lecteur flottant"
+        >
+          <PictureInPicture2 size={24} />
+        </button>
+      {/if}
       <button
         class="p-4 rounded-full bg-white/10 text-white hover:bg-white/20"
         onclick={() => (userMinimized = true)}
