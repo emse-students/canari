@@ -49,6 +49,11 @@
 
   let remoteEntries = $derived([...remoteStreamsMap.entries()]);
 
+  /** Whether a remote stream currently carries a live video track. */
+  function hasVideoForStream(stream: MediaStream): boolean {
+    return !!pickActiveVideoTrack(stream);
+  }
+
   /** Prefer a live, unmuted video track (renegotiation can leave older tracks in the stream). */
   function pickActiveVideoTrack(stream: MediaStream): MediaStreamTrack | undefined {
     const tracks = stream.getVideoTracks();
@@ -265,13 +270,21 @@
       >
         {#each remoteEntries as [key, stream], index (key)}
           {@const participant = participantForIndex(index)}
+          {@const tileHasVideo = hasVideoForStream(stream)}
           <div class="relative w-full h-full min-h-[120px] bg-black/40 rounded-xl overflow-hidden">
+            <!-- Kept mounted even without video so the tile's audio keeps playing;
+                 hidden behind the avatar when the member is audio-only. -->
             <video
               use:attachStream={stream}
               autoplay
               playsinline
-              class="w-full h-full object-cover"
+              class="w-full h-full object-cover {tileHasVideo ? '' : 'opacity-0'}"
             ></video>
+            {#if !tileHasVideo && participant}
+              <div class="absolute inset-0 flex items-center justify-center">
+                {@render callAvatar(participant.userId, participant.displayName, 'w-20 h-20')}
+              </div>
+            {/if}
             {#if participant}
               <div class="absolute bottom-2 left-2 right-2 z-10">
                 {@render participantLabel(participant)}
