@@ -9,7 +9,7 @@
 import { tick } from 'svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
-import { saveMlsState } from '$lib/utils/hex';
+import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersister';
 import { getToken } from '$lib/stores/auth';
 import {
   sendChatMessage,
@@ -625,8 +625,7 @@ export function useMessaging() {
             await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
           } else if (mlsService) {
             await mlsService.sendMessage(convo.id, protoBytes, messageId);
-            const stateBytes = await mlsService.saveState(ctx.pin);
-            await saveMlsState(ctx.userId, stateBytes);
+            scheduleOutboundMlsPersist();
           }
           if (!isChannel) {
             const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
@@ -960,8 +959,7 @@ export function useMessaging() {
           sentAt: Date.now(),
         });
         await mlsService.sendMessage(convo.id, protoBytes, messageId);
-        const stateBytes = await mlsService.saveState(ctx.pin);
-        await saveMlsState(ctx.userId, stateBytes);
+        scheduleOutboundMlsPersist();
         const payload = serializeEnvelope(mkMediaEnvelope({ ...m }, env.caption));
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };
