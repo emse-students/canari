@@ -305,7 +305,7 @@
       class="inline-flex items-center gap-1 rounded-full bg-amber-500/20 font-bold text-amber-300 {small
         ? 'px-1.5 py-0.5 text-[10px]'
         : 'px-2 py-1 text-xs'}"
-      title="Appel NON chiffré de bout en bout — chiffrement de transport uniquement (le serveur peut voir le flux)"
+      title="Appel NON chiffré de bout en bout - chiffrement de transport uniquement (le serveur peut voir le flux)"
     >
       <ShieldAlert size={small ? 12 : 14} strokeWidth={2.5} />
       Non chiffré E2E

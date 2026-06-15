@@ -128,7 +128,7 @@ export class CallService {
         senderNorm === userNorm &&
         get(this.callState) === 'incoming'
       ) {
-        appendLog('[Call] picked up on another device — stopping ring');
+        appendLog('[Call] picked up on another device - stopping ring');
         this.dismissIncomingCall();
       }
       return;

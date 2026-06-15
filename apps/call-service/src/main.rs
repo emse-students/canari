@@ -353,7 +353,7 @@ async fn handle_signal(
                 *ts = std::time::Instant::now();
             }
 
-            // One SFU participant per user — a new device replaces siblings in the same room.
+            // One SFU participant per user - a new device replaces siblings in the same room.
             evict_sibling_peers(&room, user_id).await;
 
             let pc = match create_peer_connection().await {
