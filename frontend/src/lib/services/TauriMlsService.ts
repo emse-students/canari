@@ -11,7 +11,6 @@ import {
 } from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { BaseMlsService } from './BaseMlsService';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
@@ -278,10 +277,13 @@ export class TauriMlsService extends BaseMlsService {
             return;
           }
           if (parsed.proto && this.messageCallback) {
-            const ciphertext = fromBase64(parsed.proto as string);
+            const binaryString = atob(parsed.proto as string);
+            const ciphertext = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++)
+              ciphertext[i] = binaryString.charCodeAt(i);
             const ratchetTreeBytes =
               typeof parsed.ratchetTree === 'string' && (parsed.ratchetTree as string).length > 0
-                ? fromBase64(parsed.ratchetTree as string)
+                ? Uint8Array.from(atob(parsed.ratchetTree as string), (c) => c.charCodeAt(0))
                 : undefined;
             if (ciphertext.length > 0) {
               this.enqueueMessage({
@@ -477,11 +479,6 @@ export class TauriMlsService extends BaseMlsService {
     return bytes;
   }
 
-  /** Plain autosave on native — no Argon2; same path as encrypted checkpoint. */
-  async saveStatePlain(): Promise<Uint8Array> {
-    return this.saveState(this._pin);
-  }
-
   /**
    * Re-encrypts the MLS state with the new PIN via the native Tauri command and updates
    * the cached PIN used for background saves. Must be called after a successful PIN change.
@@ -636,7 +633,7 @@ export class TauriMlsService extends BaseMlsService {
       messageBytes: Array.from(messageBytes),
     });
     const encryptedBytes = Uint8Array.from(res);
-    const proto = toBase64(encryptedBytes);
+    const proto = btoa(Array.from(encryptedBytes, (b) => String.fromCharCode(b)).join(''));
     await this.delivery.postApplicationMessage(groupId, proto, silent);
     return encryptedBytes;
   }
@@ -671,7 +668,7 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Tauri-native `invoke` wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
   async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-    const base64 = toBase64(keyPackageBytes);
+    const base64 = btoa(Array.from(keyPackageBytes, (b) => String.fromCharCode(b)).join(''));
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceAppVersion = await this.getRuntimeAppVersion();
@@ -689,7 +686,7 @@ export class TauriMlsService extends BaseMlsService {
     groupId: string,
     excludeDeviceIds?: string[]
   ): Promise<void> {
-    const proto = toBase64(commitBytes);
+    const proto = btoa(Array.from(commitBytes, (b) => String.fromCharCode(b)).join(''));
     let baseEpoch = 0;
     try {
       // Rust applies the commit locally during add/remove, so obtenir_epoch returns

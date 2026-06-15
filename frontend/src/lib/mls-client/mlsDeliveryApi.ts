@@ -1,7 +1,6 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import { ackMessagesWithRetry } from './ackRetry';
 import type { GroupMeta, UserGroupRow } from './IMlsService';
-import { toBase64, fromBase64 } from '$lib/utils/hex';
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -36,7 +35,7 @@ export class MlsDeliveryApi {
   }
 
   private uint8ToB64(bytes: Uint8Array): string {
-    return toBase64(bytes);
+    return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
   }
 
   /** Fire-and-forget POST to the delivery service; throws on non-2xx. */
@@ -92,7 +91,12 @@ export class MlsDeliveryApi {
   }
 
   private decodeKeyPackageBase64(keyPackageB64: string): Uint8Array {
-    return fromBase64(keyPackageB64);
+    const binaryString = atob(keyPackageB64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
   }
 
   /**

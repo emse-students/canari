@@ -1,8 +1,4 @@
-import { fromBase64 } from '$lib/utils/hex';
-import {
-  MLS_HISTORY_PAGE_SIZE,
-  scheduleOutboundMlsPersist,
-} from '$lib/mls-client/mlsStatePersister';
+import { saveMlsState } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type {
   AddMessageToChatOptions,
@@ -141,8 +137,8 @@ export async function replayConversationHistory(params: {
         /* if DB check fails, proceed with existing cursor */
       }
     }
-    let fetchCursor = afterStreamId;
-    let fetchedAnyPage = false;
+    const history = await mlsService.fetchHistory(id, afterStreamId);
+    if (history.length === 0) return;
 
     // Track the highest stream ID we process so the next sync starts from there.
     let latestStreamId: string | undefined;
@@ -184,306 +180,261 @@ export async function replayConversationHistory(params: {
     > = [];
     let historyIngestSeq = 0;
 
-    while (true) {
-      const history = await mlsService.fetchHistory(id, fetchCursor);
-      if (history.length === 0) {
-        if (!fetchedAnyPage) return;
-        break;
-      }
-      fetchedAnyPage = true;
-
-      const pageDecryptWork: Array<{
-        msg: (typeof history)[number];
-        cipherFingerprint: string;
-        bytes: Uint8Array;
-      }> = [];
-
-      for (const msg of history) {
-        const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
-        if (seenCipherHashes.has(cipherFingerprint)) {
-          if (msg.id && (!latestStreamId || msg.id > latestStreamId)) {
-            latestStreamId = msg.id;
-          }
-          continue;
+    for (const msg of history) {
+      const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
+      if (seenCipherHashes.has(cipherFingerprint)) {
+        if (msg.id && (!latestStreamId || msg.id > latestStreamId)) {
+          latestStreamId = msg.id;
         }
-        pageDecryptWork.push({
-          msg,
-          cipherFingerprint,
-          bytes: fromBase64(msg.content),
-        });
+        continue;
       }
 
-      const batchResults =
-        pageDecryptWork.length > 0
-          ? await mlsService.processIncomingMessageBatch(
-              id,
-              pageDecryptWork.map((w) => w.bytes)
-            )
-          : [];
+      // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
+      let skipSeenHash = false;
+      let advanceStreamCursor = false;
+      try {
+        const bytesStr = atob(msg.content);
+        const bytes = new Uint8Array(bytesStr.length);
+        for (let i = 0; i < bytesStr.length; i++) bytes[i] = bytesStr.charCodeAt(i);
 
-      for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
-        const { msg, cipherFingerprint } = pageDecryptWork[workIdx];
-        const batchResult = batchResults[workIdx];
+        const decryptedBytes = await mlsService.processIncomingMessage(id, bytes);
+        if (!decryptedBytes) continue;
 
-        // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
-        let skipSeenHash = false;
-        let advanceStreamCursor = false;
-        try {
-          if (!batchResult.ok) {
-            throw new Error(batchResult.error);
-          }
-          const decryptedBytes = batchResult.plaintext;
-          if (!decryptedBytes) continue;
+        const parsed = decodeAppMessage(decryptedBytes);
 
-          const parsed = decodeAppMessage(decryptedBytes);
+        const serverMs = parseServerTimestampMs(msg.timestamp);
+        const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;
+        if (envelope) {
+          pendingMessages.push({
+            senderId: msg.sender_id,
+            content: envelope.content,
+            ...envelope.options,
+            ingestSequence: historyIngestSeq++,
+          });
+          addedMsg++;
+          mlsUpdated = true;
+          continue;
+        } else if (parsed?.reaction) {
+          const messageId = parsed.reaction.messageId ?? '';
+          const senderNorm = msg.sender_id.toLowerCase();
+          const reactions = messageReactions.get(messageId) || [];
+          const emoji = parsed.reaction.emoji ?? '';
+          const updated = addMessageReaction(reactions, senderNorm, emoji);
+          if (!updated) continue; // déjà présente ou cap atteint - no-op
+          messageReactions.set(messageId, updated);
+          reactionUpdates.set(messageId, updated);
+          mlsUpdated = true;
+          continue;
+        } else if (parsed?.system) {
+          const senderNorm = msg.sender_id.toLowerCase();
+          let systemText: string | null = null;
 
-          const serverMs = parseServerTimestampMs(msg.timestamp);
-          const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;
-          if (envelope) {
-            pendingMessages.push({
-              senderId: msg.sender_id,
-              content: envelope.content,
-              ...envelope.options,
-              ingestSequence: historyIngestSeq++,
-            });
-            addedMsg++;
-            mlsUpdated = true;
-            continue;
-          } else if (parsed?.reaction) {
-            const messageId = parsed.reaction.messageId ?? '';
-            const senderNorm = msg.sender_id.toLowerCase();
-            const reactions = messageReactions.get(messageId) || [];
-            const emoji = parsed.reaction.emoji ?? '';
-            const updated = addMessageReaction(reactions, senderNorm, emoji);
-            if (!updated) continue; // déjà présente ou cap atteint - no-op
-            messageReactions.set(messageId, updated);
-            reactionUpdates.set(messageId, updated);
-            mlsUpdated = true;
-            continue;
-          } else if (parsed?.system) {
-            const senderNorm = msg.sender_id.toLowerCase();
-            let systemText: string | null = null;
+          try {
+            const data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
 
-            try {
-              const data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
-
-              if (parsed.system.event === 'groupRenamed' && data.newName) {
-                const convo = getConversation(contactName);
-                if (convo && convo.name !== data.newName) {
-                  setConversation(contactName, { ...convo, name: data.newName });
+            if (parsed.system.event === 'groupRenamed' && data.newName) {
+              const convo = getConversation(contactName);
+              if (convo && convo.name !== data.newName) {
+                setConversation(contactName, { ...convo, name: data.newName });
+              }
+              const getName = await resolveDisplayNames([senderNorm]);
+              systemText = `${getName(senderNorm)} a renommé le groupe en "${data.newName}"`;
+            } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
+              const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
+              systemText = `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`;
+            } else if (parsed.system.event === 'memberLeft' && data.userId) {
+              const getName = await resolveDisplayNames([data.userId]);
+              systemText = `${getName(data.userId)} a quitté le groupe`;
+            } else if (parsed.system.event === 'memberAdded') {
+              const newUserIds: string[] =
+                data.newUsers && Array.isArray(data.newUsers)
+                  ? data.newUsers
+                  : data.newUser
+                    ? [data.newUser]
+                    : [];
+              const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
+              const added = newUserIds.map((u: string) => getName(u)).join(', ');
+              if (added) systemText = `${getName(senderNorm)} a ajouté ${added} au groupe`;
+            } else if (parsed.system.event === 'groupDeleted') {
+              const getName = await resolveDisplayNames([senderNorm]);
+              systemText = `${getName(senderNorm)} a supprimé le groupe`;
+            } else if (parsed.system.event === 'read_receipt') {
+              const msgIds: string[] = data.messageIds ?? [];
+              const convo = getConversation(contactName);
+              if (convo && msgIds.length > 0) {
+                const readAt = parseServerTimestampMs(msg.timestamp) ?? Date.now();
+                let updated = false;
+                const newMsgs = [...convo.messages];
+                for (const msgId of msgIds) {
+                  const idx = newMsgs.findIndex((m) => m.id === msgId);
+                  if (idx !== -1) {
+                    const current = newMsgs[idx];
+                    const readBy = current.readBy || [];
+                    if (!readBy.includes(senderNorm)) {
+                      newMsgs[idx] = {
+                        ...current,
+                        readBy: [...readBy, senderNorm],
+                        readAt: current.readAt ?? readAt,
+                      };
+                      updated = true;
+                    }
+                  }
+                  readReceiptDbUpdates.push({ msgId, senderNorm, readAt });
                 }
-                const getName = await resolveDisplayNames([senderNorm]);
-                systemText = `${getName(senderNorm)} a renommé le groupe en "${data.newName}"`;
-              } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
-                const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
-                systemText = `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`;
-              } else if (parsed.system.event === 'memberLeft' && data.userId) {
-                const getName = await resolveDisplayNames([data.userId]);
-                systemText = `${getName(data.userId)} a quitté le groupe`;
-              } else if (parsed.system.event === 'memberAdded') {
-                const newUserIds: string[] =
-                  data.newUsers && Array.isArray(data.newUsers)
-                    ? data.newUsers
-                    : data.newUser
-                      ? [data.newUser]
-                      : [];
-                const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
-                const added = newUserIds.map((u: string) => getName(u)).join(', ');
-                if (added) systemText = `${getName(senderNorm)} a ajouté ${added} au groupe`;
-              } else if (parsed.system.event === 'groupDeleted') {
-                const getName = await resolveDisplayNames([senderNorm]);
-                systemText = `${getName(senderNorm)} a supprimé le groupe`;
-              } else if (parsed.system.event === 'read_receipt') {
-                const msgIds: string[] = data.messageIds ?? [];
-                const convo = getConversation(contactName);
-                if (convo && msgIds.length > 0) {
-                  const readAt = parseServerTimestampMs(msg.timestamp) ?? Date.now();
-                  let updated = false;
+                if (updated) {
+                  setConversation(contactName, { ...convo, messages: newMsgs });
+                }
+              }
+            } else if (parsed.system.event === 'delete_message' && data.messageId) {
+              const convo = getConversation(contactName);
+              if (convo) {
+                const idx = convo.messages.findIndex((m) => m.id === data.messageId);
+                if (idx !== -1) {
                   const newMsgs = [...convo.messages];
-                  for (const msgId of msgIds) {
-                    const idx = newMsgs.findIndex((m) => m.id === msgId);
-                    if (idx !== -1) {
-                      const current = newMsgs[idx];
-                      const readBy = current.readBy || [];
-                      if (!readBy.includes(senderNorm)) {
-                        newMsgs[idx] = {
-                          ...current,
-                          readBy: [...readBy, senderNorm],
-                          readAt: current.readAt ?? readAt,
-                        };
-                        updated = true;
-                      }
-                    }
-                    readReceiptDbUpdates.push({ msgId, senderNorm, readAt });
-                  }
-                  if (updated) {
-                    setConversation(contactName, { ...convo, messages: newMsgs });
-                  }
+                  newMsgs[idx] = {
+                    ...newMsgs[idx],
+                    isDeleted: true,
+                    content: 'Ce message a été supprimé.',
+                  };
+                  setConversation(contactName, { ...convo, messages: newMsgs });
                 }
-              } else if (parsed.system.event === 'delete_message' && data.messageId) {
-                const convo = getConversation(contactName);
-                if (convo) {
-                  const idx = convo.messages.findIndex((m) => m.id === data.messageId);
-                  if (idx !== -1) {
-                    const newMsgs = [...convo.messages];
-                    newMsgs[idx] = {
-                      ...newMsgs[idx],
-                      isDeleted: true,
-                      content: 'Ce message a été supprimé.',
-                    };
-                    setConversation(contactName, { ...convo, messages: newMsgs });
-                  }
+              }
+              deletedMessageIds.add(data.messageId);
+            } else if (
+              parsed.system.event === 'edit_message' &&
+              data.messageId &&
+              data.newContent
+            ) {
+              const editedAt =
+                typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
+              const convo = getConversation(contactName);
+              if (convo) {
+                const idx = convo.messages.findIndex((m) => m.id === data.messageId);
+                if (idx !== -1) {
+                  const newMsgs = [...convo.messages];
+                  newMsgs[idx] = {
+                    ...newMsgs[idx],
+                    isEdited: true,
+                    editedAt,
+                    content: data.newContent,
+                    readBy: [],
+                  };
+                  setConversation(contactName, { ...convo, messages: newMsgs });
                 }
-                deletedMessageIds.add(data.messageId);
-              } else if (
-                parsed.system.event === 'edit_message' &&
-                data.messageId &&
-                data.newContent
-              ) {
-                const editedAt =
-                  typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
-                const convo = getConversation(contactName);
-                if (convo) {
-                  const idx = convo.messages.findIndex((m) => m.id === data.messageId);
-                  if (idx !== -1) {
-                    const newMsgs = [...convo.messages];
-                    newMsgs[idx] = {
-                      ...newMsgs[idx],
-                      isEdited: true,
-                      editedAt,
-                      content: data.newContent,
-                      readBy: [],
-                    };
-                    setConversation(contactName, { ...convo, messages: newMsgs });
-                  }
-                }
-                editedMessages.set(data.messageId, { content: data.newContent, editedAt });
-              } else if (
-                parsed.system.event === 'remove_reaction' &&
-                data.messageId &&
-                data.emoji
-              ) {
-                const senderReactNorm = msg.sender_id.toLowerCase();
-                const cur = messageReactions.get(data.messageId) || [];
-                const trimmed = cur.filter(
-                  (r) => !(r.userId === senderReactNorm && r.emoji === data.emoji)
+              }
+              editedMessages.set(data.messageId, { content: data.newContent, editedAt });
+            } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
+              const senderReactNorm = msg.sender_id.toLowerCase();
+              const cur = messageReactions.get(data.messageId) || [];
+              const trimmed = cur.filter(
+                (r) => !(r.userId === senderReactNorm && r.emoji === data.emoji)
+              );
+              messageReactions.set(data.messageId, trimmed);
+              reactionUpdates.set(data.messageId, trimmed);
+            } else if (parsed.system.event === 'history_bundle') {
+              // Le bundle est livré via la queue de messages; le traiter ici garantit qu'un
+              // device arrivant en ligne après l'expiration de la queue (7 jours) récupère
+              // quand même l'historique depuis Redis Streams.
+              const bundleData = data.messages;
+              if (Array.isArray(bundleData) && bundleData.length > 0) {
+                const existingIds = new Set(
+                  (getConversation(contactName)?.messages ?? []).map((m) => m.id)
                 );
-                messageReactions.set(data.messageId, trimmed);
-                reactionUpdates.set(data.messageId, trimmed);
-              } else if (parsed.system.event === 'history_bundle') {
-                // Le bundle est livré via la queue de messages; le traiter ici garantit qu'un
-                // device arrivant en ligne après l'expiration de la queue (7 jours) récupère
-                // quand même l'historique depuis Redis Streams.
-                const bundleData = data.messages;
-                if (Array.isArray(bundleData) && bundleData.length > 0) {
-                  const existingIds = new Set(
-                    (getConversation(contactName)?.messages ?? []).map((m) => m.id)
-                  );
-                  const serverMs = parseServerTimestampMs(msg.timestamp);
-                  for (const m of bundleData) {
-                    if (m?.id && !existingIds.has(m.id) && m.senderId && m.content) {
-                      pendingMessages.push({
-                        senderId: String(m.senderId).toLowerCase(),
-                        content: String(m.content),
-                        messageId: String(m.id),
-                        timestamp:
-                          typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
-                        // Préserver le serverTimestamp original de chaque message (tri stable).
-                        // Fallback sur serverMs (timestamp du bundle) seulement si absent.
-                        serverTimestamp:
-                          typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
-                        ingestSequence: historyIngestSeq++,
-                        // Métadonnées transférées du device source : réactions, accusés,
-                        // suppressions et éditions - état complet au moment de la migration.
-                        ...(Array.isArray(m.reactions) && m.reactions.length > 0
-                          ? { reactions: m.reactions }
-                          : {}),
-                        ...(Array.isArray(m.readBy) && m.readBy.length > 0
-                          ? { readBy: m.readBy }
-                          : {}),
-                        ...(m.isDeleted === true ? { isDeleted: true } : {}),
-                        ...(m.isEdited === true ? { isEdited: true } : {}),
-                        ...(typeof m.readAt === 'number' ? { readAt: m.readAt } : {}),
-                      });
-                      addedMsg++;
-                    }
+                const serverMs = parseServerTimestampMs(msg.timestamp);
+                for (const m of bundleData) {
+                  if (m?.id && !existingIds.has(m.id) && m.senderId && m.content) {
+                    pendingMessages.push({
+                      senderId: String(m.senderId).toLowerCase(),
+                      content: String(m.content),
+                      messageId: String(m.id),
+                      timestamp:
+                        typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
+                      // Préserver le serverTimestamp original de chaque message (tri stable).
+                      // Fallback sur serverMs (timestamp du bundle) seulement si absent.
+                      serverTimestamp:
+                        typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
+                      ingestSequence: historyIngestSeq++,
+                      // Métadonnées transférées du device source : réactions, accusés,
+                      // suppressions et éditions - état complet au moment de la migration.
+                      ...(Array.isArray(m.reactions) && m.reactions.length > 0
+                        ? { reactions: m.reactions }
+                        : {}),
+                      ...(Array.isArray(m.readBy) && m.readBy.length > 0
+                        ? { readBy: m.readBy }
+                        : {}),
+                      ...(m.isDeleted === true ? { isDeleted: true } : {}),
+                      ...(m.isEdited === true ? { isEdited: true } : {}),
+                      ...(typeof m.readAt === 'number' ? { readAt: m.readAt } : {}),
+                    });
+                    addedMsg++;
                   }
-                  // Seed messageReactions depuis le bundle pour que les stream events de
-                  // réaction ultérieurs s'appliquent par-dessus, et non depuis un tableau vide.
-                  for (const m of bundleData) {
-                    if (m?.id && Array.isArray(m.reactions) && m.reactions.length > 0) {
-                      const msgId = String(m.id);
-                      if (!messageReactions.has(msgId)) {
-                        messageReactions.set(msgId, m.reactions);
-                      }
+                }
+                // Seed messageReactions depuis le bundle pour que les stream events de
+                // réaction ultérieurs s'appliquent par-dessus, et non depuis un tableau vide.
+                for (const m of bundleData) {
+                  if (m?.id && Array.isArray(m.reactions) && m.reactions.length > 0) {
+                    const msgId = String(m.id);
+                    if (!messageReactions.has(msgId)) {
+                      messageReactions.set(msgId, m.reactions);
                     }
                   }
                 }
               }
-            } catch {
-              // Keep history replay robust even if a control payload is malformed.
             }
+          } catch {
+            // Keep history replay robust even if a control payload is malformed.
+          }
 
-            if (systemText) {
-              const systemServerMs = parseServerTimestampMs(msg.timestamp);
-              pendingMessages.push({
-                senderId: 'system',
-                content: systemText,
-                isSystem: true,
-                messageId: parsed.messageId || undefined,
-                timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
-                ingestSequence: historyIngestSeq++,
-              });
-              addedMsg++;
-            }
-            mlsUpdated = true;
-            continue;
+          if (systemText) {
+            const systemServerMs = parseServerTimestampMs(msg.timestamp);
+            pendingMessages.push({
+              senderId: 'system',
+              content: systemText,
+              isSystem: true,
+              messageId: parsed.messageId || undefined,
+              timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
+              ingestSequence: historyIngestSeq++,
+            });
+            addedMsg++;
           }
-        } catch (err) {
-          const errStr = String(err);
-          if (
-            errStr.includes('CannotDecryptOwnMessage') ||
-            errStr.includes('WrongEpoch') ||
-            errStr.includes('SecretReuseError')
-          ) {
-            // Non-recoverable - mark as seen to avoid infinite reprocessing.
-            seenCipherHashes.add(cipherFingerprint);
-            seenUpdated = true;
-            continue;
-          }
-          if (errStr.includes('GAP_QUEUED')) {
-            // Recoverable epoch/ratchet gap: do NOT mark as seen so the entry is
-            // retried on the next history load after epoch resync.
-            skipSeenHash = true;
-            console.warn(`[History] GAP_QUEUED retryable: ${errStr.slice(0, 200)}`);
-          } else {
-            console.warn(`History msg error: ${err}`);
-          }
-        } finally {
-          if (!skipSeenHash) {
-            seenCipherHashes.add(cipherFingerprint);
-            seenUpdated = true;
-            advanceStreamCursor = true;
-          }
+          mlsUpdated = true;
+          continue;
         }
-
-        if (advanceStreamCursor && msg.id && (!latestStreamId || msg.id > latestStreamId)) {
-          latestStreamId = msg.id;
+      } catch (err) {
+        const errStr = String(err);
+        if (
+          errStr.includes('CannotDecryptOwnMessage') ||
+          errStr.includes('WrongEpoch') ||
+          errStr.includes('SecretReuseError')
+        ) {
+          // Non-recoverable - mark as seen to avoid infinite reprocessing.
+          seenCipherHashes.add(cipherFingerprint);
+          seenUpdated = true;
+          continue;
         }
-
-        if (workIdx > 0 && workIdx % 8 === 0) {
-          await yieldToMainThread();
+        if (errStr.includes('GAP_QUEUED')) {
+          // Recoverable epoch/ratchet gap: do NOT mark as seen so the entry is
+          // retried on the next history load after epoch resync.
+          skipSeenHash = true;
+          console.warn(`[History] GAP_QUEUED retryable: ${errStr.slice(0, 200)}`);
+        } else {
+          console.warn(`History msg error: ${err}`);
+        }
+      } finally {
+        if (!skipSeenHash) {
+          seenCipherHashes.add(cipherFingerprint);
+          seenUpdated = true;
+          advanceStreamCursor = true;
         }
       }
 
-      if (latestStreamId) {
-        saveLastStreamId(userId, id, latestStreamId);
+      if (advanceStreamCursor && msg.id && (!latestStreamId || msg.id > latestStreamId)) {
+        latestStreamId = msg.id;
       }
 
-      if (history.length < MLS_HISTORY_PAGE_SIZE) break;
-      const pageLastId = history[history.length - 1]?.id;
-      if (!pageLastId || pageLastId === fetchCursor) break;
-      fetchCursor = pageLastId;
+      if (historyIngestSeq > 0 && historyIngestSeq % 8 === 0) {
+        await yieldToMainThread();
+      }
     }
 
     if (seenUpdated) {
@@ -602,8 +553,14 @@ export async function replayConversationHistory(params: {
       }
     }
 
+    // Persist the last processed Redis stream ID so the next sync is incremental.
+    if (latestStreamId) {
+      saveLastStreamId(userId, id, latestStreamId);
+    }
+
     if (mlsUpdated) {
-      scheduleOutboundMlsPersist();
+      const stateBytes = await mlsService.saveState(pin);
+      await saveMlsState(userId, stateBytes);
       log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
     }
   } catch (err) {

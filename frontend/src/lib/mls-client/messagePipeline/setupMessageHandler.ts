@@ -11,7 +11,7 @@ import {
   resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
-import { createMlsStatePersister, registerMlsStatePersister } from '../mlsStatePersister';
+import { createMlsStatePersister } from '../mlsStatePersister';
 import type { MessageHandlerDeps } from './deps';
 export type { MessageHandlerDeps } from './deps';
 
@@ -56,7 +56,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   installWasmDuplicateDeliveryLogInterceptor();
 
   const statePersister = createMlsStatePersister({ mlsService, pin, userId, log });
-  registerMlsStatePersister(statePersister);
 
   // Flush immédiat quand l'app passe en arrière-plan (FCM Android)
   if (typeof document !== 'undefined') {

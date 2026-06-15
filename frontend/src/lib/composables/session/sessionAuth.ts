@@ -16,10 +16,6 @@ import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from 
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
-  unregisterMlsStatePersister,
-  flushActiveMlsStateEncrypted,
-} from '$lib/mls-client/mlsStatePersister';
-import {
   setupMessageHandler,
   initializeConnection,
   initTabLeadershipAsync,
@@ -842,7 +838,6 @@ export async function recoverPinImpl(
  */
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Déconnexion de userId=${ctx.getUserId()?.slice(0, 8) ?? 'inconnu'}...`);
-  void flushActiveMlsStateEncrypted().finally(() => unregisterMlsStatePersister());
   const tokenForPushCleanup = ctx.getAuthToken();
   const deviceForPushCleanup = ctx.getMyDeviceId();
 

@@ -1,10 +1,4 @@
-import type {
-  IMlsService,
-  GroupMeta,
-  UserGroupRow,
-  MlsInitOptions,
-  MlsBatchProcessResult,
-} from '$lib/mls-client';
+import type { IMlsService, GroupMeta, UserGroupRow, MlsInitOptions } from '$lib/mls-client';
 import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
 import type { MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
@@ -23,7 +17,6 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
-import { fromBase64 } from '$lib/utils/hex';
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
@@ -516,7 +509,7 @@ export abstract class BaseMlsService implements IMlsService {
 
             if (proto) {
               try {
-                const ciphertext = fromBase64(proto);
+                const ciphertext = Uint8Array.from(atob(proto), (c) => c.charCodeAt(0));
                 if (ciphertext.length > 0) {
                   this.enqueueMessage({
                     senderId: (msg.senderId as string) || 'unknown',
@@ -526,7 +519,7 @@ export abstract class BaseMlsService implements IMlsService {
                     isCommit: msg.isCommit === true,
                     ratchetTreeBytes:
                       typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                        ? fromBase64(msg.ratchetTree as string)
+                        ? Uint8Array.from(atob(msg.ratchetTree as string), (c) => c.charCodeAt(0))
                         : undefined,
                     queuedMessageId: msgId,
                     queuedCreatedAt,
@@ -851,29 +844,9 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.deleteDevice(userId, deviceId);
   }
 
-  // ── Shared MLS batch decrypt (overridable on Web for worker path) ─────────
-
-  /** Sequential decrypt fallback used by Tauri and when the crypto worker is disabled. */
-  async processIncomingMessageBatch(
-    groupId: string,
-    messageBytesList: Uint8Array[]
-  ): Promise<MlsBatchProcessResult[]> {
-    const results: MlsBatchProcessResult[] = [];
-    for (const bytes of messageBytesList) {
-      try {
-        const plaintext = await this.processIncomingMessage(groupId, bytes);
-        results.push({ ok: true, plaintext });
-      } catch (e) {
-        results.push({ ok: false, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    return results;
-  }
-
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   abstract saveState(pin: string): Promise<Uint8Array>;
-  abstract saveStatePlain(): Promise<Uint8Array>;
   abstract changePIN(newPin: string): Promise<void>;
   abstract generateKeyPackage(pin: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;

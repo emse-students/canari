@@ -1,6 +1,6 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
-import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersister';
+import { saveMlsState } from '$lib/utils/hex';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
@@ -55,7 +55,7 @@ export async function sendChatMessage(
   replyingTo: ChatMessage | null,
   deps: SendMessageDeps
 ): Promise<{ success: boolean; error?: string }> {
-  const { mlsService, userId, conversation, addMessageToChat } = deps;
+  const { mlsService, userId, pin, conversation, addMessageToChat } = deps;
 
   deps.log(
     `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" isReady=${conversation.isReady} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
@@ -118,8 +118,13 @@ export async function sendChatMessage(
 
       try {
         await mlsService.sendMessage(conversation.id, payload, messageId);
-        deps.log(`[SEND] mlsService.sendMessage confirmé - persistance MLS coalescée`);
-        scheduleOutboundMlsPersist();
+        deps.log(`[SEND] mlsService.sendMessage confirmé - sauvegarde état MLS...`);
+        try {
+          const stateBytes = await mlsService.saveState(pin);
+          await saveMlsState(userId, stateBytes);
+        } catch (saveErr) {
+          console.warn('[SEND] MLS state persist failed (quota?)', saveErr);
+        }
         deps.patchMessage?.(messageId, contactName, { status: 'sent' });
         deps.log(`[SEND] Message envoyé pour messageId=${messageId}`);
       } catch (sendErr) {
@@ -195,7 +200,7 @@ export async function addReaction(
   emoji: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, userId, conversation, currentUserDisplayName } = deps;
+  const { mlsService, userId, pin, conversation, currentUserDisplayName } = deps;
 
   if (!conversation.isReady) return;
 
@@ -203,7 +208,8 @@ export async function addReaction(
     const payload = encodeAppMessage(mkReaction(messageId, emoji));
     // silent=true: MLS state sync only, the push notification is sent via notifyReaction instead
     await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
 
     // Notify the message author (fire-and-forget, non-fatal)
     const targetMsg = conversation.messages.find((m) => m.id === messageId);
@@ -231,7 +237,7 @@ export async function removeReaction(
   emoji: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, conversation } = deps;
+  const { mlsService, userId, pin, conversation } = deps;
 
   if (!conversation.isReady) return;
 
@@ -240,7 +246,8 @@ export async function removeReaction(
       mkSystem('remove_reaction', JSON.stringify({ messageId, emoji }))
     );
     await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to send remove_reaction:', e);
   }
@@ -251,7 +258,7 @@ export async function editMessage(
   newContent: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, conversation } = deps;
+  const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
     const editedAt = Date.now();
@@ -259,7 +266,8 @@ export async function editMessage(
       mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt }))
     );
     await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to edit message:', e);
   }
@@ -267,12 +275,13 @@ export async function editMessage(
 
 /** Sends a "delete_message" system message so all peers remove the message from their local history. */
 export async function deleteMessage(messageId: string, deps: MessageActionDeps): Promise<void> {
-  const { mlsService, conversation } = deps;
+  const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
     const payload = encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })));
     await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to delete message:', e);
   }
@@ -284,14 +293,15 @@ export async function setMessagePinned(
   pinned: boolean,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, conversation } = deps;
+  const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady) return;
   try {
     const payload = encodeAppMessage(
       mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId }))
     );
     await mlsService.sendMessage(conversation.id, payload, undefined, true /* silent */);
-    scheduleOutboundMlsPersist();
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
   } catch (e) {
     console.warn('Failed to (un)pin message:', e);
   }
@@ -302,12 +312,13 @@ export async function sendReadReceipt(
   messageIds: string[],
   deps: MessageActionDeps
 ): Promise<boolean> {
-  const { mlsService, conversation } = deps;
+  const { mlsService, userId, pin, conversation } = deps;
   if (!conversation.isReady || messageIds.length === 0) return false;
   try {
     const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
     await mlsService.sendMessage(conversation.id, payload, undefined, true /* silent */);
-    scheduleOutboundMlsPersist();
+    const stateBytes = await mlsService.saveState(pin);
+    await saveMlsState(userId, stateBytes);
     return true;
   } catch (e) {
     console.warn('Failed to send read receipt:', e);

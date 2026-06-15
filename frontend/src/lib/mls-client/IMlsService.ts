@@ -2,11 +2,6 @@ import type { IncomingDeliveryMeta } from './incomingDelivery';
 
 export type { IncomingDeliveryMeta };
 
-/** Per-message outcome from {@link IMlsService.processIncomingMessageBatch}. */
-export type MlsBatchProcessResult =
-  | { ok: true; plaintext: Uint8Array | null }
-  | { ok: false; error: string };
-
 /** Options for {@link IMlsService.init}. */
 export interface MlsInitOptions {
   /**
@@ -54,8 +49,6 @@ export interface IMlsService {
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
   saveState(pin: string): Promise<Uint8Array>;
-  /** Serialises MLS state as plain CBOR without Argon2 (fast session autosave). */
-  saveStatePlain(): Promise<Uint8Array>;
   /**
    * Re-encrypts the in-memory MLS state with a new PIN and persists it.
    * Must be called after the user successfully changes their PIN on the server,
@@ -121,14 +114,6 @@ export interface IMlsService {
   ): Promise<Uint8Array>;
   /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
-  /**
-   * Decrypts multiple MLS ciphertexts for one group sequentially (ratchet order preserved).
-   * Web uses an off-thread worker when enabled; Tauri falls back to sequential native calls.
-   */
-  processIncomingMessageBatch(
-    groupId: string,
-    messageBytesList: Uint8Array[]
-  ): Promise<MlsBatchProcessResult[]>;
   /** Exports a derived secret from a group's epoch key material using the given label and context. */
   exportSecret(
     groupId: string,

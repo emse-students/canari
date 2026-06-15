@@ -46,11 +46,6 @@ const B64_PREFIX = 'b64:';
 const IDB_NAME = `CanariDBMls_`;
 const IDB_STORE = 'state';
 
-/** IndexedDB key for PIN-encrypted MLS state (loaded at login). */
-export const MLS_STATE_ENCRYPTED_KEY = 'mls_autosave';
-/** IndexedDB key for plain CBOR MLS state (fast autosave during session). */
-export const MLS_STATE_PLAIN_KEY = 'mls_autosave_plain';
-
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
 function openMlsDb(userId: string): Promise<IDBDatabase> {
@@ -74,11 +69,11 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * Persist the MLS state blob for `userId` in IndexedDB.
  * Stores raw bytes - no base64 overhead.
  */
-/** Persists the PIN-encrypted MLS checkpoint (Argon2 + ChaCha20). Used at login and on critical flush. */
-export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): Promise<void> {
+export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
+      // Ensure native .bin file is written - fail fast so callers can handle errors.
       await invoke('save_mls_state', { data: Array.from(bytes) });
       return;
     } catch (e) {
@@ -90,31 +85,10 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
   const db = await openMlsDb(userId);
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(bytes, MLS_STATE_ENCRYPTED_KEY);
+    tx.objectStore(IDB_STORE).put(bytes, 'mls_autosave');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-}
-
-/** Persists plain CBOR MLS state without Argon2 (fast session autosave). */
-export async function saveMlsStatePlain(userId: string, bytes: Uint8Array): Promise<void> {
-  if (isTauriRuntime()) {
-    // Native path has no Argon2 overhead; a single mls.bin is sufficient.
-    return saveMlsStateEncrypted(userId, bytes);
-  }
-
-  const db = await openMlsDb(userId);
-  return new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(bytes, MLS_STATE_PLAIN_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-/** @deprecated Alias for {@link saveMlsStateEncrypted}. */
-export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
-  return saveMlsStateEncrypted(userId, bytes);
 }
 
 /**
@@ -140,7 +114,7 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
   const db = await openMlsDb(userId);
   const idbResult = await new Promise<Uint8Array | null>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(MLS_STATE_ENCRYPTED_KEY);
+    const req = tx.objectStore(IDB_STORE).get('mls_autosave');
     req.onsuccess = () => resolve((req.result as Uint8Array) ?? null);
     req.onerror = () => reject(req.error);
   });
@@ -179,8 +153,7 @@ export async function removeMlsState(userId: string): Promise<void> {
   const db = await openMlsDb(userId);
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).delete(MLS_STATE_ENCRYPTED_KEY);
-    tx.objectStore(IDB_STORE).delete(MLS_STATE_PLAIN_KEY);
+    tx.objectStore(IDB_STORE).delete('mls_autosave');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
