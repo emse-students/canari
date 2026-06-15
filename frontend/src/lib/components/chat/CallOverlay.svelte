@@ -65,11 +65,27 @@
     }
     return remoteStreamVal;
   });
+  /** True only when a remote peer is actually sending video (vs audio-only). */
+  let remoteHasVideo = $derived.by(() => {
+    for (const [, stream] of remoteStreamsMap) {
+      if (pickActiveVideoTrack(stream)) return true;
+    }
+    return false;
+  });
+  /** Any remote stream, used to keep audio playing while showing an avatar (audio-only). */
+  let anyRemoteStream = $derived.by(() => {
+    if (primaryRemoteStream) return primaryRemoteStream;
+    for (const [, stream] of remoteStreamsMap) return stream;
+    return remoteStreamVal;
+  });
+  /** Connected audio-only call: a remote stream is flowing but carries no video. */
+  let remoteAudioConnected = $derived(callState === 'incall' && !remoteHasVideo && !!anyRemoteStream);
   let primaryParticipant = $derived(participants[0]);
   let isGroupCall = $derived(participants.length > 1);
   /** Grid only for multi-party; audio+video from one peer stay on a single tile. */
   let showRemoteGrid = $derived(isGroupCall && remoteEntries.length > 1);
 
+  let pipEl: HTMLElement | undefined = $state();
   let pipOffsetX = $state(0);
   let pipOffsetY = $state(0);
   let isDragging = $state(false);
@@ -106,8 +122,18 @@
   }
 
   $effect(() => {
-    if (primaryRemoteStream && remoteVideo) {
+    if (remoteHasVideo && primaryRemoteStream && remoteVideo) {
       return bindRemoteVideo(primaryRemoteStream, remoteVideo);
+    }
+  });
+
+  // Audio-only remote: keep the audio playing through a hidden sink while the UI
+  // shows the participant's avatar instead of a black video element.
+  let remoteAudioSink: HTMLAudioElement | undefined = $state();
+  $effect(() => {
+    if (!remoteHasVideo && anyRemoteStream && remoteAudioSink) {
+      remoteAudioSink.srcObject = anyRemoteStream;
+      void remoteAudioSink.play().catch(() => {});
     }
   });
 
@@ -129,8 +155,26 @@
 
   function handlePipPointerMove(e: PointerEvent) {
     if (!isDragging) return;
-    pipOffsetX = initialOffsetX + (e.clientX - dragStartX);
-    pipOffsetY = initialOffsetY + (e.clientY - dragStartY);
+    let nextX = initialOffsetX + (e.clientX - dragStartX);
+    let nextY = initialOffsetY + (e.clientY - dragStartY);
+
+    // Confine the self-view to its call container (8px inset) so it can't be
+    // dragged off-screen or under the controls.
+    const parent = pipEl?.offsetParent as HTMLElement | null;
+    if (pipEl && parent) {
+      const pr = pipEl.getBoundingClientRect();
+      const cr = parent.getBoundingClientRect();
+      const baseLeft = pr.left - pipOffsetX; // element box at offset 0
+      const baseTop = pr.top - pipOffsetY;
+      const minX = cr.left + 8 - baseLeft;
+      const maxX = cr.right - 8 - (baseLeft + pr.width);
+      const minY = cr.top + 8 - baseTop;
+      const maxY = cr.bottom - 8 - (baseTop + pr.height);
+      nextX = Math.min(Math.max(nextX, minX), maxX);
+      nextY = Math.min(Math.max(nextY, minY), maxY);
+    }
+    pipOffsetX = nextX;
+    pipOffsetY = nextY;
   }
 
   function handlePipPointerUp(e: PointerEvent) {
@@ -236,7 +280,7 @@
           </div>
         {/each}
       </div>
-    {:else if primaryRemoteStream}
+    {:else if remoteHasVideo && primaryRemoteStream}
       <div class="relative w-full h-full flex-1 min-h-0">
         <video
           bind:this={remoteVideo}
@@ -252,6 +296,8 @@
         {/if}
       </div>
     {:else if participants.length > 0}
+      <!-- Audio-only remote: hidden sink keeps the voice playing behind the avatar. -->
+      <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
       <div class="flex flex-col items-center justify-center gap-8 text-white/70 flex-1 px-6">
         {#if isGroupCall}
           <div
@@ -284,12 +330,20 @@
             />
           </div>
         {/if}
-        <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase text-center">
-          {callState === 'calling'
-            ? 'Appel en cours...'
-            : callState === 'incall'
-              ? 'En attente du flux distant…'
-              : 'Connexion en cours...'}
+        <p
+          class="text-sm font-medium text-white/60 tracking-widest uppercase text-center {remoteAudioConnected
+            ? ''
+            : 'animate-pulse'}"
+        >
+          {#if remoteAudioConnected}
+            Appel audio
+          {:else if callState === 'calling'}
+            Appel en cours...
+          {:else if callState === 'incall'}
+            En attente du flux distant…
+          {:else}
+            Connexion en cours...
+          {/if}
         </p>
       </div>
     {:else}
@@ -306,6 +360,7 @@
         transition:scale={{ duration: 400, start: 0.8, delay: 200 }}
       >
         <div
+          bind:this={pipEl}
           role="button"
           aria-label="Déplacer votre retour vidéo"
           tabindex="0"
