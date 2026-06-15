@@ -58,7 +58,7 @@ export class SqliteStorage implements IStorage {
   /**
    * Sérialise les sections `BEGIN…COMMIT`. Le plugin SQL n'a qu'une connexion et SQLite
    * n'imbrique pas les transactions : deux transactions concurrentes se court-circuitent
-   * (« cannot commit - no transaction is active » quand l'une COMMIT pendant l'autre).
+   * (" cannot commit - no transaction is active " quand l'une COMMIT pendant l'autre).
    * Toute section transactionnelle doit passer par ici pour s'exécuter une à la fois.
    */
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {

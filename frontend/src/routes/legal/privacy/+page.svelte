@@ -259,7 +259,7 @@
             un e-mail à <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline"
               >bureau@rootz-emse.fr</a
             >
-            avec l'objet <em>« Suppression compte Canari »</em> depuis l'adresse e-mail liée à votre compte
+            avec l'objet <em>" Suppression compte Canari "</em> depuis l'adresse e-mail liée à votre compte
             EMSE. Nous traiterons votre demande dans un délai de 30 jours.
           </p>
           <p class="text-text-muted text-xs">
@@ -301,7 +301,7 @@
           notamment pour se conformer à de nouvelles obligations légales ou à l'évolution du
           service. En cas de modification substantielle, vous serez notifié par une notification
           dans l'application au moins 15 jours avant l'entrée en vigueur des changements. La date de
-          « Dernière mise à jour » en haut de cette page reflète la version en vigueur. La poursuite
+          " Dernière mise à jour " en haut de cette page reflète la version en vigueur. La poursuite
           de l'utilisation de Canari après cette date vaut acceptation des nouvelles conditions.
         </p>
       </section>

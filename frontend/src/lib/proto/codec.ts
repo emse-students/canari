@@ -1,5 +1,5 @@
 /**
- * codec.ts – Protobuf encode/decode helpers for the Canari wire protocol.
+ * codec.ts - Protobuf encode/decode helpers for the Canari wire protocol.
  *
  * Two codec layers:
  *
@@ -7,7 +7,7 @@
  *    WsEnvelope  → binary   encodeEnvelope()
  *    binary      → InboundMsg   decodeInboundMsg()
  *
- * 2. Application payload (MLS plaintext – never seen by the server)
+ * 2. Application payload (MLS plaintext - never seen by the server)
  *    AppMessage  → Uint8Array  encodeAppMessage()
  *    Uint8Array  → AppMessage  decodeAppMessage()
  */

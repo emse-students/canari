@@ -138,7 +138,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     // Purge "ghost" groups: membership rows referencing a group absent from
     // dm_groups (incomplete/legacy deletion). No other cron catches these, so
-    // they would accumulate forever — this guarantees bounded growth.
+    // they would accumulate forever - this guarantees bounded growth.
     this.cleanupOrphanedMemberRowsInterval = setInterval(() => {
       void this.cleanupOrphanedMemberRows().catch((e) =>
         this.logger.error('[CRON] cleanupOrphanedMemberRows failed', e),

@@ -531,7 +531,7 @@ async fn recevoir_message_bytes(
             // SecretReuseError = la clé de ratchet de ce message a déjà été consommée
             // (doublon : livraison realtime + queue, ou requeue après restart). À l'inverse
             // d'un gap de génération FUTURE, elle ne déchiffrera JAMAIS : la mettre en file
-            // SQLite la ferait boucler indéfiniment. On la traite comme un doublon bénin —
+            // SQLite la ferait boucler indéfiniment. On la traite comme un doublon bénin -
             // Ok(None) → le frontend ACK et la supprime (parité avec le chemin WASM web).
             if err_str.contains("SecretReuseError") {
                 log::debug!(

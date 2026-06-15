@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
  * l'intent-filter `com.google.firebase.MESSAGING_EVENT`, Firebase n'appelle jamais
  * onMessageReceived : les push partent du serveur mais aucune notification n'apparaît
  * quand l'app est tuée. Cette régression (commit 53e659a0) est invisible à la
- * compilation — ces tests la font échouer en CI.
+ * compilation - ces tests la font échouer en CI.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const ANDROID_MAIN = resolve(here, '../../../src-tauri/gen/android/app/src/main');
@@ -27,7 +27,7 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(manifest).toMatch(/android:name=["']\.CanariApplication["']/);
   });
 
-  it('déclare le service FCM avec l’intent-filter MESSAGING_EVENT', () => {
+  it("déclare le service FCM avec l'intent-filter MESSAGING_EVENT", () => {
     const serviceBlock = manifest.match(/<service\b[\s\S]*?<\/service>/g) ?? [];
     const fcmService = serviceBlock.find((b) => b.includes('.CanariFirebaseMessagingService'));
     expect(fcmService, 'service CanariFirebaseMessagingService absent du manifest').toBeDefined();
@@ -56,7 +56,7 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
   it('ne réintroduit pas android:debuggable avec placeholder (casse le merge release)', () => {
     // build.gradle.kts ne définit pas manifestPlaceholders["debuggable"] → un
     // android:debuggable="${debuggable}" fait échouer processUniversalReleaseMainManifest.
-    // (On cible l'attribut, pas la chaîne — qui peut légitimement figurer en commentaire.)
+    // (On cible l'attribut, pas la chaîne - qui peut légitimement figurer en commentaire.)
     expect(manifest).not.toMatch(/android:debuggable\s*=\s*["']\$\{debuggable\}["']/);
   });
 

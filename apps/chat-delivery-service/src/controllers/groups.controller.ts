@@ -214,7 +214,7 @@ export class GroupsController {
     // résolve la lignée correctement.
     //
     // On NE supprime PAS les GroupMember de la source : le device qui reboote doit
-    // pouvoir lire « qui appartient au groupe mort » via getGroupUserMembers(deadGroup)
+    // pouvoir lire " qui appartient au groupe mort " via getGroupUserMembers(deadGroup)
     // pour les inviter dans le successeur (inviteMembers/reboot). Si on les effaçait ici,
     // inviteMembers ne trouverait personne et le successeur resterait vide (split-brain :
     // le créateur seul dans le nouveau groupe, les autres bloqués sur l'ancien).

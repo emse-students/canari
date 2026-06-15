@@ -332,7 +332,7 @@ Les niveaux de log sont configurables via `RUST_LOG` (chat-gateway) et les varia
 
 ## 9. Liens mobiles (`canari-emse.fr` → app Android / iOS)
 
-L’app native déclare des **App Links** (Android) et **Universal Links** (iOS) pour `https://canari-emse.fr` et `https://www.canari-emse.fr`. Le site sert les fichiers de vérification au build frontend :
+L'app native déclare des **App Links** (Android) et **Universal Links** (iOS) pour `https://canari-emse.fr` et `https://www.canari-emse.fr`. Le site sert les fichiers de vérification au build frontend :
 
 | URL                                       | Rôle                                                    |
 | ----------------------------------------- | ------------------------------------------------------- |
@@ -344,7 +344,7 @@ L’app native déclare des **App Links** (Android) et **Universal Links** (iOS)
 | Secret                    | Usage                                                                                                                                                                   |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ANDROID_APP_LINK_SHA256` | Empreinte(s) SHA-256 du keystore release (séparées par des virgules). Obtenir avec `./scripts/print-android-app-link-fingerprint.sh` après avoir préparé `release.jks`. |
-| `APPLE_TEAM_ID`           | Identifiant d’équipe Apple (10 caractères), ex. `ABCDE12345`. Requis pour un AASA iOS valide.                                                                           |
+| `APPLE_TEAM_ID`           | Identifiant d'équipe Apple (10 caractères), ex. `ABCDE12345`. Requis pour un AASA iOS valide.                                                                           |
 
 Ces valeurs sont injectées dans le job `build-frontend` (`VITE_ANDROID_APP_LINK_SHA256`, `VITE_APPLE_TEAM_ID`) puis figées dans les JSON statiques du build nginx.
 
@@ -372,4 +372,4 @@ adb shell am start -a android.intent.action.VIEW -d "https://canari-emse.fr/post
 
 ### iOS
 
-Sur macOS, le build release doit inclure l’entitlement _Associated Domains_ (`applinks:canari-emse.fr`) - régénéré par le plugin Tauri `deep-link` avec `"appLink": true` dans `tauri.conf.json`. Après ajout de `APPLE_TEAM_ID`, reconstruire l’IPA et réinstaller l’app.
+Sur macOS, le build release doit inclure l'entitlement _Associated Domains_ (`applinks:canari-emse.fr`) - régénéré par le plugin Tauri `deep-link` avec `"appLink": true` dans `tauri.conf.json`. Après ajout de `APPLE_TEAM_ID`, reconstruire l'IPA et réinstaller l'app.

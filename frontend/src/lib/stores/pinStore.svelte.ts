@@ -14,7 +14,7 @@ const storageKey = (conversationId: string) => `canari_pins_${conversationId}`;
 // Plain Map for the per-conversation container: it's written lazily by load()
 // which may run inside a $derived (reading pinnedMessageIds). Tracking it would
 // throw state_unsafe_mutation on first access. Reactivity is carried by each
-// inner SvelteSet instead — that's what pin/unpin actually mutate.
+// inner SvelteSet instead - that's what pin/unpin actually mutate.
 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional: see comment above
 const pins = new Map<string, SvelteSet<string>>();
 

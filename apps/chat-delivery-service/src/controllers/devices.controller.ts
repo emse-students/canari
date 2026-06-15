@@ -397,7 +397,7 @@ export class DevicesController {
   /**
    * Liste les one-time prekeys publiés d'un device (id + payload base64) afin que le
    * client valide localement, KeyPackage par KeyPackage, lesquels il possède encore en
-   * clé privée — puis purge les orphelins via {@link pruneDevicePrekeys}.
+   * clé privée - puis purge les orphelins via {@link pruneDevicePrekeys}.
    */
   async listDevicePrekeys(
     @Param('userId') userId: string,

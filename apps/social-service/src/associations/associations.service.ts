@@ -89,7 +89,7 @@ export class AssociationsService {
   async create(dto: CreateAssociationDto, userId: string) {
     if (!/^[a-z0-9][a-z0-9-]{1,49}$/.test(dto.slug)) {
       throw new BadRequestException(
-        'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2–50 chars)'
+        'Slug must start with a letter or digit and contain only lowercase letters, digits, and hyphens (2-50 chars)'
       );
     }
 

@@ -182,7 +182,7 @@
         <h3 class="mb-2 font-semibold text-text-main">Signalement de contenu</h3>
         <p class="mb-3 text-text-muted">
           Si vous observez un contenu ou un comportement contraire aux présentes CGU, vous pouvez le
-          signaler directement depuis l'application via le bouton <em>« Signaler »</em> présent sur chaque
+          signaler directement depuis l'application via le bouton <em>" Signaler "</em> présent sur chaque
           publication. Vous pouvez également contacter l'équipe de modération par e-mail :
         </p>
         <div class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5 mb-3">
@@ -191,7 +191,7 @@
             <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline ml-1"
               >bureau@rootz-emse.fr</a
             >
-            - Objet recommandé : <em>« Signalement contenu Canari »</em>
+            - Objet recommandé : <em>" Signalement contenu Canari "</em>
           </p>
         </div>
         <p class="text-text-muted text-xs">
@@ -353,7 +353,7 @@
             >
           </p>
           <p class="mt-1 text-text-muted text-xs">
-            Objet : <em>« Suppression compte Canari »</em> - depuis l'adresse e-mail liée à votre compte
+            Objet : <em>" Suppression compte Canari "</em> - depuis l'adresse e-mail liée à votre compte
             EMSE. Délai de traitement : 30 jours maximum.
           </p>
         </div>
@@ -444,7 +444,7 @@
           L'association Rootz se réserve le droit de modifier les présentes CGU à tout moment. En
           cas de modification substantielle, vous serez notifié par une notification dans
           l'application au moins <strong>15 jours avant</strong> l'entrée en vigueur des changements.
-          La date de « Dernière mise à jour » en haut de cette page reflète la version en vigueur. La
+          La date de " Dernière mise à jour " en haut de cette page reflète la version en vigueur. La
           poursuite de l'utilisation du Service après cette date vaut acceptation des nouvelles conditions.
           Si vous refusez les nouvelles conditions, vous devez cesser d'utiliser le Service et demander
           la suppression de votre compte (section 9).

@@ -186,7 +186,7 @@ const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
  * Fetches a link-preview payload for a MiGallery album URL.
  *
  * Uses `MIGALLERY_API_URL` / `MIGALLERY_API_KEY` from the environment to call the
- * authenticated `/api/albums/[id]/info` endpoint — works for all visibility
+ * authenticated `/api/albums/[id]/info` endpoint - works for all visibility
  * levels (unlisted, authenticated, private).
  *
  * The cover image URL points to Canari's own `/api/mls/gallery-cover/:albumId`

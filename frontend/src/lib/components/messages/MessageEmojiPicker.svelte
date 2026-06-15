@@ -86,7 +86,7 @@
   /**
    * French UI strings for emoji-picker-element. The `locale` attribute alone does NOT
    * translate the interface (only the data-source provides localized search keywords),
-   * so the `i18n` property must be set explicitly — otherwise the search box reads "Search".
+   * so the `i18n` property must be set explicitly - otherwise the search box reads "Search".
    */
   const EMOJI_PICKER_FR_I18N = {
     categoriesLabel: 'Catégories',

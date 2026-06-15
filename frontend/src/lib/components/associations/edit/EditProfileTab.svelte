@@ -35,7 +35,7 @@
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
 
-  /** Material You–inspired tonal palette (tone ~60, moderate saturation). */
+  /** Material You-inspired tonal palette (tone ~60, moderate saturation). */
   const PRESET_COLORS = [
     '#6B92D1',
     '#5BA8A0',

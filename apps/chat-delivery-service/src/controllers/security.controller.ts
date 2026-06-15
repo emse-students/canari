@@ -76,9 +76,9 @@ export class SecurityController {
    * userId.  We never see the raw PIN.
    *
    * Responses:
-   *   { status: 'registered' }  – first device; verifier stored server-side.
-   *   { status: 'ok' }          – verifier matches; PIN is consistent.
-   *   { status: 'mismatch' }    – verifier differs; wrong PIN for this user.
+   *   { status: 'registered' }  - first device; verifier stored server-side.
+   *   { status: 'ok' }          - verifier matches; PIN is consistent.
+   *   { status: 'mismatch' }    - verifier differs; wrong PIN for this user.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/security/pin-check')
@@ -352,7 +352,7 @@ export class SecurityController {
   /**
    * Proxies a MiGallery album cover image using the server-side API key so the
    * browser never needs to handle MiGallery credentials directly.
-   * This endpoint is intentionally unauthenticated — it only exposes album
+   * This endpoint is intentionally unauthenticated - it only exposes album
    * thumbnails, which are already visible to all EMSE students on MiGallery.
    */
   @Get('mls/gallery-cover/:albumId')

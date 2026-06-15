@@ -44,7 +44,7 @@ export interface EncryptedMediaPayload {
   ivHex: string;
 }
 
-/** Encrypt plaintext bytes (identical to encryptAndUpload step 1–2). */
+/** Encrypt plaintext bytes (identical to encryptAndUpload step 1-2). */
 export async function encryptMediaBuffer(plaintext: ArrayBuffer): Promise<EncryptedMediaPayload> {
   const { cryptoKey, keyHex } = await generateMediaCek();
   const { iv, ivHex } = generateMediaIv();

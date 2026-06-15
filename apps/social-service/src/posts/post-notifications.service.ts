@@ -89,7 +89,7 @@ export class PostNotificationsService {
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
 
-    // Push FCM (data-only) pour que toute notification visible dans l'onglet « Notifications »
+    // Push FCM (data-only) pour que toute notification visible dans l'onglet " Notifications "
     // déclenche aussi une notif système, même appli fermée. Fire-and-forget.
     const { title, body } = this.pushContent(data.type, actorName, data.text);
     void this.push.notify(data.recipientId, title, body, { type: 'social', postId: data.postId });

@@ -210,6 +210,18 @@ What NOT to write:
 
 Inline comments (`//`) inside function bodies: only for non-obvious logic, workarounds, or subtle invariants. Not for every line.
 
+### Caractères de texte (apostrophes, guillemets, tirets)
+
+Normaliser tout le texte sur les caractères ASCII du clavier français, partout (code, chaînes visibles, commentaires, documentation, fichiers de traduction) :
+
+- Apostrophe droite `'` - jamais d'apostrophe typographique courbe (`'` U+2019, `'` U+2018).
+- Guillemet droit `"` - jamais de guillemet courbe (`"` U+201C, `"` U+201D) ni de guillemet français (`«` U+00AB, `»` U+00BB).
+- Trait d'union `-` - jamais de tiret cadratin (`—` U+2014) ni de tiret demi-cadratin (`–` U+2013).
+
+Dans le code, une apostrophe à l'intérieur d'une chaîne à quotes simples s'échappe `\'`, un guillemet à l'intérieur d'une chaîne à guillemets doubles s'échappe `\"` (ne jamais réintroduire un caractère typographique pour éviter l'échappement).
+
+Cette règle vaut pour tous les fichiers du projet (TypeScript, Svelte, Rust, Kotlin, Markdown, JSON de traduction). Elle évite les divergences d'encodage et garde le texte cohérent et facile à rechercher.
+
 ## General Coding Behavior and Guidelines
 
 ### 1. Think Before Coding

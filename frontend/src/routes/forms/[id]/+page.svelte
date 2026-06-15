@@ -258,7 +258,7 @@
       if (item.required) {
         if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
           if (!val) {
-            error = `Veuillez compléter toutes les lignes pour « ${item.label} »`;
+            error = `Veuillez compléter toutes les lignes pour " ${item.label} "`;
             return;
           }
           for (const row of item.rows ?? []) {
@@ -269,17 +269,17 @@
               rowVal === '' ||
               (Array.isArray(rowVal) && rowVal.length === 0)
             ) {
-              error = `Veuillez compléter la ligne « ${row} » dans « ${item.label} »`;
+              error = `Veuillez compléter la ligne " ${row} " dans " ${item.label} "`;
               return;
             }
           }
         } else if (Array.isArray(val)) {
           if (val.length === 0) {
-            error = `Veuillez sélectionner une option pour « ${item.label} »`;
+            error = `Veuillez sélectionner une option pour " ${item.label} "`;
             return;
           }
         } else if (!val) {
-          error = `Veuillez répondre à « ${item.label} »`;
+          error = `Veuillez répondre à " ${item.label} "`;
           return;
         }
       }

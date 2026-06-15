@@ -88,13 +88,13 @@ export class AssociationsController {
     return this.followsService.listFollowedAssociations(userId);
   }
 
-  /** Public — current association memberships for a user profile. */
+  /** Public - current association memberships for a user profile. */
   @Get('users/:userId/memberships')
   listUserMemberships(@Param('userId') userId: string) {
     return this.userProfileService.listMemberships(userId);
   }
 
-  /** Public — past/honorary association roles for a user profile. */
+  /** Public - past/honorary association roles for a user profile. */
   @Get('users/:userId/role-history')
   listUserRoleHistory(@Param('userId') userId: string) {
     return this.userProfileService.listRoleHistory(userId);

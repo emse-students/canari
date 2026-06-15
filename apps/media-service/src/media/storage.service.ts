@@ -1,5 +1,5 @@
 /**
- * StorageService – abstraction over MinIO (S3-compatible object storage).
+ * StorageService - abstraction over MinIO (S3-compatible object storage).
  *
  * The service ONLY stores opaque bytes.  It has no knowledge of encryption
  * keys and cannot inspect the content of any uploaded file.

@@ -439,7 +439,7 @@ export async function listPendingCalendarEvents(): Promise<PendingCalendarEvents
   return request<PendingCalendarEventsResponse>('/api/associations/calendar/pending');
 }
 
-/** Association admins - publications et formulaires récents pour lier un événement d’agenda. */
+/** Association admins - publications et formulaires récents pour lier un événement d'agenda. */
 export async function listAssociationLinkCandidates(
   associationId: string
 ): Promise<AssociationLinkCandidates> {
@@ -448,7 +448,7 @@ export async function listAssociationLinkCandidates(
   );
 }
 
-/** Public - événement d’agenda pointant vers cette publication (fil). */
+/** Public - événement d'agenda pointant vers cette publication (fil). */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
@@ -457,7 +457,7 @@ export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   );
 }
 
-/** Public - événement d’agenda pointant vers ce formulaire. */
+/** Public - événement d'agenda pointant vers ce formulaire. */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
@@ -778,7 +778,7 @@ export interface AssociationPurchase {
   lastName: string | null;
 }
 
-/** @deprecated Use AssociationPurchase — kept for per-product endpoint compatibility. */
+/** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
 
 export interface CreateProductPayload {

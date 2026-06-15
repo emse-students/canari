@@ -232,9 +232,9 @@ async function handleWelcome({
 
   // Welcome redélivré pour un groupe qu'on détient déjà localement (typiquement un requeue
   // serveur après un restart de l'app : le Welcome d'origine repart dans les pending).
-  // Tenter de le (re)joindre échouerait sur NoMatchingKeyPackage — le KeyPackage du Welcome
+  // Tenter de le (re)joindre échouerait sur NoMatchingKeyPackage - le KeyPackage du Welcome
   // a déjà été consommé lors de la jointure initiale, OpenMLS valide la clé AVANT de
-  // détecter GroupAlreadyExists — ce qui déclencherait un welcome_request, donc un kick +
+  // détecter GroupAlreadyExists - ce qui déclencherait un welcome_request, donc un kick +
   // ré-ajout par l'invitant. Ce ré-ajout fait avancer l'epoch au-delà de nous et nous forke
   // durablement (group_epoch figé < msg_epoch). On traite donc le Welcome comme idempotent.
   if (mlsService.getLocalGroups().includes(terminalId)) {
@@ -617,7 +617,7 @@ async function handleKnownGroup({
       // Tauri : message bufferisé en SQLite. Un gap d'epoch se résorbe normalement
       // quand les commits manqués arrivent. Mais sur un groupe qu'on détient déjà,
       // si les commits ne reviennent jamais (purgés serveur), le groupe reste figé en
-      // retard et tous les messages futurs échouent en boucle — le SYNC_WATCHDOG ne le
+      // retard et tous les messages futurs échouent en boucle - le SYNC_WATCHDOG ne le
       // couvre pas (il ne vise que les groupes absents du WASM). Au-delà du seuil, on
       // oublie l'état forké et on redemande un Welcome : comme le groupe n'est plus
       // local, le re-Welcome est honoré (et non ignoré comme idempotent) → on rejoint

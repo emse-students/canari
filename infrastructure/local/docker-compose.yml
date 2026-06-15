@@ -176,7 +176,7 @@ services:
       start_period: 50s
 
   # ─────────────────────────────────────────────────────
-  # MinIO – S3-compatible object storage for encrypted media blobs
+  # MinIO - S3-compatible object storage for encrypted media blobs
   # ─────────────────────────────────────────────────────
   minio:
     image: minio/minio:latest

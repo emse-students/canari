@@ -1,5 +1,5 @@
 /**
- * media.ts – Client-side media encryption / upload / download
+ * media.ts - Client-side media encryption / upload / download
  *
  * Security model
  * ──────────────
@@ -12,7 +12,7 @@
  *  - Key rotation is handled naturally by MLS epoch changes.
  *  - Works identically for 1-to-1 chats (2-member group) and multi-party groups.
  *
- * Encryption scheme: AES-256-GCM (via SubtleCrypto – no extra dependency)
+ * Encryption scheme: AES-256-GCM (via SubtleCrypto - no extra dependency)
  *   - 256-bit random CEK (Content Encryption Key) per file
  *   - 96-bit random IV per file
  *   - Authentication tag is appended by SubtleCrypto automatically (16 bytes)
@@ -241,7 +241,7 @@ export function parseMediaMessage(content: string): MediaRef | null {
       return obj as MediaRef;
     }
   } catch {
-    // Not JSON – treat as plain text
+    // Not JSON - treat as plain text
   }
   return null;
 }
@@ -375,7 +375,7 @@ export class MediaService {
       throw new Error('Media service returned no mediaId');
     }
 
-    // 4. Return the reference – the key is only here, never on the server
+    // 4. Return the reference - the key is only here, never on the server
     const type = file.type.startsWith('video/')
       ? 'video'
       : file.type.startsWith('image/')

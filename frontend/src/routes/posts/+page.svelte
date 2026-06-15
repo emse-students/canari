@@ -387,7 +387,7 @@
           {:else if searchResults !== null}
             {#if searchResults.length === 0}
               <div class="text-center py-12 text-text-muted text-sm">
-                Aucun résultat pour « {searchQuery} »
+                Aucun résultat pour " {searchQuery} "
               </div>
             {:else}
               <div class="space-y-5">

@@ -28,7 +28,7 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 
 ## Backend identity binding
 
-Routes that take a **user id** in the path or body are checked against the **`x-user-id`** header set by the edge proxy after auth, except where another user’s id is **intentionally** required (e.g. **`getUserDevices`** to fetch another user’s key packages for invitations). **Global admins** bypass the path/body user-id match via **`x-global-admin: true`**.
+Routes that take a **user id** in the path or body are checked against the **`x-user-id`** header set by the edge proxy after auth, except where another user's id is **intentionally** required (e.g. **`getUserDevices`** to fetch another user's key packages for invitations). **Global admins** bypass the path/body user-id match via **`x-global-admin: true`**.
 
 ## Observability
 

@@ -244,7 +244,7 @@
   /** Confirms then leaves/removes the selected community, closing the modal on success. */
   async function leaveCommunity() {
     if (
-      !(await showConfirm(`Quitter la communauté « ${selectedWorkspace?.name} » ?`, {
+      !(await showConfirm(`Quitter la communauté " ${selectedWorkspace?.name} " ?`, {
         danger: true,
         confirmLabel: 'Quitter',
       }))

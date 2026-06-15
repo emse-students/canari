@@ -295,7 +295,7 @@
       const data = (await res.json()) as { activeTags?: UserTag[] };
       activeTags = data.activeTags ?? [];
     } catch {
-      // Non-blocking — section stays empty
+      // Non-blocking - section stays empty
     } finally {
       purchasesLoading = false;
     }

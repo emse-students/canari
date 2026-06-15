@@ -4,7 +4,7 @@ import { ProductsService } from '../associations/products.service';
 
 /**
  * Internal boutique endpoints for core-service (charge-product-saved-method).
- * Protected by X-Internal-Secret — not exposed through nginx auth headers.
+ * Protected by X-Internal-Secret - not exposed through nginx auth headers.
  */
 @Controller('internal/products')
 export class InternalProductsController {

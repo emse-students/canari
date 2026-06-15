@@ -299,7 +299,7 @@
             href="/calendar?association={encodeURIComponent(asso.id)}"
             class="text-xs font-semibold text-cn-dark hover:underline"
           >
-            Voir dans l’agenda global →
+            Voir dans l'agenda global →
           </a>
         </div>
         <AssociationCalendarSection

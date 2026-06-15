@@ -2,9 +2,9 @@
  * MediaController
  *
  * Endpoints:
- *   POST /media/upload  – Receive an encrypted blob, store it, return { mediaId }
- *   GET  /media/:id     – Return the encrypted blob (client decrypts it)
- *   DELETE /media/:id   – Remove a blob (owner only; simplified auth check)
+ *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
+ *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
+ *   DELETE /media/:id   - Remove a blob (owner only; simplified auth check)
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
  * The token carries `sub` (userId); future work can enforce per-user ACL.
@@ -62,7 +62,7 @@ export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
   // ---------------------------------------------------------------------------
-  // Auth helper – validates the shared HS256 JWT (same secret as chat-gateway)
+  // Auth helper - validates the shared HS256 JWT (same secret as chat-gateway)
   // ---------------------------------------------------------------------------
   private verifyToken(req: Request): string {
     const header = req.headers['authorization'] ?? '';
@@ -108,7 +108,7 @@ export class MediaController {
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: MAX_BYTES },
-      // Store entirely in memory – we pass raw bytes to MinIO
+      // Store entirely in memory - we pass raw bytes to MinIO
       storage: undefined,
     })
   )

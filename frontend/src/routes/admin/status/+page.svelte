@@ -144,22 +144,22 @@
                 {:else}
                   <span class="inline-flex items-center gap-1 text-text-muted">
                     <WifiOff size={14} />
-                    <span class="text-xs">–</span>
+                    <span class="text-xs">-</span>
                   </span>
                 {/if}
               </td>
               <td class="px-4 py-3 text-center text-text-muted">
-                {d.wsTabs > 0 ? d.wsTabs : '–'}
+                {d.wsTabs > 0 ? d.wsTabs : '-'}
               </td>
               <td class="px-4 py-3 text-center">
                 {#if d.redisOnline}
                   <span class="text-green-ok font-semibold">✓</span>
                 {:else}
-                  <span class="text-text-muted">–</span>
+                  <span class="text-text-muted">-</span>
                 {/if}
               </td>
               <td class="px-4 py-3 text-center font-mono {ttlClass(d.redisTtl)}">
-                {d.redisTtl >= 0 ? d.redisTtl : '–'}
+                {d.redisTtl >= 0 ? d.redisTtl : '-'}
               </td>
             </tr>
           {/each}
@@ -242,9 +242,9 @@
             <TriangleAlert size={13} class="mr-1 inline text-cn-yellow" />Anomalies (fond jaune)
           </p>
           <p class="text-text-muted">
-            <strong class="text-text-main">Redis ✓ mais WS –</strong> : connexion fermée (ex. arrêt
+            <strong class="text-text-main">Redis ✓ mais WS -</strong> : connexion fermée (ex. arrêt
             forcé de l'app) mais la clé Redis n'a pas encore expiré. Disparaîtra en ≤30s.<br />
-            <strong class="text-text-main">WS ✓ mais Redis –</strong> : connexion active mais présence
+            <strong class="text-text-main">WS ✓ mais Redis -</strong> : connexion active mais présence
             jamais écrite (bug gateway) ou TTL expiré sans refresh.
           </p>
         </div>

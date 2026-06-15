@@ -667,7 +667,7 @@
                 disabled={shareLoading}
                 class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
               >
-                {shareLoading ? 'Génération…' : 'Générer un lien d’invitation'}
+                {shareLoading ? 'Génération…' : 'Générer un lien d\'invitation'}
               </button>
             {/if}
             {#if shareError}

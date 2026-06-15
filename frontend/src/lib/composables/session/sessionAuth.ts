@@ -318,7 +318,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     ctx.setIsMessagingInitializing(true);
     installCatchupBenchDevTools();
     beginStartupCatchupBench();
-    cb.log('[INIT] MLS prêt — synchronisation messagerie en arrière-plan.');
+    cb.log('[INIT] MLS prêt - synchronisation messagerie en arrière-plan.');
     cb.onMlsReady?.();
 
     // Fire-and-forget : savePin est indépendant du chargement des conversations.
@@ -407,7 +407,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       console.warn('[INIT] Erreur détection groupes MLS manquants:', e);
     }
 
-    // processDeviceInvitationsLocally est appelé en fin de syncConnectionAfterWsOpen —
+    // processDeviceInvitationsLocally est appelé en fin de syncConnectionAfterWsOpen -
     // l'appeler ici avant l'ouverture du WebSocket est redondant.
 
     beginStartupCatchupPhase('setup_handler');

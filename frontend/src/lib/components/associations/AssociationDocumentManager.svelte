@@ -72,7 +72,7 @@
       );
       if (duplicate) {
         const replace = await showConfirm(
-          `Un document nommé « ${duplicate.name} » existe déjà. Voulez-vous le remplacer ?`,
+          `Un document nommé " ${duplicate.name} " existe déjà. Voulez-vous le remplacer ?`,
           { confirmLabel: 'Remplacer' }
         );
         if (replace) {
@@ -180,7 +180,7 @@
   }
 
   async function handleDelete(doc: AssociationDocument) {
-    if (!await showConfirm(`Supprimer « ${doc.name} » ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(`Supprimer " ${doc.name} " ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
     try {
       await deleteDocument(associationId, doc.id);
       console.log(`[Vault] Document supprimé: ${doc.id}`);

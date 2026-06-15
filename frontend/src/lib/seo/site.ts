@@ -6,9 +6,9 @@ export const SITE = {
   shortName: 'Canari',
   locale: 'fr_FR',
   language: 'fr',
-  tagline: 'Fil social et messagerie sécurisée pour l’EMSE',
+  tagline: "Fil social et messagerie sécurisée pour l'EMSE",
   defaultDescription:
-    'Canari réunit le fil social de l’école, les associations, l’agenda et une messagerie chiffrée de bout en bout (MLS) pour la communauté EMSE.',
+    "Canari réunit le fil social de l'école, les associations, l'agenda et une messagerie chiffrée de bout en bout (MLS) pour la communauté EMSE.",
   defaultOgType: 'website' as const,
   /** Open Graph / Twitter preview (`frontend/static/og-canari.png`, source: `src-tauri/icons/Canari.png`). */
   defaultOgImagePath: '/og-canari.png',

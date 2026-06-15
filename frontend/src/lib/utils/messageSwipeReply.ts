@@ -70,7 +70,7 @@ export function shouldTriggerReplySwipe(
   return towardCenter && Math.abs(deltaY) < threshold * 0.75;
 }
 
-/** Progress 0–1 for reply hint opacity (based on drag toward trigger). */
+/** Progress 0-1 for reply hint opacity (based on drag toward trigger). */
 export function replySwipeProgress(dragPx: number, _isOwn: boolean): number {
   const magnitude = Math.abs(dragPx);
   return Math.min(1, magnitude / REPLY_SWIPE_TRIGGER_PX);

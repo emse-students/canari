@@ -50,7 +50,7 @@
   function formatTimeRange(ev: AssociationCalendarFeedEvent): string {
     const start = formatTime(ev.startsAt);
     if (!ev.endsAt) return start;
-    return `${start} – ${formatTime(ev.endsAt)}`;
+    return `${start} - ${formatTime(ev.endsAt)}`;
   }
 
   function formatTime(iso: string): string {

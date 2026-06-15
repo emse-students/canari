@@ -540,23 +540,23 @@ pub enum KeyCode {
   Abort,
   Resume,
   Suspend,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Again,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Copy,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Cut,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Find,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Open,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Paste,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Props,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Select,
-  /// Found on Sun’s USB keyboard.
+  /// Found on Sun's USB keyboard.
   Undo,
   /// Use for dedicated <kbd>ひらがな</kbd> key found on some Japanese word processing keyboards.
   Hiragana,
@@ -848,7 +848,7 @@ impl fmt::Display for KeyCode {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Key<'a> {
   /// A key string that corresponds to the character typed by the user, taking into account the
-  /// user’s current locale setting, and any system-level keyboard mapping overrides that are in
+  /// user's current locale setting, and any system-level keyboard mapping overrides that are in
   /// effect.
   Character(&'a str),
 
@@ -884,7 +884,7 @@ pub enum Key<'a> {
   /// input.
   Control,
   /// The Function switch `Fn` key. Activating this key simultaneously with another key changes
-  /// that key’s value to an alternate character or function. This key is often handled directly
+  /// that key's value to an alternate character or function. This key is often handled directly
   /// in the keyboard hardware and does not usually generate key events.
   Fn,
   /// The Function-Lock (`FnLock` or `F-Lock`) key. Activating this key switches the mode of the
@@ -927,7 +927,7 @@ pub enum Key<'a> {
   /// The End key, used with keyboard entry to go to the end of content (`KEYCODE_MOVE_END`).
   End,
   /// The Home key, used with keyboard entry, to go to start of content (`KEYCODE_MOVE_HOME`).
-  /// For the mobile phone `Home` key (which goes to the phone’s main screen), use [`GoHome`].
+  /// For the mobile phone `Home` key (which goes to the phone's main screen), use [`GoHome`].
   ///
   /// [`GoHome`]: Self::GoHome
   Home,
@@ -970,7 +970,7 @@ pub enum Key<'a> {
   /// The Attention (Attn) key.
   Attn,
   Cancel,
-  /// Show the application’s context menu.
+  /// Show the application's context menu.
   /// This key is commonly found between the right `Super` key and the right `Control` key.
   ContextMenu,
   /// The `Esc` key. This key was originally used to initiate an escape sequence, but is
@@ -1097,7 +1097,7 @@ pub enum Key<'a> {
   /// Select next (numerically or logically) higher channel. (`APPCOMMAND_MEDIA_CHANNEL_UP`,
   /// `KEYCODE_CHANNEL_UP`)
   ChannelUp,
-  /// Close the current document or message (Note: This doesn’t close the application).
+  /// Close the current document or message (Note: This doesn't close the application).
   /// (`APPCOMMAND_CLOSE`)
   Close,
   /// Open an editor to forward the current message. (`APPCOMMAND_FORWARD_MAIL`)
@@ -1222,11 +1222,11 @@ pub enum Key<'a> {
   BrowserFavorites,
   /// Navigate to next content or page in current history. (`APPCOMMAND_BROWSER_FORWARD`)
   BrowserForward,
-  /// Go to the user’s preferred home page. (`APPCOMMAND_BROWSER_HOME`)
+  /// Go to the user's preferred home page. (`APPCOMMAND_BROWSER_HOME`)
   BrowserHome,
   /// Refresh the current page or content. (`APPCOMMAND_BROWSER_REFRESH`)
   BrowserRefresh,
-  /// Call up the user’s preferred search page. (`APPCOMMAND_BROWSER_SEARCH`)
+  /// Call up the user's preferred search page. (`APPCOMMAND_BROWSER_SEARCH`)
   BrowserSearch,
   /// Stop loading the current page or content. (`APPCOMMAND_BROWSER_STOP`)
   BrowserStop,
@@ -1243,7 +1243,7 @@ pub enum Key<'a> {
   EndCall,
   /// The Back key. (`KEYCODE_BACK`)
   GoBack,
-  /// The Home key, which goes to the phone’s main screen. (`KEYCODE_HOME`)
+  /// The Home key, which goes to the phone's main screen. (`KEYCODE_HOME`)
   GoHome,
   /// The Headset Hook key. (`KEYCODE_HEADSETHOOK`)
   HeadsetHook,
@@ -1369,9 +1369,9 @@ pub enum Key<'a> {
   FavoriteStore3,
   /// Toggle display of program or content guide. (`VK_GUIDE`, `KEYCODE_GUIDE`)
   Guide,
-  /// If guide is active and displayed, then display next day’s content. (`VK_NEXT_DAY`)
+  /// If guide is active and displayed, then display next day's content. (`VK_NEXT_DAY`)
   GuideNextDay,
-  /// If guide is active and displayed, then display previous day’s content. (`VK_PREV_DAY`)
+  /// If guide is active and displayed, then display previous day's content. (`VK_PREV_DAY`)
   GuidePreviousDay,
   /// Toggle display of information about currently selected context or media. (`VK_INFO`,
   /// `KEYCODE_INFO`)

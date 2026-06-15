@@ -64,7 +64,7 @@
     if (p.allowCustomAmount) {
       const min = p.customAmountMinCents ? (p.customAmountMinCents / 100).toFixed(2) : '0';
       const max = p.customAmountMaxCents ? (p.customAmountMaxCents / 100).toFixed(2) : '∞';
-      return `Libre (${min}–${max} ${p.currency.toUpperCase()})`;
+      return `Libre (${min}-${max} ${p.currency.toUpperCase()})`;
     }
     return 'Gratuit';
   }

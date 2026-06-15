@@ -80,7 +80,7 @@
 
   async function handleDelete(entry: UserRoleHistoryRow) {
     if (
-      !await showConfirm(`Supprimer « ${entry.roleTitle} » (${entry.associationName}) ?`, {
+      !await showConfirm(`Supprimer " ${entry.roleTitle} " (${entry.associationName}) ?`, {
         danger: true,
         confirmLabel: 'Supprimer',
       })
@@ -100,7 +100,7 @@
   {#if entries.length === 0 && !showForm}
     <p class="text-sm text-text-muted">
       {editable
-        ? 'Ajoutez vos anciens mandats (ex. Président BDE 2018–2019).'
+        ? 'Ajoutez vos anciens mandats (ex. Président BDE 2018-2019).'
         : 'Aucun parcours renseigné.'}
     </p>
   {:else}

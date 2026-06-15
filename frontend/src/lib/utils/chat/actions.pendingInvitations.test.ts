@@ -48,8 +48,8 @@ function readyConversation(id: string): Conversation {
   } as Conversation;
 }
 
-describe('processPendingInvitations - leaf déjà dans l’arbre', () => {
-  it('skip sans kicker ni ré-ajouter quand le device est déjà membre de l’arbre MLS', async () => {
+describe("processPendingInvitations - leaf déjà dans l'arbre", () => {
+  it("skip sans kicker ni ré-ajouter quand le device est déjà membre de l'arbre MLS", async () => {
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()
@@ -73,7 +73,7 @@ describe('processPendingInvitations - leaf déjà dans l’arbre', () => {
       log,
     });
 
-    // Le leaf valide ne doit jamais être kické ni ré-ajouté : l’invitation est remplie.
+    // Le leaf valide ne doit jamais être kické ni ré-ajouté : l'invitation est remplie.
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
@@ -81,7 +81,7 @@ describe('processPendingInvitations - leaf déjà dans l’arbre', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("déjà dans l'arbre"));
   });
 
-  it('ajoute normalement un device absent de l’arbre', async () => {
+  it("ajoute normalement un device absent de l'arbre", async () => {
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()

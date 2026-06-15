@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Encryption salt helper – shared by IndexedDbStorage and SqliteStorage.
+// Encryption salt helper - shared by IndexedDbStorage and SqliteStorage.
 // ---------------------------------------------------------------------------
 
 /**

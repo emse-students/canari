@@ -838,7 +838,7 @@ export class MessagingService {
     } else {
       // Device offline (app killed): the realtime WS path can't reach it, so push
       // the Welcome over FCM. Without this the recipient is never woken for the
-      // Welcome and stays unjoined — the subsequent message push then fails to
+      // Welcome and stays unjoined - the subsequent message push then fails to
       // decrypt ("Groupe introuvable") and shows a generic "Nouveau message de X".
       // Routed by data.isWelcome=true to the Android background welcome receiver,
       // which joins the group; the queue row is reconciled idempotently on next
@@ -1259,7 +1259,7 @@ export class MessagingService {
     // Écarte les messages adressés à un groupe disparu de dm_groups : orphelins
     // jamais déchiffrables ni ACK par le client, ils provoqueraient sinon une
     // boucle de recovery infinie. purgeOrphanGroups en purge aussi le résidu
-    // serveur (file, memberships, clés Redis) — voir sa doc.
+    // serveur (file, memberships, clés Redis) - voir sa doc.
     const groupIds = [
       ...new Set(
         messages.map((m) => m.groupId).filter((id): id is string => !!id),

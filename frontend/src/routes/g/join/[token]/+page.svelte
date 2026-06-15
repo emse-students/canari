@@ -62,7 +62,7 @@
         </div>
         <p class="text-sm font-semibold text-text-main">Demande envoyée !</p>
         <p class="text-xs text-text-muted leading-relaxed">
-          Vous rejoindrez « {preview?.groupName ?? 'le groupe'} » dès qu'un de ses membres sera en
+          Vous rejoindrez " {preview?.groupName ?? 'le groupe'} " dès qu'un de ses membres sera en
           ligne. La conversation apparaîtra automatiquement dans votre messagerie.
         </p>
         <a

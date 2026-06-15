@@ -109,7 +109,7 @@ export async function deleteMyRoleHistory(entryId: string): Promise<void> {
 
 /** Formats a role history period for display. */
 export function formatRoleHistoryPeriod(startYear: number | null, endYear: number | null): string {
-  if (startYear != null && endYear != null) return `${startYear} – ${endYear}`;
+  if (startYear != null && endYear != null) return `${startYear} - ${endYear}`;
   if (startYear != null) return `Depuis ${startYear}`;
   if (endYear != null) return `Jusqu'en ${endYear}`;
   return '';

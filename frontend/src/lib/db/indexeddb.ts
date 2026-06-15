@@ -125,7 +125,7 @@ export class IndexedDbStorage implements IStorage {
 
   /** Throw if init() has not been called yet; otherwise return the open database handle. */
   private ensureDb(): IDBDatabase {
-    if (!this.db) throw new Error('DB not initialized – call init() first');
+    if (!this.db) throw new Error('DB not initialized - call init() first');
     return this.db;
   }
 
@@ -371,7 +371,7 @@ export class IndexedDbStorage implements IStorage {
         const err = (e.target as IDBRequest).error;
         if (err?.name === 'ConstraintError') {
           e.preventDefault(); // prevent transaction abort
-          resolve(); // row already exists – keep local version
+          resolve(); // row already exists - keep local version
         } else {
           reject(err);
         }
@@ -391,7 +391,7 @@ export class IndexedDbStorage implements IStorage {
         const err = (e.target as IDBRequest).error;
         if (err?.name === 'ConstraintError') {
           e.preventDefault();
-          resolve(); // already exists – non-destructive skip
+          resolve(); // already exists - non-destructive skip
         } else {
           reject(err);
         }

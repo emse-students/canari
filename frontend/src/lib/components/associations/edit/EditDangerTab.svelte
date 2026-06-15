@@ -26,7 +26,7 @@
     if (
       next &&
       !(await showConfirm(
-        `Archiver ${noun} ? Elle passera dans « Anciennes » et disparaîtra des « Mes associations » de ses membres.`,
+        `Archiver ${noun} ? Elle passera dans " Anciennes " et disparaîtra des " Mes associations " de ses membres.`,
         { confirmLabel: 'Archiver' }
       ))
     )
@@ -71,8 +71,8 @@
     </h2>
     <p class="text-sm text-text-muted">
       {asso.archived
-        ? `${Noun} est archivée : elle apparaît sous « Anciennes » et n’est plus listée dans les « Mes associations » de ses membres. Vous pouvez la réactiver.`
-        : `Déplace ${noun} vers « Anciennes » sans rien supprimer. Réversible à tout moment.`}
+        ? `${Noun} est archivée : elle apparaît sous " Anciennes " et n'est plus listée dans les " Mes associations " de ses membres. Vous pouvez la réactiver.`
+        : `Déplace ${noun} vers " Anciennes " sans rien supprimer. Réversible à tout moment.`}
     </p>
     <button
       type="button"
@@ -90,7 +90,7 @@
       Zone de danger
     </h2>
     <p class="text-sm text-red-800/90">
-      Supprime définitivement {noun} et ses liens (membres, événements d’agenda). Les messages du fil
+      Supprime définitivement {noun} et ses liens (membres, événements d'agenda). Les messages du fil
       peuvent rester visibles selon la politique serveur.
     </p>
     <button

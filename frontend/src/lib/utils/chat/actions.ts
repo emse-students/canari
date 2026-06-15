@@ -409,8 +409,8 @@ export async function discoverMissingGroups(params: {
         // nous-mêmes sur un autre appareil). Le message système `groupDeleted` peut ne jamais
         // arriver (le pair était hors-ligne et deleteGroup purge la file du groupe), donc on
         // se rabat sur l'état serveur : on la marque deletedRemotely au lieu de la retirer
-        // silencieusement. ChatArea affiche alors la bannière « supprimée », verrouille le
-        // composer (plus d'envoi vers un groupe mort) et propose « Supprimer localement ».
+        // silencieusement. ChatArea affiche alors la bannière " supprimée ", verrouille le
+        // composer (plus d'envoi vers un groupe mort) et propose " Supprimer localement ".
         if (convo.isReady && !convo.deletedRemotely) {
           conversations.set(key, { ...convo, deletedRemotely: true });
           await saveConversation?.(key).catch(() => {});
@@ -632,7 +632,7 @@ const READD_WINDOW_MS = 3 * 60_000;
 const lastWelcomeSentAt = new Map<string, number>();
 
 /**
- * Délai pendant lequel un device fraîchement invité est présumé « en cours de jointure ».
+ * Délai pendant lequel un device fraîchement invité est présumé " en cours de jointure ".
  * Tant qu'il court, on ignore ses nouvelles welcome_request : son leaf est neuf, pas stale,
  * et le re-kicker l'évincerait (l'invité tomberait en UseAfterEviction à l'envoi). Doit
  * couvrir le déchiffrement du Welcome + l'ingestion du bundle historique (plusieurs secondes).

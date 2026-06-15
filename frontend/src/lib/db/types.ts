@@ -101,12 +101,12 @@ export interface IStorage {
     beforeTimestamp?: number
   ): Promise<StoredMessage[]>;
 
-  // Garbage collection – delete messages older than the given threshold.
+  // Garbage collection - delete messages older than the given threshold.
 
   /** Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. */
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
-  // Backup helpers – expose raw encrypted rows so backups don't require
+  // Backup helpers - expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same PIN.
 
   /** Return all encrypted message rows as-is (no decryption) for use in backup export. */

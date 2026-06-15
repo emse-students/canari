@@ -110,7 +110,7 @@
 <div
   class="relative w-full min-w-0 p-3 sm:p-5 md:p-6 bg-white/40 dark:bg-black/20 backdrop-blur-xl rounded-xl sm:rounded-[2rem] border border-black/5 dark:border-white/10 shadow-sm transition-all duration-300 sm:hover:shadow-md sm:hover:border-amber-500/30 group"
 >
-  <!-- Barre d’actions (mobile : réordonner + supprimer) -->
+  <!-- Barre d'actions (mobile : réordonner + supprimer) -->
   <div class="flex items-center justify-between gap-2 mb-3 sm:mb-4">
     <div class="flex items-center gap-2 min-w-0">
       {#if questionIndex != null}

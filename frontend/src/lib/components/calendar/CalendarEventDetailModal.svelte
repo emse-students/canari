@@ -28,7 +28,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} – ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   function toAgendaExport(ev: AssociationCalendarFeedEvent): AgendaExportEvent {

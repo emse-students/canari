@@ -171,7 +171,7 @@
                       ? `outline:1.5px dashed ${fg};outline-offset:-2px;`
                       : ''}"
                     title={ev.status === 'pending'
-                      ? `${ev.title} — en attente de validation`
+                      ? `${ev.title} - en attente de validation`
                       : `${ev.title} - ${ev.associationName}`}
                   >
                     <!-- Day number on the first slot -->

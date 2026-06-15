@@ -101,7 +101,7 @@
   }
 
   async function remove(ev: AssociationCalendarFeedEvent) {
-    if (!await showConfirm(`Supprimer « ${ev.title} » ?`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(`Supprimer " ${ev.title} " ?`, { danger: true, confirmLabel: 'Supprimer' })) return;
     actingId = ev.id;
     try {
       await deleteAssociationCalendarEvent(ev.associationId, ev.id);
@@ -250,7 +250,7 @@
     aria-modal="true"
   >
     <div class="w-full max-w-md rounded-2xl bg-white dark:bg-cn-surface shadow-xl p-6 space-y-4">
-      <h3 class="text-base font-bold text-text-main">Refuser « {rejectTarget.title} »</h3>
+      <h3 class="text-base font-bold text-text-main">Refuser " {rejectTarget.title} "</h3>
       <p class="text-sm text-text-muted">
         L'événement sera marqué comme refusé. L'association recevra une notification et pourra voir
         le motif dans sa page.

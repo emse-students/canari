@@ -56,7 +56,7 @@
   /**
    * Block the whole UI only on a cold start (nothing cached yet). Once cached
    * conversations are available we show them immediately and sync in the
-   * background — the per-group scheduler serializes sends safely meanwhile.
+   * background - the per-group scheduler serializes sends safely meanwhile.
    */
   const isMessagingBlocked = $derived(
     !session.isLoggedIn || (isSyncing && !hasCachedConversations)

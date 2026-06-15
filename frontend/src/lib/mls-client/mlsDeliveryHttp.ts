@@ -3,7 +3,7 @@ export type MlsPublicUrls = { baseUrl: string; historyUrl: string };
 
 /**
  * Prefer `VITE_GATEWAY_URL` / `VITE_DELIVERY_URL`; fall back to same-origin in the browser
- * (reverse proxy routes `/api/ws` and `/api/mls/`). Empty env strings mean “not configured”.
+ * (reverse proxy routes `/api/ws` and `/api/mls/`). Empty env strings mean "not configured".
  */
 export function resolveMlsPublicUrls(): MlsPublicUrls {
   const envGateway = import.meta.env.VITE_GATEWAY_URL;

@@ -159,7 +159,7 @@
 
   async function handleDeleteProduct(product: AssociationProduct) {
     if (
-      !(await showConfirm(`Supprimer le produit « ${product.name} » ? Cette action est irréversible.`, {
+      !(await showConfirm(`Supprimer le produit " ${product.name} " ? Cette action est irréversible.`, {
         danger: true,
         confirmLabel: 'Supprimer',
       }))
@@ -216,8 +216,8 @@
   {#if !stripePaymentsReady}
     <div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
       {#if stripePending}
-        Stripe Connect en cours de validation. Les produits seront créés inactifs jusqu’à
-        l’activation du compte (généralement sous quelques jours).
+        Stripe Connect en cours de validation. Les produits seront créés inactifs jusqu'à
+        l'activation du compte (généralement sous quelques jours).
       {:else}
         Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion de
         l'onboarding.

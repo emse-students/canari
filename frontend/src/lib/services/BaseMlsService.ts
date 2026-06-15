@@ -638,7 +638,7 @@ export abstract class BaseMlsService implements IMlsService {
    * Supprime tous les one-time prekeys publiés puis régénère le matériel de clé
    * (fallback statique + pool) depuis le keystore local courant via
    * {@link generateKeyPackage}. Garantit qu'aucun KeyPackage publié ne référence
-   * une clé privée absente localement — la racine de la boucle `NoMatchingKeyPackage`.
+   * une clé privée absente localement - la racine de la boucle `NoMatchingKeyPackage`.
    *
    * Débounce les appels rapprochés (≤ 30 s) : plusieurs groupes peuvent échouer en
    * même temps, mais une seule purge/régénération (coûteuse, jusqu'à 50 KeyPackages)

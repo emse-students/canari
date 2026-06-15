@@ -85,7 +85,7 @@ function formatGoogleUtc(d: Date): string {
     .replace(/\.\d{3}Z$/, 'Z');
 }
 
-/** Opens Google Calendar “create event” with the same times as the agenda row (template, not subscribed). */
+/** Opens Google Calendar "create event" with the same times as the agenda row (template, not subscribed). */
 export function googleCalendarTemplateUrl(ev: AgendaExportEvent): string {
   const start = toDate(ev.startsAt);
   if (Number.isNaN(start.getTime())) {

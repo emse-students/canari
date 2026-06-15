@@ -85,7 +85,7 @@
       )?.message.id ?? null
   );
 
-  // Dernier message envoyé lu par au moins un interlocuteur (indicateur « Lu »).
+  // Dernier message envoyé lu par au moins un interlocuteur (indicateur " Lu ").
   const lastReadOwnMessageId = $derived(
     [...visibleMessageGroups]
       .reverse()

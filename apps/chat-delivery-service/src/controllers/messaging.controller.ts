@@ -156,7 +156,7 @@ export class MessagingController {
     const preview = String(body.messagePreview ?? '').slice(0, 80);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
 
-    const notifBody = `${actor} a réagi avec ${emoji} à « ${preview} »`;
+    const notifBody = `${actor} a réagi avec ${emoji} à " ${preview} "`;
 
     return this.messagingService.sendPushToUser(
       body.targetSenderId,

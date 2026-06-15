@@ -57,7 +57,7 @@
   });
 
   async function handleDelete(id: string, title: string) {
-    if (!await showConfirm(`Supprimer le formulaire « ${title} » ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(`Supprimer le formulaire " ${title} " ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
     deletingId = id;
     try {
       await deleteForm(id);
@@ -138,9 +138,9 @@
     );
   }
 
-  /** Formats cents as a currency string, or "–" for zero. */
+  /** Formats cents as a currency string, or "-" for zero. */
   function formatAmount(cents: number): string {
-    if (!cents) return '–';
+    if (!cents) return '-';
     return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'eur' });
   }
 </script>

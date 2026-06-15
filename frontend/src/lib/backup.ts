@@ -1,28 +1,28 @@
 /**
- * backup.ts – Canari message backup / restore (WhatsApp-style)
+ * backup.ts - Canari message backup / restore (WhatsApp-style)
  *
  * Export flow:
  *   1. Read all conversation metadata from the DB (plaintext).
  *   2. Read all raw encrypted message rows from the DB (already encrypted
- *      with the user's PIN – no double work needed).
+ *      with the user's PIN - no double work needed).
  *   3. Serialise everything to JSON.
  *   4. Wrap the whole JSON in one additional Argon2+ChaCha20-Poly1305 layer
  *      using the WASM `encrypt_with_pin` helper.  This protects conversation
  *      names and other metadata that are stored plaintext in the DB.
  *   5. Prepend a 4-byte magic header and return the binary blob.
  *
- * Import flow (new device, same PIN) – NON-DESTRUCTIVE MERGE:
+ * Import flow (new device, same PIN) - NON-DESTRUCTIVE MERGE:
  *   1. Strip magic header, decrypt outer envelope with PIN.
- *   2. Parse JSON – validate version field. Compare `exporterDeviceId` with
+ *   2. Parse JSON - validate version field. Compare `exporterDeviceId` with
  *      the current device's ID:
  *        - Same device (wipe/restore): conversations stay `isReady: true`,
  *          MLS state IS valid and can be restored.
  *        - Different device (second phone/PC): conversations are imported as
- *          `isReady: false` – the device is NOT yet a MLS member of those
+ *          `isReady: false` - the device is NOT yet a MLS member of those
  *          groups.  MLS state from the backup must NOT be restored (the private
  *          leaf key belongs to the exporter, not to this device).
- *   3. `mergeConversation` (INSERT OR IGNORE) – live metadata is preserved.
- *   4. `importEncryptedRow` (INSERT OR IGNORE) – newer local messages kept.
+ *   3. `mergeConversation` (INSERT OR IGNORE) - live metadata is preserved.
+ *   4. `importEncryptedRow` (INSERT OR IGNORE) - newer local messages kept.
  *   5. Returns `{ data, isSameDevice }` so the caller can decide what to do
  *      with the MLS state and can trigger Device A re-invitation flow.
  *
@@ -84,7 +84,7 @@ const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x01]);
  * @param deviceId     MLS device ID of the exporting device (used on import
  *                     to detect same-device restore vs. second-device transfer).
  * @param mlsStateHex  Optional hex string of the encrypted MLS state from
- *                     localStorage – valid only for same-device restores.
+ *                     localStorage - valid only for same-device restores.
  * @returns Binary blob ready to be saved / downloaded as a .canari file.
  */
 export async function exportBackup(

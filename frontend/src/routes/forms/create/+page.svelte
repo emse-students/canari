@@ -297,7 +297,7 @@
 
       <div>
         <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1">
-          Date d’ouverture (shotgun)
+          Date d'ouverture (shotgun)
         </label>
         <input
           id="form-opens-at"

@@ -193,8 +193,8 @@
       const { navigateExternal } = await import('$lib/utils/openExternal');
       await navigateExternal(url);
     } catch (err) {
-      console.error('[Stripe] Impossible d’ouvrir le tableau de bord:', err);
-      error = err instanceof Error ? err.message : 'Impossible d’ouvrir Stripe';
+      console.error('[Stripe] Impossible d\'ouvrir le tableau de bord:', err);
+      error = err instanceof Error ? err.message : 'Impossible d\'ouvrir Stripe';
     } finally {
       stripeDashboardLoading = false;
     }
@@ -453,7 +453,7 @@
                     </div>
                   </div>
                   <p class="text-xs text-text-muted leading-relaxed">
-                    Les fonds « en attente » seront disponibles après le délai de traitement Stripe.
+                    Les fonds " en attente " seront disponibles après le délai de traitement Stripe.
                     Les virements se gèrent sur le tableau de bord Stripe de l'association (compte
                     Standard).
                   </p>
@@ -494,8 +494,8 @@
                 </p>
                 <p class="text-sm leading-relaxed">
                   Votre dossier a bien été transmis. Stripe valide généralement le compte sous
-                  quelques heures à quelques jours ouvrés - aucune action n’est requise de votre
-                  part pour l’instant.
+                  quelques heures à quelques jours ouvrés - aucune action n'est requise de votre
+                  part pour l'instant.
                 </p>
                 {#if stripeConnectStatus.pendingVerification && stripeConnectStatus.pendingVerification.length > 0}
                   <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
@@ -521,7 +521,7 @@
                 </p>
               </div>
             {:else if stripeConnectStatus?.status === 'unavailable'}
-              <p class="text-sm text-amber-700">Stripe n’est pas configuré sur le serveur.</p>
+              <p class="text-sm text-amber-700">Stripe n'est pas configuré sur le serveur.</p>
             {:else}
               <p class="text-sm text-text-muted leading-relaxed">
                 {#if asso.stripeAccountId}

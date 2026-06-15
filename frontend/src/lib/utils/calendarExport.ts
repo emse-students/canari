@@ -15,7 +15,7 @@ const MAX_SHOW = 3;
 export interface CalendarExportOptions {
   /** Base64 data: URL for the full-page background image. */
   bgDataUrl?: string | null;
-  /** Background image opacity in percent (0–100). Default: 14. */
+  /** Background image opacity in percent (0-100). Default: 14. */
   bgOpacity?: number;
   /** Header bar background color (hex). Default: '#151B2C'. */
   headerBg?: string;
@@ -23,17 +23,17 @@ export interface CalendarExportOptions {
   monthTitleColor?: string;
   /** Weekday row background color (hex). Default: '#151B2C'. */
   weekdayRowBg?: string;
-  /** Mon–Fri label color (hex). Default: '#c8d8eb'. */
+  /** Mon-Fri label color (hex). Default: '#c8d8eb'. */
   weekdayLabelColor?: string;
-  /** Sat–Sun label color (hex). Default: '#f5c518'. */
+  /** Sat-Sun label color (hex). Default: '#f5c518'. */
   weekendLabelColor?: string;
   /** Normal day cell background color (hex). Default: '#ffffff'. */
   cellBg?: string;
-  /** Normal day cell background opacity in percent (0–100). Default: 92. */
+  /** Normal day cell background opacity in percent (0-100). Default: 92. */
   cellBgOpacity?: number;
   /** Weekend cell background color (hex). Default: '#f1f5f9'. */
   weekendCellBg?: string;
-  /** Weekend cell background opacity in percent (0–100). Default: 92. */
+  /** Weekend cell background opacity in percent (0-100). Default: 92. */
   weekendCellBgOpacity?: number;
   /** Cell border color (hex). Default: '#dde3ec'. */
   borderColor?: string;

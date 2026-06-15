@@ -18,7 +18,7 @@ describe('buildIcsCalendar', () => {
     const ics = buildIcsCalendar([
       {
         id: 'ev-1',
-        title: 'Test « réunion »',
+        title: 'Test " réunion "',
         description: 'Line1\nLine2',
         startsAt: '2026-05-13T12:00:00.000Z',
         endsAt: null,
@@ -28,7 +28,7 @@ describe('buildIcsCalendar', () => {
     expect(ics).toContain('END:VCALENDAR');
     expect(ics).toContain('BEGIN:VEVENT');
     expect(ics).toContain('UID:ev-1@canari');
-    expect(ics).toContain('SUMMARY:Test « réunion »');
+    expect(ics).toContain('SUMMARY:Test " réunion "');
     expect(ics).toContain('DESCRIPTION:Line1\\nLine2');
     expect(ics).toContain('DTSTART:20260513T120000Z');
     expect(ics).toMatch(/DTEND:20260513T130000Z/);

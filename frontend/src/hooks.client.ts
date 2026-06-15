@@ -1,5 +1,5 @@
 /**
- * Client-side hooks – runs once at app startup before any component renders.
+ * Client-side hooks - runs once at app startup before any component renders.
  *
  * On Tauri, wraps `window.fetch` so that **external API calls** go through
  * the native HTTP plugin (bypasses CORS, uses native TLS), while internal

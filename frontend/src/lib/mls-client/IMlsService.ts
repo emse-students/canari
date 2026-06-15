@@ -83,8 +83,8 @@ export interface IMlsService {
    * valide localement lesquels on possède encore en clé privée, et purge du serveur
    * ceux qui sont orphelins (clé privée perdue après reset/restauration d'état).
    *
-   * Empêche un pair de consommer un KeyPackage qu'on ne peut pas honorer — la cause
-   * de la boucle `NoMatchingKeyPackage` — au lieu d'attendre l'échec. Best-effort,
+   * Empêche un pair de consommer un KeyPackage qu'on ne peut pas honorer - la cause
+   * de la boucle `NoMatchingKeyPackage` - au lieu d'attendre l'échec. Best-effort,
    * conçu pour tourner en arrière-plan à la connexion.
    */
   reconcilePublishedKeyPackages(): Promise<void>;

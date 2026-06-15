@@ -37,7 +37,7 @@ async function fetchCiphertext(
         if (buf.byteLength > 0) return buf;
       }
     } catch {
-      // Cache API unavailable or read failed — fall through to network.
+      // Cache API unavailable or read failed - fall through to network.
     }
   }
 

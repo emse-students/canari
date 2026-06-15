@@ -182,7 +182,7 @@
         Agenda des associations
       </h1>
       <p class="text-sm text-text-muted mt-1">
-        Calendrier mensuel — cliquez sur un jour pour voir les événements.
+        Calendrier mensuel - cliquez sur un jour pour voir les événements.
       </p>
     </div>
   </div>

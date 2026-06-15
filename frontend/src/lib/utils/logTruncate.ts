@@ -14,7 +14,7 @@ let installed = false;
 
 /**
  * Réduit les UUIDs et les longues suites hexadécimales (≥ 16 caractères) à leurs
- * 8 premiers caractères suivis de « … ». Les hex courts (epochs, compteurs,
+ * 8 premiers caractères suivis de " … ". Les hex courts (epochs, compteurs,
  * couleurs CSS) sont laissés intacts.
  */
 export function truncateLogIds(text: string): string {
@@ -29,8 +29,8 @@ export function truncateLogIds(text: string): string {
  * les autres (objets, erreurs) passent inchangés. Idempotent : ne wrappe la
  * console qu'une seule fois quel que soit le nombre d'appels.
  *
- * Couvre d'un seul point d'entrée tous les logs web — `[API]`, `[WS]`,
- * `appendLog`, `[RUST::INFO]`… — sans toucher aux dizaines de sites d'appel.
+ * Couvre d'un seul point d'entrée tous les logs web - `[API]`, `[WS]`,
+ * `appendLog`, `[RUST::INFO]`… - sans toucher aux dizaines de sites d'appel.
  */
 export function installConsoleIdTruncation(): void {
   if (installed) return;

@@ -159,7 +159,7 @@ async function main() {
   console.log(
     '\nNotes: tailles = octets plaintext avant chiffrement. Ciphertext ≈ plaintext + 16 o (tag GCM).'
   );
-  console.log('La compression WebP (canvas) n’est pas mesurée ici - uniquement le crypto client.');
+  console.log("La compression WebP (canvas) n'est pas mesurée ici - uniquement le crypto client.");
 }
 
 function pad(s: string, width: number): string {

@@ -59,7 +59,7 @@ jobs:
           fi
 
           if [[ -z "$BASE" ]]; then
-            echo "No base commit available – running all tests."
+            echo "No base commit available - running all tests."
             run_all; exit 0
           fi
 
@@ -71,7 +71,7 @@ jobs:
 
           # CI workflow itself changed → test everything
           if has '\.github/workflows/ci\.yml'; then
-            echo "CI workflow changed – running all tests."
+            echo "CI workflow changed - running all tests."
             run_all; exit 0
           fi
 

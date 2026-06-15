@@ -477,7 +477,7 @@
               {/each}
             </select>
             <p class="mt-1.5 text-[0.7rem] text-text-muted ml-1">
-              Seuls les événements validés de l’agenda apparaissent ici.
+              Seuls les événements validés de l'agenda apparaissent ici.
             </p>
           </div>
         {/if}

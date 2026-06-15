@@ -28,7 +28,7 @@
     },
     {
       label: 'Modération générale',
-      text: 'Votre compte a été restreint par l’équipe de modération. Contactez le BDE si vous pensez qu’il s’agit d’une erreur.',
+      text: 'Votre compte a été restreint par l\'équipe de modération. Contactez le BDE si vous pensez qu\'il s\'agit d\'une erreur.',
     },
   ];
 
@@ -61,8 +61,8 @@
 >
   <div class="space-y-4 px-1 pb-2">
     <p class="text-sm text-text-muted leading-relaxed">
-      L’utilisateur pourra encore se connecter et lire, mais ne pourra plus publier, commenter ni
-      réagir. Le message ci-dessous lui sera affiché dans l’application.
+      L'utilisateur pourra encore se connecter et lire, mais ne pourra plus publier, commenter ni
+      réagir. Le message ci-dessous lui sera affiché dans l'application.
     </p>
 
     <div class="flex flex-wrap gap-2">
@@ -81,7 +81,7 @@
 
     <label class="block">
       <span class="text-xs font-semibold text-text-muted mb-1.5 block"
-        >Message visible par l’utilisateur</span
+        >Message visible par l'utilisateur</span
       >
       <textarea
         bind:value={reason}

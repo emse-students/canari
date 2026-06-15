@@ -2,7 +2,7 @@
  * Module-level singletons for the chat session.
  *
  * These are created once at module load time and persist for the entire
- * application lifecycle – across all route navigations. This allows the
+ * application lifecycle - across all route navigations. This allows the
  * WebSocket connection, MLS state, and conversation data to remain active
  * even when the user is not on the /chat page.
  *
@@ -16,7 +16,7 @@ import { useChannelWorkspaces } from '$lib/composables/useChannelWorkspaces.svel
 import { useNotifications } from '$lib/composables/useNotifications.svelte';
 
 // ── Singleton composable instances ───────────────────────────────────────────
-// Called once at module level – the $state / $derived variables inside live
+// Called once at module level - the $state / $derived variables inside live
 // for the entire app lifetime (SPA mode, no SSR).
 export const globalSession = useChatSession();
 export const globalConvs = useConversations();

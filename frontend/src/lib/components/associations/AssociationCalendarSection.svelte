@@ -482,7 +482,7 @@
     <div>
       <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
       <p class="text-sm text-text-muted">
-        Calendrier mensuel — cliquez sur un jour pour voir le détail.
+        Calendrier mensuel - cliquez sur un jour pour voir le détail.
         {#if canEdit}
           Les nouveaux événements sont en attente de validation avant publication.
         {/if}
@@ -679,11 +679,11 @@
       aria-labelledby="cal-modal-title"
     >
       <h3 id="cal-modal-title" class="text-lg font-bold text-text-main">
-        {editingId ? 'Modifier l’événement' : 'Proposer un événement'}
+        {editingId ? 'Modifier l\'événement' : 'Proposer un événement'}
       </h3>
       {#if !editingId}
         <p class="text-xs text-text-muted">
-          L’événement sera visible par tous après validation par un administrateur.
+          L'événement sera visible par tous après validation par un administrateur.
         </p>
       {/if}
       <Input label="Titre" bind:value={formTitle} />
@@ -920,7 +920,7 @@
             </a>
           </li>
           <li>
-            Dans le menu de gauche, cliquez sur le <strong>+</strong> à côté de « Autres agendas »
+            Dans le menu de gauche, cliquez sur le <strong>+</strong> à côté de " Autres agendas "
           </li>
           <li>Sélectionnez <strong>À partir de l'URL</strong></li>
           <li>Collez le lien et validez</li>

@@ -2,7 +2,7 @@
  * Contract tests for the addMessageToChat options-based API.
  *
  * The original bug: connection.ts called addMessageToChat with 7 positional
- * arguments, but the exposed wrapper only accepted 4. The 5th–7th args
+ * arguments, but the exposed wrapper only accepted 4. The 5th-7th args
  * (messageId, replyTo, timestamp) were silently discarded, causing every
  * incoming message to get a random UUID instead of the wire message ID.
  *

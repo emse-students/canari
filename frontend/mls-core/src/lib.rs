@@ -838,7 +838,7 @@ impl MlsManager {
     /// Recalcule le `hash_ref` du KeyPackage (la clé sous laquelle son bundle privé
     /// est stocké lors de la génération) puis interroge le keystore. Permet au client
     /// de détecter les KeyPackages publiés sur le serveur dont la clé privée locale a
-    /// été perdue (état réinitialisé ou restauré depuis une sauvegarde antérieure) —
+    /// été perdue (état réinitialisé ou restauré depuis une sauvegarde antérieure) -
     /// racine de la boucle `NoMatchingKeyPackage`. Ces KeyPackages orphelins peuvent
     /// alors être purgés du serveur avant qu'un pair ne les consomme.
     pub fn key_package_has_private(&self, kp_bytes: &[u8]) -> Result<bool, MlsError> {

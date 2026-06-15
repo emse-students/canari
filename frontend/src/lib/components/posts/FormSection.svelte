@@ -85,7 +85,7 @@
       </p>
     {/if}
   {:else}
-    <p class="mb-3 text-sm font-medium text-text-muted">Aucun formulaire pour l’instant.</p>
+    <p class="mb-3 text-sm font-medium text-text-muted">Aucun formulaire pour l'instant.</p>
   {/if}
 
   <a

@@ -85,7 +85,7 @@ Si le JWT est invalide ou absent, la connexion est rejetée avec `4401 Unauthori
 
 ### Heartbeat / Présence
 
-La clé Redis `user:online:{userId}:{deviceId}` est renouvelée (`set_ex`, TTL **20s**) à chaque **Pong** WebSocket et à chaque frame **Text** reçue du client (`refresh_presence`). La tâche d’écriture envoie en parallèle un **ping** WebSocket toutes les **1s** (voir `handlers.rs`). En pratique, un client actif reste « online » tant que le socket répond, plutôt que d’attendre un rafraîchissement périodique long. Si le client se déconnecte brutalement, la clé expire au plus tard après le TTL (20s) une fois les pings sans réponse.
+La clé Redis `user:online:{userId}:{deviceId}` est renouvelée (`set_ex`, TTL **20s**) à chaque **Pong** WebSocket et à chaque frame **Text** reçue du client (`refresh_presence`). La tâche d'écriture envoie en parallèle un **ping** WebSocket toutes les **1s** (voir `handlers.rs`). En pratique, un client actif reste " online " tant que le socket répond, plutôt que d'attendre un rafraîchissement périodique long. Si le client se déconnecte brutalement, la clé expire au plus tard après le TTL (20s) une fois les pings sans réponse.
 
 **Note** : une déconnexion explicite (`disconnect`) supprime la clé immédiatement via `handle_disconnect`.
 

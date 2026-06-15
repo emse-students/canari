@@ -390,8 +390,8 @@ async function findAncestorWithMembers(
  * Invite tous les membres de `deadGroupId` dans le nouveau groupe successeur.
  *
  * Sources pour déterminer qui inviter (par priorité) :
- *  1. `getGroupMembers` (dm_device_group_memberships, active) — source primaire.
- *  2. `getGroupUserMembers` (dm_group_members, user-level) — fallback si la source 1
+ *  1. `getGroupMembers` (dm_device_group_memberships, active) - source primaire.
+ *  2. `getGroupUserMembers` (dm_group_members, user-level) - fallback si la source 1
  *     est vide (cas typique : device créateur supprimé via fresh-start, ce qui efface
  *     ses entrées device-level mais laisse dm_group_members intact).
  *

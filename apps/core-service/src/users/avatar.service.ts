@@ -17,7 +17,7 @@ export class AvatarService {
 
     if (!this.avatarApiKey) {
       this.logger.warn(
-        'MIGALLERY_API_KEY is not set — avatar proxy will not work.',
+        'MIGALLERY_API_KEY is not set - avatar proxy will not work.',
       );
     }
   }

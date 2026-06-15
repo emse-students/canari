@@ -108,7 +108,7 @@
             >
           </p>
           <p class="text-text-muted text-xs">
-            Objet recommandé : <em>« Signalement CSAE - Canari »</em>. Décrivez la situation,
+            Objet recommandé : <em>" Signalement CSAE - Canari "</em>. Décrivez la situation,
             incluez toute information pertinente (date, contenu, utilisateur concerné si connu).
             Nous traiterons le signalement dans les meilleurs délais.
           </p>

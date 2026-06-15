@@ -167,7 +167,7 @@
     <div>
       <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
       <p class="text-sm text-text-muted mt-1">
-        Rôles affichés sur la page publique. Gérez les droits d’accès de chaque membre.
+        Rôles affichés sur la page publique. Gérez les droits d'accès de chaque membre.
       </p>
     </div>
     <button

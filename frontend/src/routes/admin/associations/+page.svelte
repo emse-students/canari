@@ -72,7 +72,7 @@
     <div>
       <h2 class="text-lg font-extrabold text-text-main">Associations & BDE</h2>
       <p class="text-sm text-text-muted mt-0.5">
-        Marquez les associations « BDE ». Une asso BDE débloque les super-rôles
+        Marquez les associations " BDE ". Une asso BDE débloque les super-rôles
         (valider les évènements, créer des associations, modérer) pour ses membres habilités.
       </p>
     </div>

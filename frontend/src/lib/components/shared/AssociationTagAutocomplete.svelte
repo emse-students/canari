@@ -255,7 +255,7 @@
                 : ''}"
               onmousedown={confirmCreate}
             >
-              <span class="text-text-main">Créer « <span class="font-mono">{trimmedQuery}</span> »</span>
+              <span class="text-text-main">Créer " <span class="font-mono">{trimmedQuery}</span> "</span>
             </button>
           </li>
         {/if}
@@ -269,7 +269,7 @@
     <p class="text-xs text-text-muted ml-1">Choisissez un tag existant dans la liste.</p>
   {:else if suggestions.length === 0 && !isLoading && trimmedQuery}
     <p class="text-xs text-text-muted ml-1">
-      Aucun tag existant — vous pouvez en créer un nouveau (ex. cotisant:bde-2026-2027).
+      Aucun tag existant - vous pouvez en créer un nouveau (ex. cotisant:bde-2026-2027).
     </p>
   {/if}
 </div>

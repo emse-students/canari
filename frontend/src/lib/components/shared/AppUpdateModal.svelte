@@ -44,15 +44,15 @@
     </p>
     {#if isAndroid}
       <p>
-        Le téléchargement de l’APK s’ouvrira dans votre navigateur ; installez-le ensuite pour
-        mettre à jour l’application.
+        Le téléchargement de l'APK s'ouvrira dans votre navigateur ; installez-le ensuite pour
+        mettre à jour l'application.
       </p>
     {:else if isNative}
       <p>
         Téléchargez et installez la dernière version depuis la page de release GitHub.
       </p>
     {:else}
-      <p>Rechargez l’application pour utiliser la dernière version déployée.</p>
+      <p>Rechargez l'application pour utiliser la dernière version déployée.</p>
     {/if}
   </div>
 
@@ -76,7 +76,7 @@
         ? 'Ouverture…'
         : isNative
           ? 'Télécharger la mise à jour'
-          : 'Recharger l’application'}
+          : 'Recharger l\'application'}
     </button>
   {/snippet}
 </Modal>

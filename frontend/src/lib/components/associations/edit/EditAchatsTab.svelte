@@ -188,10 +188,10 @@
         Le tag <span class="font-mono">{grantSelectedProduct.grantedTagName}</span> sera accordé
         automatiquement.
       {:else if grantSelectedProduct?.type === 'balance_topup'}
-        Les recharges Cercle ne sont pas créditées automatiquement — utilisez l’interface Cercle si
+        Les recharges Cercle ne sont pas créditées automatiquement - utilisez l'interface Cercle si
         nécessaire.
       {:else}
-        L’achat apparaîtra dans l’historique comme un paiement manuel.
+        L'achat apparaîtra dans l'historique comme un paiement manuel.
       {/if}
     </p>
     <button
