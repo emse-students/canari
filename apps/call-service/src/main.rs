@@ -426,43 +426,47 @@ async fn handle_signal(
                         let local_track_clone = local_track.clone();
                         let is_video = remote_track.kind() == RTPCodecType::Video;
                         let media_ssrc = remote_track.ssrc();
+
+                        // RTP forwarding loop - never interrupted, so no packet is dropped.
                         tokio::spawn(async move {
                             let mut buf = vec![0u8; 1500];
-                            // Periodically ask the publisher for a keyframe. The SFU forwards
-                            // opaque (E2E-encrypted) RTP, so it can't detect keyframe needs;
-                            // without this a subscriber that can't self-request one (Firefox
-                            // has no generateKeyFrame) only gets delta frames and shows black
-                            // video while audio plays. Browser-agnostic fix.
-                            let mut keyframe_tick =
-                                tokio::time::interval(std::time::Duration::from_secs(2));
-                            loop {
-                                tokio::select! {
-                                    read = remote_track.read(&mut buf) => {
-                                        match read {
-                                            Ok((parsed, _)) => {
-                                                if local_track_clone.write_rtp(&parsed).await.is_err() {
-                                                    break;
-                                                }
-                                            }
-                                            Err(_) => break,
-                                        }
-                                    }
-                                    _ = keyframe_tick.tick(), if is_video => {
-                                        match pc_weak.upgrade() {
-                                            Some(pc) => {
-                                                let _ = pc
-                                                    .write_rtcp(&[Box::new(PictureLossIndication {
-                                                        sender_ssrc: 0,
-                                                        media_ssrc,
-                                                    })])
-                                                    .await;
-                                            }
-                                            None => break,
-                                        }
-                                    }
+                            while let Ok((parsed, _)) = remote_track.read(&mut buf).await {
+                                if local_track_clone.write_rtp(&parsed).await.is_err() {
+                                    break;
                                 }
                             }
                         });
+
+                        // Separate keyframe-request loop for video. The SFU forwards opaque
+                        // (E2E-encrypted) RTP and can't detect keyframe needs, so it periodically
+                        // asks the publisher for an IDR. Without this a subscriber that can't
+                        // self-request one (Firefox has no generateKeyFrame) only gets delta
+                        // frames and shows black video while audio plays. Runs in its own task
+                        // so it never cancels the RTP read above (which would drop packets).
+                        if is_video {
+                            tokio::spawn(async move {
+                                let mut ticker =
+                                    tokio::time::interval(std::time::Duration::from_secs(2));
+                                loop {
+                                    ticker.tick().await;
+                                    match pc_weak.upgrade() {
+                                        Some(pc) => {
+                                            if pc
+                                                .write_rtcp(&[Box::new(PictureLossIndication {
+                                                    sender_ssrc: 0,
+                                                    media_ssrc,
+                                                })])
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        None => break,
+                                    }
+                                }
+                            });
+                        }
 
                         for peer_entry in room_clone.peers.iter() {
                             let other_pid = peer_entry.key();

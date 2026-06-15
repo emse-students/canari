@@ -59,8 +59,6 @@ export class CallService {
   private mergedRemoteStream: MediaStream | null = null;
   private callKeyBytes: Uint8Array | null = null;
   private pendingRemoteIceCandidates: RTCIceCandidateInit[] = [];
-  /** Pending keyframe-burst timers, cleared on cleanup. */
-  private keyframeBurstTimers: number[] = [];
 
   public currentCallId: string | null = null;
   public currentGroupId: string | null = null;
@@ -251,8 +249,6 @@ export class CallService {
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
     this.e2eActive.set(true);
-    for (const t of this.keyframeBurstTimers) clearTimeout(t);
-    this.keyframeBurstTimers = [];
     this.incomingHasVideo = true;
     this.callHasVideo = false;
 
@@ -600,7 +596,6 @@ export class CallService {
       }
       appendLog(`[Call] E2E transforms attached (${senders} sender(s), ${receivers} receiver(s))`);
       this.e2eActive.set(true);
-      this.scheduleKeyframeBursts();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLog(`[Call] E2E transforms failed: ${msg}`);
@@ -645,71 +640,9 @@ export class CallService {
 
     this.publishRemoteStream();
 
-    if (track.kind === 'video') {
-      this.scheduleVideoUnmuteWatchdog(track);
-    }
-
     if (get(this.callState) === 'calling' || get(this.callState) === 'incoming') {
       this.callState.set('incall');
     }
-  }
-
-  /** Whether we've already logged that generateKeyFrame is unsupported (Firefox), to avoid spam. */
-  private loggedKeyframeUnsupported = false;
-
-  /**
-   * Asks local encoders to emit an IDR frame so remote decoders can start after E2E attach.
-   * No-op on Firefox (no generateKeyFrame): there the encoder's periodic GOP keyframes are
-   * the only recovery, and the SFU/peer must drive them.
-   */
-  private async requestVideoKeyframes(): Promise<void> {
-    const pc = this.pc;
-    if (!pc) return;
-
-    for (const sender of pc.getSenders()) {
-      const mediaTrack = sender.track;
-      if (!mediaTrack || mediaTrack.kind !== 'video' || !mediaTrack.enabled) continue;
-
-      const ext = sender as RTCRtpSender & { generateKeyFrame?: () => Promise<void> };
-      if (typeof ext.generateKeyFrame !== 'function') {
-        if (!this.loggedKeyframeUnsupported) {
-          appendLog('[Call] generateKeyFrame unavailable in this browser (Firefox) - skipping');
-          this.loggedKeyframeUnsupported = true;
-        }
-        continue;
-      }
-      try {
-        await ext.generateKeyFrame();
-        appendLog('[Call] keyframe requested on local video sender');
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        appendLog(`[Call] generateKeyFrame failed: ${msg}`);
-      }
-    }
-  }
-
-  /**
-   * Generates IDR keyframes on our local video sender several times over the first
-   * seconds of a call. The SFU cannot read E2E-encrypted frames, so it can't issue
-   * keyframe requests when a peer subscribes; without this, a late-joining receiver
-   * only gets delta frames and shows black video while audio plays fine.
-   */
-  private scheduleKeyframeBursts() {
-    for (const t of this.keyframeBurstTimers) clearTimeout(t);
-    this.keyframeBurstTimers = [];
-    for (const delay of [0, 800, 2000, 4000, 7000, 11000]) {
-      const timer = window.setTimeout(() => void this.requestVideoKeyframes(), delay);
-      this.keyframeBurstTimers.push(timer);
-    }
-  }
-
-  private scheduleVideoUnmuteWatchdog(track: MediaStreamTrack) {
-    window.setTimeout(() => {
-      if (track.readyState === 'ended') return;
-      if (!track.muted) return;
-      appendLog('[Call] remote video still muted - requesting keyframe');
-      void this.requestVideoKeyframes();
-    }, 3_000);
   }
 
   /** Notifies subscribers so `<video>` re-binds when tracks start producing frames. */
@@ -1076,8 +1009,6 @@ export class CallService {
         }
         this.localStreamStore.set(this.localStream);
         await this.renegotiate();
-        // New video sender: spray keyframes so peers can sync the freshly-added track.
-        this.scheduleKeyframeBursts();
         this.isVideoOff.set(false);
         appendLog('[Call] camera acquired and added mid-call (renegotiated)');
       } catch (e) {

@@ -609,8 +609,8 @@
       {/if}
     </div>
 
-    <!-- End-to-end encryption status (warns when degraded to transport-only). -->
-    <div class="absolute top-[4.25rem] left-6 z-10">
+    <!-- End-to-end encryption status (top-right, clear of the caller name and self PiP). -->
+    <div class="absolute top-6 right-6 z-10">
       {@render e2eBadge(false)}
     </div>
   </div>
