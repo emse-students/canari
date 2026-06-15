@@ -70,6 +70,10 @@ export class CallService {
   private callKey: CryptoKey | null = null;
 
   private callHasVideo = false;
+  /** `visibilitychange` listener installed during a call; removed on cleanup. */
+  private backgroundVisibilityHandler: (() => void) | null = null;
+  /** True while the camera was auto-paused because the tab/app went to the background. */
+  private videoPausedByBackground = false;
 
   public callState = writable<CallState>('idle');
   /** @deprecated Use remoteStreams for multi-party; kept for single-remote fallback. */
@@ -167,6 +171,7 @@ export class CallService {
       this.currentCallId = roomId;
       this.currentRoomToken = roomToken;
       await this.setupMedia(video);
+      this.installBackgroundHandler();
       await this.setupEncryption(groupId, this.currentCallId!);
       await this.connectToSfu(this.currentCallId!);
       const deviceId = this.mlsService.getDeviceId();
@@ -198,6 +203,7 @@ export class CallService {
       // Fetch our own room token before connecting (the initiator already has theirs).
       this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
       await this.setupMedia(useVideo);
+      this.installBackgroundHandler();
       await this.setupEncryption(groupId, callId);
       await this.connectToSfu(callId);
       this.syncCallPresence(true);
@@ -238,6 +244,7 @@ export class CallService {
   }
 
   private cleanup() {
+    this.removeBackgroundHandler();
     this.syncCallPresence(false);
     this.callState.set('idle');
     this.currentCallId = null;
@@ -950,6 +957,40 @@ export class CallService {
     } catch (e) {
       console.error('Decryption failed', e);
     }
+  }
+
+  /**
+   * Pauses the camera while the tab/app is backgrounded (and resumes on return). Mobile
+   * browsers freeze a hidden tab's encoder anyway, so this just stops wasting relay
+   * bandwidth on a frozen frame; audio keeps flowing so the call continues in background.
+   */
+  private installBackgroundHandler() {
+    if (typeof document === 'undefined' || this.backgroundVisibilityHandler) return;
+    const handler = () => {
+      if (!this.localStream) return;
+      if (document.hidden) {
+        if (get(this.isVideoOff)) return; // camera already off - nothing to pause
+        const liveVideo = this.localStream.getVideoTracks().filter((t) => t.enabled);
+        if (liveVideo.length === 0) return;
+        liveVideo.forEach((t) => (t.enabled = false));
+        this.videoPausedByBackground = true;
+        appendLog('[Call] backgrounded - camera paused (audio continues)');
+      } else if (this.videoPausedByBackground) {
+        this.localStream.getVideoTracks().forEach((t) => (t.enabled = true));
+        this.videoPausedByBackground = false;
+        appendLog('[Call] foregrounded - camera resumed');
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    this.backgroundVisibilityHandler = handler;
+  }
+
+  private removeBackgroundHandler() {
+    if (this.backgroundVisibilityHandler && typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.backgroundVisibilityHandler);
+    }
+    this.backgroundVisibilityHandler = null;
+    this.videoPausedByBackground = false;
   }
 
   private async setupMedia(video: boolean) {
