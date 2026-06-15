@@ -11,6 +11,8 @@
     Phone,
     Maximize,
     Minimize,
+    Minimize2,
+    Maximize2,
   } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
   import type { CallState } from '$lib/services/CallService';
@@ -85,6 +87,16 @@
   });
   /** Connected audio-only call: a remote stream is flowing but carries no video. */
   let remoteAudioConnected = $derived(callState === 'incall' && !remoteHasVideo && !!anyRemoteStream);
+  /** Any video in play (local sending or remote receiving). */
+  let hasAnyVideo = $derived(remoteHasVideo || !isVideoOff);
+  /** User explicitly collapsed the call to the docked widget. */
+  let userMinimized = $state(false);
+  /**
+   * Compact, non-blocking widget mode: used for audio-only calls (so the user can
+   * keep navigating the app, à la Messenger/Discord) and whenever the user minimizes.
+   * Incoming rings always use the prominent expanded prompt.
+   */
+  let compact = $derived(callState !== 'incoming' && (userMinimized || !hasAnyVideo));
   let primaryParticipant = $derived(participants[0]);
   let isGroupCall = $derived(participants.length > 1);
   /** Grid only for multi-party; audio+video from one peer stay on a single tile. */
@@ -132,11 +144,11 @@
     }
   });
 
-  // Audio-only remote: keep the audio playing through a hidden sink while the UI
-  // shows the participant's avatar instead of a black video element.
+  // Keep remote audio playing through a hidden sink whenever no on-screen video
+  // element is carrying it: audio-only remote, or the compact (minimized) widget.
   let remoteAudioSink: HTMLAudioElement | undefined = $state();
   $effect(() => {
-    if (!remoteHasVideo && anyRemoteStream && remoteAudioSink) {
+    if (anyRemoteStream && remoteAudioSink && (compact || !remoteHasVideo)) {
       remoteAudioSink.srcObject = anyRemoteStream;
       void remoteAudioSink.play().catch(() => {});
     }
@@ -255,6 +267,102 @@
   </div>
 {/snippet}
 
+{#if compact}
+  <!-- Docked, non-blocking widget: the rest of the app stays interactive. -->
+  <div
+    class="fixed bottom-4 right-4 z-[300] w-[min(20rem,calc(100vw-2rem))] rounded-3xl bg-[#0a0d14]/95 backdrop-blur-2xl shadow-2xl ring-1 ring-white/10 p-4 select-none"
+    transition:fly={{ y: 30, duration: 250 }}
+  >
+    <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
+    <div class="flex items-center gap-3">
+      <div class="relative h-12 w-12 shrink-0">
+        <span
+          class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full ring-2 ring-[#0a0d14] {callState ===
+          'incall'
+            ? 'bg-emerald-400'
+            : 'bg-amber-400 animate-pulse'}"
+        ></span>
+        <div class="h-full w-full overflow-hidden rounded-full ring-1 ring-white/20">
+          {#if isGroupCall}
+            <div class="flex h-full w-full items-center justify-center bg-white/10 text-white font-bold">
+              {participants.length}
+            </div>
+          {:else if primaryParticipant}
+            <Avatar
+              userId={primaryParticipant.userId}
+              fill
+              shape="circle"
+              fallbackLabel={primaryParticipant.displayName}
+            />
+          {/if}
+        </div>
+      </div>
+      <div class="min-w-0 flex-1">
+        {#if isGroupCall}
+          <p class="truncate text-sm font-bold text-white">{participants.length} participants</p>
+        {:else if primaryParticipant}
+          <UserName
+            userId={primaryParticipant.userId}
+            fallback={primaryParticipant.displayName}
+            link={false}
+            class="block truncate text-sm font-bold text-white"
+          />
+        {:else}
+          <p class="truncate text-sm font-bold text-white">Appel</p>
+        {/if}
+        <p class="truncate text-xs font-medium text-white/55">
+          {#if remoteAudioConnected}
+            Appel audio
+          {:else if callState === 'calling'}
+            Appel en cours…
+          {:else if callState === 'incall'}
+            Connecté
+          {:else}
+            Connexion…
+          {/if}
+        </p>
+      </div>
+      <button
+        class="rounded-full p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+        onclick={() => (userMinimized = false)}
+        title="Agrandir"
+        aria-label="Agrandir l'appel"
+      >
+        <Maximize2 size={18} />
+      </button>
+    </div>
+
+    <div class="mt-3 flex items-center justify-center gap-2">
+      <button
+        class="rounded-full p-3 transition-all {isMuted
+          ? 'bg-white text-[#151B2C]'
+          : 'bg-white/10 text-white hover:bg-white/20'}"
+        onclick={() => callService.toggleMute()}
+        aria-label={isMuted ? 'Activer le micro' : 'Couper le micro'}
+      >
+        {#if isMuted}<MicOff size={20} />{:else}<Mic size={20} />{/if}
+      </button>
+      <button
+        class="rounded-full bg-white/10 p-3 text-white transition-all hover:bg-white/20"
+        onclick={() => {
+          userMinimized = false;
+          void callService.toggleVideo();
+        }}
+        title="Passer en vidéo"
+        aria-label="Activer la caméra"
+      >
+        <Video size={20} />
+      </button>
+      <button
+        class="rounded-full bg-red-500 p-3 text-white transition-all hover:bg-red-400 hover:scale-105"
+        onclick={endCall}
+        aria-label="Raccrocher"
+      >
+        <PhoneOff size={20} />
+      </button>
+    </div>
+  </div>
+{:else}
 <div
   class="fixed inset-0 z-[300] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
   transition:fade={{ duration: 300 }}
@@ -500,6 +608,14 @@
         {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
       </button>
       <button
+        class="p-4 rounded-full bg-white/10 text-white hover:bg-white/20"
+        onclick={() => (userMinimized = true)}
+        title="Réduire l'appel"
+        aria-label="Réduire l'appel dans un coin"
+      >
+        <Minimize2 size={24} />
+      </button>
+      <button
         class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
         onclick={toggleFullscreen}
         aria-label="Plein écran"
@@ -517,3 +633,4 @@
     {/if}
   </div>
 </div>
+{/if}
