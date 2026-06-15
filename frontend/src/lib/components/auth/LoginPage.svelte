@@ -10,6 +10,7 @@
     isBelowMinClientVersion,
     refreshAppVersionCheck,
   } from '$lib/stores/appVersionCheck.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   // ─── État de l'authentification ─────────────────────────────────────────────
   let isLoggingIn = $state(false);
@@ -21,10 +22,7 @@
   const loginDisabled = $derived(isBelowMinClientVersion());
   const maintenanceNotice = $derived.by(() => {
     if (!platformInfo?.maintenance.enabled) return null;
-    return (
-      platformInfo.maintenance.message ||
-      "Canari est en maintenance. Seuls les administrateurs peuvent se connecter."
-    );
+    return platformInfo.maintenance.message || m.auth_maintenance_default();
   });
 
   // ─── Utilitaires ────────────────────────────────────────────────────────────
@@ -105,7 +103,7 @@
     loginError = '';
     await refreshAppVersionCheck();
     if (isBelowMinClientVersion()) {
-      loginError = `Mettez à jour Canari (minimum ${platformInfo?.minClientVersion ?? '?'}) avant de vous connecter.`;
+      loginError = m.auth_update_required({ version: platformInfo?.minClientVersion ?? '?' });
       return;
     }
     isLoggingIn = true;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fade, slide } from 'svelte/transition';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether an OIDC or dev login request is in progress. */
@@ -57,7 +58,7 @@
       <h1 class="text-5xl font-brand font-bold text-text-main tracking-wide drop-shadow-sm">
         Canari
       </h1>
-      <p class="text-text-muted text-base mt-3 font-medium">Mines Saint-Étienne</p>
+      <p class="text-text-muted text-base mt-3 font-medium">{m.auth_brand_subtitle()}</p>
     </div>
 
     <!-- OIDC Login Button -->
@@ -81,14 +82,14 @@
             <span
               class="inline-block w-4 h-4 border-2 border-[#151B2C]/20 border-t-[#151B2C] rounded-full animate-spin"
             ></span>
-            Redirection…
+            {m.auth_redirecting()}
           </span>
         {:else}
-          Se connecter
+          {m.auth_sign_in()}
         {/if}
       </button>
 
-      <p class="text-xs text-text-muted">Connexion sécurisée via votre compte Mines</p>
+      <p class="text-xs text-text-muted">{m.auth_secure_login()}</p>
 
       {#if loginError}
         <div
@@ -105,13 +106,13 @@
         onclick={onReset}
         class="text-text-muted text-xs mt-6 underline hover:text-red-500 transition-colors"
       >
-        Réinitialiser l'appareil
+        {m.auth_reset_device()}
       </button>
 
       <div class="flex justify-center gap-4 mt-4 text-xs text-text-muted">
-        <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors">Confidentialité</a>
+        <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors">{m.auth_privacy()}</a>
         <span>·</span>
-        <a href="/legal/cgu" class="hover:text-cn-yellow transition-colors">CGU</a>
+        <a href="/legal/cgu" class="hover:text-cn-yellow transition-colors">{m.auth_terms()}</a>
       </div>
     </div>
   </div>

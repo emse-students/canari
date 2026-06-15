@@ -746,6 +746,7 @@ export class CallService {
         if (this.callKey && this.isE2eMediaEnabled() && canUseRtpScriptTransform()) {
           void this.setupSenderTransform(sender);
         }
+        if (track.kind === 'video') void this.applyVideoSenderLimits(sender);
       }
       await configureCallAudioSenders(this.pc!, this.callHasVideo);
     }
@@ -955,12 +956,47 @@ export class CallService {
     this.callHasVideo = video;
     this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: buildCallAudioConstraints(),
-      video: video ? { facingMode: 'user' } : false,
+      video: video ? CallService.VIDEO_CONSTRAINTS : false,
     });
     logCallAudioTrackSettings(this.localStream, appendLog);
     this.localStreamStore.set(this.localStream);
     this.isMuted.set(false);
     this.isVideoOff.set(!video);
+  }
+
+  /**
+   * Caps the camera capture so the stream fits the Cloudflare TURN relay (all media is
+   * relay-only here). 640x480@30 keeps motion smooth without flooding the relay.
+   */
+  private static readonly VIDEO_CONSTRAINTS: MediaTrackConstraints = {
+    facingMode: 'user',
+    width: { ideal: 640, max: 1280 },
+    height: { ideal: 480, max: 720 },
+    frameRate: { ideal: 30, max: 30 },
+  };
+
+  /** Target max video bitrate (bps). The relay path is the bottleneck, so we cap to limit loss/corruption. */
+  private static readonly MAX_VIDEO_BITRATE = 700_000;
+
+  /**
+   * Caps a video sender's bitrate so the encoder doesn't overshoot the TURN relay's
+   * capacity (which causes the blocky corruption seen on constrained links).
+   */
+  private async applyVideoSenderLimits(sender: RTCRtpSender): Promise<void> {
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+      params.encodings[0].maxBitrate = CallService.MAX_VIDEO_BITRATE;
+      params.encodings[0].maxFramerate = 30;
+      await sender.setParameters(params);
+      appendLog(`[Call] video sender capped at ${CallService.MAX_VIDEO_BITRATE / 1000} kbps`);
+    } catch (e) {
+      appendLog(
+        `[Call] applyVideoSenderLimits failed: ${e instanceof Error ? e.message : 'unknown'}`
+      );
+    }
   }
 
   private async sendMlsNotification(groupId: string, appMsgPartial: canari.IAppMessage) {
@@ -997,7 +1033,7 @@ export class CallService {
       if (!this.localStream || !this.pc) return;
       try {
         const camStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+          video: CallService.VIDEO_CONSTRAINTS,
         });
         const videoTrack = camStream.getVideoTracks()[0];
         if (!videoTrack) return;
@@ -1007,6 +1043,7 @@ export class CallService {
         if (this.callKey && this.isE2eMediaEnabled() && canUseRtpScriptTransform()) {
           void this.setupSenderTransform(sender);
         }
+        void this.applyVideoSenderLimits(sender);
         this.localStreamStore.set(this.localStream);
         await this.renegotiate();
         this.isVideoOff.set(false);

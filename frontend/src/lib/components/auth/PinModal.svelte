@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -74,11 +75,11 @@
     e.preventDefault();
     const trimmed = pin.trim();
     if (!trimmed) {
-      internalError = 'Veuillez entrer votre PIN.';
+      internalError = m.auth_pin_required();
       return;
     }
     if (trimmed.length < 4) {
-      internalError = 'Le PIN doit contenir au moins 4 caractères.';
+      internalError = m.auth_pin_min_length();
       return;
     }
     internalError = '';
@@ -88,27 +89,24 @@
 
 <Modal
   {open}
-  title={isFirstSetup ? 'Choisir un PIN de chiffrement' : 'PIN de chiffrement'}
+  title={isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
   onClose={onClose ?? (() => {})}
 >
   <form onsubmit={handleSubmit} class="space-y-6 p-1">
     {#if isFirstSetup}
       <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/10 px-4 py-3 space-y-1.5">
         <p class="text-sm font-semibold text-cn-yellow">
-          Première connexion - choisissez votre PIN
+          {m.auth_pin_first_heading()}
         </p>
         <p class="text-sm text-text-muted leading-relaxed">
-          Ce PIN chiffre tous vos messages. Il n'est <strong class="text-text-main"
-            >jamais transmis au serveur</strong
-          >
-          et ne peut pas être récupéré si vous l'oubliez.<br />
-          <strong class="text-text-main">Notez-le et conservez-le précieusement.</strong>
+          {m.auth_pin_setup_p1()}<strong class="text-text-main">{m.auth_pin_never_sent()}</strong
+          >{m.auth_pin_setup_p2()}<br />
+          <strong class="text-text-main">{m.auth_pin_keep_safe()}</strong>
         </p>
       </div>
     {:else}
       <p class="text-sm text-text-muted leading-relaxed text-center">
-        Entrez votre PIN pour déverrouiller le chiffrement de bout en bout. Ce PIN est le même sur
-        tous vos appareils.
+        {m.auth_pin_unlock_desc()}
       </p>
     {/if}
 
@@ -120,12 +118,12 @@
         class="w-full py-3 flex items-center justify-center gap-2 rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 text-sm font-semibold text-text-main hover:bg-white/10 dark:hover:bg-black/30 transition-all disabled:opacity-50"
       >
         <Fingerprint size={18} />
-        Utiliser l'empreinte digitale
+        {m.auth_pin_use_fingerprint()}
       </button>
 
       <div class="flex items-center gap-3">
         <hr class="flex-1 border-cn-border/40" />
-        <span class="text-xs text-text-muted">ou entrez votre PIN</span>
+        <span class="text-xs text-text-muted">{m.auth_pin_or_enter()}</span>
         <hr class="flex-1 border-cn-border/40" />
       </div>
     {/if}
@@ -147,7 +145,7 @@
       {/if}
 
       <!-- Numeric keypad -->
-      <div class="grid grid-cols-3 gap-2.5" aria-label="Clavier numérique">
+      <div class="grid grid-cols-3 gap-2.5" aria-label={m.auth_pin_numeric_keypad()}>
         {#each ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'] as key (key)}
           {#if key === ''}
             <span></span>
@@ -175,22 +173,21 @@
       </div>
 
       <p class="text-xs text-text-muted text-center">
-        {isFirstSetup
-          ? 'Au moins 4 chiffres.'
-          : 'Entrez le PIN choisi lors de votre première connexion.'}
+        {isFirstSetup ? m.auth_pin_hint_setup_short() : m.auth_pin_hint_returning()}
         <button
           type="button"
           onclick={() => {
             pin = '';
             useNumpad = false;
           }}
-          class="ml-1 underline hover:text-text-main transition-colors">Saisie manuelle</button
+          class="ml-1 underline hover:text-text-main transition-colors"
+          >{m.auth_pin_manual_entry()}</button
         >
       </p>
     {:else}
       <!-- Text input fallback (alphanumeric PINs) -->
       <div class="space-y-2">
-        <label for="encryption-pin" class="sr-only">Code PIN</label>
+        <label for="encryption-pin" class="sr-only">{m.auth_pin_label()}</label>
         <input
           id="encryption-pin"
           type="password"
@@ -204,16 +201,15 @@
           class="w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3.5 text-center text-2xl tracking-[0.4em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50"
         />
         <p class="text-xs text-text-muted text-center">
-          {isFirstSetup
-            ? 'Au moins 4 chiffres ou caractères de votre choix.'
-            : 'Entrez le PIN choisi lors de votre première connexion.'}
+          {isFirstSetup ? m.auth_pin_hint_setup_long() : m.auth_pin_hint_returning()}
           <button
             type="button"
             onclick={() => {
               pin = '';
               useNumpad = true;
             }}
-            class="ml-1 underline hover:text-text-main transition-colors">Clavier numérique</button
+            class="ml-1 underline hover:text-text-main transition-colors"
+            >{m.auth_pin_numeric_keypad()}</button
           >
         </p>
         {#if displayError}
@@ -229,11 +225,11 @@
     >
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
-        {loadingStep || 'Vérification…'}
+        {loadingStep || m.auth_pin_verifying()}
       {:else if isFirstSetup}
-        Créer mon PIN
+        {m.auth_pin_create()}
       {:else}
-        Déverrouiller
+        {m.auth_pin_unlock()}
       {/if}
     </button>
 
@@ -245,7 +241,7 @@
         onclick={() => onRecoverPin?.()}
         class="w-full text-xs font-semibold text-cn-yellow hover:underline text-center disabled:opacity-50"
       >
-        Mon PIN a changé sur un autre appareil → Récupérer mes messages
+        {m.auth_pin_recover_link()}
       </button>
     {/if}
 
@@ -257,7 +253,7 @@
           onclick={() => (showForgotPin = !showForgotPin)}
           class="w-full text-xs text-text-muted hover:text-text-main transition-colors text-center"
         >
-          PIN oublié ?
+          {m.auth_pin_forgot()}
         </button>
 
         {#if showForgotPin}
@@ -265,18 +261,18 @@
             <div class="flex items-start gap-2">
               <AlertTriangle size={16} class="text-red-500 shrink-0 mt-0.5" />
               <p class="text-xs text-text-muted leading-relaxed">
-                Le PIN n'est <strong class="text-text-main">jamais stocké sur nos serveurs</strong>
-                - il est impossible à récupérer.
+                {m.auth_pin_forgot_p1()}<strong class="text-text-main"
+                  >{m.auth_pin_forgot_never_stored()}</strong
+                >{m.auth_pin_forgot_p2()}
               </p>
             </div>
 
             {#if onForgotPinReset}
               <p class="text-xs text-text-muted leading-relaxed">
-                <strong class="text-text-main">Réinitialiser votre PIN</strong> conserve votre
-                compte, vos publications et la communauté, mais
-                <strong class="text-text-main"
-                  >efface définitivement l'historique de vos messages chiffrés</strong
-                >. Vous serez ré-invité à vos conversations.
+                <strong class="text-text-main">{m.auth_pin_reset_strong1()}</strong
+                >{m.auth_pin_reset_mid()}<strong class="text-text-main"
+                  >{m.auth_pin_reset_strong2()}</strong
+                >{m.auth_pin_reset_end()}
               </p>
               {#if confirmReset}
                 <button
@@ -288,7 +284,7 @@
                   }}
                   class="block w-full text-center text-xs font-bold text-white bg-red-500 hover:bg-red-600 transition-colors py-2 rounded-lg disabled:opacity-50"
                 >
-                  Confirmer - effacer mes messages et réinitialiser
+                  {m.auth_pin_reset_confirm()}
                 </button>
               {:else}
                 <button
@@ -297,7 +293,7 @@
                   onclick={() => (confirmReset = true)}
                   class="block w-full text-center text-xs font-semibold text-red-500 hover:text-red-400 transition-colors py-1.5 rounded-lg border border-red-500/30 hover:border-red-400/40 hover:bg-red-500/5 disabled:opacity-50"
                 >
-                  Réinitialiser mon PIN
+                  {m.auth_pin_reset_button()}
                 </button>
               {/if}
             {/if}
@@ -307,7 +303,7 @@
               onclick={() => onClose?.()}
               class="block w-full text-center text-xs font-medium text-text-muted hover:text-text-main transition-colors py-1.5"
             >
-              Ou supprimer définitivement mon compte →
+              {m.auth_pin_delete_account_link()}
             </a>
           </div>
         {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, AlertTriangle, KeyRound } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -31,10 +32,14 @@
   }: Props = $props();
 
   const isRecover = $derived(variant === 'recover');
-  const title = $derived(isRecover ? 'Récupérer mes messages' : 'Changer mon PIN');
-  const currentLabel = $derived(isRecover ? 'Ancien PIN (de cet appareil)' : 'PIN actuel');
-  const newLabel = $derived(isRecover ? 'Nouveau PIN (du compte)' : 'Nouveau PIN');
-  const submitLabel = $derived(isRecover ? 'Récupérer mes messages' : 'Changer mon PIN');
+  const title = $derived(isRecover ? m.auth_changepin_title_recover() : m.auth_changepin_title());
+  const currentLabel = $derived(
+    isRecover ? m.auth_changepin_current_recover() : m.auth_changepin_current()
+  );
+  const newLabel = $derived(isRecover ? m.auth_changepin_new_recover() : m.auth_changepin_new());
+  const submitLabel = $derived(
+    isRecover ? m.auth_changepin_title_recover() : m.auth_changepin_title()
+  );
 
   let currentPin = $state('');
   let newPin = $state('');
@@ -59,21 +64,19 @@
     const next = newPin.trim();
     const confirm = confirmPin.trim();
     if (!cur || !next || !confirm) {
-      internalError = 'Veuillez remplir tous les champs.';
+      internalError = m.auth_changepin_fill_all();
       return;
     }
     if (next.length < 4) {
-      internalError = 'Le nouveau PIN doit contenir au moins 4 caractères.';
+      internalError = m.auth_changepin_min_length();
       return;
     }
     if (next !== confirm) {
-      internalError = 'Le nouveau PIN et sa confirmation ne correspondent pas.';
+      internalError = m.auth_changepin_mismatch();
       return;
     }
     if (next === cur) {
-      internalError = isRecover
-        ? 'Le nouveau PIN doit être différent de l’ancien.'
-        : 'Le nouveau PIN doit être différent de l’actuel.';
+      internalError = isRecover ? m.auth_changepin_diff_old() : m.auth_changepin_diff_current();
       return;
     }
     internalError = '';
@@ -89,18 +92,19 @@
     <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/10 px-4 py-3">
       {#if isRecover}
         <p class="text-sm text-text-muted leading-relaxed">
-          Votre PIN a été changé sur un autre appareil. Entrez votre
-          <strong class="text-text-main">ancien PIN</strong> (qui déchiffre cet appareil) puis votre
-          <strong class="text-text-main">nouveau PIN</strong> pour récupérer tous vos messages sans rien
-          perdre.
+          {m.auth_changepin_recover_p1()}<strong class="text-text-main"
+            >{m.auth_changepin_recover_old()}</strong
+          >{m.auth_changepin_recover_p2()}<strong class="text-text-main"
+            >{m.auth_changepin_recover_new()}</strong
+          >{m.auth_changepin_recover_p3()}
         </p>
       {:else}
         <p class="text-sm text-text-muted leading-relaxed">
-          Le PIN chiffre tous vos messages et n’est <strong class="text-text-main"
-            >jamais transmis au serveur</strong
-          >. Après le changement, vos
-          <strong class="text-text-main">autres appareils devront se reconnecter</strong> avec le nouveau
-          PIN (l’empreinte digitale sera à ré-enregistrer).
+          {m.auth_changepin_change_p1()}<strong class="text-text-main"
+            >{m.auth_pin_never_sent()}</strong
+          >{m.auth_changepin_change_p2()}<strong class="text-text-main"
+            >{m.auth_changepin_change_reconnect()}</strong
+          >{m.auth_changepin_change_p3()}
         </p>
       {/if}
     </div>
@@ -137,7 +141,7 @@
 
     <div class="space-y-2">
       <label for="confirm-pin" class="block text-xs font-bold text-text-muted px-1"
-        >Confirmer le nouveau PIN</label
+        >{m.auth_changepin_confirm_label()}</label
       >
       <input
         id="confirm-pin"
@@ -165,7 +169,7 @@
     >
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
-        {isRecover ? 'Récupération en cours…' : 'Changement en cours…'}
+        {isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing()}
       {:else}
         <KeyRound size={16} strokeWidth={2.5} />
         {submitLabel}
