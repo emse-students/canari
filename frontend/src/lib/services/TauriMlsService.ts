@@ -477,7 +477,7 @@ export class TauriMlsService extends BaseMlsService {
     return bytes;
   }
 
-  /** Plain CBOR snapshot for in-memory use; native path matches encrypted persist. */
+  /** Plain autosave on native — no Argon2; same path as encrypted checkpoint. */
   async saveStatePlain(): Promise<Uint8Array> {
     return this.saveState(this._pin);
   }

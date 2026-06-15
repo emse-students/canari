@@ -48,8 +48,8 @@ const IDB_STORE = 'state';
 
 /** IndexedDB key for PIN-encrypted MLS state (loaded at login). */
 export const MLS_STATE_ENCRYPTED_KEY = 'mls_autosave';
-/** @deprecated Legacy plain autosave key — purged on load; never written anymore. */
-const MLS_STATE_PLAIN_KEY_LEGACY = 'mls_autosave_plain';
+/** IndexedDB key for plain CBOR MLS state (fast autosave during session). */
+export const MLS_STATE_PLAIN_KEY = 'mls_autosave_plain';
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -96,14 +96,17 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
   });
 }
 
-/** Removes a legacy plain MLS snapshot if present (pre-option-2 installs). */
-export async function purgeLegacyPlainMlsState(userId: string): Promise<void> {
-  if (isTauriRuntime()) return;
+/** Persists plain CBOR MLS state without Argon2 (fast session autosave). */
+export async function saveMlsStatePlain(userId: string, bytes: Uint8Array): Promise<void> {
+  if (isTauriRuntime()) {
+    // Native path has no Argon2 overhead; a single mls.bin is sufficient.
+    return saveMlsStateEncrypted(userId, bytes);
+  }
 
   const db = await openMlsDb(userId);
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).delete(MLS_STATE_PLAIN_KEY_LEGACY);
+    tx.objectStore(IDB_STORE).put(bytes, MLS_STATE_PLAIN_KEY);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -141,10 +144,7 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
     req.onsuccess = () => resolve((req.result as Uint8Array) ?? null);
     req.onerror = () => reject(req.error);
   });
-  if (idbResult) {
-    void purgeLegacyPlainMlsState(userId).catch(() => {});
-    return idbResult;
-  }
+  if (idbResult) return idbResult;
 
   // Migration path: read legacy localStorage entry, move it to IDB, erase from localStorage.
   const saved = localStorage.getItem('mls_autosave_' + userId);
@@ -180,7 +180,7 @@ export async function removeMlsState(userId: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
     tx.objectStore(IDB_STORE).delete(MLS_STATE_ENCRYPTED_KEY);
-    tx.objectStore(IDB_STORE).delete(MLS_STATE_PLAIN_KEY_LEGACY);
+    tx.objectStore(IDB_STORE).delete(MLS_STATE_PLAIN_KEY);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
