@@ -1,7 +1,7 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
-import { saveMlsState } from '$lib/utils/hex';
+import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendFullHistoryBundle } from './groupActions';
 import { resolveTerminalGroup } from './groupSyncEligibility';
@@ -234,7 +234,7 @@ export async function reboot(
     log(`[REBOOT] Candidat créé : ${candidateId.slice(0, 8)}…`);
     await mlsService.createGroup(candidateId);
     await mlsService.registerMember(candidateId, userId);
-    await saveMlsState(userId, await mlsService.saveState(pin));
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
   } catch (e) {
     log(`[REBOOT] Échec création candidat : ${String(e)}`);
     if (candidateId) {
@@ -460,7 +460,7 @@ async function inviteMembers(
     log(`[REBOOT] ${bulk.addedDeviceIds.length} device(s) ajouté(s)`);
 
     // Persister AVANT d'envoyer (si crash, les membres peuvent rejoindre via welcome_request)
-    await saveMlsState(userId, await mlsService.saveState(pin));
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
     // Envoyer le commit d'abord (fix R4 : via sendCommit qui valide l'epoch)
     if (bulk.commit) {
@@ -679,7 +679,7 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
         log(`[HEALTH] Erreur migration : ${String(e)}`)
       );
       try {
-        await saveMlsState(userId, await mlsService.saveState(pin));
+        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
       } catch {
         /* non-bloquant */
       }

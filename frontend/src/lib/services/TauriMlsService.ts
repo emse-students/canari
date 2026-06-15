@@ -9,6 +9,8 @@ import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import { mapNativeBatchDecryptResults } from '$lib/mls-client/mlsBatchDecrypt';
+import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
@@ -646,6 +648,22 @@ export class TauriMlsService extends BaseMlsService {
       messageBytes: Array.from(messageBytes),
     });
     return res ? Uint8Array.from(res) : null;
+  }
+
+  /** Single IPC crossing for an ordered page of ciphertexts (history catch-up on native MLS). */
+  async processIncomingMessagesBatch(
+    groupId: string,
+    messages: Uint8Array[]
+  ): Promise<MlsBatchProcessResult[]> {
+    if (messages.length === 0) return [];
+    const raw = await invoke<Array<{ ok: boolean; data?: number[] | null; error?: string }>>(
+      'recevoir_messages_batch',
+      {
+        groupId,
+        messages: messages.map((m) => Array.from(m)),
+      }
+    );
+    return mapNativeBatchDecryptResults(raw);
   }
 
   /** Tauri-native `invoke` wrapper - calls `exporter_secret` in Rust to derive a keying-material export for channel encryption. */

@@ -4,6 +4,7 @@ import {
   registerMlsStatePersister,
   unregisterMlsStatePersister,
   scheduleOutboundMlsPersist,
+  persistMlsStructuralCheckpoint,
 } from './mlsStatePersisterRegistry';
 
 vi.mock('$lib/utils/hex', () => ({
@@ -82,5 +83,38 @@ describe('createMlsStatePersister', () => {
 
   it('scheduleOutboundMlsPersist is a no-op without a registered persister', () => {
     expect(() => scheduleOutboundMlsPersist()).not.toThrow();
+  });
+});
+
+describe('persistMlsStructuralCheckpoint', () => {
+  afterEach(() => {
+    unregisterMlsStatePersister();
+  });
+
+  it('uses the active persister when registered', async () => {
+    const saveState = vi.fn().mockResolvedValue(new Uint8Array([4, 5]));
+    const persister = createMlsStatePersister({
+      mlsService: { saveState } as any,
+      pin: '9999',
+      userId: 'user-struct',
+    });
+    registerMlsStatePersister(persister);
+
+    await persistMlsStructuralCheckpoint();
+
+    expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to direct save when no persister is registered', async () => {
+    const saveState = vi.fn().mockResolvedValue(new Uint8Array([6, 7]));
+
+    await persistMlsStructuralCheckpoint({
+      mlsService: { saveState } as any,
+      pin: '1111',
+      userId: 'fallback-user',
+    });
+
+    expect(saveState).toHaveBeenCalledWith('1111');
+    expect(saveMlsStateEncrypted).toHaveBeenCalledWith('fallback-user', new Uint8Array([6, 7]));
   });
 });

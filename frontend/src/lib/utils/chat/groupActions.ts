@@ -1,4 +1,4 @@
-import { saveMlsState } from '$lib/utils/hex';
+import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { Conversation } from '$lib/types';
@@ -194,8 +194,7 @@ export async function persistMlsStateAfterMutation(
   log?: (msg: string) => void
 ): Promise<void> {
   try {
-    const stBytes = await mlsService.saveState(pin);
-    await saveMlsState(userId, stBytes);
+    await persistMlsStructuralCheckpoint({ mlsService, pin, userId });
   } catch (e) {
     log?.(`[MLS] Échec saveState après mutation: ${e instanceof Error ? e.message : String(e)}`);
   }

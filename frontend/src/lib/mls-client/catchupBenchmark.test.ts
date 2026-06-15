@@ -15,6 +15,7 @@ import {
   summarizeConversationStats,
   formatCatchupBenchSummary,
   isCatchupBenchEnabled,
+  recordMlsSaveStateMs,
 } from './catchupBenchmark';
 
 describe('catchupBenchmark', () => {
@@ -98,11 +99,23 @@ describe('catchupBenchmark', () => {
       newMessagesIngested: 0,
       msPerMessage: 150,
       msPerConversation: 350,
+      mlsSaveStateMs: 42.5,
+      mlsSaveStateCount: 2,
       phases: [],
     });
     expect(line).toContain('startup');
     expect(line).toContain('12 conv');
     expect(line).toContain('28 pending');
     expect(line).toContain('150 ms/msg');
+    expect(line).toContain('42.5 ms saveState (2x)');
+  });
+
+  it('recordMlsSaveStateMs accumulates on active startup session', () => {
+    beginStartupCatchupBench();
+    recordMlsSaveStateMs(12.3);
+    recordMlsSaveStateMs(7.7);
+    const report = finishStartupCatchupBench()!;
+    expect(report.mlsSaveStateMs).toBe(20);
+    expect(report.mlsSaveStateCount).toBe(2);
   });
 });

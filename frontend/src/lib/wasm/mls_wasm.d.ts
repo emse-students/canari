@@ -72,6 +72,11 @@ export class WasmMlsClient {
 
 export function decrypt_with_pin(pin: string, encrypted_data: Uint8Array): Uint8Array;
 
+/**
+ * Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot. Safe to call from a Web Worker.
+ */
+export function encrypt_mls_state_blob(plain_state: Uint8Array, pin: string): Uint8Array;
+
 export function encrypt_with_pin(pin: string, data: Uint8Array): Uint8Array;
 
 export function init_logger(): void;
@@ -82,6 +87,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmmlsclient_free: (a: number, b: number) => void;
     readonly decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly encrypt_mls_state_blob: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];

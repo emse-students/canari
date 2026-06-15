@@ -47,6 +47,12 @@ pub fn init_logger() {
     let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
 }
 
+/// Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot. Safe to call from a Web Worker.
+#[wasm_bindgen]
+pub fn encrypt_mls_state_blob(plain_state: &[u8], pin: &str) -> Result<Vec<u8>, JsValue> {
+    MlsManager::encrypt_state_blob(plain_state, pin).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 // ----------------------------------------------------
 
 // On crée une structure "Wrapper" exposée à JavaScript
@@ -388,15 +394,24 @@ impl WasmMlsClient {
             group_id,
             messages.length()
         );
+
+        let mut rust_messages = Vec::with_capacity(messages.length() as usize);
+        for entry in messages.iter() {
+            rust_messages.push(js_sys::Uint8Array::new(&entry).to_vec());
+        }
+        let message_refs: Vec<&[u8]> = rust_messages.iter().map(|v| v.as_slice()).collect();
+        let outcomes = self
+            .manager
+            .process_incoming_messages(&group_id, &message_refs);
+
         let ok_key = JsValue::from_str("ok");
         let data_key = JsValue::from_str("data");
         let error_key = JsValue::from_str("error");
         let results = js_sys::Array::new();
 
-        for entry in messages.iter() {
-            let bytes = js_sys::Uint8Array::new(&entry).to_vec();
+        for outcome in outcomes {
             let obj = js_sys::Object::new();
-            match self.manager.process_incoming_message(&group_id, &bytes) {
+            match outcome {
                 Ok(Some(plaintext)) => {
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
                     let data = js_sys::Uint8Array::from(plaintext.as_slice());

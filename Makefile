@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend clean run-ci lint-frontend
+.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -288,6 +288,12 @@ test-frontend:
 	@echo "${BLUE}🧪 Testing Frontend conversation logic...${RESET}"
 	@cd frontend && npm test
 	@echo "${GREEN}✅ Frontend tests OK${RESET}"
+
+# Criterion benchmarks for mls-core hot paths (Phase 3 baseline)
+bench-mls:
+	@echo "${BLUE}📊 Running mls-core Criterion benchmarks...${RESET}"
+	@cd frontend/mls-core && cargo bench -p mls-core --bench mls_perf
+	@echo "${GREEN}✅ MLS benchmarks done${RESET}"
 
 # Tests Libs Rust
 test-libs:

@@ -1,4 +1,5 @@
 import type { IMlsService, MlsBatchProcessResult } from './IMlsService';
+import { wasmClientDecryptPage } from './mlsBatchDecrypt';
 
 /**
  * A stateful decrypt session for one group's history catch-up.
@@ -29,11 +30,15 @@ export interface MlsDecryptSession {
  * the Web fallback when the crypto worker is unavailable - a single, unambiguous code path.
  */
 export function createSequentialDecryptSession(
-  service: Pick<IMlsService, 'processIncomingMessage'>,
+  service: Pick<IMlsService, 'processIncomingMessage' | 'processIncomingMessagesBatch'>,
   groupId: string
 ): MlsDecryptSession {
   return {
     async decryptPage(messageBytesList: Uint8Array[]): Promise<MlsBatchProcessResult[]> {
+      if (messageBytesList.length === 0) return [];
+      if (service.processIncomingMessagesBatch) {
+        return service.processIncomingMessagesBatch(groupId, messageBytesList);
+      }
       const results: MlsBatchProcessResult[] = [];
       for (const bytes of messageBytesList) {
         try {

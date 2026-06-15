@@ -1,4 +1,6 @@
 import type { MlsStatePersister } from './mlsStatePersister';
+import type { IMlsService } from './IMlsService';
+import { saveMlsStateEncrypted } from '$lib/utils/hex';
 
 /**
  * Process-wide handle to the session's MLS state persister.
@@ -30,4 +32,28 @@ export function scheduleOutboundMlsPersist(): void {
 /** Flushes the encrypted MLS checkpoint if a persister is registered (logout / background). */
 export async function flushActiveMlsStateEncrypted(): Promise<void> {
   await activePersister?.flushEncrypted();
+}
+
+/** Fallback when the registry persister is not registered (tests / pre-pipeline). */
+export interface MlsStructuralCheckpointFallback {
+  mlsService: Pick<IMlsService, 'saveState'>;
+  pin: string;
+  userId: string;
+}
+
+/**
+ * Encrypted checkpoint after structural MLS mutations (commits, bootstrap, forget).
+ * Routes through the session persister when registered; otherwise uses the fallback path.
+ */
+export async function persistMlsStructuralCheckpoint(
+  fallback?: MlsStructuralCheckpointFallback
+): Promise<void> {
+  if (activePersister) {
+    activePersister.scheduleDeferred();
+    await activePersister.flushEncrypted();
+    return;
+  }
+  if (!fallback) return;
+  const bytes = await fallback.mlsService.saveState(fallback.pin);
+  await saveMlsStateEncrypted(fallback.userId, bytes);
 }

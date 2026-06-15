@@ -195,8 +195,7 @@ export async function processPendingInvitations(params: {
           }
 
           // Save MLS state before commit (crash-safety)
-          const stBytes = await mlsService.saveState(pin);
-          await saveMlsState(userId, stBytes);
+          await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
           // Send commit, excluding the inviter (self) and the newly-welcomed device
           if (result.commit) {
@@ -809,8 +808,7 @@ export async function handleWelcomeRequest(params: {
         await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 
         // Sauvegarder l'état MLS après le remove commit
-        const stBytes = await mlsService.saveState(pin);
-        await saveMlsState(userId, stBytes);
+        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
         // Re-fetch le KeyPackage (peut avoir changé après le kick)
         const freshDevices = await mlsService.fetchUserDevices(requesterUserId);
@@ -844,8 +842,7 @@ export async function handleWelcomeRequest(params: {
     }
 
     // Sauvegarder l'état MLS avant le commit (crash-safety)
-    const stBytes = await mlsService.saveState(pin);
-    await saveMlsState(userId, stBytes);
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
     // Broadcaster le commit en excluant l'inviteur (self) et l'invité
     if (result.commit) {

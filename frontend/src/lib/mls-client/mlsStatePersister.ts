@@ -1,4 +1,5 @@
 import type { IMlsService } from './IMlsService';
+import { recordMlsSaveStateMs } from './catchupBenchmark';
 import { saveMlsStateEncrypted } from '$lib/utils/hex';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 
@@ -45,7 +46,11 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
 
   async function runSaveEncrypted(): Promise<void> {
     await yieldToMainThread();
+    const saveStarted = typeof performance !== 'undefined' ? performance.now() : null;
     const bytes = await mlsService.saveState(pin);
+    if (saveStarted !== null) {
+      recordMlsSaveStateMs(performance.now() - saveStarted);
+    }
     await saveMlsStateEncrypted(userId, bytes);
     log?.('[MLS] État MLS persisté (chiffré)');
   }

@@ -1,5 +1,5 @@
 pub mod security;
-use security::{decrypt_blob, derive_key_from_pin, encrypt_blob};
+use security::{decrypt_blob, derive_key_from_pin};
 
 use ciborium::{de::from_reader, ser::into_writer};
 use openmls::prelude::*;
@@ -9,6 +9,7 @@ use openmls_rust_crypto::OpenMlsRustCrypto;
 use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider; // Explicit import for write_key_package
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use thiserror::Error;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
@@ -37,7 +38,7 @@ type AddMemberResult = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 // --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedState {
     pub identity_bundle: Vec<u8>,
     pub storage_values: HashMap<Vec<u8>, Vec<u8>>,
@@ -46,6 +47,15 @@ pub struct PersistedState {
     /// #[serde(default)] assure la compatibilité avec les états sauvegardés avant ce champ.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
+}
+
+/// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
+#[derive(Serialize)]
+struct PersistedStateSer<'a> {
+    identity_bundle: &'a [u8],
+    storage_values: &'a HashMap<Vec<u8>, Vec<u8>>,
+    group_ids: &'a [Vec<u8>],
+    forgotten_group_min_epochs: &'a HashMap<String, u64>,
 }
 
 // Struct request wrapper for serialization
@@ -63,6 +73,52 @@ struct IdentityBundle {
 
 // --- 2. LE GESTIONNAIRE (MÉMOIRE VIVE) ---
 
+/// In-memory CBOR snapshot cache for `save_state` / `save_encrypted`.
+/// Uses interior mutability so `generate_key_package` (`&self`) can invalidate it.
+struct StateSnapshotCache {
+    dirty: bool,
+    cached_cbor: Option<Vec<u8>>,
+}
+
+impl StateSnapshotCache {
+    fn new_dirty() -> Self {
+        Self {
+            dirty: true,
+            cached_cbor: None,
+        }
+    }
+
+    /// Seeds the cache from a freshly loaded plaintext snapshot (no re-serialize on first save).
+    fn from_loaded(bytes: Vec<u8>) -> Self {
+        Self {
+            dirty: false,
+            cached_cbor: Some(bytes),
+        }
+    }
+
+    fn invalidate(&mut self) {
+        self.dirty = true;
+    }
+
+    fn get_or_build<F>(&mut self, build: F) -> Result<Vec<u8>, MlsError>
+    where
+        F: FnOnce() -> Result<Vec<u8>, MlsError>,
+    {
+        if !self.dirty {
+            if let Some(ref cached) = self.cached_cbor {
+                log::debug!("save_state: returning cached CBOR snapshot ({} bytes)", cached.len());
+                return Ok(cached.clone());
+            }
+        }
+
+        let bytes = build()?;
+        log::debug!("save_state: rebuilt CBOR snapshot ({} bytes)", bytes.len());
+        self.cached_cbor = Some(bytes.clone());
+        self.dirty = false;
+        Ok(bytes)
+    }
+}
+
 pub struct MlsManager {
     // OpenMlsRustCrypto owns the MemoryStorage internally and implements OpenMlsProvider
     provider: OpenMlsRustCrypto,
@@ -76,9 +132,21 @@ pub struct MlsManager {
     /// Défini par forget_group pour éviter qu'un Welcome périmé (d'un appareil
     /// lui-même en retard d'epoch) ne remette ce device sur la mauvaise branche.
     forgotten_group_min_epochs: HashMap<String, u64>,
+
+    state_snapshot: RefCell<StateSnapshotCache>,
 }
 
 impl MlsManager {
+    /// Marks the CBOR snapshot stale after any MLS state mutation.
+    fn mark_state_dirty(&self) {
+        self.state_snapshot.borrow_mut().invalidate();
+    }
+
+    /// Invalidates the in-memory CBOR snapshot so the next [`Self::save_state`] rebuilds it.
+    /// Exposed for benchmarks and integration tests measuring cold serialization cost.
+    pub fn invalidate_persisted_snapshot(&self) {
+        self.mark_state_dirty();
+    }
     // --- A. INITIALISATION (Chargement ou Création) ---
 
     pub fn load_or_create(
@@ -149,6 +217,7 @@ impl MlsManager {
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
+                state_snapshot: RefCell::new(StateSnapshotCache::from_loaded(state_bytes)),
             })
         } else {
             // CAS 2 : Première création
@@ -165,6 +234,7 @@ impl MlsManager {
                 credential,
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
+                state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
     }
@@ -201,6 +271,7 @@ impl MlsManager {
         match result {
             Ok(group) => {
                 self.groups.insert(group_id_str, group);
+                self.mark_state_dirty();
                 Ok(())
             }
             Err(e) => {
@@ -217,6 +288,7 @@ impl MlsManager {
                                 group_id_str
                             );
                             self.groups.insert(group_id_str.clone(), recovered);
+                            self.mark_state_dirty();
                         }
                         _ => {
                             log::warn!(
@@ -236,6 +308,7 @@ impl MlsManager {
     /// Use this when re-bootstrapping a phantom group (lost local state) to avoid
     /// recovering a stale-epoch orphan via `create_group`.
     pub fn force_create_group(&mut self, group_id_str: String) -> Result<(), MlsError> {
+        self.mark_state_dirty();
         let group_id = GroupId::from_slice(group_id_str.as_bytes());
 
         // 1. Remove from in-memory map if present.
@@ -307,6 +380,7 @@ impl MlsManager {
             group_id,
             min_epoch
         );
+        self.mark_state_dirty();
     }
 
     /// Purge définitive de tout état local d'un groupe : mémoire vive, stockage OpenMLS,
@@ -333,6 +407,7 @@ impl MlsManager {
             "[POISON_PILL] drop_group: {} purgé définitivement",
             group_id
         );
+        self.mark_state_dirty();
     }
 
     // --- C0. SUPPRESSION DE MEMBRE(S) ---
@@ -380,6 +455,7 @@ impl MlsManager {
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
 
+        self.mark_state_dirty();
         commit_msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))
@@ -428,6 +504,7 @@ impl MlsManager {
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
 
+        self.mark_state_dirty();
         commit_msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))
@@ -496,6 +573,7 @@ impl MlsManager {
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
+        self.mark_state_dirty();
         Ok((
             commit_bytes,
             Some(welcome_bytes),
@@ -629,6 +707,7 @@ impl MlsManager {
         }
 
         self.groups.insert(group_id.clone(), group);
+        self.mark_state_dirty();
 
         Ok(group_id)
     }
@@ -645,6 +724,7 @@ impl MlsManager {
             .create_message(&self.provider, &self.keypair, message)
             .map_err(|e| MlsError::OpenMls(format!("Encrypt error: {:?}", e)))?;
 
+        self.mark_state_dirty();
         msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::Serialization(e.to_string()))
@@ -660,8 +740,47 @@ impl MlsManager {
         let group = self
             .groups
             .get_mut(group_id)
-            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+            .ok_or_else(|| MlsError::GroupNotFound(group_id.to_string()))?;
+        Self::process_incoming_on_group(
+            group,
+            &self.provider,
+            group_id,
+            message_bytes,
+            &self.state_snapshot,
+        )
+    }
 
+    /// Decrypts `messages` for one group in ratchet order. Per-message errors are returned
+    /// in the output vector instead of aborting the batch (history catch-up path).
+    pub fn process_incoming_messages(
+        &mut self,
+        group_id: &str,
+        messages: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, MlsError>> {
+        let Some(group) = self.groups.get_mut(group_id) else {
+            return messages
+                .iter()
+                .map(|_| Err(MlsError::GroupNotFound(group_id.to_string())))
+                .collect();
+        };
+
+        let provider = &self.provider;
+        let snapshot = &self.state_snapshot;
+        messages
+            .iter()
+            .map(|bytes| {
+                Self::process_incoming_on_group(group, provider, group_id, bytes, snapshot)
+            })
+            .collect()
+    }
+
+    fn process_incoming_on_group(
+        group: &mut MlsGroup,
+        provider: &OpenMlsRustCrypto,
+        group_id: &str,
+        message_bytes: &[u8],
+        state_snapshot: &RefCell<StateSnapshotCache>,
+    ) -> Result<Option<Vec<u8>>, MlsError> {
         let msg_in = MlsMessageIn::tls_deserialize(&mut &message_bytes[..])
             .map_err(|_| MlsError::InvalidData)?;
 
@@ -671,14 +790,9 @@ impl MlsManager {
             _ => return Err(MlsError::InvalidData),
         };
 
-        // Both fields are always cleartext in the MLS frame header - safe to read
-        // before decryption and invaluable for diagnosing epoch-mismatch errors.
         let msg_epoch = protocol_message.epoch();
         let group_epoch = group.epoch();
 
-        // Epoch-gap fast-fail: a future epoch means we missed at least one commit.
-        // Returning early avoids consuming any ratchet key material needlessly and
-        // lets the caller queue the message for gap recovery.
         if msg_epoch.as_u64() > group_epoch.as_u64() {
             log::warn!(
                 "Gap détecté : msg_epoch={} > group_epoch={} pour group={}. \
@@ -693,14 +807,9 @@ impl MlsManager {
             )));
         }
 
-        let processed_message = match group.process_message(&self.provider, protocol_message) {
+        let processed_message = match group.process_message(provider, protocol_message) {
             Ok(pm) => pm,
             Err(e) => {
-                // If the message is from a past epoch, it's almost certainly our own
-                // echoed commit (already merged via merge_pending_commit) or a stale
-                // commit that another device already applied.  The decryption keys for
-                // commits are consumed during merge, so re-processing always fails with
-                // AeadError.  Silently succeed so the caller ACKs it on the gateway.
                 if msg_epoch.as_u64() < group_epoch.as_u64() {
                     log::debug!(
                         "Stale message ignored: msg_epoch={} < group_epoch={} ({})",
@@ -726,13 +835,14 @@ impl MlsManager {
 
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
-                // Return validity and data
+                state_snapshot.borrow_mut().invalidate();
                 Ok(Some(app_msg.into_bytes()))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
                 group
-                    .merge_staged_commit(&self.provider, *staged_commit)
+                    .merge_staged_commit(provider, *staged_commit)
                     .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;
+                state_snapshot.borrow_mut().invalidate();
                 Ok(None)
             }
             _ => Ok(None),
@@ -742,6 +852,11 @@ impl MlsManager {
     // --- E. SAUVEGARDE (Sérialisation CBOR) ---
 
     pub fn save_state(&self) -> Result<Vec<u8>, MlsError> {
+        let mut cache = self.state_snapshot.borrow_mut();
+        cache.get_or_build(|| self.serialize_state())
+    }
+
+    fn serialize_state(&self) -> Result<Vec<u8>, MlsError> {
         // 1. Sérialiser l'identité (using Ref wrapper to avoid cloning keypair)
         let keypair_bytes = self
             .keypair
@@ -763,23 +878,24 @@ impl MlsManager {
         into_writer(&bundle, &mut bundle_bytes)
             .map_err(|e| MlsError::Serialization(e.to_string()))?;
 
-        // 2. Extraire le stockage brut de MemoryStorage du provider
+        // 2. Snapshot OpenMLS storage under a read lock (no HashMap::clone).
         let storage = self.provider.storage();
         let storage_lock = storage.values.read().unwrap();
-        let storage_values = storage_lock.clone();
 
-        // 3. Collecter les IDs des groupes actifs
-        let mut group_ids = Vec::new();
-        for gid_str in self.groups.keys() {
-            group_ids.push(gid_str.as_bytes().to_vec());
-        }
+        // 3. Collecter les IDs des groupes actifs (triés pour un CBOR déterministe)
+        let mut group_ids: Vec<Vec<u8>> = self
+            .groups
+            .keys()
+            .map(|gid_str| gid_str.as_bytes().to_vec())
+            .collect();
+        group_ids.sort();
 
-        // 4. Créer l'état global
-        let persisted = PersistedState {
-            identity_bundle: bundle_bytes,
-            storage_values,
-            group_ids,
-            forgotten_group_min_epochs: self.forgotten_group_min_epochs.clone(),
+        // 4. Encoder l'état global sans copier storage_values
+        let persisted = PersistedStateSer {
+            identity_bundle: &bundle_bytes,
+            storage_values: &storage_lock,
+            group_ids: &group_ids,
+            forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
         };
 
         let mut final_bytes = Vec::new();
@@ -823,6 +939,8 @@ impl MlsManager {
             .write_key_package(&hash_ref, &key_package_bundle)
             .map_err(|e| MlsError::OpenMls(format!("Storage error: {:?}", e)))?;
 
+        self.mark_state_dirty();
+
         // 3. Retourner le KeyPackage public sérialisé
         key_package
             .tls_serialize_detached()
@@ -861,30 +979,15 @@ impl MlsManager {
 
     // --- F. CHIFFREMENT / DÉCHIFFREMENT (Helper) ---
 
+    /// Encrypts a plain CBOR MLS snapshot (Argon2 + ChaCha20). Usable off-thread without a live manager.
+    pub fn encrypt_state_blob(plain_state: &[u8], pin: &str) -> Result<Vec<u8>, MlsError> {
+        security::encrypt_state_with_pin(pin, plain_state)
+            .map_err(|s| MlsError::OpenMls(format!("encrypt_state_blob: {}", s)))
+    }
+
     pub fn save_encrypted(&self, pin: &str) -> Result<Vec<u8>, MlsError> {
         let plain_state = self.save_state()?;
-
-        // Generate a random salt for Argon2
-        let salt = self
-            .provider
-            .rand()
-            .random_array::<16>() // Use const generic N=16
-            .map_err(|e| MlsError::OpenMls(format!("Rng error: {:?}", e)))?;
-
-        // Derive key
-        let key = derive_key_from_pin(pin, &salt)
-            .map_err(|s| MlsError::OpenMls(format!("Key derivation: {}", s)))?;
-
-        // Encrypt (encrypt_blob handles the nonce)
-        let ciphertext = encrypt_blob(&key, &plain_state)
-            .map_err(|s| MlsError::OpenMls(format!("Encryption: {}", s)))?;
-
-        // Prepend salt to the result: [salt (16) || nonce (12, inside ciphertext) || ciphertext]
-        let mut result = Vec::with_capacity(salt.len() + ciphertext.len());
-        result.extend_from_slice(&salt);
-        result.extend_from_slice(&ciphertext);
-
-        Ok(result)
+        Self::encrypt_state_blob(&plain_state, pin)
     }
 
     pub fn load_encrypted(

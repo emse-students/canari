@@ -12,6 +12,7 @@ import {
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
 import { createMlsStatePersister } from '../mlsStatePersister';
+import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
 export type { MessageHandlerDeps } from './deps';
@@ -58,17 +59,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   const statePersister = createMlsStatePersister({ mlsService, pin, userId, log });
   registerMlsStatePersister(statePersister);
-
-  // Flush immédiat quand l'app passe en arrière-plan (FCM Android)
-  if (typeof document !== 'undefined') {
-    document.addEventListener(
-      'visibilitychange',
-      () => {
-        if (document.hidden) void statePersister.flush();
-      },
-      { passive: true }
-    );
-  }
+  installMlsStatePersisterLifecycle(statePersister);
 
   if (mlsService.setBulkIngestHooks) {
     mlsService.setBulkIngestHooks(

@@ -19,6 +19,7 @@ import {
   unregisterMlsStatePersister,
   flushActiveMlsStateEncrypted,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
+import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
 import {
   setupMessageHandler,
   initializeConnection,
@@ -842,7 +843,10 @@ export async function recoverPinImpl(
  */
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Déconnexion de userId=${ctx.getUserId()?.slice(0, 8) ?? 'inconnu'}...`);
-  void flushActiveMlsStateEncrypted().finally(() => unregisterMlsStatePersister());
+  void flushActiveMlsStateEncrypted().finally(() => {
+    uninstallMlsStatePersisterLifecycle();
+    unregisterMlsStatePersister();
+  });
   const tokenForPushCleanup = ctx.getAuthToken();
   const deviceForPushCleanup = ctx.getMyDeviceId();
 

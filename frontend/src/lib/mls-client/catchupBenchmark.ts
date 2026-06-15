@@ -41,6 +41,10 @@ export interface CatchupBenchReport {
   msPerMessage: number | null;
   /** durationMs / conversationCount when > 0. */
   msPerConversation: number | null;
+  /** Cumulative WASM `saveState` (Argon2) time during this session. */
+  mlsSaveStateMs: number;
+  /** Number of encrypted MLS checkpoints written during this session. */
+  mlsSaveStateCount: number;
   phases: CatchupBenchPhase[];
 }
 
@@ -63,6 +67,8 @@ interface ActiveSession {
   messagesAcked: number;
   conversationsTouched: Set<string>;
   newMessagesIngested: number;
+  mlsSaveStateMs: number;
+  mlsSaveStateCount: number;
 }
 
 const MAX_REPORTS = 50;
@@ -132,6 +138,8 @@ function createSession(kind: CatchupBenchReport['kind']): ActiveSession {
     messagesAcked: 0,
     conversationsTouched: new Set(),
     newMessagesIngested: 0,
+    mlsSaveStateMs: 0,
+    mlsSaveStateCount: 0,
   };
 }
 
@@ -219,6 +227,8 @@ function finalizeSession(session: ActiveSession): CatchupBenchReport {
     messagesAcked: session.messagesAcked,
     conversationsTouched: session.conversationsTouched.size,
     newMessagesIngested: session.newMessagesIngested,
+    mlsSaveStateMs: Math.round(session.mlsSaveStateMs * 10) / 10,
+    mlsSaveStateCount: session.mlsSaveStateCount,
     msPerMessage:
       messagesDenominator > 0 ? Math.round((durationMs / messagesDenominator) * 10) / 10 : null,
     msPerConversation:
@@ -256,6 +266,9 @@ export function formatCatchupBenchSummary(report: CatchupBenchReport): string {
   if (report.conversationsTouched > 0) parts.push(`${report.conversationsTouched} conv touchées`);
   if (report.msPerMessage !== null) parts.push(`${report.msPerMessage} ms/msg`);
   if (report.msPerConversation !== null) parts.push(`${report.msPerConversation} ms/conv`);
+  if (report.mlsSaveStateCount > 0) {
+    parts.push(`${report.mlsSaveStateMs} ms saveState (${report.mlsSaveStateCount}x)`);
+  }
   return parts.join(' | ');
 }
 
@@ -405,6 +418,16 @@ export function getLatestCatchupBenchReport(
     if (!kind || r.kind === kind) return r;
   }
   return undefined;
+}
+
+/** Records duration of a WASM `saveState` (encrypted checkpoint) call. */
+export function recordMlsSaveStateMs(durationMs: number): void {
+  if (!isCatchupBenchEnabled() || durationMs < 0) return;
+  for (const session of [activeStartup, activeQueueDrain, activeBulkFlush]) {
+    if (!session) continue;
+    session.mlsSaveStateMs += durationMs;
+    session.mlsSaveStateCount += 1;
+  }
 }
 
 /** Clears in-memory benchmark history. */

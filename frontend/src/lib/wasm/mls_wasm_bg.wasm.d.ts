@@ -3,6 +3,7 @@
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmmlsclient_free: (a: number, b: number) => void;
 export const decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const encrypt_mls_state_blob: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const init_logger: () => void;
 export const wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];

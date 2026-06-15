@@ -121,6 +121,14 @@ export interface IMlsService {
   /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;
   /**
+   * Decrypts a page of ciphertexts in ratchet order with a single WASM crossing when available.
+   * Per-message failures are returned in the result vector instead of aborting the batch.
+   */
+  processIncomingMessagesBatch?(
+    groupId: string,
+    messages: Uint8Array[]
+  ): Promise<MlsBatchProcessResult[]>;
+  /**
    * Opens a paged decrypt session for one group's history catch-up (ratchet order preserved).
    * Web runs it off-thread via a persistent worker; Tauri / disabled-worker decrypt sequentially
    * on the live client. The caller feeds pages then calls {@link MlsDecryptSession.finish}.

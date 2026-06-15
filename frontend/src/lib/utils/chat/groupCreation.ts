@@ -1,7 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
-import { saveMlsState } from '$lib/utils/hex';
+import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
@@ -147,8 +147,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         // Sauvegarder l'état MLS AVANT d'envoyer le commit au réseau.
         // En cas de crash entre le saveState et le sendCommit, l'état local
         // reste cohérent (post-addMember) et le commit peut être retenté.
-        const stateBytes = await mlsService.saveState(pin);
-        await saveMlsState(userId, stateBytes);
+        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
         if (bulk.commit) {
           const excludeIds = bulk.addedDeviceIds.map((did) => `${userId}:${did}`);
@@ -162,8 +161,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       }
     } else {
       // Pas d'autres appareils : sauvegarder quand même après createGroup
-      const stateBytes = await mlsService.saveState(pin);
-      await saveMlsState(userId, stateBytes);
+      await persistMlsStateAfterMutation(mlsService, userId, pin, log);
     }
 
     conversations.set(conversationKey, {
@@ -270,8 +268,7 @@ async function processBulkAddition(
       // Add all devices in bulk (single MLS commit)
       const bulk = await mlsService.addMembersBulk(conversation.id, allDevices);
 
-      const stateBytes = await mlsService.saveState(pin);
-      await saveMlsState(userId, stateBytes);
+      await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
       // Send welcomes per-device; do not abort all recipients on one failure.
       log(
@@ -337,8 +334,7 @@ async function processBulkAddition(
           mkSystem('memberAdded', JSON.stringify({ newUsers: [...deliveredUsers] }))
         );
         await mlsService.sendMessage(conversation.id, controlMsg);
-        const st = await mlsService.saveState(pin);
-        await saveMlsState(userId, st);
+        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
       } catch (e) {
         console.warn('Failed to broadcast member addition:', e);
       }
@@ -411,8 +407,7 @@ async function performDirectAdd(
     }
 
     // Sauvegarder AVANT sendCommit (crash-safety : l'état local doit survivre à un crash ici)
-    const stBytes = await mlsService.saveState(pin);
-    await saveMlsState(userId, stBytes);
+    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
     if (bulk.commit) {
       const excludeIds = bulk.addedDeviceIds.map((did) => {

@@ -1,5 +1,8 @@
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
+import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
+import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
   detectRuntimeDeviceOs,
@@ -39,6 +42,8 @@ export class WebMlsService extends BaseMlsService {
   private readonly useKeyPackageWorker = import.meta.env.VITE_MLS_KEYPACKAGE_WORKER !== 'false';
   /** Feature flag for off-thread MLS decrypt during catch-up (enabled by default). */
   private readonly useCryptoWorker = import.meta.env.VITE_MLS_CRYPTO_WORKER !== 'false';
+  /** Feature flag for off-thread Argon2 encrypt on MLS checkpoints (enabled by default). */
+  private readonly useEncryptWorker = import.meta.env.VITE_MLS_ENCRYPT_WORKER !== 'false';
 
   constructor() {
     super('web');
@@ -525,11 +530,22 @@ export class WebMlsService extends BaseMlsService {
     this.client.force_create_group(groupId);
   }
 
-  /** WASM client wrapper - calls `this.client.save_state(pin)` to encrypt and return the current MLS state as bytes. */
+  /** WASM client wrapper - serialises current MLS state as plain CBOR (no Argon2). */
+  async saveStatePlain(): Promise<Uint8Array> {
+    return this.client.save_state(undefined) as Uint8Array;
+  }
+
+  /** Encrypts a plain CBOR snapshot (worker when enabled, else main-thread WASM). */
+  async encryptState(plain: Uint8Array, pin: string): Promise<Uint8Array> {
+    return encryptMlsStateOffThread(plain, pin, { enabled: this.useEncryptWorker });
+  }
+
+  /** Plain CBOR on main thread, then Argon2+ChaCha off-thread when the encrypt worker is enabled. */
   async saveState(pin: string): Promise<Uint8Array> {
-    const stateBytes = this.client.save_state(pin) as Uint8Array;
-    this.lastKnownState = stateBytes.slice();
-    return stateBytes;
+    const plain = await this.saveStatePlain();
+    const encrypted = await this.encryptState(plain, pin);
+    this.lastKnownState = encrypted.slice();
+    return encrypted;
   }
 
   /**
@@ -537,7 +553,7 @@ export class WebMlsService extends BaseMlsService {
    * The in-memory client state is unchanged; only the persisted blob is re-encrypted.
    */
   async changePIN(newPin: string): Promise<void> {
-    const newState = this.client.save_state(newPin) as Uint8Array;
+    const newState = await this.saveState(newPin);
     this.lastKnownState = newState.slice();
     await saveMlsState(this.userId, newState);
     console.log('[MLS] PIN changed - state re-encrypted and persisted.');
@@ -694,6 +710,14 @@ export class WebMlsService extends BaseMlsService {
   ): Promise<Uint8Array | null> {
     const result = this.client.process_incoming_message_bytes(groupId, messageBytes);
     return result ?? null;
+  }
+
+  /** Single WASM crossing for an ordered page of ciphertexts (history catch-up / fallback path). */
+  async processIncomingMessagesBatch(
+    groupId: string,
+    messages: Uint8Array[]
+  ): Promise<MlsBatchProcessResult[]> {
+    return wasmClientDecryptPage(this.client, groupId, messages);
   }
 
   /**

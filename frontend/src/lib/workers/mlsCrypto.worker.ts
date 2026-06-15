@@ -1,4 +1,5 @@
 import { loadAndInitWasm } from '$lib/mls-client/mlsWasmLoader';
+import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 
 /**
  * Some generated WASM glue paths still reference `window` unconditionally
@@ -66,21 +67,16 @@ async function handleInit(msg: InitRequest): Promise<void> {
 
 function handleDecryptPage(msg: DecryptPageRequest): void {
   if (!client) throw new Error('decryptPage before init');
-  // Single JS<->WASM crossing: the per-message loop runs in Rust (process_incoming_messages_batch).
   const inputs = msg.messages.map((buf) => new Uint8Array(buf));
-  const raw = client.process_incoming_messages_batch(sessionGroupId, inputs) as Array<{
-    ok: boolean;
-    data?: Uint8Array | null;
-    error?: string;
-  }>;
+  const mapped = wasmClientDecryptPage(client, sessionGroupId, inputs);
 
   const results: PageResult[] = [];
   const transfers: Transferable[] = [];
-  for (const r of raw) {
+  for (const r of mapped) {
     if (!r.ok) {
-      results.push({ ok: false, error: String(r.error ?? 'decrypt error') });
-    } else if (r.data && r.data.length > 0) {
-      const buf = asTransferBuffer(r.data);
+      results.push({ ok: false, error: r.error });
+    } else if (r.plaintext && r.plaintext.length > 0) {
+      const buf = asTransferBuffer(r.plaintext);
       results.push({ ok: true, data: buf });
       transfers.push(buf);
     } else {

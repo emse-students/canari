@@ -32,6 +32,81 @@ struct KeyPackageBatchResult {
     state: Vec<u8>,
 }
 
+/// Per-message outcome for batch MLS decrypt (history catch-up).
+#[derive(serde::Serialize, Clone)]
+struct BatchDecryptItem {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+fn map_decrypt_outcome(result: Result<Option<Vec<u8>>, mls_core::MlsError>) -> BatchDecryptItem {
+    match result {
+        Ok(Some(data)) => BatchDecryptItem {
+            ok: true,
+            data: Some(data),
+            error: None,
+        },
+        Ok(None) => BatchDecryptItem {
+            ok: true,
+            data: None,
+            error: None,
+        },
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("SecretReuseError") {
+                return BatchDecryptItem {
+                    ok: true,
+                    data: None,
+                    error: None,
+                };
+            }
+            BatchDecryptItem {
+                ok: false,
+                data: None,
+                error: Some(err_str),
+            }
+        }
+    }
+}
+
+/// Decrypts an ordered page of ciphertexts under one manager lock (S5 native path).
+fn decrypt_messages_batch(
+    manager: &mut MlsManager,
+    group_id: &str,
+    messages: &[Vec<u8>],
+) -> Vec<BatchDecryptItem> {
+    let refs: Vec<&[u8]> = messages.iter().map(|m| m.as_slice()).collect();
+    manager
+        .process_incoming_messages(group_id, &refs)
+        .into_iter()
+        .map(map_decrypt_outcome)
+        .collect()
+}
+
+#[cfg(target_os = "android")]
+async fn persist_background_mls_checkpoint(
+    pool: &sqlx::SqlitePool,
+    files_dir: &std::path::Path,
+    enc: &[u8],
+) -> Result<(), String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)")
+        .bind(enc)
+        .bind(ts)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    write_mls_bin_atomically(&files_dir.join("mls.bin"), enc)
+}
+
 /// Écrit `data` dans `path` de façon atomique : écriture dans un fichier temporaire
 /// suivi d'un `rename(2)`, qui est atomique sur Linux/Android au sein du même filesystem.
 /// Garantit que le lecteur ne voit jamais un fichier partiellement écrit.
@@ -577,6 +652,32 @@ async fn recevoir_message_bytes(
             Err(err_str)
         }
     }
+}
+
+/// Decrypts a page of MLS ciphertexts in one IPC crossing (ratchet order preserved).
+#[tauri::command]
+async fn recevoir_messages_batch(
+    group_id: String,
+    messages: Vec<Vec<u8>>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<BatchDecryptItem>, String> {
+    let manager_state = state.mls_manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_mut()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        log::debug!(
+            "recevoir_messages_batch group={} count={}",
+            group_id,
+            messages.len()
+        );
+        Ok::<Vec<BatchDecryptItem>, String>(decrypt_messages_batch(manager, &group_id, &messages))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ─── Re-Bootstrap (Fail-Safe) ─────────────────────────────────────────────────
@@ -1633,6 +1734,7 @@ pub fn run() {
             envoyer_message_bytes,
             recevoir_message,
             recevoir_message_bytes,
+            recevoir_messages_batch,
             exporter_secret,
             get_fcm_token,
             check_push_secret_health,
@@ -1723,8 +1825,6 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .map_err(|e| e.to_string())?;
 
         for group_id in group_ids {
-            // Exclure les messages ayant dépassé 3 tentatives : ils bloquaient la queue entière
-            // (le message corrompu empêchait tous les suivants d'être traités via `break`).
             let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
                 "SELECT id, ciphertext FROM pending_mls_messages \
                  WHERE group_id = ? AND is_ready = 0 AND attempt_count < 3 \
@@ -1735,41 +1835,73 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .await
             .map_err(|e| e.to_string())?;
 
-            for (id, ciphertext) in &rows {
-                if manager.process_incoming_message(&group_id, ciphertext).is_ok() {
-                    if let Ok(enc) = manager.save_encrypted(&pin_str) {
-                        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-                        sqlx::query("UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?")
-                            .bind(id)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(|e| e.to_string())?;
+            if rows.is_empty() {
+                continue;
+            }
 
-                        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
-                        sqlx::query("INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)")
-                            .bind(enc.as_slice())
-                            .bind(ts)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(|e| e.to_string())?;
+            let ciphertexts: Vec<Vec<u8>> = rows.iter().map(|(_, ct)| ct.clone()).collect();
+            let outcomes = decrypt_messages_batch(&mut manager, &group_id, &ciphertexts);
+            let mut state_mutated = false;
+            let mut ready_ids: Vec<String> = Vec::new();
 
-                        if tx.commit().await.is_ok() {
-                            let _ = write_mls_bin_atomically(&std::path::Path::new(&files_dir_str).join("mls.bin"), &enc);
-                        }
-                    }
+            for (i, outcome) in outcomes.iter().enumerate() {
+                let id = &rows[i].0;
+                if outcome.ok {
+                    state_mutated = true;
+                    ready_ids.push(id.clone());
                 } else {
-                    // Message irrécupérable : incrémenter le compteur et continuer avec le suivant
-                    // (avant : `break` → tout le groupe était bloqué jusqu'à l'expiration 7j).
                     let _ = sqlx::query(
                         "UPDATE pending_mls_messages SET attempt_count = attempt_count + 1 WHERE id = ?",
                     )
                     .bind(id)
                     .execute(&pool)
                     .await;
-                    log::warn!("Background Worker: group={} msg={} déchiffrement échoué, attempt_count incrémenté",
-                        &group_id, &id[..id.len().min(8)]);
-                    // Ne pas casser la boucle : les messages suivants peuvent être déchiffrés.
-                    continue;
+                    log::warn!(
+                        "Background Worker: group={} msg={} déchiffrement échoué: {:?}",
+                        &group_id,
+                        &id[..id.len().min(8)],
+                        outcome.error
+                    );
+                }
+            }
+
+            if state_mutated {
+                if let Ok(enc) = manager.save_encrypted(&pin_str) {
+                    if persist_background_mls_checkpoint(
+                        &pool,
+                        std::path::Path::new(&files_dir_str),
+                        &enc,
+                    )
+                    .await
+                    .is_ok()
+                    {
+                        for id in &ready_ids {
+                            let _ = sqlx::query(
+                                "UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?",
+                            )
+                            .bind(id)
+                            .execute(&pool)
+                            .await;
+                        }
+                        log::debug!(
+                            "Background Worker: checkpoint coalescé group={} ({} octets, {} msg)",
+                            group_id,
+                            enc.len(),
+                            ready_ids.len()
+                        );
+                    } else {
+                        log::error!(
+                            "Background Worker: checkpoint persist failed group={} — {} msg(s) restent en attente",
+                            group_id,
+                            ready_ids.len()
+                        );
+                    }
+                } else {
+                    log::error!(
+                        "Background Worker: save_encrypted failed group={} — {} msg(s) restent en attente",
+                        group_id,
+                        ready_ids.len()
+                    );
                 }
             }
 

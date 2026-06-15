@@ -1,47 +1,48 @@
 import * as $protobuf from "protobufjs";
 import Long = require("long");
-
 /** Namespace canari. */
 export namespace canari {
 
-    /**
-     * Properties of a WsEnvelope.
-     * @deprecated Use canari.WsEnvelope.$Properties instead.
-     */
-    interface IWsEnvelope extends canari.WsEnvelope.$Properties {
+    /** Properties of a WsEnvelope. */
+    interface IWsEnvelope {
+
+        /** WsEnvelope mls */
+        mls?: (canari.IMlsFrame|null);
+
+        /** WsEnvelope welcome */
+        welcome?: (canari.IWelcomeFrame|null);
+
+        /** WsEnvelope read */
+        read?: (canari.IReadAck|null);
     }
 
     /** Represents a WsEnvelope. */
-    class WsEnvelope {
+    class WsEnvelope implements IWsEnvelope {
 
         /**
          * Constructs a new WsEnvelope.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.WsEnvelope.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IWsEnvelope);
 
         /** WsEnvelope mls. */
-        mls?: (canari.MlsFrame.$Properties|null);
+        public mls?: (canari.IMlsFrame|null);
 
         /** WsEnvelope welcome. */
-        welcome?: (canari.WelcomeFrame.$Properties|null);
+        public welcome?: (canari.IWelcomeFrame|null);
 
         /** WsEnvelope read. */
-        read?: (canari.ReadAck.$Properties|null);
+        public read?: (canari.IReadAck|null);
 
         /** WsEnvelope body. */
-        body?: ("mls"|"welcome"|"read");
+        public body?: ("mls"|"welcome"|"read");
 
         /**
          * Creates a new WsEnvelope instance using the specified properties.
          * @param [properties] Properties to set
          * @returns WsEnvelope instance
          */
-        static create(properties: canari.WsEnvelope.$Shape): canari.WsEnvelope & canari.WsEnvelope.$Shape;
-        static create(properties?: canari.WsEnvelope.$Properties): canari.WsEnvelope;
+        public static create(properties?: canari.IWsEnvelope): canari.WsEnvelope;
 
         /**
          * Encodes the specified WsEnvelope message. Does not implicitly {@link canari.WsEnvelope.verify|verify} messages.
@@ -49,7 +50,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.WsEnvelope.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IWsEnvelope, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified WsEnvelope message, length delimited. Does not implicitly {@link canari.WsEnvelope.verify|verify} messages.
@@ -57,40 +58,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.WsEnvelope.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IWsEnvelope, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a WsEnvelope message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.WsEnvelope & canari.WsEnvelope.$Shape} WsEnvelope
+         * @returns WsEnvelope
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.WsEnvelope & canari.WsEnvelope.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.WsEnvelope;
 
         /**
          * Decodes a WsEnvelope message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.WsEnvelope & canari.WsEnvelope.$Shape} WsEnvelope
+         * @returns WsEnvelope
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.WsEnvelope & canari.WsEnvelope.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.WsEnvelope;
 
         /**
          * Verifies a WsEnvelope message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a WsEnvelope message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns WsEnvelope
          */
-        static fromObject(object: { [k: string]: any }): canari.WsEnvelope;
+        public static fromObject(object: { [k: string]: any }): canari.WsEnvelope;
 
         /**
          * Creates a plain object from a WsEnvelope message. Also converts values to other types if specified.
@@ -98,86 +99,53 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.WsEnvelope, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.WsEnvelope, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this WsEnvelope to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for WsEnvelope
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for WsEnvelope
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace WsEnvelope {
+    /** Properties of a Recipient. */
+    interface IRecipient {
 
-        /** Properties of a WsEnvelope. */
-        interface $Properties {
+        /** Recipient userId */
+        userId?: (string|null);
 
-            /** WsEnvelope mls */
-            mls?: (canari.MlsFrame.$Properties|null);
-
-            /** WsEnvelope welcome */
-            welcome?: (canari.WelcomeFrame.$Properties|null);
-
-            /** WsEnvelope read */
-            read?: (canari.ReadAck.$Properties|null);
-
-            /** WsEnvelope body */
-            body?: ("mls"|"welcome"|"read");
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Narrowed shape of a WsEnvelope. */
-        type $Shape = {
-          mls?: canari.MlsFrame.$Shape|null;
-          welcome?: canari.WelcomeFrame.$Shape|null;
-          read?: canari.ReadAck.$Shape|null;
-          $unknowns?: Uint8Array[];
-        } & (
-          ({ body?: undefined; mls?: null; welcome?: null; read?: null }|{ body?: "mls"; mls: canari.MlsFrame.$Shape; welcome?: null; read?: null }|{ body?: "welcome"; mls?: null; welcome: canari.WelcomeFrame.$Shape; read?: null }|{ body?: "read"; mls?: null; welcome?: null; read: canari.ReadAck.$Shape })
-        );
-    }
-
-    /**
-     * Properties of a Recipient.
-     * @deprecated Use canari.Recipient.$Properties instead.
-     */
-    interface IRecipient extends canari.Recipient.$Properties {
+        /** Recipient deviceId */
+        deviceId?: (string|null);
     }
 
     /** Represents a Recipient. */
-    class Recipient {
+    class Recipient implements IRecipient {
 
         /**
          * Constructs a new Recipient.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.Recipient.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IRecipient);
 
         /** Recipient userId. */
-        userId: string;
+        public userId: string;
 
         /** Recipient deviceId. */
-        deviceId: string;
+        public deviceId: string;
 
         /**
          * Creates a new Recipient instance using the specified properties.
          * @param [properties] Properties to set
          * @returns Recipient instance
          */
-        static create(properties: canari.Recipient.$Shape): canari.Recipient & canari.Recipient.$Shape;
-        static create(properties?: canari.Recipient.$Properties): canari.Recipient;
+        public static create(properties?: canari.IRecipient): canari.Recipient;
 
         /**
          * Encodes the specified Recipient message. Does not implicitly {@link canari.Recipient.verify|verify} messages.
@@ -185,7 +153,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.Recipient.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IRecipient, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified Recipient message, length delimited. Does not implicitly {@link canari.Recipient.verify|verify} messages.
@@ -193,40 +161,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.Recipient.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IRecipient, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a Recipient message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.Recipient & canari.Recipient.$Shape} Recipient
+         * @returns Recipient
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.Recipient & canari.Recipient.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.Recipient;
 
         /**
          * Decodes a Recipient message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.Recipient & canari.Recipient.$Shape} Recipient
+         * @returns Recipient
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.Recipient & canari.Recipient.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.Recipient;
 
         /**
          * Verifies a Recipient message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a Recipient message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns Recipient
          */
-        static fromObject(object: { [k: string]: any }): canari.Recipient;
+        public static fromObject(object: { [k: string]: any }): canari.Recipient;
 
         /**
          * Creates a plain object from a Recipient message. Also converts values to other types if specified.
@@ -234,76 +202,59 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.Recipient, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.Recipient, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this Recipient to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for Recipient
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for Recipient
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace Recipient {
+    /** Properties of a MlsFrame. */
+    interface IMlsFrame {
 
-        /** Properties of a Recipient. */
-        interface $Properties {
+        /** MlsFrame ciphertext */
+        ciphertext?: (Uint8Array|null);
 
-            /** Recipient userId */
-            userId?: (string|null);
+        /** MlsFrame groupId */
+        groupId?: (string|null);
 
-            /** Recipient deviceId */
-            deviceId?: (string|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a Recipient. */
-        type $Shape = canari.Recipient.$Properties;
-    }
-
-    /**
-     * Properties of a MlsFrame.
-     * @deprecated Use canari.MlsFrame.$Properties instead.
-     */
-    interface IMlsFrame extends canari.MlsFrame.$Properties {
+        /** MlsFrame recipients */
+        recipients?: (canari.IRecipient[]|null);
     }
 
     /** Represents a MlsFrame. */
-    class MlsFrame {
+    class MlsFrame implements IMlsFrame {
 
         /**
          * Constructs a new MlsFrame.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.MlsFrame.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IMlsFrame);
 
         /** MlsFrame ciphertext. */
-        ciphertext: Uint8Array;
+        public ciphertext: Uint8Array;
 
         /** MlsFrame groupId. */
-        groupId: string;
+        public groupId: string;
 
         /** MlsFrame recipients. */
-        recipients: canari.Recipient.$Properties[];
+        public recipients: canari.IRecipient[];
 
         /**
          * Creates a new MlsFrame instance using the specified properties.
          * @param [properties] Properties to set
          * @returns MlsFrame instance
          */
-        static create(properties: canari.MlsFrame.$Shape): canari.MlsFrame & canari.MlsFrame.$Shape;
-        static create(properties?: canari.MlsFrame.$Properties): canari.MlsFrame;
+        public static create(properties?: canari.IMlsFrame): canari.MlsFrame;
 
         /**
          * Encodes the specified MlsFrame message. Does not implicitly {@link canari.MlsFrame.verify|verify} messages.
@@ -311,7 +262,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.MlsFrame.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IMlsFrame, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified MlsFrame message, length delimited. Does not implicitly {@link canari.MlsFrame.verify|verify} messages.
@@ -319,40 +270,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.MlsFrame.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IMlsFrame, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a MlsFrame message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.MlsFrame & canari.MlsFrame.$Shape} MlsFrame
+         * @returns MlsFrame
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.MlsFrame & canari.MlsFrame.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.MlsFrame;
 
         /**
          * Decodes a MlsFrame message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.MlsFrame & canari.MlsFrame.$Shape} MlsFrame
+         * @returns MlsFrame
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.MlsFrame & canari.MlsFrame.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.MlsFrame;
 
         /**
          * Verifies a MlsFrame message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a MlsFrame message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns MlsFrame
          */
-        static fromObject(object: { [k: string]: any }): canari.MlsFrame;
+        public static fromObject(object: { [k: string]: any }): canari.MlsFrame;
 
         /**
          * Creates a plain object from a MlsFrame message. Also converts values to other types if specified.
@@ -360,79 +311,59 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.MlsFrame, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.MlsFrame, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this MlsFrame to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for MlsFrame
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for MlsFrame
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace MlsFrame {
+    /** Properties of a WelcomeFrame. */
+    interface IWelcomeFrame {
 
-        /** Properties of a MlsFrame. */
-        interface $Properties {
+        /** WelcomeFrame ciphertext */
+        ciphertext?: (Uint8Array|null);
 
-            /** MlsFrame ciphertext */
-            ciphertext?: (Uint8Array|null);
+        /** WelcomeFrame groupId */
+        groupId?: (string|null);
 
-            /** MlsFrame groupId */
-            groupId?: (string|null);
-
-            /** MlsFrame recipients */
-            recipients?: (canari.Recipient.$Properties[]|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a MlsFrame. */
-        type $Shape = canari.MlsFrame.$Properties;
-    }
-
-    /**
-     * Properties of a WelcomeFrame.
-     * @deprecated Use canari.WelcomeFrame.$Properties instead.
-     */
-    interface IWelcomeFrame extends canari.WelcomeFrame.$Properties {
+        /** WelcomeFrame recipients */
+        recipients?: (canari.IRecipient[]|null);
     }
 
     /** Represents a WelcomeFrame. */
-    class WelcomeFrame {
+    class WelcomeFrame implements IWelcomeFrame {
 
         /**
          * Constructs a new WelcomeFrame.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.WelcomeFrame.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IWelcomeFrame);
 
         /** WelcomeFrame ciphertext. */
-        ciphertext: Uint8Array;
+        public ciphertext: Uint8Array;
 
         /** WelcomeFrame groupId. */
-        groupId: string;
+        public groupId: string;
 
         /** WelcomeFrame recipients. */
-        recipients: canari.Recipient.$Properties[];
+        public recipients: canari.IRecipient[];
 
         /**
          * Creates a new WelcomeFrame instance using the specified properties.
          * @param [properties] Properties to set
          * @returns WelcomeFrame instance
          */
-        static create(properties: canari.WelcomeFrame.$Shape): canari.WelcomeFrame & canari.WelcomeFrame.$Shape;
-        static create(properties?: canari.WelcomeFrame.$Properties): canari.WelcomeFrame;
+        public static create(properties?: canari.IWelcomeFrame): canari.WelcomeFrame;
 
         /**
          * Encodes the specified WelcomeFrame message. Does not implicitly {@link canari.WelcomeFrame.verify|verify} messages.
@@ -440,7 +371,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.WelcomeFrame.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IWelcomeFrame, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified WelcomeFrame message, length delimited. Does not implicitly {@link canari.WelcomeFrame.verify|verify} messages.
@@ -448,40 +379,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.WelcomeFrame.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IWelcomeFrame, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a WelcomeFrame message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.WelcomeFrame & canari.WelcomeFrame.$Shape} WelcomeFrame
+         * @returns WelcomeFrame
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.WelcomeFrame & canari.WelcomeFrame.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.WelcomeFrame;
 
         /**
          * Decodes a WelcomeFrame message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.WelcomeFrame & canari.WelcomeFrame.$Shape} WelcomeFrame
+         * @returns WelcomeFrame
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.WelcomeFrame & canari.WelcomeFrame.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.WelcomeFrame;
 
         /**
          * Verifies a WelcomeFrame message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a WelcomeFrame message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns WelcomeFrame
          */
-        static fromObject(object: { [k: string]: any }): canari.WelcomeFrame;
+        public static fromObject(object: { [k: string]: any }): canari.WelcomeFrame;
 
         /**
          * Creates a plain object from a WelcomeFrame message. Also converts values to other types if specified.
@@ -489,73 +420,47 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.WelcomeFrame, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.WelcomeFrame, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this WelcomeFrame to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for WelcomeFrame
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for WelcomeFrame
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace WelcomeFrame {
+    /** Properties of a ReadAck. */
+    interface IReadAck {
 
-        /** Properties of a WelcomeFrame. */
-        interface $Properties {
-
-            /** WelcomeFrame ciphertext */
-            ciphertext?: (Uint8Array|null);
-
-            /** WelcomeFrame groupId */
-            groupId?: (string|null);
-
-            /** WelcomeFrame recipients */
-            recipients?: (canari.Recipient.$Properties[]|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a WelcomeFrame. */
-        type $Shape = canari.WelcomeFrame.$Properties;
-    }
-
-    /**
-     * Properties of a ReadAck.
-     * @deprecated Use canari.ReadAck.$Properties instead.
-     */
-    interface IReadAck extends canari.ReadAck.$Properties {
+        /** ReadAck messageId */
+        messageId?: (string|null);
     }
 
     /** Represents a ReadAck. */
-    class ReadAck {
+    class ReadAck implements IReadAck {
 
         /**
          * Constructs a new ReadAck.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.ReadAck.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IReadAck);
 
         /** ReadAck messageId. */
-        messageId: string;
+        public messageId: string;
 
         /**
          * Creates a new ReadAck instance using the specified properties.
          * @param [properties] Properties to set
          * @returns ReadAck instance
          */
-        static create(properties: canari.ReadAck.$Shape): canari.ReadAck & canari.ReadAck.$Shape;
-        static create(properties?: canari.ReadAck.$Properties): canari.ReadAck;
+        public static create(properties?: canari.IReadAck): canari.ReadAck;
 
         /**
          * Encodes the specified ReadAck message. Does not implicitly {@link canari.ReadAck.verify|verify} messages.
@@ -563,7 +468,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.ReadAck.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IReadAck, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified ReadAck message, length delimited. Does not implicitly {@link canari.ReadAck.verify|verify} messages.
@@ -571,40 +476,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.ReadAck.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IReadAck, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a ReadAck message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.ReadAck & canari.ReadAck.$Shape} ReadAck
+         * @returns ReadAck
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReadAck & canari.ReadAck.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReadAck;
 
         /**
          * Decodes a ReadAck message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.ReadAck & canari.ReadAck.$Shape} ReadAck
+         * @returns ReadAck
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReadAck & canari.ReadAck.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReadAck;
 
         /**
          * Verifies a ReadAck message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a ReadAck message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns ReadAck
          */
-        static fromObject(object: { [k: string]: any }): canari.ReadAck;
+        public static fromObject(object: { [k: string]: any }): canari.ReadAck;
 
         /**
          * Creates a plain object from a ReadAck message. Also converts values to other types if specified.
@@ -612,82 +517,77 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.ReadAck, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.ReadAck, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this ReadAck to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for ReadAck
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for ReadAck
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace ReadAck {
+    /** Properties of an InboundMsg. */
+    interface IInboundMsg {
 
-        /** Properties of a ReadAck. */
-        interface $Properties {
+        /** InboundMsg ciphertext */
+        ciphertext?: (Uint8Array|null);
 
-            /** ReadAck messageId */
-            messageId?: (string|null);
+        /** InboundMsg senderId */
+        senderId?: (string|null);
 
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
+        /** InboundMsg senderDeviceId */
+        senderDeviceId?: (string|null);
 
-        /** Shape of a ReadAck. */
-        type $Shape = canari.ReadAck.$Properties;
-    }
+        /** InboundMsg groupId */
+        groupId?: (string|null);
 
-    /**
-     * Properties of an InboundMsg.
-     * @deprecated Use canari.InboundMsg.$Properties instead.
-     */
-    interface IInboundMsg extends canari.InboundMsg.$Properties {
+        /** InboundMsg isWelcome */
+        isWelcome?: (boolean|null);
+
+        /** InboundMsg isCommit */
+        isCommit?: (boolean|null);
     }
 
     /** Represents an InboundMsg. */
-    class InboundMsg {
+    class InboundMsg implements IInboundMsg {
 
         /**
          * Constructs a new InboundMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.InboundMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IInboundMsg);
 
         /** InboundMsg ciphertext. */
-        ciphertext: Uint8Array;
+        public ciphertext: Uint8Array;
 
         /** InboundMsg senderId. */
-        senderId: string;
+        public senderId: string;
 
         /** InboundMsg senderDeviceId. */
-        senderDeviceId: string;
+        public senderDeviceId: string;
 
         /** InboundMsg groupId. */
-        groupId: string;
+        public groupId: string;
 
         /** InboundMsg isWelcome. */
-        isWelcome: boolean;
+        public isWelcome: boolean;
 
         /** InboundMsg isCommit. */
-        isCommit: boolean;
+        public isCommit: boolean;
 
         /**
          * Creates a new InboundMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns InboundMsg instance
          */
-        static create(properties: canari.InboundMsg.$Shape): canari.InboundMsg & canari.InboundMsg.$Shape;
-        static create(properties?: canari.InboundMsg.$Properties): canari.InboundMsg;
+        public static create(properties?: canari.IInboundMsg): canari.InboundMsg;
 
         /**
          * Encodes the specified InboundMsg message. Does not implicitly {@link canari.InboundMsg.verify|verify} messages.
@@ -695,7 +595,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.InboundMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IInboundMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified InboundMsg message, length delimited. Does not implicitly {@link canari.InboundMsg.verify|verify} messages.
@@ -703,40 +603,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.InboundMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IInboundMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an InboundMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.InboundMsg & canari.InboundMsg.$Shape} InboundMsg
+         * @returns InboundMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.InboundMsg & canari.InboundMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.InboundMsg;
 
         /**
          * Decodes an InboundMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.InboundMsg & canari.InboundMsg.$Shape} InboundMsg
+         * @returns InboundMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.InboundMsg & canari.InboundMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.InboundMsg;
 
         /**
          * Verifies an InboundMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an InboundMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns InboundMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.InboundMsg;
+        public static fromObject(object: { [k: string]: any }): canari.InboundMsg;
 
         /**
          * Creates a plain object from an InboundMsg message. Also converts values to other types if specified.
@@ -744,109 +644,98 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.InboundMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.InboundMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this InboundMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for InboundMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for InboundMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace InboundMsg {
+    /** Properties of an AppMessage. */
+    interface IAppMessage {
 
-        /** Properties of an InboundMsg. */
-        interface $Properties {
+        /** AppMessage messageId */
+        messageId?: (string|null);
 
-            /** InboundMsg ciphertext */
-            ciphertext?: (Uint8Array|null);
+        /** AppMessage sentAt */
+        sentAt?: (number|null);
 
-            /** InboundMsg senderId */
-            senderId?: (string|null);
+        /** AppMessage text */
+        text?: (canari.ITextMsg|null);
 
-            /** InboundMsg senderDeviceId */
-            senderDeviceId?: (string|null);
+        /** AppMessage reply */
+        reply?: (canari.IReplyMsg|null);
 
-            /** InboundMsg groupId */
-            groupId?: (string|null);
+        /** AppMessage reaction */
+        reaction?: (canari.IReactionMsg|null);
 
-            /** InboundMsg isWelcome */
-            isWelcome?: (boolean|null);
+        /** AppMessage media */
+        media?: (canari.IMediaMsg|null);
 
-            /** InboundMsg isCommit */
-            isCommit?: (boolean|null);
+        /** AppMessage system */
+        system?: (canari.ISystemMsg|null);
 
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
+        /** AppMessage call */
+        call?: (canari.ICallMsg|null);
 
-        /** Shape of an InboundMsg. */
-        type $Shape = canari.InboundMsg.$Properties;
-    }
-
-    /**
-     * Properties of an AppMessage.
-     * @deprecated Use canari.AppMessage.$Properties instead.
-     */
-    interface IAppMessage extends canari.AppMessage.$Properties {
+        /** AppMessage poll */
+        poll?: (canari.IPollMsg|null);
     }
 
     /** Represents an AppMessage. */
-    class AppMessage {
+    class AppMessage implements IAppMessage {
 
         /**
          * Constructs a new AppMessage.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.AppMessage.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IAppMessage);
 
         /** AppMessage messageId. */
-        messageId: string;
+        public messageId: string;
 
         /** AppMessage sentAt. */
-        sentAt: number;
+        public sentAt: number;
 
         /** AppMessage text. */
-        text?: (canari.TextMsg.$Properties|null);
+        public text?: (canari.ITextMsg|null);
 
         /** AppMessage reply. */
-        reply?: (canari.ReplyMsg.$Properties|null);
+        public reply?: (canari.IReplyMsg|null);
 
         /** AppMessage reaction. */
-        reaction?: (canari.ReactionMsg.$Properties|null);
+        public reaction?: (canari.IReactionMsg|null);
 
         /** AppMessage media. */
-        media?: (canari.MediaMsg.$Properties|null);
+        public media?: (canari.IMediaMsg|null);
 
         /** AppMessage system. */
-        system?: (canari.SystemMsg.$Properties|null);
+        public system?: (canari.ISystemMsg|null);
 
         /** AppMessage call. */
-        call?: (canari.CallMsg.$Properties|null);
+        public call?: (canari.ICallMsg|null);
 
         /** AppMessage poll. */
-        poll?: (canari.PollMsg.$Properties|null);
+        public poll?: (canari.IPollMsg|null);
 
         /** AppMessage kind. */
-        kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll");
+        public kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll");
 
         /**
          * Creates a new AppMessage instance using the specified properties.
          * @param [properties] Properties to set
          * @returns AppMessage instance
          */
-        static create(properties: canari.AppMessage.$Shape): canari.AppMessage & canari.AppMessage.$Shape;
-        static create(properties?: canari.AppMessage.$Properties): canari.AppMessage;
+        public static create(properties?: canari.IAppMessage): canari.AppMessage;
 
         /**
          * Encodes the specified AppMessage message. Does not implicitly {@link canari.AppMessage.verify|verify} messages.
@@ -854,7 +743,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.AppMessage.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IAppMessage, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified AppMessage message, length delimited. Does not implicitly {@link canari.AppMessage.verify|verify} messages.
@@ -862,40 +751,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.AppMessage.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IAppMessage, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes an AppMessage message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.AppMessage & canari.AppMessage.$Shape} AppMessage
+         * @returns AppMessage
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.AppMessage & canari.AppMessage.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.AppMessage;
 
         /**
          * Decodes an AppMessage message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.AppMessage & canari.AppMessage.$Shape} AppMessage
+         * @returns AppMessage
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.AppMessage & canari.AppMessage.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.AppMessage;
 
         /**
          * Verifies an AppMessage message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates an AppMessage message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns AppMessage
          */
-        static fromObject(object: { [k: string]: any }): canari.AppMessage;
+        public static fromObject(object: { [k: string]: any }): canari.AppMessage;
 
         /**
          * Creates a plain object from an AppMessage message. Also converts values to other types if specified.
@@ -903,131 +792,92 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.AppMessage, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.AppMessage, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this AppMessage to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for AppMessage
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for AppMessage
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace AppMessage {
+    /** Properties of a CallMsg. */
+    interface ICallMsg {
 
-        /** Properties of an AppMessage. */
-        interface $Properties {
+        /** CallMsg callId */
+        callId?: (string|null);
 
-            /** AppMessage messageId */
-            messageId?: (string|null);
+        /** CallMsg hasVideo */
+        hasVideo?: (boolean|null);
 
-            /** AppMessage sentAt */
-            sentAt?: (number|null);
+        /** CallMsg deviceId */
+        deviceId?: (string|null);
 
-            /** AppMessage text */
-            text?: (canari.TextMsg.$Properties|null);
+        /** CallMsg offerSdp */
+        offerSdp?: (string|null);
 
-            /** AppMessage reply */
-            reply?: (canari.ReplyMsg.$Properties|null);
+        /** CallMsg answerSdp */
+        answerSdp?: (string|null);
 
-            /** AppMessage reaction */
-            reaction?: (canari.ReactionMsg.$Properties|null);
+        /** CallMsg iceCandidate */
+        iceCandidate?: (string|null);
 
-            /** AppMessage media */
-            media?: (canari.MediaMsg.$Properties|null);
+        /** CallMsg hangup */
+        hangup?: (boolean|null);
 
-            /** AppMessage system */
-            system?: (canari.SystemMsg.$Properties|null);
-
-            /** AppMessage call */
-            call?: (canari.CallMsg.$Properties|null);
-
-            /** AppMessage poll */
-            poll?: (canari.PollMsg.$Properties|null);
-
-            /** AppMessage kind */
-            kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll");
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Narrowed shape of an AppMessage. */
-        type $Shape = {
-          messageId?: string|null;
-          sentAt?: number|null;
-          text?: canari.TextMsg.$Shape|null;
-          reply?: canari.ReplyMsg.$Shape|null;
-          reaction?: canari.ReactionMsg.$Shape|null;
-          media?: canari.MediaMsg.$Shape|null;
-          system?: canari.SystemMsg.$Shape|null;
-          call?: canari.CallMsg.$Shape|null;
-          poll?: canari.PollMsg.$Shape|null;
-          $unknowns?: Uint8Array[];
-        } & (
-          ({ kind?: undefined; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "text"; text: canari.TextMsg.$Shape; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "reply"; text?: null; reply: canari.ReplyMsg.$Shape; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "reaction"; text?: null; reply?: null; reaction: canari.ReactionMsg.$Shape; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "media"; text?: null; reply?: null; reaction?: null; media: canari.MediaMsg.$Shape; system?: null; call?: null; poll?: null }|{ kind?: "system"; text?: null; reply?: null; reaction?: null; media?: null; system: canari.SystemMsg.$Shape; call?: null; poll?: null }|{ kind?: "call"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call: canari.CallMsg.$Shape; poll?: null }|{ kind?: "poll"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll: canari.PollMsg.$Shape })
-        );
-    }
-
-    /**
-     * Properties of a CallMsg.
-     * @deprecated Use canari.CallMsg.$Properties instead.
-     */
-    interface ICallMsg extends canari.CallMsg.$Properties {
+        /** CallMsg answered */
+        answered?: (boolean|null);
     }
 
     /** Represents a CallMsg. */
-    class CallMsg {
+    class CallMsg implements ICallMsg {
 
         /**
          * Constructs a new CallMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.CallMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.ICallMsg);
 
         /** CallMsg callId. */
-        callId: string;
+        public callId: string;
 
         /** CallMsg hasVideo. */
-        hasVideo: boolean;
+        public hasVideo: boolean;
 
         /** CallMsg deviceId. */
-        deviceId: string;
+        public deviceId: string;
 
         /** CallMsg offerSdp. */
-        offerSdp?: (string|null);
+        public offerSdp?: (string|null);
 
         /** CallMsg answerSdp. */
-        answerSdp?: (string|null);
+        public answerSdp?: (string|null);
 
         /** CallMsg iceCandidate. */
-        iceCandidate?: (string|null);
+        public iceCandidate?: (string|null);
 
         /** CallMsg hangup. */
-        hangup?: (boolean|null);
+        public hangup?: (boolean|null);
 
         /** CallMsg answered. */
-        answered?: (boolean|null);
+        public answered?: (boolean|null);
 
         /** CallMsg payload. */
-        payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered");
+        public payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered");
 
         /**
          * Creates a new CallMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns CallMsg instance
          */
-        static create(properties: canari.CallMsg.$Shape): canari.CallMsg & canari.CallMsg.$Shape;
-        static create(properties?: canari.CallMsg.$Properties): canari.CallMsg;
+        public static create(properties?: canari.ICallMsg): canari.CallMsg;
 
         /**
          * Encodes the specified CallMsg message. Does not implicitly {@link canari.CallMsg.verify|verify} messages.
@@ -1035,7 +885,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.CallMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.ICallMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified CallMsg message, length delimited. Does not implicitly {@link canari.CallMsg.verify|verify} messages.
@@ -1043,40 +893,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.CallMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.ICallMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a CallMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.CallMsg & canari.CallMsg.$Shape} CallMsg
+         * @returns CallMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.CallMsg & canari.CallMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.CallMsg;
 
         /**
          * Decodes a CallMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.CallMsg & canari.CallMsg.$Shape} CallMsg
+         * @returns CallMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.CallMsg & canari.CallMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.CallMsg;
 
         /**
          * Verifies a CallMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a CallMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns CallMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.CallMsg;
+        public static fromObject(object: { [k: string]: any }): canari.CallMsg;
 
         /**
          * Creates a plain object from a CallMsg message. Also converts values to other types if specified.
@@ -1084,103 +934,47 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.CallMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.CallMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this CallMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for CallMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for CallMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace CallMsg {
+    /** Properties of a TextMsg. */
+    interface ITextMsg {
 
-        /** Properties of a CallMsg. */
-        interface $Properties {
-
-            /** CallMsg callId */
-            callId?: (string|null);
-
-            /** CallMsg hasVideo */
-            hasVideo?: (boolean|null);
-
-            /** CallMsg deviceId */
-            deviceId?: (string|null);
-
-            /** CallMsg offerSdp */
-            offerSdp?: (string|null);
-
-            /** CallMsg answerSdp */
-            answerSdp?: (string|null);
-
-            /** CallMsg iceCandidate */
-            iceCandidate?: (string|null);
-
-            /** CallMsg hangup */
-            hangup?: (boolean|null);
-
-            /** CallMsg answered */
-            answered?: (boolean|null);
-
-            /** CallMsg payload */
-            payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered");
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Narrowed shape of a CallMsg. */
-        type $Shape = {
-          callId?: string|null;
-          hasVideo?: boolean|null;
-          deviceId?: string|null;
-          offerSdp?: string|null;
-          answerSdp?: string|null;
-          iceCandidate?: string|null;
-          hangup?: boolean|null;
-          answered?: boolean|null;
-          $unknowns?: Uint8Array[];
-        } & (
-          ({ payload?: undefined; offerSdp?: null; answerSdp?: null; iceCandidate?: null; hangup?: null; answered?: null }|{ payload?: "offerSdp"; offerSdp: string; answerSdp?: null; iceCandidate?: null; hangup?: null; answered?: null }|{ payload?: "answerSdp"; offerSdp?: null; answerSdp: string; iceCandidate?: null; hangup?: null; answered?: null }|{ payload?: "iceCandidate"; offerSdp?: null; answerSdp?: null; iceCandidate: string; hangup?: null; answered?: null }|{ payload?: "hangup"; offerSdp?: null; answerSdp?: null; iceCandidate?: null; hangup: boolean; answered?: null }|{ payload?: "answered"; offerSdp?: null; answerSdp?: null; iceCandidate?: null; hangup?: null; answered: boolean })
-        );
-    }
-
-    /**
-     * Properties of a TextMsg.
-     * @deprecated Use canari.TextMsg.$Properties instead.
-     */
-    interface ITextMsg extends canari.TextMsg.$Properties {
+        /** TextMsg content */
+        content?: (string|null);
     }
 
     /** Represents a TextMsg. */
-    class TextMsg {
+    class TextMsg implements ITextMsg {
 
         /**
          * Constructs a new TextMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.TextMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.ITextMsg);
 
         /** TextMsg content. */
-        content: string;
+        public content: string;
 
         /**
          * Creates a new TextMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns TextMsg instance
          */
-        static create(properties: canari.TextMsg.$Shape): canari.TextMsg & canari.TextMsg.$Shape;
-        static create(properties?: canari.TextMsg.$Properties): canari.TextMsg;
+        public static create(properties?: canari.ITextMsg): canari.TextMsg;
 
         /**
          * Encodes the specified TextMsg message. Does not implicitly {@link canari.TextMsg.verify|verify} messages.
@@ -1188,7 +982,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.TextMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.ITextMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified TextMsg message, length delimited. Does not implicitly {@link canari.TextMsg.verify|verify} messages.
@@ -1196,40 +990,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.TextMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.ITextMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a TextMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.TextMsg & canari.TextMsg.$Shape} TextMsg
+         * @returns TextMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.TextMsg & canari.TextMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.TextMsg;
 
         /**
          * Decodes a TextMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.TextMsg & canari.TextMsg.$Shape} TextMsg
+         * @returns TextMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.TextMsg & canari.TextMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.TextMsg;
 
         /**
          * Verifies a TextMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a TextMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns TextMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.TextMsg;
+        public static fromObject(object: { [k: string]: any }): canari.TextMsg;
 
         /**
          * Creates a plain object from a TextMsg message. Also converts values to other types if specified.
@@ -1237,73 +1031,59 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.TextMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.TextMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this TextMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for TextMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for TextMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace TextMsg {
+    /** Properties of a ReplyRef. */
+    interface IReplyRef {
 
-        /** Properties of a TextMsg. */
-        interface $Properties {
+        /** ReplyRef id */
+        id?: (string|null);
 
-            /** TextMsg content */
-            content?: (string|null);
+        /** ReplyRef senderId */
+        senderId?: (string|null);
 
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a TextMsg. */
-        type $Shape = canari.TextMsg.$Properties;
-    }
-
-    /**
-     * Properties of a ReplyRef.
-     * @deprecated Use canari.ReplyRef.$Properties instead.
-     */
-    interface IReplyRef extends canari.ReplyRef.$Properties {
+        /** ReplyRef preview */
+        preview?: (string|null);
     }
 
     /** Represents a ReplyRef. */
-    class ReplyRef {
+    class ReplyRef implements IReplyRef {
 
         /**
          * Constructs a new ReplyRef.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.ReplyRef.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IReplyRef);
 
         /** ReplyRef id. */
-        id: string;
+        public id: string;
 
         /** ReplyRef senderId. */
-        senderId: string;
+        public senderId: string;
 
         /** ReplyRef preview. */
-        preview: string;
+        public preview: string;
 
         /**
          * Creates a new ReplyRef instance using the specified properties.
          * @param [properties] Properties to set
          * @returns ReplyRef instance
          */
-        static create(properties: canari.ReplyRef.$Shape): canari.ReplyRef & canari.ReplyRef.$Shape;
-        static create(properties?: canari.ReplyRef.$Properties): canari.ReplyRef;
+        public static create(properties?: canari.IReplyRef): canari.ReplyRef;
 
         /**
          * Encodes the specified ReplyRef message. Does not implicitly {@link canari.ReplyRef.verify|verify} messages.
@@ -1311,7 +1091,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.ReplyRef.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IReplyRef, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified ReplyRef message, length delimited. Does not implicitly {@link canari.ReplyRef.verify|verify} messages.
@@ -1319,40 +1099,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.ReplyRef.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IReplyRef, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a ReplyRef message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.ReplyRef & canari.ReplyRef.$Shape} ReplyRef
+         * @returns ReplyRef
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReplyRef & canari.ReplyRef.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReplyRef;
 
         /**
          * Decodes a ReplyRef message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.ReplyRef & canari.ReplyRef.$Shape} ReplyRef
+         * @returns ReplyRef
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReplyRef & canari.ReplyRef.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReplyRef;
 
         /**
          * Verifies a ReplyRef message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a ReplyRef message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns ReplyRef
          */
-        static fromObject(object: { [k: string]: any }): canari.ReplyRef;
+        public static fromObject(object: { [k: string]: any }): canari.ReplyRef;
 
         /**
          * Creates a plain object from a ReplyRef message. Also converts values to other types if specified.
@@ -1360,76 +1140,53 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.ReplyRef, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.ReplyRef, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this ReplyRef to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for ReplyRef
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for ReplyRef
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace ReplyRef {
+    /** Properties of a ReplyMsg. */
+    interface IReplyMsg {
 
-        /** Properties of a ReplyRef. */
-        interface $Properties {
+        /** ReplyMsg content */
+        content?: (string|null);
 
-            /** ReplyRef id */
-            id?: (string|null);
-
-            /** ReplyRef senderId */
-            senderId?: (string|null);
-
-            /** ReplyRef preview */
-            preview?: (string|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a ReplyRef. */
-        type $Shape = canari.ReplyRef.$Properties;
-    }
-
-    /**
-     * Properties of a ReplyMsg.
-     * @deprecated Use canari.ReplyMsg.$Properties instead.
-     */
-    interface IReplyMsg extends canari.ReplyMsg.$Properties {
+        /** ReplyMsg replyTo */
+        replyTo?: (canari.IReplyRef|null);
     }
 
     /** Represents a ReplyMsg. */
-    class ReplyMsg {
+    class ReplyMsg implements IReplyMsg {
 
         /**
          * Constructs a new ReplyMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.ReplyMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IReplyMsg);
 
         /** ReplyMsg content. */
-        content: string;
+        public content: string;
 
         /** ReplyMsg replyTo. */
-        replyTo?: (canari.ReplyRef.$Properties|null);
+        public replyTo?: (canari.IReplyRef|null);
 
         /**
          * Creates a new ReplyMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns ReplyMsg instance
          */
-        static create(properties: canari.ReplyMsg.$Shape): canari.ReplyMsg & canari.ReplyMsg.$Shape;
-        static create(properties?: canari.ReplyMsg.$Properties): canari.ReplyMsg;
+        public static create(properties?: canari.IReplyMsg): canari.ReplyMsg;
 
         /**
          * Encodes the specified ReplyMsg message. Does not implicitly {@link canari.ReplyMsg.verify|verify} messages.
@@ -1437,7 +1194,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.ReplyMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IReplyMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified ReplyMsg message, length delimited. Does not implicitly {@link canari.ReplyMsg.verify|verify} messages.
@@ -1445,40 +1202,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.ReplyMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IReplyMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a ReplyMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.ReplyMsg & canari.ReplyMsg.$Shape} ReplyMsg
+         * @returns ReplyMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReplyMsg & canari.ReplyMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReplyMsg;
 
         /**
          * Decodes a ReplyMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.ReplyMsg & canari.ReplyMsg.$Shape} ReplyMsg
+         * @returns ReplyMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReplyMsg & canari.ReplyMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReplyMsg;
 
         /**
          * Verifies a ReplyMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a ReplyMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns ReplyMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.ReplyMsg;
+        public static fromObject(object: { [k: string]: any }): canari.ReplyMsg;
 
         /**
          * Creates a plain object from a ReplyMsg message. Also converts values to other types if specified.
@@ -1486,73 +1243,53 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.ReplyMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.ReplyMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this ReplyMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for ReplyMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for ReplyMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace ReplyMsg {
+    /** Properties of a ReactionMsg. */
+    interface IReactionMsg {
 
-        /** Properties of a ReplyMsg. */
-        interface $Properties {
+        /** ReactionMsg messageId */
+        messageId?: (string|null);
 
-            /** ReplyMsg content */
-            content?: (string|null);
-
-            /** ReplyMsg replyTo */
-            replyTo?: (canari.ReplyRef.$Properties|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a ReplyMsg. */
-        type $Shape = canari.ReplyMsg.$Properties;
-    }
-
-    /**
-     * Properties of a ReactionMsg.
-     * @deprecated Use canari.ReactionMsg.$Properties instead.
-     */
-    interface IReactionMsg extends canari.ReactionMsg.$Properties {
+        /** ReactionMsg emoji */
+        emoji?: (string|null);
     }
 
     /** Represents a ReactionMsg. */
-    class ReactionMsg {
+    class ReactionMsg implements IReactionMsg {
 
         /**
          * Constructs a new ReactionMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.ReactionMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IReactionMsg);
 
         /** ReactionMsg messageId. */
-        messageId: string;
+        public messageId: string;
 
         /** ReactionMsg emoji. */
-        emoji: string;
+        public emoji: string;
 
         /**
          * Creates a new ReactionMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns ReactionMsg instance
          */
-        static create(properties: canari.ReactionMsg.$Shape): canari.ReactionMsg & canari.ReactionMsg.$Shape;
-        static create(properties?: canari.ReactionMsg.$Properties): canari.ReactionMsg;
+        public static create(properties?: canari.IReactionMsg): canari.ReactionMsg;
 
         /**
          * Encodes the specified ReactionMsg message. Does not implicitly {@link canari.ReactionMsg.verify|verify} messages.
@@ -1560,7 +1297,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.ReactionMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IReactionMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified ReactionMsg message, length delimited. Does not implicitly {@link canari.ReactionMsg.verify|verify} messages.
@@ -1568,40 +1305,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.ReactionMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IReactionMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a ReactionMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.ReactionMsg & canari.ReactionMsg.$Shape} ReactionMsg
+         * @returns ReactionMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReactionMsg & canari.ReactionMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.ReactionMsg;
 
         /**
          * Decodes a ReactionMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.ReactionMsg & canari.ReactionMsg.$Shape} ReactionMsg
+         * @returns ReactionMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReactionMsg & canari.ReactionMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.ReactionMsg;
 
         /**
          * Verifies a ReactionMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a ReactionMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns ReactionMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.ReactionMsg;
+        public static fromObject(object: { [k: string]: any }): canari.ReactionMsg;
 
         /**
          * Creates a plain object from a ReactionMsg message. Also converts values to other types if specified.
@@ -1609,73 +1346,53 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.ReactionMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.ReactionMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this ReactionMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for ReactionMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for ReactionMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace ReactionMsg {
+    /** Properties of a PollOption. */
+    interface IPollOption {
 
-        /** Properties of a ReactionMsg. */
-        interface $Properties {
+        /** PollOption id */
+        id?: (string|null);
 
-            /** ReactionMsg messageId */
-            messageId?: (string|null);
-
-            /** ReactionMsg emoji */
-            emoji?: (string|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a ReactionMsg. */
-        type $Shape = canari.ReactionMsg.$Properties;
-    }
-
-    /**
-     * Properties of a PollOption.
-     * @deprecated Use canari.PollOption.$Properties instead.
-     */
-    interface IPollOption extends canari.PollOption.$Properties {
+        /** PollOption label */
+        label?: (string|null);
     }
 
     /** Represents a PollOption. */
-    class PollOption {
+    class PollOption implements IPollOption {
 
         /**
          * Constructs a new PollOption.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.PollOption.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IPollOption);
 
         /** PollOption id. */
-        id: string;
+        public id: string;
 
         /** PollOption label. */
-        label: string;
+        public label: string;
 
         /**
          * Creates a new PollOption instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PollOption instance
          */
-        static create(properties: canari.PollOption.$Shape): canari.PollOption & canari.PollOption.$Shape;
-        static create(properties?: canari.PollOption.$Properties): canari.PollOption;
+        public static create(properties?: canari.IPollOption): canari.PollOption;
 
         /**
          * Encodes the specified PollOption message. Does not implicitly {@link canari.PollOption.verify|verify} messages.
@@ -1683,7 +1400,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.PollOption.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IPollOption, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PollOption message, length delimited. Does not implicitly {@link canari.PollOption.verify|verify} messages.
@@ -1691,40 +1408,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.PollOption.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IPollOption, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PollOption message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.PollOption & canari.PollOption.$Shape} PollOption
+         * @returns PollOption
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.PollOption & canari.PollOption.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.PollOption;
 
         /**
          * Decodes a PollOption message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.PollOption & canari.PollOption.$Shape} PollOption
+         * @returns PollOption
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.PollOption & canari.PollOption.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.PollOption;
 
         /**
          * Verifies a PollOption message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PollOption message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PollOption
          */
-        static fromObject(object: { [k: string]: any }): canari.PollOption;
+        public static fromObject(object: { [k: string]: any }): canari.PollOption;
 
         /**
          * Creates a plain object from a PollOption message. Also converts values to other types if specified.
@@ -1732,79 +1449,65 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.PollOption, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.PollOption, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PollOption to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PollOption
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PollOption
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace PollOption {
+    /** Properties of a PollMsg. */
+    interface IPollMsg {
 
-        /** Properties of a PollOption. */
-        interface $Properties {
+        /** PollMsg question */
+        question?: (string|null);
 
-            /** PollOption id */
-            id?: (string|null);
+        /** PollMsg options */
+        options?: (canari.IPollOption[]|null);
 
-            /** PollOption label */
-            label?: (string|null);
+        /** PollMsg multipleChoice */
+        multipleChoice?: (boolean|null);
 
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a PollOption. */
-        type $Shape = canari.PollOption.$Properties;
-    }
-
-    /**
-     * Properties of a PollMsg.
-     * @deprecated Use canari.PollMsg.$Properties instead.
-     */
-    interface IPollMsg extends canari.PollMsg.$Properties {
+        /** PollMsg endsAt */
+        endsAt?: (number|null);
     }
 
     /** Represents a PollMsg. */
-    class PollMsg {
+    class PollMsg implements IPollMsg {
 
         /**
          * Constructs a new PollMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.PollMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IPollMsg);
 
         /** PollMsg question. */
-        question: string;
+        public question: string;
 
         /** PollMsg options. */
-        options: canari.PollOption.$Properties[];
+        public options: canari.IPollOption[];
 
         /** PollMsg multipleChoice. */
-        multipleChoice: boolean;
+        public multipleChoice: boolean;
 
         /** PollMsg endsAt. */
-        endsAt: number;
+        public endsAt: number;
 
         /**
          * Creates a new PollMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns PollMsg instance
          */
-        static create(properties: canari.PollMsg.$Shape): canari.PollMsg & canari.PollMsg.$Shape;
-        static create(properties?: canari.PollMsg.$Properties): canari.PollMsg;
+        public static create(properties?: canari.IPollMsg): canari.PollMsg;
 
         /**
          * Encodes the specified PollMsg message. Does not implicitly {@link canari.PollMsg.verify|verify} messages.
@@ -1812,7 +1515,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.PollMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IPollMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified PollMsg message, length delimited. Does not implicitly {@link canari.PollMsg.verify|verify} messages.
@@ -1820,40 +1523,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.PollMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IPollMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a PollMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.PollMsg & canari.PollMsg.$Shape} PollMsg
+         * @returns PollMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.PollMsg & canari.PollMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.PollMsg;
 
         /**
          * Decodes a PollMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.PollMsg & canari.PollMsg.$Shape} PollMsg
+         * @returns PollMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.PollMsg & canari.PollMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.PollMsg;
 
         /**
          * Verifies a PollMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a PollMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns PollMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.PollMsg;
+        public static fromObject(object: { [k: string]: any }): canari.PollMsg;
 
         /**
          * Creates a plain object from a PollMsg message. Also converts values to other types if specified.
@@ -1861,119 +1564,109 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.PollMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.PollMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this PollMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for PollMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for PollMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace PollMsg {
-
-        /** Properties of a PollMsg. */
-        interface $Properties {
-
-            /** PollMsg question */
-            question?: (string|null);
-
-            /** PollMsg options */
-            options?: (canari.PollOption.$Properties[]|null);
-
-            /** PollMsg multipleChoice */
-            multipleChoice?: (boolean|null);
-
-            /** PollMsg endsAt */
-            endsAt?: (number|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a PollMsg. */
-        type $Shape = canari.PollMsg.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
     /** MediaKind enum. */
     enum MediaKind {
-
-        /** MEDIA_FILE value */
         MEDIA_FILE = 0,
-
-        /** MEDIA_IMAGE value */
         MEDIA_IMAGE = 1,
-
-        /** MEDIA_VIDEO value */
         MEDIA_VIDEO = 2,
-
-        /** MEDIA_AUDIO value */
         MEDIA_AUDIO = 3
     }
 
-    /**
-     * Properties of a MediaMsg.
-     * @deprecated Use canari.MediaMsg.$Properties instead.
-     */
-    interface IMediaMsg extends canari.MediaMsg.$Properties {
+    /** Properties of a MediaMsg. */
+    interface IMediaMsg {
+
+        /** MediaMsg kind */
+        kind?: (canari.MediaKind|null);
+
+        /** MediaMsg mediaId */
+        mediaId?: (string|null);
+
+        /** MediaMsg key */
+        key?: (Uint8Array|null);
+
+        /** MediaMsg iv */
+        iv?: (Uint8Array|null);
+
+        /** MediaMsg mimeType */
+        mimeType?: (string|null);
+
+        /** MediaMsg size */
+        size?: (number|null);
+
+        /** MediaMsg fileName */
+        fileName?: (string|null);
+
+        /** MediaMsg caption */
+        caption?: (string|null);
+
+        /** MediaMsg width */
+        width?: (number|null);
+
+        /** MediaMsg height */
+        height?: (number|null);
     }
 
     /** Represents a MediaMsg. */
-    class MediaMsg {
+    class MediaMsg implements IMediaMsg {
 
         /**
          * Constructs a new MediaMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.MediaMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.IMediaMsg);
 
         /** MediaMsg kind. */
-        kind: canari.MediaKind;
+        public kind: canari.MediaKind;
 
         /** MediaMsg mediaId. */
-        mediaId: string;
+        public mediaId: string;
 
         /** MediaMsg key. */
-        key: Uint8Array;
+        public key: Uint8Array;
 
         /** MediaMsg iv. */
-        iv: Uint8Array;
+        public iv: Uint8Array;
 
         /** MediaMsg mimeType. */
-        mimeType: string;
+        public mimeType: string;
 
         /** MediaMsg size. */
-        size: number;
+        public size: number;
 
         /** MediaMsg fileName. */
-        fileName: string;
+        public fileName: string;
 
         /** MediaMsg caption. */
-        caption: string;
+        public caption: string;
 
         /** MediaMsg width. */
-        width: number;
+        public width: number;
 
         /** MediaMsg height. */
-        height: number;
+        public height: number;
 
         /**
          * Creates a new MediaMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns MediaMsg instance
          */
-        static create(properties: canari.MediaMsg.$Shape): canari.MediaMsg & canari.MediaMsg.$Shape;
-        static create(properties?: canari.MediaMsg.$Properties): canari.MediaMsg;
+        public static create(properties?: canari.IMediaMsg): canari.MediaMsg;
 
         /**
          * Encodes the specified MediaMsg message. Does not implicitly {@link canari.MediaMsg.verify|verify} messages.
@@ -1981,7 +1674,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.MediaMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.IMediaMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified MediaMsg message, length delimited. Does not implicitly {@link canari.MediaMsg.verify|verify} messages.
@@ -1989,40 +1682,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.MediaMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.IMediaMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a MediaMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.MediaMsg & canari.MediaMsg.$Shape} MediaMsg
+         * @returns MediaMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.MediaMsg & canari.MediaMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.MediaMsg;
 
         /**
          * Decodes a MediaMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.MediaMsg & canari.MediaMsg.$Shape} MediaMsg
+         * @returns MediaMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.MediaMsg & canari.MediaMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.MediaMsg;
 
         /**
          * Verifies a MediaMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a MediaMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns MediaMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.MediaMsg;
+        public static fromObject(object: { [k: string]: any }): canari.MediaMsg;
 
         /**
          * Creates a plain object from a MediaMsg message. Also converts values to other types if specified.
@@ -2030,97 +1723,53 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.MediaMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.MediaMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this MediaMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for MediaMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for MediaMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
-    namespace MediaMsg {
+    /** Properties of a SystemMsg. */
+    interface ISystemMsg {
 
-        /** Properties of a MediaMsg. */
-        interface $Properties {
+        /** SystemMsg event */
+        event?: (string|null);
 
-            /** MediaMsg kind */
-            kind?: (canari.MediaKind|null);
-
-            /** MediaMsg mediaId */
-            mediaId?: (string|null);
-
-            /** MediaMsg key */
-            key?: (Uint8Array|null);
-
-            /** MediaMsg iv */
-            iv?: (Uint8Array|null);
-
-            /** MediaMsg mimeType */
-            mimeType?: (string|null);
-
-            /** MediaMsg size */
-            size?: (number|null);
-
-            /** MediaMsg fileName */
-            fileName?: (string|null);
-
-            /** MediaMsg caption */
-            caption?: (string|null);
-
-            /** MediaMsg width */
-            width?: (number|null);
-
-            /** MediaMsg height */
-            height?: (number|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a MediaMsg. */
-        type $Shape = canari.MediaMsg.$Properties;
-    }
-
-    /**
-     * Properties of a SystemMsg.
-     * @deprecated Use canari.SystemMsg.$Properties instead.
-     */
-    interface ISystemMsg extends canari.SystemMsg.$Properties {
+        /** SystemMsg data */
+        data?: (string|null);
     }
 
     /** Represents a SystemMsg. */
-    class SystemMsg {
+    class SystemMsg implements ISystemMsg {
 
         /**
          * Constructs a new SystemMsg.
          * @param [properties] Properties to set
          */
-        constructor(properties?: canari.SystemMsg.$Properties);
-
-        /** Unknown fields preserved while decoding */
-        $unknowns?: Uint8Array[];
+        constructor(properties?: canari.ISystemMsg);
 
         /** SystemMsg event. */
-        event: string;
+        public event: string;
 
         /** SystemMsg data. */
-        data: string;
+        public data: string;
 
         /**
          * Creates a new SystemMsg instance using the specified properties.
          * @param [properties] Properties to set
          * @returns SystemMsg instance
          */
-        static create(properties: canari.SystemMsg.$Shape): canari.SystemMsg & canari.SystemMsg.$Shape;
-        static create(properties?: canari.SystemMsg.$Properties): canari.SystemMsg;
+        public static create(properties?: canari.ISystemMsg): canari.SystemMsg;
 
         /**
          * Encodes the specified SystemMsg message. Does not implicitly {@link canari.SystemMsg.verify|verify} messages.
@@ -2128,7 +1777,7 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encode(message: canari.SystemMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encode(message: canari.ISystemMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Encodes the specified SystemMsg message, length delimited. Does not implicitly {@link canari.SystemMsg.verify|verify} messages.
@@ -2136,40 +1785,40 @@ export namespace canari {
          * @param [writer] Writer to encode to
          * @returns Writer
          */
-        static encodeDelimited(message: canari.SystemMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+        public static encodeDelimited(message: canari.ISystemMsg, writer?: $protobuf.Writer): $protobuf.Writer;
 
         /**
          * Decodes a SystemMsg message from the specified reader or buffer.
          * @param reader Reader or buffer to decode from
          * @param [length] Message length if known beforehand
-         * @returns {canari.SystemMsg & canari.SystemMsg.$Shape} SystemMsg
+         * @returns SystemMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.SystemMsg & canari.SystemMsg.$Shape;
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.SystemMsg;
 
         /**
          * Decodes a SystemMsg message from the specified reader or buffer, length delimited.
          * @param reader Reader or buffer to decode from
-         * @returns {canari.SystemMsg & canari.SystemMsg.$Shape} SystemMsg
+         * @returns SystemMsg
          * @throws {Error} If the payload is not a reader or valid buffer
          * @throws {$protobuf.util.ProtocolError} If required fields are missing
          */
-        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.SystemMsg & canari.SystemMsg.$Shape;
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.SystemMsg;
 
         /**
          * Verifies a SystemMsg message.
          * @param message Plain object to verify
          * @returns `null` if valid, otherwise the reason why it is not
          */
-        static verify(message: { [k: string]: any }): (string|null);
+        public static verify(message: { [k: string]: any }): (string|null);
 
         /**
          * Creates a SystemMsg message from a plain object. Also converts values to their respective internal types.
          * @param object Plain object
          * @returns SystemMsg
          */
-        static fromObject(object: { [k: string]: any }): canari.SystemMsg;
+        public static fromObject(object: { [k: string]: any }): canari.SystemMsg;
 
         /**
          * Creates a plain object from a SystemMsg message. Also converts values to other types if specified.
@@ -2177,38 +1826,19 @@ export namespace canari {
          * @param [options] Conversion options
          * @returns Plain object
          */
-        static toObject(message: canari.SystemMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+        public static toObject(message: canari.SystemMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
 
         /**
          * Converts this SystemMsg to JSON.
          * @returns JSON object
          */
-        toJSON(): { [k: string]: any };
+        public toJSON(): { [k: string]: any };
 
         /**
-         * Gets the type url for SystemMsg
-         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
-         * @returns The type url
+         * Gets the default type url for SystemMsg
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
          */
-        static getTypeUrl(prefix?: string): string;
-    }
-
-    namespace SystemMsg {
-
-        /** Properties of a SystemMsg. */
-        interface $Properties {
-
-            /** SystemMsg event */
-            event?: (string|null);
-
-            /** SystemMsg data */
-            data?: (string|null);
-
-            /** Unknown fields preserved while decoding */
-            $unknowns?: Uint8Array[];
-        }
-
-        /** Shape of a SystemMsg. */
-        type $Shape = canari.SystemMsg.$Properties;
+        public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 }
