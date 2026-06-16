@@ -3,6 +3,7 @@
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import { subscribeFormReminder, unsubscribeFormReminder, checkFormReminder } from '$lib/posts/api';
   import { onMount } from 'svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Forms attached to the post, each with its submission status for the current user. */
@@ -69,18 +70,18 @@
           <!-- Informations du Formulaire -->
           <div class="flex-1 min-w-0">
             <h3 class="font-bold text-[0.95rem] text-text-main truncate transition-colors {fi.submitted ? 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400' : 'group-hover:text-amber-600 dark:group-hover:text-amber-400'}">
-              {fi.title || 'Formulaire'}
+              {fi.title || m.post_form_fallback_title()}
             </h3>
             <p class="text-[0.75rem] font-semibold mt-0.5 {fi.submitted ? 'text-emerald-600/80 dark:text-emerald-400/80' : 'text-text-muted'}">
               {#if fi.submitted}
-                Réponse envoyée
+                {m.post_form_response_sent()}
               {:else if fi.opensAt && formOpensAtIso(fi.opensAt)}
                 <span class="inline-flex items-center gap-1">
                   <Clock size={12} strokeWidth={2.5} />
-                  Ouvre le {formatFormOpensAt(fi.opensAt)}
+                  {m.post_form_opens_on_label({ date: formatFormOpensAt(fi.opensAt) })}
                 </span>
               {:else}
-                Remplir le formulaire
+                {m.post_form_fill_label()}
               {/if}
             </p>
           </div>
@@ -102,14 +103,16 @@
           onclick={() => toggleReminder(fi.id)}
           disabled={toggling[fi.id]}
           class="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-xl transition-colors {subscribed[fi.id] ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20' : 'text-text-muted hover:text-text hover:bg-cn-surface'}"
-          title={subscribed[fi.id] ? 'Désactiver le rappel' : 'Me prévenir quand disponible'}
+          title={subscribed[fi.id]
+            ? m.post_form_disable_reminder_label()
+            : m.post_form_notify_when_available_label()}
         >
           {#if subscribed[fi.id]}
             <BellOff size={13} strokeWidth={2} />
-            Rappel activé
+            {m.post_form_reminder_enabled_label()}
           {:else}
             <Bell size={13} strokeWidth={2} />
-            Me prévenir
+            {m.post_form_notify_me_label()}
           {/if}
         </button>
       {/if}

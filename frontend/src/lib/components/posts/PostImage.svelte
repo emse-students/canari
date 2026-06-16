@@ -4,6 +4,7 @@
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { Image as ImageIcon, CircleAlert } from '@lucide/svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Encrypted media descriptor containing the download reference and decryption keys. */
@@ -34,7 +35,7 @@
   $effect(() => {
     if (!authToken) {
       loading = false;
-      loadError = "Jeton d'authentification manquant";
+      loadError = m.post_missing_auth_token();
       return;
     }
 
@@ -69,7 +70,7 @@
       })
       .catch((err) => {
         if (!destroyed) {
-          loadError = err instanceof Error ? err.message : "Impossible de charger l'image";
+          loadError = err instanceof Error ? err.message : m.post_image_load_error();
         }
       })
       .finally(() => {
@@ -123,7 +124,7 @@
   {:else if blobUrl}
     <img
       src={blobUrl}
-      alt={media.fileName ?? 'Image de la publication'}
+      alt={media.fileName ?? m.post_image_alt()}
       class="max-h-full max-w-full object-contain select-none"
     />
   {/if}
@@ -147,11 +148,11 @@
       type="button"
       onclick={handleClick}
       class="block w-full h-full outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:z-10 group/img cursor-zoom-in"
-      aria-label="Agrandir l'image"
+      aria-label={m.post_zoom_image_label()}
     >
       <img
         src={blobUrl}
-        alt={media.fileName ?? 'Image de la publication'}
+        alt={media.fileName ?? m.post_image_alt()}
         class="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-105"
         loading="lazy"
       />
@@ -161,14 +162,14 @@
   <MediaLightbox
     open={lightboxOpen && !!blobUrl}
     onClose={closeLightbox}
-    ariaLabel="Image agrandie"
-    title={media.fileName ?? 'Image'}
+    ariaLabel={m.post_image_enlarged_alt()}
+    title={media.fileName ?? m.post_image_label()}
     onDownload={blobUrl ? () => downloadBlob(blobUrl!, media.fileName ?? 'image') : undefined}
   >
     {#if blobUrl}
       <img
         src={blobUrl}
-        alt={media.fileName ?? 'Image agrandie'}
+        alt={media.fileName ?? m.post_image_enlarged_alt()}
         class="max-h-full max-w-full object-contain select-none"
       />
     {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { portal } from '$lib/actions/portal';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Aggregated count of each reaction type across all users. */
@@ -103,7 +104,7 @@
         {/each}
       </ul>
     {:else}
-      <p class="opacity-60 italic">Chargement…</p>
+      <p class="opacity-60 italic">{m.common_loading_label()}</p>
     {/if}
   </div>
 {/if}

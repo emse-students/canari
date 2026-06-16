@@ -2,6 +2,7 @@
   import { Pin, PinOff, Pencil, Trash2, Flag, Link, Check } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { slide } from 'svelte/transition';
+  import { m } from '$lib/paraglide/messages';
 
   /**
    * Props for the PostOverlayControls component.
@@ -77,8 +78,8 @@
       type="button"
       onclick={sharePost}
       class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 hover:bg-amber-500/10 transition-colors outline-none"
-      aria-label={copiedLink ? 'Lien copié' : 'Partager le post'}
-      title={copiedLink ? 'Lien copié' : 'Partager'}
+      aria-label={copiedLink ? m.post_link_copied_label() : m.post_share_post_label()}
+      title={copiedLink ? m.post_link_copied_label() : m.post_share_label()}
     >
       {#if copiedLink}
         <Check size={14} strokeWidth={2.5} />
@@ -91,8 +92,8 @@
         type="button"
         onclick={onTogglePin}
         class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
-        aria-label={pinned ? 'Désépingler' : 'Épingler'}
-        title={pinned ? 'Désépingler' : 'Épingler'}
+        aria-label={pinned ? m.post_unpin_action_label() : m.post_pin_action_label()}
+        title={pinned ? m.post_unpin_action_label() : m.post_pin_action_label()}
       >
         {#if pinned}
           <PinOff size={14} strokeWidth={2.5} />
@@ -106,7 +107,7 @@
         type="button"
         onclick={onStartEdit}
         class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
-        aria-label="Modifier le post"
+        aria-label={m.post_edit_post_label()}
       >
         <Pencil size={14} strokeWidth={2.5} />
       </button>
@@ -116,7 +117,7 @@
         type="button"
         onclick={onDelete}
         class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
-        aria-label="Supprimer le post"
+        aria-label={m.post_delete_post_label()}
       >
         <Trash2 size={14} strokeWidth={2.5} />
       </button>
@@ -128,7 +129,7 @@
           transition:slide={{ duration: 150 }}
         >
           <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wide">
-            Signaler ce post
+            {m.post_report_post_title()}
           </p>
           <div class="flex flex-col gap-1">
             {#each reportReasons as r (r)}
@@ -150,14 +151,14 @@
               type="button"
               onclick={() => onToggleReport(false)}
               class="flex-1 text-xs font-bold text-text-muted hover:text-text-main rounded-lg py-1.5 transition-colors"
-              >Annuler</button
+              >{m.common_cancel_button()}</button
             >
             <button
               type="button"
               onclick={onSubmitReport}
               disabled={!reportReason || reportSubmitting}
               class="flex-1 text-xs font-bold bg-red-500 text-white rounded-lg py-1.5 disabled:opacity-40 transition-colors hover:bg-red-400"
-              >Signaler</button
+              >{m.post_report_label()}</button
             >
           </div>
         </div>
@@ -166,7 +167,7 @@
           type="button"
           onclick={() => onToggleReport(true)}
           class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
-          aria-label="Signaler ce post"
+          aria-label={m.post_report_post_title()}
         >
           <Flag size={14} strokeWidth={2.5} />
         </button>

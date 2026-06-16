@@ -1,5 +1,6 @@
 <script lang="ts">
   import { MessageCircle, Smile } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   /** Props for the PostActions bar (reaction picker + comment button). */
   interface Props {
@@ -38,7 +39,7 @@
       class="flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors {userReaction
         ? 'bg-cn-yellow/15 text-cn-dark'
         : 'text-text-muted hover:bg-[var(--cn-surface)]'}"
-      aria-label="Ajouter une réaction"
+      aria-label={m.post_reacter()}
     >
       {#if userReaction}
         <span class="text-lg"
@@ -47,7 +48,7 @@
         <span class="text-sm font-medium">{userReaction}</span>
       {:else}
         <Smile size={20} />
-        <span class="text-sm">Réagir</span>
+        <span class="text-sm">{m.post_react()}</span>
       {/if}
     </button>
 
@@ -77,9 +78,9 @@
     type="button"
     onclick={onCommentClick}
     class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-text-muted hover:bg-[var(--cn-surface)] transition-colors"
-    aria-label="Commenter"
+    aria-label={m.post_commenter()}
   >
     <MessageCircle size={20} />
-    <span class="text-sm">{commentCount ? commentCount : 'Commenter'}</span>
+    <span class="text-sm">{commentCount ? commentCount : m.post_commenter()}</span>
   </button>
 </div>

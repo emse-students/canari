@@ -12,6 +12,7 @@
   import { onMount } from 'svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { mediaAspectStyle, GALLERY_MEDIA_ASPECT } from '$lib/utils/mediaLayout';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -77,7 +78,7 @@
           onclick={() => (expanded = !expanded)}
           class="mt-1 text-[0.82rem] font-bold text-amber-600 dark:text-amber-400 hover:underline outline-none focus-visible:underline"
         >
-          {expanded ? 'Voir moins' : 'Voir plus'}
+          {expanded ? m.post_voir_moins() : m.post_voir_plus()}
         </button>
       {/if}
     </div>
@@ -126,7 +127,7 @@
   <MediaLightbox
     open={lightboxIndex !== null}
     onClose={closeLightbox}
-    ariaLabel="Galerie d'images"
+    ariaLabel={m.post_gallery_label()}
     showPrev={post.images.length > 1}
     showNext={post.images.length > 1}
     onPrev={prevImage}

@@ -4,6 +4,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { Clock } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
+  import { m } from '$lib/paraglide/messages';
 
   /** Props for the PostHeader component. */
   interface Props {
@@ -35,7 +36,7 @@
     <a
       href={associationHref}
       class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
-      aria-label="Voir l'association {post.association.name}"
+      aria-label={m.post_view_association_label({ name: post.association.name })}
     >
       <AssociationAvatar
         name={post.association.name}
@@ -48,7 +49,7 @@
     <a
       href="/profile/{encodeURIComponent(post.authorId ?? '')}"
       class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
-      aria-label="Voir le profil de {getPostAuthorName()}"
+      aria-label={m.post_view_profile_label({ name: getPostAuthorName() })}
     >
       <Avatar userId={post.authorId ?? ''} size="md" />
     </a>

@@ -2,6 +2,7 @@
   import { X, ChartColumn } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   /**
    * Collapsible card that lets the author configure a poll.
@@ -35,13 +36,13 @@
       class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted"
     >
       <ChartColumn size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
-      Sondage
+      {m.post_poll_section_title()}
     </p>
     <button
       type="button"
       onclick={onRemove}
       class="rounded-full p-1.5 text-text-muted transition-colors hover:bg-cn-surface hover:text-text-main"
-      title="Retirer le sondage"
+      title={m.post_poll_remove_label()}
     >
       <X size={16} />
     </button>
@@ -49,17 +50,17 @@
 
   <div class="space-y-4">
     <Input
-      label="Question du sondage"
+      label={m.post_poll_question_label()}
       bind:value={question}
-      placeholder="Quelle est votre question ?"
+      placeholder={m.post_poll_question_placeholder()}
     />
-    <Textarea label="Options (une par ligne)" bind:value={optionsRaw} rows={3} />
+    <Textarea label={m.post_poll_options_label()} bind:value={optionsRaw} rows={3} />
 
     <!-- Multiple-choice toggle -->
     <label
       class="flex cursor-pointer select-none items-center justify-between rounded-xl bg-cn-surface/80 px-4 py-3 transition-colors hover:bg-cn-border/30 dark:bg-white/5 dark:hover:bg-white/10"
     >
-      <span class="text-sm font-semibold text-text-main">Autoriser plusieurs réponses</span>
+      <span class="text-sm font-semibold text-text-main">{m.post_poll_allow_multiple_label()}</span>
       <div class="relative flex items-center">
         <input type="checkbox" bind:checked={multipleChoice} class="peer sr-only" />
         <div

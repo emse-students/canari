@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Clock, Trash2 } from '@lucide/svelte';
   import type { ScheduledPost } from '$lib/posts/api';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * Banner listing the current user's posts that are scheduled for future publication.
@@ -18,7 +20,10 @@
 
   /** Formats a UTC ISO string into a short French locale date+time string. */
   function formatScheduled(iso: string): string {
-    return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+    return new Date(iso).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
   }
 </script>
 
@@ -27,7 +32,7 @@
   <div class="flex items-center gap-2 border-b border-cn-border bg-amber-500/5 px-4 py-2.5">
     <Clock size={14} class="shrink-0 text-amber-500" />
     <span class="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-      Publications programmées ({posts.length})
+      {m.post_scheduled_panel_title({ count: posts.length })}
     </span>
   </div>
 
@@ -40,7 +45,7 @@
             {sp.markdown.slice(0, 80)}{sp.markdown.length > 80 ? '…' : ''}
           </p>
           <p class="mt-0.5 text-xs text-text-muted">
-            Publié le {formatScheduled(sp.scheduledAt)}
+            {m.post_scheduled_published_on_label({ date: formatScheduled(sp.scheduledAt) })}
           </p>
         </div>
 
@@ -48,8 +53,8 @@
           type="button"
           onclick={() => onDelete(sp.id)}
           class="shrink-0 rounded-lg p-1.5 text-text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
-          title="Supprimer"
-          aria-label="Supprimer"
+          title={m.common_delete_button()}
+          aria-label={m.common_delete_button()}
         >
           <Trash2 size={15} />
         </button>

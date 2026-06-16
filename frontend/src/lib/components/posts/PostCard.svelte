@@ -33,6 +33,8 @@
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS } from '$lib/posts/reactions';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * Props for the PostCard component.
@@ -181,16 +183,16 @@
   /** Submits the current selectedOptions to the API and updates the local poll vote counts on success. */
   async function submitVote(pollId: string, allowEmpty = false) {
     if (!currentUserId.trim()) {
-      errorMessage = 'Identifiez-vous avant de voter.';
+      errorMessage = m.post_identifier_avant();
       return;
     }
     if (!allowEmpty && selectedOptions.length === 0) {
-      errorMessage = 'Sélectionnez au moins une option.';
+      errorMessage = m.post_sondage_selectionner();
       return;
     }
     try {
       await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
-      actionMessage = selectedOptions.length === 0 ? 'Vote retiré.' : 'Vote enregistré !';
+      actionMessage = selectedOptions.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
       // Update the poll locally - track votesByUser + per-option vote arrays
       const updatedPolls = (localPost.polls ?? []).map((p) => {
         if (p.id !== pollId) return p;
@@ -208,7 +210,7 @@
       });
       localPost = { ...localPost, polls: updatedPolls };
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de voter';
+      errorMessage = err instanceof Error ? err.message : m.post_unable_to_vote();
     }
   }
 
@@ -218,7 +220,7 @@
     try {
       await assertNotMuted();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Action non autorisée';
+      errorMessage = err instanceof Error ? err.message : m.post_action_not_allowed();
       return;
     }
 
@@ -238,7 +240,7 @@
       localPost = { ...localPost, reactions: result.reactions };
     } catch (err) {
       localPost = { ...localPost, reactions: prevReactions };
-      errorMessage = err instanceof Error ? err.message : 'Erreur lors de la réaction';
+      errorMessage = err instanceof Error ? err.message : m.post_reaction_error();
     }
   }
 
@@ -259,7 +261,7 @@
       await deletePostApi(localPost.id);
       onDelete?.();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de supprimer le post';
+      errorMessage = err instanceof Error ? err.message : m.post_unable_to_delete_post();
     }
   }
 
@@ -288,7 +290,7 @@
       localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
       commentText = '';
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de commenter';
+      errorMessage = err instanceof Error ? err.message : m.post_unable_to_comment();
     } finally {
       submittingComment = false;
     }
@@ -316,7 +318,7 @@
         comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
       };
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de modifier le commentaire';
+      errorMessage = err instanceof Error ? err.message : m.post_unable_to_edit_comment();
     }
   }
 
@@ -331,7 +333,7 @@
         ),
       };
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de supprimer le commentaire';
+      errorMessage = err instanceof Error ? err.message : m.post_unable_to_delete_comment();
     }
   }
 
@@ -341,18 +343,18 @@
       const fn = localPost.pinned ? unpinPostApi : pinPostApi;
       const res = await fn(localPost.id);
       localPost = { ...localPost, pinned: res.pinned };
-      actionMessage = res.pinned ? 'Post épinglé !' : 'Post désépinglé.';
+      actionMessage = res.pinned ? m.post_epingle() : m.post_unpinned();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : "Impossible de modifier l'épingle";
+      errorMessage = err instanceof Error ? err.message : m.post_unable_to_toggle_pin();
     }
   }
 
-  const REPORT_REASONS = [
-    { label: 'Spam', value: 'spam' as const },
-    { label: 'Harcèlement', value: 'harassment' as const },
-    { label: 'Contenu inapproprié', value: 'inappropriate' as const },
-    { label: 'Autre', value: 'other' as const },
-  ];
+  const REPORT_REASONS = $derived([
+    { label: m.post_spam(), value: 'spam' as const },
+    { label: m.post_harassment(), value: 'harassment' as const },
+    { label: m.post_inappropriate(), value: 'inappropriate' as const },
+    { label: m.post_autre(), value: 'other' as const },
+  ]);
   let reportOpen = $state(false);
   let reportReason = $state('');
   let reportSubmitting = $state(false);
@@ -361,7 +363,7 @@
   async function handleReportComment(commentId: string) {
     try {
       await createReport('comment', commentId, 'inappropriate');
-      actionMessage = 'Commentaire signalé. Merci !';
+      actionMessage = m.post_comment_reported();
     } catch {
       // Ignore duplicate report errors silently.
     }
@@ -374,13 +376,13 @@
     try {
       const value = REPORT_REASONS.find((r) => r.label === reportReason)?.value ?? 'other';
       await createReport('post', localPost.id, value, undefined, localPost.authorId ?? null);
-      actionMessage = 'Signalement envoyé. Merci !';
+      actionMessage = m.post_signalement_merci();
       reportOpen = false;
       reportReason = '';
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
-      actionMessage = msg.includes('already') ? 'Vous avez déjà signalé ce post.' : '';
-      if (!actionMessage) errorMessage = msg || 'Impossible de signaler';
+      actionMessage = msg.includes('already') ? m.post_already_reported() : '';
+      if (!actionMessage) errorMessage = msg || m.post_unable_to_report();
       reportOpen = false;
       reportReason = '';
     } finally {
@@ -394,7 +396,7 @@
     <span
       class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30 inline-flex items-center gap-1 pointer-events-none"
     >
-      <Pin size={10} strokeWidth={3} /> Épinglé
+      <Pin size={10} strokeWidth={3} /> {m.post_pinned()}
     </span>
   {/if}
   <Card
@@ -435,10 +437,10 @@
         >
           <CalendarCheck size={14} strokeWidth={2.5} />
           <span>
-            Événement :
+            {m.post_event_label()}
             {ev.title}
             ·
-            {new Date(ev.startsAt).toLocaleString('fr-FR', {
+            {new Date(ev.startsAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
               day: 'numeric',
               month: 'short',
               hour: '2-digit',

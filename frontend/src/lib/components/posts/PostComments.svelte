@@ -24,6 +24,7 @@
   import PostCodespan from './PostCodespan.svelte';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   const mentionRenderers = {
     link: PostMentionLink,
@@ -291,7 +292,7 @@
             type="button"
             onclick={submitEdit}
             class="text-amber-500 hover:text-amber-400 shrink-0 outline-none"
-            aria-label="Valider"
+            aria-label={m.common_validate_button()}
           >
             <Send size={15} strokeWidth={2.5} />
           </button>
@@ -299,7 +300,7 @@
             type="button"
             onclick={cancelEdit}
             class="text-text-muted hover:text-text-main shrink-0 outline-none"
-            aria-label="Annuler"
+            aria-label={m.common_cancel_button()}
           >
             <X size={15} strokeWidth={2.5} />
           </button>
@@ -344,7 +345,7 @@
                 onclick={() => toggleCommentExpanded(comment.id)}
                 class="text-[0.75rem] font-semibold text-primary mt-0.5 hover:underline focus-visible:underline outline-none"
               >
-                {isExpanded ? 'Voir moins' : 'Voir plus'}
+                {isExpanded ? m.post_voir_moins() : m.post_voir_plus()}
               </button>
             {/if}
           {/if}
@@ -374,7 +375,9 @@
             ? 'text-red-500'
             : 'text-text-muted hover:text-text-main'}"
         >
-          {comment.likes?.length ? `${comment.likes.length} J'aime` : "J'aime"}
+          {comment.likes?.length
+            ? m.post_likes_count_label({ count: comment.likes.length })
+            : m.post_like_label()}
         </button>
 
         <button
@@ -382,7 +385,7 @@
           onclick={() => initiateReply(comment)}
           class="text-[0.7rem] font-extrabold text-text-muted hover:text-text-main transition-colors outline-none focus-visible:underline"
         >
-          Répondre
+          {m.post_reply_label()}
         </button>
 
         {#if isOwn && !isEditing}
@@ -390,7 +393,7 @@
             type="button"
             onclick={() => initiateEdit(comment)}
             class="text-[0.7rem] font-extrabold text-text-muted hover:text-amber-500 transition-colors outline-none"
-            aria-label="Modifier"
+            aria-label={m.common_edit_label()}
           >
             <Pencil size={12} strokeWidth={2.5} />
           </button>
@@ -398,7 +401,7 @@
             type="button"
             onclick={() => onDeleteComment(comment.id)}
             class="text-[0.7rem] font-extrabold text-text-muted hover:text-red-500 transition-colors outline-none"
-            aria-label="Supprimer"
+            aria-label={m.common_delete_button()}
           >
             <Trash2 size={12} strokeWidth={2.5} />
           </button>
@@ -407,8 +410,8 @@
             type="button"
             onclick={() => onReport?.(comment.id)}
             class="text-[0.7rem] font-extrabold text-text-muted hover:text-red-400 transition-colors outline-none"
-            aria-label="Signaler ce commentaire"
-            title="Signaler"
+            aria-label={m.post_report_comment_label()}
+            title={m.post_report_label()}
           >
             <Flag size={11} strokeWidth={2.5} />
           </button>
@@ -445,7 +448,7 @@
             class="text-[0.75rem] font-bold text-text-muted hover:text-text-main flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
           >
             <ChevronDown size={16} strokeWidth={2.5} />
-            Afficher les {topLevelComments.length} commentaires
+            {m.post_show_comments_label({ count: topLevelComments.length })}
           </button>
         {:else if showComments}
           <button
@@ -454,7 +457,7 @@
             class="text-[0.75rem] font-bold text-text-muted hover:text-text-main flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
           >
             <ChevronUp size={16} strokeWidth={2.5} />
-            Masquer
+            {m.post_hide_comments_label()}
           </button>
         {/if}
       </div>
@@ -463,7 +466,7 @@
       {#if topLevelComments.length > 1}
         <div class="flex items-center gap-1">
           <ArrowUpDown size={12} class="text-text-muted opacity-60" />
-          {#each [['recent', 'Récents'], ['oldest', 'Anciens'], ['liked', 'Aimés']] as const as [mode, label] (mode)}
+          {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
             <button
               type="button"
               onclick={() => (sortMode = mode)}
@@ -494,7 +497,7 @@
         disabled={loadingAll}
         class="w-full text-[0.75rem] font-bold text-text-muted hover:text-text-main py-1.5 rounded-lg transition-colors disabled:opacity-50 mb-2"
       >
-        {loadingAll ? 'Chargement…' : 'Charger tous les commentaires'}
+        {loadingAll ? m.common_loading_label() : m.post_load_all_comments_label()}
       </button>
     {/if}
 
@@ -505,19 +508,19 @@
           class="flex items-center justify-between px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-700 dark:text-amber-400 text-[0.7rem] font-bold ml-10 animate-in fade-in slide-in-from-bottom-1"
         >
           <span class="flex items-center gap-1.5"
-            ><CornerDownRight size={14} /> En réponse à {replyingToName}</span
+            ><CornerDownRight size={14} /> {m.post_replying_to_label({ name: replyingToName })}</span
           >
           <button
             onclick={cancelReply}
             class="hover:bg-amber-500/20 rounded-full p-1 transition-colors outline-none"
-            aria-label="Annuler la réponse"
+            aria-label={m.post_cancel_reply_label()}
           >
             <X size={14} strokeWidth={2.5} />
           </button>
         </div>
       {/if}
       {@render commentInputRow(
-        replyingToId ? 'Écrivez votre réponse...' : 'Ajouter un commentaire...'
+        replyingToId ? m.post_reply_placeholder() : m.post_comment_placeholder()
       )}
     </div>
   </div>
@@ -525,7 +528,7 @@
   <div
     class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
   >
-    {@render commentInputRow('Soyez le premier à commenter...')}
+    {@render commentInputRow(m.post_first_comment_placeholder())}
   </div>
 {/if}
 
@@ -551,14 +554,14 @@
               type="button"
               onclick={clearPendingMedia}
               class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-red-500 transition-colors"
-              aria-label="Supprimer l'image"
+              aria-label={m.post_remove_image_label()}
             >
               <X size={10} strokeWidth={3} />
             </button>
           {/if}
         </div>
         {#if uploadingMedia}
-          <span class="text-[0.7rem] text-text-muted animate-pulse">Chargement…</span>
+          <span class="text-[0.7rem] text-text-muted animate-pulse">{m.common_loading_label()}</span>
         {/if}
       </div>
     {/if}
@@ -583,7 +586,7 @@
           onclick={handleSubmitComment}
           disabled={(!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia}
           class="shrink-0 p-1.5 ml-1 rounded-full text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
-          aria-label="Envoyer le commentaire"
+          aria-label={m.post_send_comment_label()}
         >
           <Send size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
         </button>

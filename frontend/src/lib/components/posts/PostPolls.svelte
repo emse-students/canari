@@ -3,6 +3,7 @@
   import type { Poll } from '$lib/posts/api';
   import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { portal } from '$lib/actions/portal';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Polls attached to the post, or undefined when the post has none. */
@@ -80,13 +81,13 @@
 
   function pollCountdown(endsAt: string): string {
     const diff = new Date(endsAt).getTime() - Date.now();
-    if (diff <= 0) return 'Terminé';
+    if (diff <= 0) return m.post_poll_ended_label();
     const days = Math.floor(diff / 86400000);
-    if (days > 0) return `${days} j restant${days > 1 ? 's' : ''}`;
+    if (days > 0) return m.post_poll_days_remaining({ count: days });
     const hours = Math.floor(diff / 3600000);
-    if (hours > 0) return `${hours} h restante${hours > 1 ? 's' : ''}`;
+    if (hours > 0) return m.post_poll_hours_remaining({ count: hours });
     const mins = Math.floor(diff / 60000);
-    return `${mins} min restante${mins > 1 ? 's' : ''}`;
+    return m.post_poll_minutes_remaining({ count: mins });
   }
 
   function hasVoted(poll: Poll): boolean {
@@ -118,7 +119,7 @@
                 <span
                   class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider opacity-80"
                 >
-                  Choix multiples autorisés
+                  {m.post_poll_multiple_choice_label()}
                 </span>
               {/if}
               {#if poll.endsAt}
@@ -132,7 +133,7 @@
                 <span
                   class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-600 dark:text-emerald-400"
                 >
-                  ✓ Vous avez voté
+                  ✓ {m.post_poll_you_voted_label()}
                 </span>
               {/if}
             </div>
@@ -218,7 +219,7 @@
                     class="text-[0.7rem] font-bold text-text-muted bg-black/5 dark:bg-white/10 px-2 py-1 rounded-lg select-none"
                     class:cursor-pointer={voterIds.length > 0}
                     class:cursor-default={voterIds.length === 0}
-                    aria-label="{voteCount} vote(s)"
+                    aria-label={m.post_poll_vote_count_label({ count: voteCount })}
                     onmouseenter={(e) =>
                       voterIds.length > 0 &&
                       showVoterTooltip(option.id, option.votes, e.currentTarget as HTMLElement)}
@@ -242,10 +243,12 @@
         <!-- Pied du sondage (Total + Bouton de validation pour multi-choice) -->
         <div class="mt-5 flex items-center justify-between">
           <span class="text-xs font-semibold text-text-muted">
-            {totalVotes} vote{totalVotes > 1 ? 's' : ''} au total
+            {m.post_poll_total_votes_label({ count: totalVotes })}
           </span>
           {#if poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()}
-            <span class="text-xs font-bold text-text-muted opacity-60">Sondage terminé</span>
+            <span class="text-xs font-bold text-text-muted opacity-60"
+              >{m.post_poll_ended_full_label()}</span
+            >
           {:else if poll.multipleChoice}
             <button
               type="button"
@@ -253,7 +256,7 @@
               disabled={selectedOptions.length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >
-              Voter
+              {m.post_sondage_voter()}
             </button>
           {/if}
         </div>
@@ -271,7 +274,9 @@
     style="top: {tooltipPos.top}px; right: {tooltipPos.right}px;"
     role="tooltip"
   >
-    <p class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1">Votants</p>
+    <p class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1">
+      {m.post_poll_voters_label()}
+    </p>
     {#if names}
       <ul class="space-y-0.5">
         {#each names as name (name)}
@@ -279,7 +284,7 @@
         {/each}
       </ul>
     {:else}
-      <p class="opacity-60 italic">Chargement…</p>
+      <p class="opacity-60 italic">{m.common_loading_label()}</p>
     {/if}
   </div>
 {/if}

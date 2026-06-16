@@ -13,6 +13,7 @@
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { m } from '$lib/paraglide/messages';
 
   interface ConvItem {
     meta: ConversationMeta;
@@ -163,13 +164,13 @@
       <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
-      <span class="text-[0.95rem] font-extrabold text-text-main tracking-wide">Discussions</span>
+      <span class="text-[0.95rem] font-extrabold text-text-main tracking-wide">{m.post_conversations_panel_title()}</span>
     </div>
     <a
       href="/chat"
       class="text-[0.7rem] font-bold text-amber-600 dark:text-amber-500 hover:text-amber-500 dark:hover:text-amber-400 transition-colors flex items-center gap-0.5 uppercase tracking-wider outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded"
     >
-      Tout voir
+      {m.post_conversations_see_all_label()}
       <ChevronRight size={14} strokeWidth={2.5} />
     </a>
   </div>
@@ -179,7 +180,7 @@
     {#if isLoading}
       <div class="flex flex-col justify-center items-center py-10 gap-3 text-text-muted">
         <LoaderCircle size={24} class="animate-spin text-amber-500" />
-        <span class="text-xs font-semibold">Chargement...</span>
+        <span class="text-xs font-semibold">{m.common_loading_label()}</span>
       </div>
     {:else if displayItems.length === 0}
       <div class="text-center py-10 px-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -188,15 +189,15 @@
         >
           <MessageCircle size={24} strokeWidth={2} />
         </div>
-        <p class="text-sm font-bold text-text-main mb-1">Aucune discussion privée</p>
+        <p class="text-sm font-bold text-text-main mb-1">{m.post_conversations_empty_title()}</p>
         <p class="text-xs font-medium text-text-muted px-2 mb-4 leading-relaxed">
-          Démarrez un message direct ou un groupe privé avec vos contacts.
+          {m.post_conversations_empty_description()}
         </p>
         <a
           href="/chat"
           class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/20 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         >
-          Nouvelle discussion
+          {m.chat_new_discussion_label()}
         </a>
       </div>
     {:else}
@@ -227,7 +228,7 @@
       class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] transition-all text-[#151B2C] text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
-      Ouvrir la messagerie
+      {m.post_conversations_open_messaging_label()}
     </a>
   </div>
 </aside>

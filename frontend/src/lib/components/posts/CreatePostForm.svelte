@@ -40,6 +40,8 @@
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * Full-featured post creation form. Supports:
@@ -192,9 +194,10 @@
   });
 
   function formatLinkableEventLabel(ev: AssociationCalendarEvent): string {
+    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
     const d = new Date(ev.startsAt);
-    const date = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
-    const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const date = d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+    const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
     return `${date} ${time} - ${ev.title}`;
   }
 
@@ -263,13 +266,13 @@
     try {
       await assertNotMuted();
       if (!markdown.trim() && selectedFiles.length === 0) {
-        throw new Error('Le contenu du post ou une image est requis.');
+        throw new Error(m.post_create_content_required());
       }
       if (selectedFiles.length > 0 && !authToken) {
         try {
           authToken = await getToken();
         } catch {
-          throw new Error("Impossible d'obtenir un jeton pour l'envoi d'images.");
+          throw new Error(m.post_create_image_token_error());
         }
       }
 
@@ -299,7 +302,7 @@
           .filter(Boolean)
           .map((label) => ({ label }));
         if (!pollQuestion.trim() || options.length < 2) {
-          throw new Error('Un sondage nécessite une question et au moins deux options.');
+          throw new Error(m.post_create_poll_requires_options());
         }
         payload.polls = [
           { question: pollQuestion.trim(), options, multipleChoice: pollMultipleChoice },
@@ -307,7 +310,7 @@
       }
 
       if (includeForm) {
-        if (!selectedFormId) throw new Error('Veuillez sélectionner un formulaire.');
+        if (!selectedFormId) throw new Error(m.post_create_form_required());
         payload.attachedFormId = selectedFormId;
       }
 
@@ -337,7 +340,7 @@
       selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de publier le post';
+      errorMessage = err instanceof Error ? err.message : m.post_create_publish_error();
     } finally {
       publishing = false;
     }
@@ -350,10 +353,10 @@
   <!-- En-tête du Formulaire -->
   <div class="border-b border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 px-5 py-4">
     <p class="text-[0.65rem] font-extrabold uppercase tracking-widest text-amber-500 mb-0.5">
-      Créer une publication
+      {m.post_create_title()}
     </p>
     <p class="text-sm font-semibold text-text-main opacity-90">
-      Partagez une annonce, un événement ou un sondage avec le réseau.
+      {m.post_create_subtitle()}
     </p>
   </div>
 
@@ -367,7 +370,7 @@
             for="post-association-select"
             class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
           >
-            Publier en tant que
+            {m.post_create_post_as_label()}
           </label>
           <div class="relative group">
             <span
@@ -385,10 +388,10 @@
               class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
             >
               <option value="" class="bg-white dark:bg-zinc-900 font-medium"
-                >Profil personnel</option
+                >{m.post_create_personal_profile_label()}</option
               >
               {#if postAsGroups.assos.length > 0}
-                <optgroup label="Associations">
+                <optgroup label={m.post_create_associations_group_label()}>
                   {#each postAsGroups.assos as a (a.id)}
                     <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option
                     >
@@ -396,7 +399,7 @@
                 </optgroup>
               {/if}
               {#if postAsGroups.lists.length > 0}
-                <optgroup label="Listes">
+                <optgroup label={m.post_create_lists_group_label()}>
                   {#each postAsGroups.lists as a (a.id)}
                     <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
                       >{listOptionLabel(a)}</option
@@ -420,7 +423,7 @@
               for="post-payment-association-select"
               class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
             >
-              Encaissement (Stripe)
+              {m.post_create_payment_account_label()}
             </label>
             <div class="relative group">
               <span
@@ -435,7 +438,7 @@
                 class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
               >
                 <option value="" class="bg-white dark:bg-zinc-900 font-medium"
-                  >Aucun compte lié</option
+                  >{m.post_create_no_linked_account_label()}</option
                 >
                 {#each payableAssociations as a (a.id)}
                   <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
@@ -459,7 +462,7 @@
               class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
             >
               <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
-              Lier à un événement validé (optionnel)
+              {m.post_create_link_event_label()}
             </label>
             <select
               id="post-linked-calendar-event"
@@ -468,7 +471,7 @@
               class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer disabled:opacity-60"
             >
               <option value="" class="bg-white dark:bg-zinc-900 font-medium">
-                {loadingLinkableEvents ? 'Chargement…' : '- Aucun événement -'}
+                {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
               </option>
               {#each linkableCalendarEvents as ev (ev.id)}
                 <option value={ev.id} class="bg-white dark:bg-zinc-900 font-medium">
@@ -477,7 +480,7 @@
               {/each}
             </select>
             <p class="mt-1.5 text-[0.7rem] text-text-muted ml-1">
-              Seuls les événements validés de l'agenda apparaissent ici.
+              {m.post_create_validated_events_hint()}
             </p>
           </div>
         {/if}
@@ -493,9 +496,9 @@
         <span
           class="text-[0.75rem] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5"
         >
-          Brouillon restauré
+          {m.post_create_draft_restored_label()}
           <span class="font-medium text-amber-700/70 dark:text-amber-400/70"
-            >(texte et options ; pas les photos)</span
+            >{m.post_create_draft_restored_detail()}</span
           >
         </span>
         <button
@@ -507,7 +510,7 @@
           }}
           class="text-xs font-bold text-amber-700/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-400 transition-colors outline-none focus-visible:underline"
         >
-          Effacer
+          {m.post_create_clear_draft_label()}
         </button>
       </div>
     {/if}
@@ -522,13 +525,13 @@
           class="pointer-events-none absolute right-4 top-3 text-[0.65rem] font-bold uppercase tracking-wider text-text-muted opacity-60"
           transition:fade={{ duration: 200 }}
         >
-          Sauvegardé
+          {m.post_create_draft_saved_label()}
         </span>
       {/if}
 
       <MarkdownComposerField
         bind:value={markdown}
-        placeholder="Écrivez votre message ici..."
+        placeholder={m.post_create_message_placeholder()}
         minHeight="120px"
         toolbarClass="mb-1"
         editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
@@ -552,15 +555,15 @@
               >
                 <img
                   {src}
-                  alt="Aperçu"
+                  alt={m.post_create_image_preview_alt()}
                   class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                 />
                 <button
                   type="button"
                   onclick={() => removeFile(i)}
                   class="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm backdrop-blur-md transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                  aria-label="Retirer cette image"
-                  title="Supprimer"
+                  aria-label={m.post_create_remove_image_label()}
+                  title={m.common_delete_button()}
                 >
                   <X size={14} strokeWidth={2.5} />
                 </button>
@@ -569,7 +572,7 @@
               <input
                 type="text"
                 bind:value={imageCaptions[i]}
-                placeholder="Légende (opt.)"
+                placeholder={m.post_create_caption_placeholder()}
                 maxlength="120"
                 class="w-full rounded-lg border border-black/10 dark:border-white/10 bg-white/70 dark:bg-black/40 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-main placeholder:text-text-muted/60 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all shadow-inner"
               />
@@ -627,14 +630,14 @@
         <!-- Ajouter des photos -->
         <label
           for={imageInputId}
-          title="Photos"
+          title={m.post_create_photos_label()}
           class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
           {selectedFiles.length > 0
             ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
             : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
           <Image size={18} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Photos</span>
+          <span class="hidden text-xs sm:inline">{m.post_create_photos_label()}</span>
         </label>
         <input
           id={imageInputId}
@@ -648,7 +651,7 @@
         <!-- Ajouter un sondage -->
         <button
           type="button"
-          title="Sondage"
+          title={m.post_poll_section_title()}
           onclick={() => (includePoll = !includePoll)}
           class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
           {includePoll
@@ -656,13 +659,13 @@
             : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
           <ChartColumn size={18} strokeWidth={includePoll ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Sondage</span>
+          <span class="hidden text-xs sm:inline">{m.post_poll_section_title()}</span>
         </button>
 
         <!-- Ajouter un formulaire -->
         <button
           type="button"
-          title="Formulaire"
+          title={m.post_form_fallback_title()}
           onclick={() => (includeForm = !includeForm)}
           class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
           {includeForm
@@ -670,7 +673,7 @@
             : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
           <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Formulaire</span>
+          <span class="hidden text-xs sm:inline">{m.post_form_fallback_title()}</span>
         </button>
 
         <!-- Séparateur vertical visuel -->
@@ -691,7 +694,7 @@
             type="datetime-local"
             bind:value={scheduledAt}
             min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-            title="Programmer la publication"
+            title={m.post_create_schedule_publication_label()}
             class="bg-transparent pl-2 pr-1 text-[0.7rem] font-bold text-text-main outline-none cursor-pointer {scheduledAt
               ? 'w-36 text-amber-700 dark:text-amber-400'
               : 'w-5 sm:w-28 text-transparent sm:text-text-main'} transition-all"
@@ -701,7 +704,7 @@
               type="button"
               onclick={() => (scheduledAt = '')}
               class="rounded-full p-1 text-text-muted transition-colors hover:text-red-500 hover:bg-red-500/10 outline-none"
-              title="Annuler la programmation"
+              title={m.post_create_cancel_schedule_label()}
             >
               <X size={14} strokeWidth={2.5} />
             </button>
@@ -718,9 +721,11 @@
         onclick={publishPost}
       >
         {#if publishing}
-          {scheduledAt ? 'Programmation…' : 'Publication…'}
+          {scheduledAt
+            ? m.post_create_scheduling_in_progress_label()
+            : m.post_create_publishing_in_progress_label()}
         {:else}
-          {scheduledAt ? 'Programmer' : 'Publier'}
+          {scheduledAt ? m.post_create_schedule_button_label() : m.post_create_publish_button_label()}
         {/if}
       </Button>
     </div>
