@@ -66,7 +66,7 @@
   import SyncSessionModal from '$lib/components/chat/SyncSessionModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
-  import { performPinChange } from '$lib/utils/chat/pinChange';
+  import { performPinChange, type PinOperationProgress } from '$lib/utils/chat/pinChange';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -86,6 +86,7 @@
   let showChangePinModal = $state(false);
   let changePinError = $state('');
   let changePinLoading = $state(false);
+  let changePinProgress = $state<PinOperationProgress | null>(null);
   let changePinSuccess = $state('');
   let pendingInvitationCount = $state(0);
   let fileInput: HTMLInputElement | undefined = $state();
@@ -124,6 +125,7 @@
   async function handleChangePin(currentPin: string, newPin: string) {
     changePinError = '';
     changePinLoading = true;
+    changePinProgress = { percent: 0, stage: 'server' };
     try {
       await performPinChange(
         {
@@ -131,6 +133,9 @@
           mlsService: session.ensureMls(),
           setPin: (p: string) => (session.pin = p),
           log: appendLog,
+          onProgress: (progress) => {
+            changePinProgress = progress;
+          },
         },
         currentPin,
         newPin
@@ -142,6 +147,7 @@
       changePinError = e instanceof Error ? e.message : String(e);
     } finally {
       changePinLoading = false;
+      changePinProgress = null;
     }
   }
 
@@ -1061,6 +1067,7 @@
   onClose={() => (showChangePinModal = false)}
   externalError={changePinError}
   isLoading={changePinLoading}
+  loadingProgress={changePinProgress}
 />
 
 <SyncSessionModal

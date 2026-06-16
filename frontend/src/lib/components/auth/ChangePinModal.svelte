@@ -2,6 +2,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, AlertTriangle, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import type { PinOperationProgress } from '$lib/utils/chat/pinChange';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -14,6 +15,8 @@
     externalError?: string;
     /** Whether a change attempt is in progress; disables inputs and shows a spinner. */
     isLoading?: boolean;
+    /** Live progress for the in-flight PIN change / recovery operation. */
+    loadingProgress?: PinOperationProgress | null;
     /**
      * 'change' (default): a logged-in user rotates their PIN.
      * 'recover': the PIN was changed on another device - the user types their OLD PIN
@@ -28,6 +31,7 @@
     onClose,
     externalError = '',
     isLoading = false,
+    loadingProgress = null,
     variant = 'change',
   }: Props = $props();
 
@@ -57,6 +61,34 @@
   });
 
   const displayError = $derived(externalError || internalError);
+
+  /** Maps a progress stage to a localized step label for the progress bar. */
+  function progressLabel(progress: PinOperationProgress): string {
+    const current = progress.current ?? 0;
+    const total = progress.total ?? 0;
+    switch (progress.stage) {
+      case 'verify':
+        return m.auth_changepin_progress_verify();
+      case 'server':
+        return m.auth_changepin_progress_server();
+      case 'mls':
+        return m.auth_changepin_progress_mls();
+      case 'messages_decrypt':
+        return m.auth_changepin_progress_messages_decrypt({ current, total });
+      case 'messages_encrypt':
+        return m.auth_changepin_progress_messages_encrypt({ current, total });
+      case 'finalize':
+        return m.auth_changepin_progress_finalize();
+      case 'login':
+        return m.auth_changepin_progress_login();
+      default:
+        return isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing();
+    }
+  }
+
+  const progressCaption = $derived(
+    loadingProgress ? progressLabel(loadingProgress) : ''
+  );
 
   function handleSubmit(e: Event) {
     e.preventDefault();
@@ -160,6 +192,24 @@
         <AlertTriangle size={16} class="shrink-0" />
         {displayError}
       </p>
+    {/if}
+
+    {#if isLoading && loadingProgress}
+      <div class="space-y-2 px-1" role="status" aria-live="polite">
+        <div class="flex items-center justify-between gap-3 text-xs text-text-muted">
+          <span class="truncate">{progressCaption}</span>
+          <span class="shrink-0 font-mono tabular-nums">{loadingProgress.percent}%</span>
+        </div>
+        <div
+          class="w-full h-2 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden"
+          aria-hidden="true"
+        >
+          <div
+            class="h-full bg-cn-yellow rounded-full transition-[width] duration-300 ease-out"
+            style="width: {loadingProgress.percent}%"
+          ></div>
+        </div>
+      </div>
     {/if}
 
     <button

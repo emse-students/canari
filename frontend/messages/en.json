@@ -70,6 +70,13 @@
   "auth_changepin_confirm_label": "Confirm the new PIN",
   "auth_changepin_recovering": "Recovering…",
   "auth_changepin_changing": "Changing…",
+  "auth_changepin_progress_verify": "Verifying PIN...",
+  "auth_changepin_progress_server": "Updating account...",
+  "auth_changepin_progress_mls": "Converting encryption state...",
+  "auth_changepin_progress_messages_decrypt": "Decrypting messages ({current}/{total})...",
+  "auth_changepin_progress_messages_encrypt": "Re-encrypting messages ({current}/{total})...",
+  "auth_changepin_progress_finalize": "Finalizing...",
+  "auth_changepin_progress_login": "Signing in...",
 
   "auth_biometric_aria": "Biometric authentication",
   "auth_biometric_title": "Biometric unlock",

@@ -150,6 +150,9 @@
   let showRecoverModal = $state(false);
   let recoverError = $state('');
   let recoverLoading = $state(false);
+  let recoverProgress = $state<import('$lib/utils/chat/pinChange').PinOperationProgress | null>(
+    null
+  );
 
   /**
    * Enables the recovery link when a local MLS state exists and the failure is either a
@@ -180,12 +183,16 @@
   async function handleRecoverSubmit(oldPin: string, newPin: string) {
     recoverError = '';
     recoverLoading = true;
+    recoverProgress = { percent: 0, stage: 'verify' };
     let failMsg = '';
     try {
       await globalSession.recoverPin(
         { ...sessionCb(), onLoginFailed: (m: string) => (failMsg = m), onMlsReady: () => {} },
         oldPin,
-        newPin
+        newPin,
+        (progress) => {
+          recoverProgress = progress;
+        }
       );
       if (!globalSession.isLoggedIn) {
         throw new Error(failMsg || 'Échec de la connexion après récupération.');
@@ -198,6 +205,7 @@
       recoverError = e instanceof Error ? e.message : String(e);
     } finally {
       recoverLoading = false;
+      recoverProgress = null;
     }
   }
 
@@ -872,6 +880,7 @@
   onClose={() => (showRecoverModal = false)}
   externalError={recoverError}
   isLoading={recoverLoading}
+  loadingProgress={recoverProgress}
 />
 
 {#if globalSession.callService && globalSession.callState !== 'idle'}

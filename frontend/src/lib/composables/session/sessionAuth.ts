@@ -9,7 +9,11 @@ import { goto } from '$app/navigation';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
-import { applyNewPinLocally } from '$lib/utils/chat/pinChange';
+import {
+  applyNewPinLocally,
+  reencryptLocalMessages,
+  type PinProgressCallback,
+} from '$lib/utils/chat/pinChange';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
@@ -797,11 +801,13 @@ export async function recoverPinImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
   oldPin: string,
-  newPin: string
+  newPin: string,
+  onProgress?: PinProgressCallback
 ): Promise<void> {
   const userId = ctx.getUserId();
   if (!userId.trim()) throw new Error('Aucun utilisateur connecté.');
   cb.log('[PIN_RECOVER] Démarrage de la récupération…');
+  onProgress?.({ percent: 3, stage: 'verify' });
 
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
@@ -823,23 +829,34 @@ export async function recoverPinImpl(
     throw new Error('Le nouveau PIN est incorrect.');
   }
 
+  onProgress?.({ percent: 15, stage: 'mls' });
   // Non-destructively decrypt local state with the old PIN, then re-encrypt under the new.
   const mls = ctx.ensureMls();
   const ok = await mls.recoverAndRekey(userId, oldPin, newPin, state);
   if (!ok) {
     throw new Error("L'ancien PIN est incorrect (il ne déchiffre pas cet appareil).");
   }
-  cb.log('[PIN_RECOVER] État local re-chiffré avec le nouveau PIN.');
+  cb.log('[PIN_RECOVER] État MLS re-chiffré avec le nouveau PIN.');
 
+  const storage = await getStorage(userId);
+  await reencryptLocalMessages(storage, oldPin, newPin, cb.log, onProgress, {
+    start: 20,
+    end: 82,
+  });
+  cb.log('[PIN_RECOVER] Messages locaux re-chiffrés avec le nouveau PIN.');
+
+  onProgress?.({ percent: 88, stage: 'finalize' });
   await applyNewPinLocally(newPin, cb.log);
   ctx.setPin(newPin);
 
+  onProgress?.({ percent: 92, stage: 'login' });
   // Continue with a normal login. init() is a no-op (recoverAndRekey already marked the
   // client initialised), so the decrypted client is reused and all messages are kept.
   await loginImpl(ctx, cb);
   if (!ctx.isLoggedIn()) {
     throw new Error('La connexion a échoué après la récupération.');
   }
+  onProgress?.({ percent: 100, stage: 'login' });
   cb.log('[PIN_RECOVER] Terminé - messages conservés.');
 }
 

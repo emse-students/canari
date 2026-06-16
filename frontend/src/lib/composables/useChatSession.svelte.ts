@@ -497,7 +497,8 @@ export function useChatSession() {
     recoverPin: (
       cb: import('./session/sessionTypes').ChatSessionCallbacks,
       oldPin: string,
-      newPin: string
-    ) => recoverPinImpl(ctx, cb, oldPin, newPin),
+      newPin: string,
+      onProgress?: import('$lib/utils/chat/pinChange').PinProgressCallback
+    ) => recoverPinImpl(ctx, cb, oldPin, newPin, onProgress),
   };
 }

@@ -3,19 +3,156 @@
  *
  * Unlike the destructive "forgot PIN" reset, this preserves all messages: the
  * in-memory MLS state (already decrypted at login) is re-encrypted under the new
- * PIN via {@link IMlsService.changePIN}, and the account-wide verifier is rotated
+ * PIN via {@link IMlsService.changePIN}, the local message DB is re-encrypted via
+ * {@link reencryptLocalMessages}, and the account-wide verifier is rotated
  * server-side after proving knowledge of the current PIN.
  *
  * Because the verifier is account-wide, the user's other devices keep their old
  * PIN locally and will hit a mismatch at their next login - they must re-enter the
  * new PIN (and re-enrol biometric). That is inherent: the PIN never leaves a device.
  */
+import { decryptData } from '$lib/encryption';
+import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import { savePin } from '$lib/utils/pinVault';
 import { getToken } from '$lib/stores/auth';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { IMlsService } from '$lib/mls-client';
+
+/** Batch size for local message re-encryption (avoids memory spikes on large histories). */
+const REENCRYPT_BATCH_SIZE = 200;
+
+/** How often re-encryption reports progress and yields to the UI thread. */
+const REENCRYPT_PROGRESS_INTERVAL = 25;
+
+/** Identifies the current step of a PIN change or cross-device recovery flow. */
+export type PinOperationStage =
+  | 'verify'
+  | 'server'
+  | 'mls'
+  | 'messages_decrypt'
+  | 'messages_encrypt'
+  | 'finalize'
+  | 'login';
+
+/** User-facing progress snapshot for PIN change / recovery modals. */
+export interface PinOperationProgress {
+  /** 0-100 inclusive. */
+  percent: number;
+  stage: PinOperationStage;
+  /** Optional counter for message decrypt/encrypt steps. */
+  current?: number;
+  /** Optional total for message decrypt/encrypt steps. */
+  total?: number;
+}
+
+export type PinProgressCallback = (progress: PinOperationProgress) => void;
+
+function reportProgress(
+  onProgress: PinProgressCallback | undefined,
+  progress: PinOperationProgress
+): void {
+  onProgress?.(progress);
+}
+
+/**
+ * Re-encrypts every locally stored message from `oldPin` to `newPin`.
+ * Conversation metadata is plaintext and untouched; only message payloads use the PIN.
+ *
+ * @returns The number of messages successfully re-encrypted.
+ * @throws When encrypted rows exist but none decrypt with `oldPin` (wrong PIN or corruption).
+ */
+export async function reencryptLocalMessages(
+  storage: IStorage,
+  oldPin: string,
+  newPin: string,
+  log: (msg: string) => void = () => {},
+  onProgress?: PinProgressCallback,
+  percentRange: { start: number; end: number } = { start: 30, end: 80 }
+): Promise<number> {
+  if (oldPin === newPin) return 0;
+
+  const rows = await storage.getAllEncryptedRows();
+  if (rows.length === 0) return 0;
+
+  const { start, end } = percentRange;
+  const span = end - start;
+
+  log(`[PIN_CHANGE] Re-chiffrement de ${rows.length} message(s) local(aux)…`);
+
+  const decrypted: StoredMessage[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    try {
+      const payload = await decryptData(row.cipherText, row.iv, row.salt, oldPin);
+      decrypted.push({
+        id: row.id,
+        conversationId: row.conversationId,
+        timestamp: row.timestamp,
+        senderId: payload.senderId,
+        content: payload.content,
+        readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
+        reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
+        readAt:
+          typeof payload.readAt === 'number' && payload.readAt > 0 ? payload.readAt : undefined,
+        serverTimestamp:
+          typeof payload.serverTimestamp === 'number' && payload.serverTimestamp > 0
+            ? payload.serverTimestamp
+            : undefined,
+        isDeleted: payload.isDeleted === true ? true : undefined,
+        isEdited: payload.isEdited === true ? true : undefined,
+      });
+    } catch {
+      console.warn('[PIN_CHANGE] Impossible de déchiffrer le message', row.id);
+    }
+
+    if (onProgress && (i % REENCRYPT_PROGRESS_INTERVAL === 0 || i === rows.length - 1)) {
+      const frac = (i + 1) / rows.length;
+      reportProgress(onProgress, {
+        percent: Math.round(start + frac * span * 0.5),
+        stage: 'messages_decrypt',
+        current: i + 1,
+        total: rows.length,
+      });
+    }
+    if (i > 0 && i % REENCRYPT_PROGRESS_INTERVAL === 0) {
+      await yieldToMainThread();
+    }
+  }
+
+  if (decrypted.length === 0) {
+    throw new Error(
+      "Impossible de déchiffrer les messages locaux avec l'ancien PIN. Vérifiez le PIN saisi."
+    );
+  }
+
+  if (decrypted.length < rows.length) {
+    log(
+      `[PIN_CHANGE] Avertissement: ${rows.length - decrypted.length} message(s) ignoré(s) (déchiffrement impossible).`
+    );
+  }
+
+  const batchCount = Math.ceil(decrypted.length / REENCRYPT_BATCH_SIZE);
+  for (let i = 0; i < decrypted.length; i += REENCRYPT_BATCH_SIZE) {
+    await storage.saveMessages(decrypted.slice(i, i + REENCRYPT_BATCH_SIZE), newPin);
+    const batchIdx = Math.floor(i / REENCRYPT_BATCH_SIZE) + 1;
+    if (onProgress) {
+      const frac = batchIdx / batchCount;
+      reportProgress(onProgress, {
+        percent: Math.round(start + span * (0.5 + frac * 0.5)),
+        stage: 'messages_encrypt',
+        current: Math.min(batchIdx * REENCRYPT_BATCH_SIZE, decrypted.length),
+        total: decrypted.length,
+      });
+    }
+    if (batchIdx < batchCount) await yieldToMainThread();
+  }
+
+  log(`[PIN_CHANGE] ${decrypted.length} message(s) re-chiffré(s) avec le nouveau PIN.`);
+  return decrypted.length;
+}
 
 /**
  * Refreshes this device's locally stored PIN material after the account PIN changed:
@@ -43,6 +180,8 @@ export interface PinChangeOptions {
   setPin: (pin: string) => void;
   /** Debug log sink. */
   log: (msg: string) => void;
+  /** Optional progress reporter for modal progress bars. */
+  onProgress?: PinProgressCallback;
 }
 
 /**
@@ -58,8 +197,9 @@ export async function performPinChange(
   currentPin: string,
   newPin: string
 ): Promise<void> {
-  const { userId, mlsService, setPin, log } = opts;
+  const { userId, mlsService, setPin, log, onProgress } = opts;
   log('[PIN_CHANGE] Démarrage du changement de PIN…');
+  reportProgress(onProgress, { percent: 5, stage: 'server' });
 
   const [oldVerifier, newVerifier, token] = await Promise.all([
     computePinVerifier(userId, currentPin),
@@ -75,12 +215,22 @@ export async function performPinChange(
   if (res.status === 403) throw new Error('PIN actuel incorrect.');
   if (!res.ok) throw new Error('Échec du changement de PIN côté serveur.');
 
-  // Verifier rotated - re-encrypt the local MLS state under the new PIN.
+  reportProgress(onProgress, { percent: 20, stage: 'mls' });
+  // Verifier rotated - re-encrypt MLS state and local message DB under the new PIN.
   await mlsService.changePIN(newPin);
-  setPin(newPin);
   log('[PIN_CHANGE] État MLS re-chiffré avec le nouveau PIN.');
+
+  const storage = await getStorage(userId);
+  await reencryptLocalMessages(storage, currentPin, newPin, log, onProgress, {
+    start: 25,
+    end: 85,
+  });
+
+  reportProgress(onProgress, { percent: 92, stage: 'finalize' });
+  setPin(newPin);
 
   // Refresh this device's stored PIN + biometric so silent re-login keeps working.
   await applyNewPinLocally(newPin, log);
+  reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[PIN_CHANGE] Terminé.');
 }
