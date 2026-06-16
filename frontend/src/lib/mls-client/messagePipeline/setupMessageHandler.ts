@@ -61,12 +61,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 
-  if (mlsService.setBulkIngestHooks) {
-    mlsService.setBulkIngestHooks(
-      () => statePersister.onBulkIngestStart(),
-      () => statePersister.onBulkIngestEnd()
-    );
-  }
+  // The persister satisfies BulkIngestObserver (onBulkIngestStart/End): it defers the encrypted
+  // MLS checkpoint to one flush per drain. The UI render buffer registers its own observer in
+  // sessionAuth; the two are independent subscribers, no longer multiplexed over one hook.
+  mlsService.addBulkIngestObserver(statePersister);
 
   // Buffer court : commits arrivant avant leur Welcome (max 10s d'attente)
   const pendingBuffer = new Map<
@@ -542,13 +540,17 @@ async function handleKnownGroup({
       // null peut être un commit structurel (add/remove) ou un duplicate légitime
       if (consumeWasmDuplicateDeliveryFlag()) {
         log(`[MLS] Duplicate pour ${convoKey.slice(0, 8)}… - ACK silencieux`);
+      } else {
+        log(`[MLS] Commit structurel pour ${convoKey.slice(0, 8)}… - sans payload applicatif`);
       }
-      // Commit structurel sans payload applicatif - ok
       return true;
     }
 
     const msg = decodeAppMessage(decrypted);
-    if (!msg) return true;
+    if (!msg) {
+      log(`[MLS] Payload non décodable pour ${convoKey.slice(0, 8)}… - ACK`);
+      return true;
+    }
 
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
@@ -556,10 +558,13 @@ async function handleKnownGroup({
         const stableId =
           normalizeMessageId(msg.messageId) ?? normalizeMessageId(deliveryMeta?.queuedMessageId);
         if (stableId) envelope.options.messageId = stableId;
+        log(`[MLS] Message déchiffré pour ${convoKey.slice(0, 8)}… → addMessageToChat`);
         await addMessageToChat(sender, envelope.content, convoKey, {
           ...envelope.options,
           serverTimestamp: deliveryMeta?.queuedCreatedAt,
         });
+      } else {
+        log(`[MLS] Enveloppe vide pour ${convoKey.slice(0, 8)}… - rien à afficher`);
       }
     } else if (msg.reaction) {
       const msgId = msg.reaction.messageId ?? '';

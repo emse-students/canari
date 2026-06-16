@@ -526,8 +526,13 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       log: cb.log,
     });
 
-    if (mlsService.setBulkIngestHooks && cb.beginBulkMessageIngest && cb.endBulkMessageIngest) {
-      mlsService.setBulkIngestHooks(cb.beginBulkMessageIngest, cb.endBulkMessageIngest);
+    if (cb.beginBulkMessageIngest && cb.endBulkMessageIngest) {
+      const beginUi = cb.beginBulkMessageIngest;
+      const endUi = cb.endBulkMessageIngest;
+      mlsService.addBulkIngestObserver({
+        onBulkIngestStart: (phase) => beginUi(phase),
+        onBulkIngestEnd: (phase) => endUi(phase),
+      });
     }
     endStartupCatchupPhase();
 

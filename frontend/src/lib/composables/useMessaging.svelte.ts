@@ -46,6 +46,7 @@ import type {
   Conversation,
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, StoredMessage } from '$lib/db';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
@@ -148,18 +149,18 @@ export function useMessaging() {
   }
 
   /**
-   * Marks MLS message catch-up (overlay and/or bulk buffer).
-   * @param enableBulkBuffer Buffer incoming messages for one UI flush per conversation.
-   * @param showOverlay Show the blocking sync overlay while MLS state is catching up.
+   * Opens a UI catch-up window for a bulk-ingest phase: buffers incoming messages for one grouped
+   * flush per conversation (`bufferUi`) and/or shows the blocking sync overlay (`showOverlay`).
    */
-  function beginBulkMessageIngest(enableBulkBuffer = false, showOverlay = false) {
-    if (!enableBulkBuffer && !showOverlay) return;
+  function beginBulkMessageIngest(phase: BulkIngestPhase) {
+    const { bufferUi, showOverlay } = phase;
+    if (!bufferUi && !showOverlay) return;
 
     if (showOverlay) {
       messageCatchupDepth += 1;
       isMessageCatchupActive = true;
     }
-    if (enableBulkBuffer) {
+    if (bufferUi) {
       bulkIngestActive = true;
       bulkIngestSeq = 0;
       bulkIngestBuffer.clear();
@@ -175,15 +176,17 @@ export function useMessaging() {
   }
 
   /** Ends catch-up: flushes bulk buffer when used, then hides the loading overlay. */
-  async function endBulkMessageIngest(
-    ctx: MessagingContext,
-    enableBulkBuffer = false,
-    showOverlay = false
-  ) {
-    if (!enableBulkBuffer && !showOverlay) return;
+  async function endBulkMessageIngest(ctx: MessagingContext, phase: BulkIngestPhase) {
+    const { bufferUi, showOverlay } = phase;
+    if (!bufferUi && !showOverlay) return;
 
     try {
-      if (enableBulkBuffer && bulkIngestActive) {
+      if (bufferUi && bulkIngestActive) {
+        // Disable buffering BEFORE the await loop: any message that arrives during the flush
+        // (e.g. a channel event calling addMessageToChat outside the drain queue) then takes
+        // the live path and renders immediately, instead of landing in a buffer the finally
+        // block is about to discard - which would silently drop it.
+        bulkIngestActive = false;
         const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
           const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
           const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
@@ -207,7 +210,7 @@ export function useMessaging() {
     } catch (e) {
       console.error('[CATCHUP] endBulkMessageIngest failed:', e);
     } finally {
-      if (enableBulkBuffer) {
+      if (bufferUi) {
         bulkIngestActive = false;
         bulkIngestBuffer.clear();
       }

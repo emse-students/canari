@@ -32,6 +32,7 @@
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
+  import type { BulkIngestPhase } from '$lib/mls-client';
   import { Fingerprint } from '@lucide/svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
@@ -353,10 +354,10 @@
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
-      beginBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
-        globalMessaging.beginBulkMessageIngest(bulk, overlay),
-      endBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
-        globalMessaging.endBulkMessageIngest(msgCtx(), bulk, overlay),
+      beginBulkMessageIngest: (phase: BulkIngestPhase) =>
+        globalMessaging.beginBulkMessageIngest(phase),
+      endBulkMessageIngest: (phase: BulkIngestPhase) =>
+        globalMessaging.endBulkMessageIngest(msgCtx(), phase),
       batchAddMessages: (
         msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
         contactName: string

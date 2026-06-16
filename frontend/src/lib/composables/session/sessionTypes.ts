@@ -8,6 +8,7 @@
  */
 import type { SvelteMap } from 'svelte/reactivity';
 import type { IMlsService } from '$lib/mlsService';
+import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 
@@ -23,11 +24,8 @@ export interface ChatSessionCallbacks {
     contactName: string,
     options?: AddMessageToChatOptions
   ) => Promise<void>;
-  beginBulkMessageIngest?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void;
-  endBulkMessageIngest?: (
-    enableBulkBuffer?: boolean,
-    showOverlay?: boolean
-  ) => void | Promise<void>;
+  beginBulkMessageIngest?: (phase: BulkIngestPhase) => void;
+  endBulkMessageIngest?: (phase: BulkIngestPhase) => void | Promise<void>;
   batchAddMessages?: (
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string

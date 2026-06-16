@@ -8,6 +8,8 @@ export type {
   UserGroupRow,
   MlsInitOptions,
   MlsBatchProcessResult,
+  BulkIngestPhase,
+  BulkIngestObserver,
 } from './IMlsService';
 export { MLS_LOCAL_STATE_UNDECRYPTABLE } from './IMlsService';
 export { loadAndInitWasm } from './mlsWasmLoader';

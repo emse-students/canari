@@ -26,6 +26,31 @@ export interface MlsInitOptions {
  */
 export const MLS_LOCAL_STATE_UNDECRYPTABLE = 'MLS_LOCAL_STATE_UNDECRYPTABLE';
 
+/**
+ * Describes a bulk-ingest window: a span during which many MLS messages are processed at once
+ * (a queue drain after reconnect, or a history restore). The same immutable object is replayed
+ * at open and close, which guarantees the two ends agree on what to do.
+ */
+export interface BulkIngestPhase {
+  /**
+   * Buffer decrypted messages for a single grouped UI flush at close. `true` for a live drain
+   * (avoids N reactive updates that cause jank); `false` for a history restore that already
+   * appends its messages in one batch.
+   */
+  readonly bufferUi: boolean;
+  /** Show the blocking sync overlay for the duration of the window. */
+  readonly showOverlay: boolean;
+}
+
+/**
+ * Observer of the bulk-ingest window lifecycle. Each `onBulkIngestStart` is paired with exactly
+ * one `onBulkIngestEnd` receiving the same {@link BulkIngestPhase}, even when windows nest.
+ */
+export interface BulkIngestObserver {
+  onBulkIngestStart(phase: BulkIngestPhase): void;
+  onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
+}
+
 /** Row from `GET /api/mls/users/:id/groups` (includes successor routing when soft-deleted). */
 export type UserGroupRow = {
   groupId: string;
@@ -354,23 +379,27 @@ export interface IMlsService {
   onWelcomeProcessed(callback: (groupId?: string) => void): void;
 
   /**
-   * Optional hooks for batching UI updates while draining a large MLS message queue
-   * (e.g. after reconnect). Implemented by WebMlsService / TauriMlsService.
+   * Registers an observer of the bulk-ingest window lifecycle. Observers are notified in
+   * registration order on both open ({@link beginBulkIngest}) and close ({@link endBulkIngest}).
+   * Each subscriber reacts in its own way (deferred MLS state persistence, UI render buffering);
+   * none multiplexes the others' parameters.
    */
-  setBulkIngestHooks(
-    onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
-    onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
-  ): void;
+  addBulkIngestObserver(observer: BulkIngestObserver): void;
 
   /**
-   * Opens a bulk-ingest window (UI buffering + deferred persistence). Pair with
+   * Opens a bulk-ingest window with the given {@link BulkIngestPhase}. Pair with
    * {@link endBulkIngest}; prefer the {@link withMlsBulkIngest} helper which is exception-safe.
-   * Windows nest via an internal depth counter, so the encrypted checkpoint coalesces to one
-   * flush at the outermost close.
+   * Windows nest via an internal phase stack, so the encrypted checkpoint coalesces to one
+   * flush at the outermost close. Omitting `phase` opens a persistence-only window
+   * (no UI buffering, no overlay) - the default for {@link withMlsBulkIngest}.
    */
-  beginBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): void;
-  /** Closes a bulk-ingest window; resolves only after the encrypted checkpoint (if any) completes. */
-  endBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): Promise<void>;
+  beginBulkIngest(phase?: BulkIngestPhase): void;
+  /**
+   * Closes the innermost bulk-ingest window, replaying the exact {@link BulkIngestPhase} it was
+   * opened with so start and end are symmetric by construction. Resolves only after the encrypted
+   * checkpoint (if any) completes.
+   */
+  endBulkIngest(): Promise<void>;
 
   /**
    * Announce to all online members of `groupId` that this device needs a Welcome.

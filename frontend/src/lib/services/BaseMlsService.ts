@@ -1,4 +1,11 @@
-import type { IMlsService, GroupMeta, UserGroupRow, MlsInitOptions } from '$lib/mls-client';
+import type {
+  IMlsService,
+  GroupMeta,
+  UserGroupRow,
+  MlsInitOptions,
+  BulkIngestPhase,
+  BulkIngestObserver,
+} from '$lib/mls-client';
 import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
 import {
   type MlsDecryptSession,
@@ -97,11 +104,17 @@ export abstract class BaseMlsService implements IMlsService {
   /** Per-conversation queues with round-robin scheduling and a global MLS mutex. */
   protected readonly messageScheduler: MlsPerGroupScheduler;
 
-  protected bulkIngestStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void;
-  protected bulkIngestEnd?: (
-    enableBulkBuffer?: boolean,
-    showOverlay?: boolean
-  ) => void | Promise<void>;
+  /** Persistence-only window: no UI buffering, no overlay (default for {@link withMlsBulkIngest}). */
+  private static readonly PERSIST_ONLY_PHASE: BulkIngestPhase = {
+    bufferUi: false,
+    showOverlay: false,
+  };
+
+  /** Lifecycle observers of bulk-ingest windows (MLS state persister, UI render buffer). */
+  private readonly bulkIngestObservers: BulkIngestObserver[] = [];
+
+  /** Stack of open phases, so {@link endBulkIngest} replays the exact phase its open used. */
+  private readonly bulkIngestPhases: BulkIngestPhase[] = [];
 
   constructor(platform: 'web' | 'tauri', fetchImpl?: MlsDeliveryFetch) {
     this.platform = platform;
@@ -261,35 +274,23 @@ export abstract class BaseMlsService implements IMlsService {
     this.welcomeProcessedCallback = callback;
   }
 
-  setBulkIngestHooks(
-    onStart?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void,
-    onEnd?: (enableBulkBuffer?: boolean, showOverlay?: boolean) => void | Promise<void>
-  ): void {
-    // Two callers (setupMessageHandler + useChatSession) each register their own hooks;
-    // chain them so both fire. Each pair is symmetric (N starts = N ends), so
-    // bulkIngestDepth stays balanced regardless of registration order.
-    const prevStart = this.bulkIngestStart;
-    const prevEnd = this.bulkIngestEnd;
-    if (onStart) {
-      this.bulkIngestStart = (enableBulkBuffer, showOverlay) => {
-        prevStart?.(enableBulkBuffer, showOverlay);
-        onStart(enableBulkBuffer, showOverlay);
-      };
-    }
-    if (onEnd) {
-      this.bulkIngestEnd = async (enableBulkBuffer, showOverlay) => {
-        await prevEnd?.(enableBulkBuffer, showOverlay);
-        await onEnd(enableBulkBuffer, showOverlay);
-      };
-    }
+  addBulkIngestObserver(observer: BulkIngestObserver): void {
+    this.bulkIngestObservers.push(observer);
   }
 
-  beginBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): void {
-    this.bulkIngestStart?.(enableBulkBuffer, showOverlay);
+  beginBulkIngest(phase: BulkIngestPhase = BaseMlsService.PERSIST_ONLY_PHASE): void {
+    this.bulkIngestPhases.push(phase);
+    for (const observer of this.bulkIngestObservers) observer.onBulkIngestStart(phase);
   }
 
-  async endBulkIngest(enableBulkBuffer?: boolean, showOverlay?: boolean): Promise<void> {
-    await this.bulkIngestEnd?.(enableBulkBuffer, showOverlay);
+  async endBulkIngest(): Promise<void> {
+    const phase = this.bulkIngestPhases.pop();
+    if (!phase) {
+      console.warn('[QUEUE] endBulkIngest sans beginBulkIngest correspondant - ignoré');
+      return;
+    }
+    // Replay the exact phase the matching open used: start and end can never disagree.
+    for (const observer of this.bulkIngestObservers) await observer.onBulkIngestEnd(phase);
   }
 
   // ── Message queue ─────────────────────────────────────────────────────────
@@ -446,7 +447,9 @@ export abstract class BaseMlsService implements IMlsService {
       {
         onDrainStart: (pendingCount) => {
           beginQueueDrainBench(pendingCount);
-          this.bulkIngestStart?.(true, pendingCount > 1);
+          // Live drain: buffer decrypted messages for one grouped UI flush; show the overlay
+          // only for a multi-message catch-up. endBulkIngest replays this exact phase.
+          this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
         },
         onDrainEnd: async () => {
           if (ackIds.length > 0) {
@@ -463,7 +466,7 @@ export abstract class BaseMlsService implements IMlsService {
           }
 
           finishQueueDrainBench(ackIds.length);
-          await this.bulkIngestEnd?.(true, true);
+          await this.endBulkIngest();
         },
       }
     );

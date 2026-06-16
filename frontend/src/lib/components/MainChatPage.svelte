@@ -33,6 +33,7 @@
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
   import type { ChatMessage, Conversation } from '$lib/types';
+  import type { BulkIngestPhase } from '$lib/mls-client';
   import { WifiOff } from '@lucide/svelte';
 
   interface Props {
@@ -206,10 +207,9 @@
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
-      beginBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
-        messaging.beginBulkMessageIngest(bulk, overlay),
-      endBulkMessageIngest: (bulk?: boolean, overlay?: boolean) =>
-        messaging.endBulkMessageIngest(msgCtx(), bulk, overlay),
+      beginBulkMessageIngest: (phase: BulkIngestPhase) => messaging.beginBulkMessageIngest(phase),
+      endBulkMessageIngest: (phase: BulkIngestPhase) =>
+        messaging.endBulkMessageIngest(msgCtx(), phase),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string
