@@ -243,163 +243,170 @@ async function handleWelcome({
     return true;
   }
 
-  try {
-    // processWelcome retourne le groupId MLS effectif (peut différer de l'enveloppe de livraison).
-    // Fallback sur le groupId de l'enveloppe si le WASM retourne undefined (ne devrait pas arriver).
-    const joinedGroupId =
-      (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
-
-    // Annuler les timers en cours pour ce groupe (dans les deux maps : locale + connexion)
-    const buf = pendingBuffer.get(joinedGroupId);
-    if (buf) {
-      clearTimeout(buf.timer);
-      pendingBuffer.delete(joinedGroupId);
-    }
-    cancelReAdd(joinedGroupId, recoveryTimers);
-    deps.cancelGroupRecovery?.(joinedGroupId); // annule aussi le timer armé par onGroupMissing
-    noMatchKpFailures.delete(joinedGroupId); // Welcome traité - reset l'escalade NoMatchingKeyPackage
-
-    // Persister immédiatement après Welcome (epoch initialisée)
-    statePersister.persistNow();
-
-    // Purger du WASM les prédécesseurs dont le successeur est le groupe qu'on vient de rejoindre.
-    // Isolé dans son propre try/catch : une erreur ici (ex. forgetGroup sur un groupe déjà absent)
-    // ne doit pas tomber dans le catch de processWelcome et déclencher un welcome_request parasite.
+  // Section critique WASM sous le verrou MLS. La résolution du groupe terminal et les
+  // contrôles de recovery ci-dessus tournent hors verrou (réseau pur) ; seul ce bloc WASM
+  // contigu (processWelcome -> purge des prédécesseurs -> replay) doit rester exclusif.
+  // Le drain n'auto-verrouille pas les Welcome (voir MlsPerGroupScheduler.drain), ce qui
+  // évite de tenir le mutex pendant le préambule réseau et de bloquer le catch-up.
+  await mlsService.runUnderMlsLock(async () => {
     try {
-      const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
-      // Pré-fetch des métas en parallèle : enchaîner les getGroupMeta en séquence
-      // multiplierait les aller-retours réseau tenus sous le verrou MLS.
-      const metas = await Promise.all(
-        otherLocalIds.map((predId) =>
-          mlsService.getGroupMeta(predId).then(
-            (m) => ({ predId, m }),
-            () => ({ predId, m: null })
-          )
-        )
-      );
-      let purgedAny = false;
-      for (const { predId, m } of metas) {
-        if (m?.successorId === joinedGroupId) {
-          mlsService.forgetGroup(predId);
-          purgedAny = true;
-          log(`[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé du WASM (successeur rejoint)`);
-        }
+      // processWelcome retourne le groupId MLS effectif (peut différer de l'enveloppe de livraison).
+      // Fallback sur le groupId de l'enveloppe si le WASM retourne undefined (ne devrait pas arriver).
+      const joinedGroupId =
+        (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
+
+      // Annuler les timers en cours pour ce groupe (dans les deux maps : locale + connexion)
+      const buf = pendingBuffer.get(joinedGroupId);
+      if (buf) {
+        clearTimeout(buf.timer);
+        pendingBuffer.delete(joinedGroupId);
       }
-      // Un seul checkpoint chiffré (Argon2) pour l'ensemble des purges, pas un par prédécesseur.
-      if (purgedAny) statePersister.persistNow();
-    } catch (e) {
-      log(`[WELCOME] Erreur purge prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
-    }
+      cancelReAdd(joinedGroupId, recoveryTimers);
+      deps.cancelGroupRecovery?.(joinedGroupId); // annule aussi le timer armé par onGroupMissing
+      noMatchKpFailures.delete(joinedGroupId); // Welcome traité - reset l'escalade NoMatchingKeyPackage
 
-    // La purge de l'ancien groupe du Map et d'IndexedDB est déléguée :
-    // - Map : upsertConversation (ci-dessous) supprime l'entrée prédécesseur quand il
-    //   trouve le même pair DM sous un ancien groupId, et migre ses messages en mémoire.
-    // - IndexedDB : mergeDirectConversationDuplicates au prochain login (Fix 1).
-    //
-    // Supprimer l'IndexedDB du prédécesseur ici effacerait les messages accumulés
-    // avant que upsertConversation puisse les lire et les persister dans le successeur,
-    // provoquant une perte visible jusqu'à réception du bundle historique.
+      // Persister immédiatement après Welcome (epoch initialisée)
+      statePersister.persistNow();
 
-    // Enregistrement côté serveur (idempotent - safety net si l'invitant n'a pas encore
-    // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
-    // Résultats non utilisés : lancés sans await pour ne pas retenir le verrou MLS pendant
-    // deux aller-retours réseau (le groupe est déjà rejoint localement).
-    void mlsService.registerMember(joinedGroupId, userId).catch(() => {});
-    void mlsService
-      .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
-      .catch(() => {});
+      // Purger du WASM les prédécesseurs dont le successeur est le groupe qu'on vient de rejoindre.
+      // Isolé dans son propre try/catch : une erreur ici (ex. forgetGroup sur un groupe déjà absent)
+      // ne doit pas tomber dans le catch de processWelcome et déclencher un welcome_request parasite.
+      try {
+        const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
+        // Pré-fetch des métas en parallèle : enchaîner les getGroupMeta en séquence
+        // multiplierait les aller-retours réseau tenus sous le verrou MLS.
+        const metas = await Promise.all(
+          otherLocalIds.map((predId) =>
+            mlsService.getGroupMeta(predId).then(
+              (m) => ({ predId, m }),
+              () => ({ predId, m: null })
+            )
+          )
+        );
+        let purgedAny = false;
+        for (const { predId, m } of metas) {
+          if (m?.successorId === joinedGroupId) {
+            mlsService.forgetGroup(predId);
+            purgedAny = true;
+            log(`[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé du WASM (successeur rejoint)`);
+          }
+        }
+        // Un seul checkpoint chiffré (Argon2) pour l'ensemble des purges, pas un par prédécesseur.
+        if (purgedAny) statePersister.persistNow();
+      } catch (e) {
+        log(`[WELCOME] Erreur purge prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
+      }
 
-    // groupMeta déjà récupéré par resolveTerminalGroup - pas de second appel HTTP.
-    await upsertConversation(joinedGroupId, groupMeta, sender, userId, deps);
+      // La purge de l'ancien groupe du Map et d'IndexedDB est déléguée :
+      // - Map : upsertConversation (ci-dessous) supprime l'entrée prédécesseur quand il
+      //   trouve le même pair DM sous un ancien groupId, et migre ses messages en mémoire.
+      // - IndexedDB : mergeDirectConversationDuplicates au prochain login (Fix 1).
+      //
+      // Supprimer l'IndexedDB du prédécesseur ici effacerait les messages accumulés
+      // avant que upsertConversation puisse les lire et les persister dans le successeur,
+      // provoquant une perte visible jusqu'à réception du bundle historique.
 
-    // Replay des messages bufferisés (commits arrivés avant le Welcome)
-    if (buf?.msgs.length) {
-      for (const msg of buf.msgs) {
-        try {
-          const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content);
-          if (decBytes) {
-            const appMsg = decodeAppMessage(decBytes);
-            if (appMsg) {
-              const envelope = appMsgToEnvelope(appMsg);
-              if (envelope) {
-                if (batchAddMessages) {
-                  await batchAddMessages(
-                    [{ senderId: msg.sender, content: envelope.content, ...envelope.options }],
-                    joinedGroupId
-                  );
-                } else {
-                  await addMessageToChat(
-                    msg.sender,
-                    envelope.content,
-                    joinedGroupId,
-                    envelope.options
-                  );
+      // Enregistrement côté serveur (idempotent - safety net si l'invitant n'a pas encore
+      // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
+      // Résultats non utilisés : lancés sans await pour ne pas retenir le verrou MLS pendant
+      // deux aller-retours réseau (le groupe est déjà rejoint localement).
+      void mlsService.registerMember(joinedGroupId, userId).catch(() => {});
+      void mlsService
+        .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
+        .catch(() => {});
+
+      // groupMeta déjà récupéré par resolveTerminalGroup - pas de second appel HTTP.
+      await upsertConversation(joinedGroupId, groupMeta, sender, userId, deps);
+
+      // Replay des messages bufferisés (commits arrivés avant le Welcome)
+      if (buf?.msgs.length) {
+        for (const msg of buf.msgs) {
+          try {
+            const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content);
+            if (decBytes) {
+              const appMsg = decodeAppMessage(decBytes);
+              if (appMsg) {
+                const envelope = appMsgToEnvelope(appMsg);
+                if (envelope) {
+                  if (batchAddMessages) {
+                    await batchAddMessages(
+                      [{ senderId: msg.sender, content: envelope.content, ...envelope.options }],
+                      joinedGroupId
+                    );
+                  } else {
+                    await addMessageToChat(
+                      msg.sender,
+                      envelope.content,
+                      joinedGroupId,
+                      envelope.options
+                    );
+                  }
                 }
               }
             }
+          } catch {
+            /* ignore erreurs de replay */
           }
-        } catch {
-          /* ignore erreurs de replay */
         }
+        statePersister.persistNow();
       }
-      statePersister.persistNow();
-    }
 
-    // Historique : délégué à onWelcomeProcessed (après reinject) pour ne pas bloquer
-    // la queue sous le verrou MLS (createDecryptSession ré-acquiert le même mutex).
-    onGroupReady?.(joinedGroupId);
-    log(`[WELCOME] Groupe ${joinedGroupId.slice(0, 8)}… prêt`);
-  } catch (e) {
-    const err = String(e);
-    if (err.includes('GroupAlreadyExists')) {
-      // Idempotent - on a déjà ce groupe, marquer prêt si besoin
-      if (groupId) {
-        const convo = deps.conversations.get(groupId);
-        if (convo && !convo.isReady) {
-          deps.conversations.set(groupId, { ...convo, isReady: true });
-          await saveConversation(groupId).catch(() => {});
+      // Historique : délégué à onWelcomeProcessed (après reinject) pour ne pas bloquer
+      // la queue sous le verrou MLS (createDecryptSession ré-acquiert le même mutex).
+      onGroupReady?.(joinedGroupId);
+      log(`[WELCOME] Groupe ${joinedGroupId.slice(0, 8)}… prêt`);
+    } catch (e) {
+      const err = String(e);
+      if (err.includes('GroupAlreadyExists')) {
+        // Idempotent - on a déjà ce groupe, marquer prêt si besoin
+        if (groupId) {
+          const convo = deps.conversations.get(groupId);
+          if (convo && !convo.isReady) {
+            deps.conversations.set(groupId, { ...convo, isReady: true });
+            await saveConversation(groupId).catch(() => {});
+          }
+          onGroupReady?.(groupId);
         }
-        onGroupReady?.(groupId);
-      }
-      noMatchKpFailures.delete(terminalId || (groupId ?? ''));
-      log(`[WELCOME] GroupAlreadyExists pour ${groupId?.slice(0, 8)}… - noop`);
-    } else if (err.includes('NoMatchingKeyPackage')) {
-      // Nos KeyPackages publiés ne correspondent plus à nos clés privées locales :
-      // l'invitant nous ré-ajoute avec un KeyPackage qu'on ne peut pas honorer.
-      const target = terminalId || (groupId ?? '');
-      const failures = (noMatchKpFailures.get(target) ?? 0) + 1;
-      noMatchKpFailures.set(target, failures);
+        noMatchKpFailures.delete(terminalId || (groupId ?? ''));
+        log(`[WELCOME] GroupAlreadyExists pour ${groupId?.slice(0, 8)}… - noop`);
+      } else if (err.includes('NoMatchingKeyPackage')) {
+        // Nos KeyPackages publiés ne correspondent plus à nos clés privées locales :
+        // l'invitant nous ré-ajoute avec un KeyPackage qu'on ne peut pas honorer.
+        const target = terminalId || (groupId ?? '');
+        const failures = (noMatchKpFailures.get(target) ?? 0) + 1;
+        noMatchKpFailures.set(target, failures);
 
-      if (failures > MAX_NOMATCH_KP_RETRIES) {
-        // Ré-ajout durablement en échec → recovery complète plutôt que re-boucler.
-        log(
-          `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - escalade requestReAdd`
-        );
-        noMatchKpFailures.delete(target);
-        if (target) await requestReAdd(target, deps, recoveryTimers);
-      } else {
-        // 1ʳᵉ détection : republier un matériel de clé frais pour que le prochain
-        // ré-ajout de l'invitant utilise un KeyPackage qu'on peut honorer.
-        // republishKeyMaterial débounce lui-même les appels rapprochés.
-        if (failures === 1) {
+        if (failures > MAX_NOMATCH_KP_RETRIES) {
+          // Ré-ajout durablement en échec → recovery complète plutôt que re-boucler.
           log(
-            `[WELCOME] NoMatchingKeyPackage pour ${target.slice(0, 8)}… - republication KeyPackages + welcome_request`
+            `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - escalade requestReAdd`
           );
-          await mlsService.republishKeyMaterial(deps.pin).catch(() => {});
+          noMatchKpFailures.delete(target);
+          if (target) await requestReAdd(target, deps, recoveryTimers);
         } else {
-          log(
-            `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - welcome_request`
-          );
+          // 1ʳᵉ détection : republier un matériel de clé frais pour que le prochain
+          // ré-ajout de l'invitant utilise un KeyPackage qu'on peut honorer.
+          // republishKeyMaterial débounce lui-même les appels rapprochés.
+          if (failures === 1) {
+            log(
+              `[WELCOME] NoMatchingKeyPackage pour ${target.slice(0, 8)}… - republication KeyPackages + welcome_request`
+            );
+            await mlsService.republishKeyMaterial(deps.pin).catch(() => {});
+          } else {
+            log(
+              `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - welcome_request`
+            );
+          }
+          if (target) await mlsService.sendWelcomeRequest(target).catch(() => {});
         }
-        if (target) await mlsService.sendWelcomeRequest(target).catch(() => {});
+      } else if (err.includes('CannotDecryptOwnMessage')) {
+        // Welcome destiné à un autre device - ignorer
+        log(`[WELCOME] CannotDecryptOwnMessage pour ${groupId?.slice(0, 8)}… - ACK silencieux`);
+      } else {
+        log(`[WELCOME] Erreur traitement ${groupId?.slice(0, 8)}…: ${err.slice(0, 150)}`);
       }
-    } else if (err.includes('CannotDecryptOwnMessage')) {
-      // Welcome destiné à un autre device - ignorer
-      log(`[WELCOME] CannotDecryptOwnMessage pour ${groupId?.slice(0, 8)}… - ACK silencieux`);
-    } else {
-      log(`[WELCOME] Erreur traitement ${groupId?.slice(0, 8)}…: ${err.slice(0, 150)}`);
     }
-  }
+  });
 
   return true; // Toujours ACKé
 }

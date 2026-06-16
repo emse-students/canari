@@ -299,6 +299,11 @@ export abstract class BaseMlsService implements IMlsService {
     return this.messageScheduler.waitUntilIdle();
   }
 
+  /** Runs `fn` under the global MLS client mutex (shared with the drain and catch-up sessions). */
+  runUnderMlsLock<T>(fn: () => Promise<T>): Promise<T> {
+    return this.messageScheduler.runUnderMlsLock(fn);
+  }
+
   /** Enqueues a message and starts the per-group fair drain loop if idle. */
   protected enqueueMessage(msg: MlsQueuedMessage): void {
     this.messageScheduler.enqueue(msg);

@@ -32,6 +32,40 @@ describe('MlsPerGroupScheduler', () => {
     expect(order).toEqual(['a', 'b', 'a', 'b']);
   });
 
+  it('drains Welcome without waiting on the held MLS lock (handler self-locks)', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    // Simulate a catch-up decrypt session holding the lock.
+    const release = await scheduler.acquireMlsLock();
+
+    let welcomeProcessed = false;
+    scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+    await scheduler.drain(async () => {
+      welcomeProcessed = true;
+    });
+
+    expect(welcomeProcessed).toBe(true); // Welcome is not auto-locked, so it is not blocked.
+    release();
+  });
+
+  it('blocks application messages while the MLS lock is held (auto-locked)', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    const release = await scheduler.acquireMlsLock();
+
+    let processed = false;
+    scheduler.enqueue(msg('group-a', 'a1')); // non-Welcome -> auto-locked by the drain
+    const drainP = scheduler.drain(async () => {
+      processed = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(processed).toBe(false); // blocked behind the held lock
+
+    release();
+    await drainP;
+    expect(processed).toBe(true);
+  });
+
   it('processes group B while group A waits on Welcome (web mode)', async () => {
     const scheduler = new MlsPerGroupScheduler('web');
     scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));

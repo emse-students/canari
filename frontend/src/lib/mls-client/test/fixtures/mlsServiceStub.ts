@@ -24,6 +24,7 @@ export function createMlsServiceStub(
       decryptPage: vi.fn().mockResolvedValue([]),
       finish: vi.fn().mockResolvedValue(undefined),
     }),
+    runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
     exportSecret: vi.fn().mockResolvedValue(new Uint8Array(32)),
     connect: vi.fn().mockResolvedValue(undefined),
     isWsOpen: vi.fn().mockReturnValue(true),

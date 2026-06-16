@@ -217,7 +217,15 @@ export class MlsPerGroupScheduler {
         if (!picked) break;
 
         const { msg } = picked;
-        await this.runUnderMlsLock(() => processMessage(msg));
+        // Welcome messages self-manage the MLS lock: their handler runs the network
+        // preamble (terminal-group resolution, recovery checks) unlocked and only holds the
+        // lock around the contiguous WASM critical section. Auto-locking them here would
+        // keep the mutex held across those round-trips and starve catch-up / key-package work.
+        if (msg.isWelcome) {
+          await processMessage(msg);
+        } else {
+          await this.runUnderMlsLock(() => processMessage(msg));
+        }
 
         if (this.getPendingCount() > 0) {
           await yieldToMainThread();

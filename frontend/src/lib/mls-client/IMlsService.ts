@@ -134,6 +134,12 @@ export interface IMlsService {
    * on the live client. The caller feeds pages then calls {@link MlsDecryptSession.finish}.
    */
   createDecryptSession(groupId: string): Promise<MlsDecryptSession>;
+  /**
+   * Runs `fn` while holding the global MLS client mutex, so callers that interleave network
+   * I/O with WASM operations (e.g. the Welcome handler) can keep their WASM critical section
+   * exclusive without holding the lock across their network preamble.
+   */
+  runUnderMlsLock<T>(fn: () => Promise<T>): Promise<T>;
   /** Exports a derived secret from a group's epoch key material using the given label and context. */
   exportSecret(
     groupId: string,
