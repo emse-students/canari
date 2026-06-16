@@ -5,6 +5,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
   import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench, Building2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
 
@@ -38,14 +39,14 @@
       href: string;
       label: string;
       icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform' | 'associations';
-    }[] = [{ href: '/admin/agenda', label: 'Agenda en attente', icon: 'agenda' }];
+    }[] = [{ href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: 'agenda' }];
     if (isGlobalAdminUser) {
       items.push(
-        { href: '/admin/moderation', label: 'Posts signalés', icon: 'moderation' },
-        { href: '/admin/associations', label: 'Assos / BDE', icon: 'associations' },
-        { href: '/admin/status', label: 'Présence & connexions', icon: 'status' },
-        { href: '/admin/platform', label: 'Plateforme', icon: 'platform' },
-        { href: '/admin/users', label: 'Admins', icon: 'users' }
+        { href: '/admin/moderation', label: m.admin_reported_posts_label(), icon: 'moderation' },
+        { href: '/admin/associations', label: m.admin_associations_label(), icon: 'associations' },
+        { href: '/admin/status', label: m.admin_presence_connections_label(), icon: 'status' },
+        { href: '/admin/platform', label: m.admin_platform_label(), icon: 'platform' },
+        { href: '/admin/users', label: m.admin_admins_label(), icon: 'users' }
       );
     }
     return items;
@@ -62,7 +63,7 @@
   <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
     <a href="/dashboard" class="text-sm text-text-muted hover:text-text-main transition-colors inline-flex items-center gap-1">
       <ArrowLeft size={14} />
-      Tableau de bord
+      {m.admin_dashboard_link()}
     </a>
 
     <header class="flex items-start gap-3">
@@ -70,18 +71,18 @@
         <Shield size={22} />
       </span>
       <div>
-        <h1 class="text-xl font-extrabold text-text-main tracking-tight">Administration</h1>
+        <h1 class="text-xl font-extrabold text-text-main tracking-tight">{m.admin_title()}</h1>
         <p class="text-sm text-text-muted mt-0.5">
           {#if isGlobalAdminUser}
-            Outils globaux et modération de l'agenda.
+            {m.admin_global_description()}
           {:else}
-            Modération de l'agenda de vos associations.
+            {m.admin_associations_description()}
           {/if}
         </p>
       </div>
     </header>
 
-    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label="Administration" data-swipe-nav-ignore>
+    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label={m.admin_title()} data-swipe-nav-ignore>
       <a
         href="/admin"
         class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
@@ -89,7 +90,7 @@
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'border border-cn-border text-text-muted hover:text-text-main'}"
       >
-        Accueil
+        {m.admin_home_label()}
       </a>
       {#each navItems as item (item.href)}
         <a

@@ -16,6 +16,8 @@
     UserCog,
     Wrench,
   } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let isGlobalAdminUser = $state(false);
   let pendingCount = $state<number | null>(null);
@@ -40,8 +42,8 @@
       const response = await apiFetch(`${deliveryUrl()}/api/mls/push/broadcast-test`, {
         method: 'POST',
         body: JSON.stringify({
-          title: 'Canari - test push global',
-          message: `Diagnostic ${new Date().toLocaleTimeString()}`,
+          title: m.admin_push_test_title(),
+          message: m.admin_push_test_diagnostic_label({ time: new Date().toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR') }),
         }),
       });
       if (!response.ok) {
@@ -54,16 +56,31 @@
         sent: number;
         failed: number;
       };
-      pushTestResult = `Test envoyé - trace ${data.traceId}, ${data.sent}/${data.targetedDevices} appareils.`;
+      pushTestResult = m.admin_push_test_result_label({
+        traceId: data.traceId,
+        sent: data.sent,
+        targetedDevices: data.targetedDevices,
+      });
     } catch (e) {
-      pushTestResult = e instanceof Error ? e.message : 'Erreur';
+      pushTestResult = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       isPushTestRunning = false;
     }
   }
 
+  type AdminCardKind =
+    | 'agenda'
+    | 'moderation'
+    | 'platform'
+    | 'status'
+    | 'users'
+    | 'associations'
+    | 'create-association'
+    | 'calendar';
+
   interface AdminCard {
     href?: string;
+    kind: AdminCardKind;
     label: string;
     description: string;
     badge?: string;
@@ -77,8 +94,9 @@
     const list: AdminCard[] = [
       {
         href: '/admin/agenda',
-        label: 'Agenda en attente',
-        description: 'Valider les événements proposés avant publication.',
+        kind: 'agenda',
+        label: m.admin_pending_agenda_label(),
+        description: m.admin_card_agenda_desc(),
         badge: pendingCount !== null && pendingCount > 0 ? `${pendingCount}` : undefined,
       },
     ];
@@ -86,44 +104,51 @@
       list.push(
         {
           href: '/admin/moderation',
-          label: 'Posts signalés',
-          description: 'Modération des publications signalées sur le fil.',
+          kind: 'moderation',
+          label: m.admin_reported_posts_label(),
+          description: m.admin_card_moderation_desc(),
           globalOnly: true,
         },
         {
           href: '/admin/platform',
-          label: 'Plateforme',
-          description: 'Mode maintenance et version client minimale.',
+          kind: 'platform',
+          label: m.admin_platform_label(),
+          description: m.admin_card_platform_desc(),
           globalOnly: true,
         },
         {
           href: '/admin/status',
-          label: 'Présence & connexions',
-          description: 'Surveillance WebSocket / Redis des appareils connectés.',
+          kind: 'status',
+          label: m.admin_presence_connections_label(),
+          description: m.admin_card_status_desc(),
           globalOnly: true,
         },
         {
           href: '/admin/users',
-          label: 'Gestion des admins',
-          description: 'Attribuer ou retirer les droits administrateur globaux.',
+          kind: 'users',
+          label: m.admin_card_manage_admins_label(),
+          description: m.admin_card_users_desc(),
           globalOnly: true,
         },
         {
           href: '/associations',
-          label: 'Associations',
-          description: 'Liste et pages publiques des associations.',
+          kind: 'associations',
+          label: m.admin_card_associations_label(),
+          description: m.admin_card_associations_desc(),
           globalOnly: true,
         },
         {
           href: '/associations/new',
-          label: 'Créer une association',
-          description: 'Nouvelle association sur la plateforme.',
+          kind: 'create-association',
+          label: m.admin_card_create_association_label(),
+          description: m.admin_card_create_association_desc(),
           globalOnly: true,
         },
         {
           href: '/calendar',
-          label: 'Agenda global',
-          description: 'Vue mensuelle de tous les événements validés.',
+          kind: 'calendar',
+          label: m.admin_card_global_calendar_label(),
+          description: m.admin_card_calendar_desc(),
           globalOnly: true,
         }
       );
@@ -134,7 +159,7 @@
 
 <div class="space-y-4">
   <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-    {#each cards as card (card.label)}
+    {#each cards as card (card.kind)}
       {#if card.href}
         <a
           href={card.href}
@@ -143,19 +168,19 @@
           <span
             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
           >
-            {#if card.label.includes('Agenda en attente')}
+            {#if card.kind === 'agenda'}
               <CalendarClock size={20} />
-            {:else if card.label.includes('signalés')}
+            {:else if card.kind === 'moderation'}
               <ShieldAlert size={20} />
-            {:else if card.label.includes('Présence')}
+            {:else if card.kind === 'status'}
               <Activity size={20} />
-            {:else if card.label.includes('Plateforme')}
+            {:else if card.kind === 'platform'}
               <Wrench size={20} />
-            {:else if card.label.includes('admins')}
+            {:else if card.kind === 'users'}
               <UserCog size={20} />
-            {:else if card.label.includes('Associations')}
+            {:else if card.kind === 'associations'}
               <Users size={20} />
-            {:else if card.label.includes('Créer')}
+            {:else if card.kind === 'create-association'}
               <PlusCircle size={20} />
             {:else}
               <CalendarDays size={20} />
@@ -184,10 +209,10 @@
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
       <div class="flex items-center gap-2">
         <Bell size={18} class="text-cn-dark" />
-        <h2 class="text-sm font-bold text-text-main">Test notification push</h2>
+        <h2 class="text-sm font-bold text-text-main">{m.admin_push_test_heading()}</h2>
       </div>
       <p class="text-xs text-text-muted">
-        Envoie une notification de test à tous les appareils enregistrés (diagnostic).
+        {m.admin_push_test_description()}
       </p>
       <button
         type="button"
@@ -195,7 +220,7 @@
         disabled={isPushTestRunning}
         class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
       >
-        {isPushTestRunning ? 'Envoi…' : 'Lancer le test push'}
+        {isPushTestRunning ? m.admin_push_test_sending_label() : m.admin_push_test_button_label()}
       </button>
       {#if pushTestResult}
         <p class="text-xs text-text-muted">{pushTestResult}</p>
@@ -204,7 +229,6 @@
   {/if}
 
   <p class="text-xs text-text-muted">
-    La configuration Stripe Connect se fait sur chaque association : page publique → Modifier →
-    onglet Paiements.
+    {m.admin_stripe_connect_hint()}
   </p>
 </div>

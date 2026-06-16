@@ -5,6 +5,7 @@
   import { coreUrl } from '$lib/utils/apiUrl';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
+  import { m } from '$lib/paraglide/messages';
 
   interface AdminUser {
     id: string;
@@ -45,10 +46,10 @@
     error = '';
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/admin/list`);
-      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      if (!res.ok) throw new Error(m.admin_users_http_error_label({ status: res.status }));
       users = await res.json();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur chargement';
+      error = e instanceof Error ? e.message : m.admin_users_load_error();
     } finally {
       loading = false;
     }
@@ -63,14 +64,14 @@
         method: 'PATCH',
         body: JSON.stringify({ admin: newVal }),
       });
-      if (!res.ok) throw new Error(`Erreur ${res.status}`);
+      if (!res.ok) throw new Error(m.admin_users_http_error_label({ status: res.status }));
       users = users.map((u) => (u.id === user.id ? { ...u, admin: newVal } : u));
-      feedback = { ...feedback, [user.id]: newVal ? 'Admin accordé' : 'Admin retiré' };
+      feedback = { ...feedback, [user.id]: newVal ? m.admin_users_granted_label() : m.admin_users_revoked_label() };
       setTimeout(() => {
         feedback = { ...feedback, [user.id]: '' };
       }, 2000);
     } catch (e) {
-      feedback = { ...feedback, [user.id]: e instanceof Error ? e.message : 'Erreur' };
+      feedback = { ...feedback, [user.id]: e instanceof Error ? e.message : m.common_generic_error_label() };
     } finally {
       saving = { ...saving, [user.id]: false };
     }
@@ -92,9 +93,9 @@
         <Users size={22} strokeWidth={2.5} />
       </div>
       <div>
-        <h1 class="text-2xl font-extrabold text-text-main">Gestion des admins</h1>
+        <h1 class="text-2xl font-extrabold text-text-main">{m.admin_card_manage_admins_label()}</h1>
         <p class="text-sm text-text-muted">
-          Accordez ou retirez les droits d'administration globaux.
+          {m.admin_users_subtitle()}
         </p>
       </div>
     </div>
@@ -103,7 +104,7 @@
       onclick={load}
       disabled={loading}
       class="p-2 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
-      title="Rafraîchir"
+      title={m.moderation_refresh()}
     >
       <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />
     </button>
@@ -120,14 +121,14 @@
   <input
     type="search"
     bind:value={searchQuery}
-    placeholder="Rechercher un utilisateur…"
+    placeholder={m.admin_users_search_placeholder()}
     class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50"
   />
 
   {#if loading}
-    <div class="text-sm text-text-muted">Chargement…</div>
+    <div class="text-sm text-text-muted">{m.common_loading_label()}</div>
   {:else if filtered.length === 0}
-    <div class="text-sm text-text-muted">Aucun utilisateur trouvé.</div>
+    <div class="text-sm text-text-muted">{m.admin_users_empty()}</div>
   {:else}
     <ul class="space-y-2">
       {#each filtered as user (user.id)}
@@ -161,9 +162,9 @@
                 : 'bg-black/10 dark:bg-white/20'}"
               role="switch"
               aria-checked={user.admin ?? false}
-              title={user.admin ? 'Retirer admin' : 'Accorder admin'}
+              title={user.admin ? m.admin_users_revoke_action_label() : m.admin_users_grant_action_label()}
             >
-              <span class="sr-only">{user.admin ? 'Retirer admin' : 'Accorder admin'}</span>
+              <span class="sr-only">{user.admin ? m.admin_users_revoke_action_label() : m.admin_users_grant_action_label()}</span>
               <span
                 class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {user.admin
                   ? 'translate-x-6'

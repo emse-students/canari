@@ -7,6 +7,8 @@
   import { fetchUserProfile, type UserProfile } from '$lib/stores/user';
   import { RefreshCw, Wifi, WifiOff, TriangleAlert, Info } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface DeviceEntry {
     userId: string;
@@ -54,7 +56,7 @@
           .catch(() => {});
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur inconnue';
+      error = e instanceof Error ? e.message : m.admin_status_unknown_error();
     } finally {
       loading = false;
     }
@@ -97,12 +99,12 @@
 </script>
 
 <svelte:head>
-  <title>Admin - Statut des connexions</title>
+  <title>{m.admin_status_page_title()}</title>
 </svelte:head>
 
 {#snippet deviceTable(rows: DeviceEntry[])}
   {#if rows.length === 0}
-    <p class="text-sm text-text-muted">Aucun appareil.</p>
+    <p class="text-sm text-text-muted">{m.admin_status_no_devices()}</p>
   {:else}
     <div class="overflow-x-auto rounded-xl border border-cn-border">
       <table class="w-full text-sm">
@@ -110,12 +112,12 @@
           <tr
             class="border-b border-cn-border bg-[var(--surface-elevated)] text-xs font-semibold uppercase tracking-wide text-text-muted"
           >
-            <th class="px-4 py-2.5 text-left">Utilisateur</th>
-            <th class="px-4 py-2.5 text-left">Device ID</th>
-            <th class="px-4 py-2.5 text-center">WS</th>
-            <th class="px-4 py-2.5 text-center">Onglets</th>
-            <th class="px-4 py-2.5 text-center">Redis</th>
-            <th class="px-4 py-2.5 text-center">TTL (s)</th>
+            <th class="px-4 py-2.5 text-left">{m.admin_status_col_user()}</th>
+            <th class="px-4 py-2.5 text-left">{m.admin_status_col_device_id()}</th>
+            <th class="px-4 py-2.5 text-center">{m.admin_status_col_ws()}</th>
+            <th class="px-4 py-2.5 text-center">{m.admin_status_col_tabs()}</th>
+            <th class="px-4 py-2.5 text-center">{m.admin_status_col_redis()}</th>
+            <th class="px-4 py-2.5 text-center">{m.admin_status_col_ttl()}</th>
           </tr>
         </thead>
         <tbody>
@@ -139,7 +141,7 @@
                 {#if d.wsConnected}
                   <span class="inline-flex items-center gap-1 text-green-ok font-medium">
                     <Wifi size={14} />
-                    <span class="text-xs">Connecté</span>
+                    <span class="text-xs">{m.admin_status_ws_connected_label()}</span>
                   </span>
                 {:else}
                   <span class="inline-flex items-center gap-1 text-text-muted">
@@ -173,28 +175,28 @@
   <!-- En-tête -->
   <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
     <div>
-      <h1 class="text-2xl font-bold text-text-main">Connexions en direct</h1>
+      <h1 class="text-2xl font-bold text-text-main">{m.admin_status_title()}</h1>
       <p class="mt-0.5 text-text-muted">
-        {total} appareil{total !== 1 ? 's' : ''} - rafraîchissement toutes les {REFRESH_MS / 1000}s
+        {m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
       </p>
     </div>
     <div class="flex items-center gap-2">
       {#if lastUpdated}
-        <span class="text-xs text-text-muted">MAJ {lastUpdated.toLocaleTimeString()}</span>
+        <span class="text-xs text-text-muted">{m.admin_status_last_updated_label({ time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}</span>
       {/if}
       <button
         onclick={() => (showLegend = !showLegend)}
         class="flex items-center gap-1.5 rounded-lg border border-cn-border bg-[var(--cn-surface)] px-3 py-1.5 text-sm text-text-muted hover:border-cn-yellow hover:text-text-main transition-colors"
       >
         <Info size={14} />
-        Légende
+        {m.admin_status_legend_button()}
       </button>
       <button
         onclick={() => void fetchPresence()}
         class="flex items-center gap-1.5 rounded-lg border border-cn-border bg-[var(--cn-surface)] px-3 py-1.5 text-sm text-text-muted hover:border-cn-yellow hover:text-text-main transition-colors"
       >
         <RefreshCw size={14} />
-        Actualiser
+        {m.admin_status_refresh_button()}
       </button>
     </div>
   </div>
@@ -202,50 +204,38 @@
   <!-- Légende -->
   {#if showLegend}
     <div class="mb-6 rounded-xl border border-cn-border bg-[var(--cn-surface)] p-5 text-sm">
-      <h2 class="mb-4 font-semibold text-text-main">Comment interpréter ce tableau</h2>
+      <h2 class="mb-4 font-semibold text-text-main">{m.admin_status_legend_heading()}</h2>
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <p class="mb-1 font-medium text-text-main">
-            <Wifi size={13} class="mr-1 inline text-green-ok" />WS (WebSocket)
+            <Wifi size={13} class="mr-1 inline text-green-ok" />{m.admin_status_legend_ws_label()}
           </p>
           <p class="text-text-muted">
-            Connexion WebSocket active en mémoire du gateway. Chaque onglet ouvert dans l'app compte
-            comme un onglet (colonne "Onglets"). Après un <strong class="text-text-main"
-              >arrêt forcé</strong
-            >
-            de l'app, le serveur envoie un Ping toutes les 30s : s'il ne reçoit pas de Pong, il
-            ferme la connexion. L'utilisateur reste marqué "WS connecté" pendant
-            <strong class="text-text-main">jusqu'à ~30s</strong> après la déconnexion.
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+            {@html m.admin_status_legend_ws_html()}
           </p>
         </div>
         <div>
-          <p class="mb-1 font-medium text-text-main">Redis (présence)</p>
+          <p class="mb-1 font-medium text-text-main">{m.admin_status_legend_redis_label()}</p>
           <p class="text-text-muted">
-            Clé <code class="rounded bg-[var(--surface-elevated)] px-1 font-mono text-xs"
-              >user:online:&#123;userId&#125;:&#123;deviceId&#125;</code
-            >
-            dans Redis. Créée à la connexion WS, rafraîchie à chaque Pong. Supprimée automatiquement quand
-            la connexion se ferme proprement.
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+            {@html m.admin_status_legend_redis_html()}
           </p>
         </div>
         <div>
-          <p class="mb-1 font-medium text-text-main">TTL (secondes restantes)</p>
+          <p class="mb-1 font-medium text-text-main">{m.admin_status_legend_ttl_label()}</p>
           <p class="text-text-muted">
-            Durée de vie restante de la clé Redis. La clé expire après 90s sans refresh.
-            <span class="text-green-ok font-medium">Vert</span> = sain,
-            <span class="text-cn-yellow font-medium">jaune</span> = bientôt expiré,
-            <span class="text-red-err font-medium">rouge</span> = &lt;20s (connexion probablement morte).
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+            {@html m.admin_status_legend_ttl_html()}
           </p>
         </div>
         <div>
           <p class="mb-1 font-medium text-text-main">
-            <TriangleAlert size={13} class="mr-1 inline text-cn-yellow" />Anomalies (fond jaune)
+            <TriangleAlert size={13} class="mr-1 inline text-cn-yellow" />{m.admin_status_legend_anomalies_label()}
           </p>
           <p class="text-text-muted">
-            <strong class="text-text-main">Redis ✓ mais WS -</strong> : connexion fermée (ex. arrêt
-            forcé de l'app) mais la clé Redis n'a pas encore expiré. Disparaîtra en ≤30s.<br />
-            <strong class="text-text-main">WS ✓ mais Redis -</strong> : connexion active mais présence
-            jamais écrite (bug gateway) ou TTL expiré sans refresh.
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+            {@html m.admin_status_legend_anomalies_html()}
           </p>
         </div>
       </div>
@@ -261,17 +251,17 @@
   {/if}
 
   {#if loading}
-    <div class="text-text-muted">Chargement…</div>
+    <div class="text-text-muted">{m.common_loading_label()}</div>
   {:else}
     <!-- Anomalies -->
     {#if anomalies.length > 0}
       <section class="mb-8">
         <h2 class="mb-1 flex items-center gap-2 font-semibold text-text-main">
           <TriangleAlert size={16} class="text-cn-yellow" />
-          {anomalies.length} anomalie{anomalies.length > 1 ? 's' : ''} - WS et Redis désynchronisés
+          {m.admin_status_anomalies_heading({ count: anomalies.length })}
         </h2>
         <p class="mb-3 text-sm text-text-muted">
-          Fond jaune = WS et Redis ne sont pas d'accord sur le statut de l'appareil.
+          {m.admin_status_anomalies_desc()}
         </p>
         {@render deviceTable(anomalies)}
       </section>
@@ -280,14 +270,14 @@
         class="mb-6 flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-3 text-sm text-green-ok"
       >
         <Wifi size={14} />
-        Aucune anomalie - WS et Redis sont synchronisés sur tous les appareils
+        {m.admin_status_no_anomalies()}
       </div>
     {/if}
 
     <!-- Tous les appareils -->
     <section>
       <h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-text-muted">
-        Tous les appareils ({total})
+        {m.admin_status_all_devices_heading({ count: total })}
       </h2>
       {@render deviceTable(devices)}
     </section>

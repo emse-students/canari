@@ -14,6 +14,8 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { generateAvatarColor } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
@@ -42,7 +44,7 @@
       events = res.events;
       canValidate = res.canValidate;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
       events = [];
     } finally {
       loading = false;
@@ -52,8 +54,9 @@
   onMount(load);
 
   function formatRange(ev: AssociationCalendarFeedEvent): string {
+    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
     const s = new Date(ev.startsAt);
-    const fmt = new Intl.DateTimeFormat('fr-FR', {
+    const fmt = new Intl.DateTimeFormat(locale, {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
@@ -62,7 +65,7 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 
   async function validate(ev: AssociationCalendarFeedEvent) {
@@ -71,7 +74,7 @@
       await validateAssociationCalendarEvent(ev.associationId, ev.id);
       await load();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       actingId = null;
     }
@@ -94,20 +97,20 @@
       rejectTarget = null;
       await load();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       rejecting = false;
     }
   }
 
   async function remove(ev: AssociationCalendarFeedEvent) {
-    if (!await showConfirm(`Supprimer " ${ev.title} " ?`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.admin_agenda_delete_confirm_message({ title: ev.title }), { danger: true, confirmLabel: m.common_delete_button() })) return;
     actingId = ev.id;
     try {
       await deleteAssociationCalendarEvent(ev.associationId, ev.id);
       await load();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       actingId = null;
     }
@@ -116,9 +119,9 @@
 
 <div class="space-y-4">
   <div>
-    <h2 class="text-lg font-bold text-text-main">Événements en attente</h2>
+    <h2 class="text-lg font-bold text-text-main">{m.admin_agenda_title()}</h2>
     <p class="text-sm text-text-muted mt-1">
-      Validez un événement pour le rendre visible sur l'agenda public et dans l'agenda global.
+      {m.admin_agenda_subtitle()}
     </p>
   </div>
 
@@ -138,7 +141,7 @@
     <div
       class="rounded-2xl border border-dashed border-cn-border px-6 py-12 text-center text-sm text-text-muted"
     >
-      Aucun événement en attente de validation.
+      {m.admin_agenda_empty()}
     </div>
   {:else}
     <ul class="space-y-3">
@@ -200,7 +203,7 @@
                 class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
               >
                 <Check size={14} />
-                Valider
+                {m.admin_agenda_validate_button()}
               </button>
               <button
                 type="button"
@@ -209,7 +212,7 @@
                 class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-3 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
               >
                 <X size={14} />
-                Refuser
+                {m.admin_agenda_reject_button()}
               </button>
             {/if}
             <a
@@ -217,7 +220,7 @@
               class="inline-flex items-center gap-1 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
             >
               <ExternalLink size={14} />
-              Association
+              {m.admin_agenda_association_link_label()}
             </a>
             <button
               type="button"
@@ -226,7 +229,7 @@
               class="inline-flex items-center gap-1 rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
               <Trash2 size={14} />
-              Supprimer
+              {m.common_delete_button()}
             </button>
           </div>
         </li>
@@ -250,20 +253,19 @@
     aria-modal="true"
   >
     <div class="w-full max-w-md rounded-2xl bg-white dark:bg-cn-surface shadow-xl p-6 space-y-4">
-      <h3 class="text-base font-bold text-text-main">Refuser " {rejectTarget.title} "</h3>
+      <h3 class="text-base font-bold text-text-main">{m.admin_agenda_reject_modal_title({ title: rejectTarget.title })}</h3>
       <p class="text-sm text-text-muted">
-        L'événement sera marqué comme refusé. L'association recevra une notification et pourra voir
-        le motif dans sa page.
+        {m.admin_agenda_reject_modal_desc()}
       </p>
       <div class="space-y-1.5">
         <span class="text-xs font-semibold text-text-muted uppercase tracking-wide"
-          >Motif (optionnel)</span
+          >{m.admin_agenda_reject_reason_label()}</span
         >
         <Textarea
           bind:value={rejectReason}
           rows={3}
           maxlength={1000}
-          placeholder="Ex : dates non conformes au règlement, contenu incomplet…"
+          placeholder={m.admin_agenda_reject_reason_placeholder()}
         />
       </div>
       <div class="flex gap-2 justify-end">
@@ -274,7 +276,7 @@
           }}
           class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
         >
-          Annuler
+          {m.common_cancel_button()}
         </button>
         <button
           type="button"
@@ -283,7 +285,7 @@
           class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-4 py-2 text-sm font-bold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
         >
           <X size={14} />
-          {rejecting ? 'En cours…' : 'Confirmer le refus'}
+          {rejecting ? m.admin_agenda_reject_confirm_progress() : m.admin_agenda_reject_confirm_button()}
         </button>
       </div>
     </div>

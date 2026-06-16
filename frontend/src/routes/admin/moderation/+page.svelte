@@ -38,6 +38,8 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   type Tab = 'reports' | 'hidden' | 'muted';
 
@@ -103,7 +105,7 @@
       );
       await resolveNames(ids);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de charger les signalements.';
+      error = e instanceof Error ? e.message : m.moderation_load_reports_error();
     } finally {
       loadingReports = false;
     }
@@ -117,7 +119,7 @@
       const ids = hiddenPosts.map((p) => p.authorId).filter((id): id is string => Boolean(id));
       await resolveNames(ids);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de charger les posts masqués.';
+      error = e instanceof Error ? e.message : m.moderation_load_hidden_posts_error();
     } finally {
       loadingHidden = false;
     }
@@ -134,7 +136,7 @@
       ];
       await resolveNames(ids);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de charger les utilisateurs mutés.';
+      error = e instanceof Error ? e.message : m.moderation_load_muted_users_error();
     } finally {
       loadingMuted = false;
     }
@@ -153,7 +155,7 @@
       const updated = await reviewReport(reportId, action);
       reports = reports.map((r) => (r.id === reportId ? updated : r));
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       processingId = null;
     }
@@ -186,7 +188,7 @@
       muteDialogTarget = null;
       if (tab === 'muted') void loadMuted();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors du mute.';
+      error = e instanceof Error ? e.message : m.moderation_mute_error();
     } finally {
       muteDialogLoading = false;
       processingId = null;
@@ -202,14 +204,14 @@
       await handleReview(report.id, 'reviewed');
       if (tab === 'hidden') void loadHidden();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors du masquage.';
+      error = e instanceof Error ? e.message : m.moderation_hide_error();
       processingId = null;
     }
   }
 
   async function handleDeletePost(report: ContentReport) {
     if (report.contentType !== 'post') return;
-    if (!await showConfirm('Supprimer définitivement cette publication ?', { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.moderation_delete_post_confirm(), { danger: true, confirmLabel: m.moderation_supprimer() })) return;
     processingId = report.id;
     error = '';
     try {
@@ -217,21 +219,21 @@
       await handleReview(report.id, 'reviewed');
       hiddenPosts = hiddenPosts.filter((p) => p.id !== report.contentId);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors de la suppression.';
+      error = e instanceof Error ? e.message : m.moderation_delete_error();
       processingId = null;
     }
   }
 
   async function handleDeleteComment(report: ContentReport) {
     if (report.contentType !== 'comment') return;
-    if (!await showConfirm('Supprimer ce commentaire et ses réponses ?', { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.moderation_delete_comment_confirm(), { danger: true, confirmLabel: m.moderation_supprimer() })) return;
     processingId = report.id;
     error = '';
     try {
       await deleteReportedComment(report.contentId);
       await handleReview(report.id, 'reviewed');
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors de la suppression du commentaire.';
+      error = e instanceof Error ? e.message : m.moderation_delete_comment_error();
       processingId = null;
     }
   }
@@ -242,7 +244,7 @@
       await unmuteUser(userId);
       mutedUsers = mutedUsers.filter((u) => u.userId !== userId);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur';
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       processingId = null;
     }
@@ -254,7 +256,7 @@
       await unhidePost(postId);
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors de la restauration.';
+      error = e instanceof Error ? e.message : m.moderation_restore_error();
     } finally {
       processingId = null;
     }
@@ -266,7 +268,7 @@
       await deletePost(postId);
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors de la suppression.';
+      error = e instanceof Error ? e.message : m.moderation_delete_error();
     } finally {
       processingId = null;
     }
@@ -277,7 +279,8 @@
   }
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
+    return new Date(iso).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
   }
 
   function excerpt(markdown: string, max = 220): string {
@@ -285,18 +288,18 @@
     return plain.length > max ? plain.slice(0, max) + '…' : plain;
   }
 
-  const reasonLabel: Record<string, string> = {
-    spam: 'Spam',
-    harassment: 'Harcèlement',
-    inappropriate: 'Contenu inapproprié',
-    other: 'Autre',
-  };
+  const reasonLabel: Record<string, string> = $derived({
+    spam: m.moderation_reason_spam(),
+    harassment: m.moderation_reason_harassment(),
+    inappropriate: m.moderation_reason_inappropriate(),
+    other: m.moderation_reason_other(),
+  });
 
-  const statusLabel: Record<ContentReport['status'], string> = {
-    pending: 'En attente',
-    reviewed: 'Traité',
-    dismissed: 'Ignoré',
-  };
+  const statusLabel: Record<ContentReport['status'], string> = $derived({
+    pending: m.moderation_pending(),
+    reviewed: m.moderation_reviewed(),
+    dismissed: m.moderation_dismissed(),
+  });
 
   const statusClass: Record<ContentReport['status'], string> = {
     pending: 'bg-amber-100 text-amber-700',
@@ -304,11 +307,11 @@
     dismissed: 'bg-gray-100 text-text-muted',
   };
 
-  const contentTypeLabel: Record<ContentReport['contentType'], string> = {
-    post: 'Post',
-    comment: 'Commentaire',
-    message: 'Message',
-  };
+  const contentTypeLabel: Record<ContentReport['contentType'], string> = $derived({
+    post: m.moderation_post(),
+    comment: m.moderation_comment(),
+    message: m.moderation_message(),
+  });
 
   const pendingReports = $derived(reports.filter((r) => r.status === 'pending'));
   const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
@@ -319,9 +322,9 @@
     <div class="flex items-center gap-3">
       <ShieldAlert size={28} class="text-red-500" />
       <div>
-        <h1 class="text-2xl font-bold text-text-main">Modération</h1>
+        <h1 class="text-2xl font-bold text-text-main">{m.moderation_title()}</h1>
         <p class="text-sm text-text-muted">
-          Signalements, posts masqués et utilisateurs restreints
+          {m.moderation_subtitle()}
         </p>
       </div>
     </div>
@@ -333,7 +336,7 @@
       }}
       disabled={loadingReports || loadingHidden || loadingMuted}
       class="p-2 rounded-xl border border-cn-border text-text-muted hover:text-text-main transition-colors disabled:opacity-40"
-      aria-label="Rafraîchir"
+      aria-label={m.moderation_refresh()}
     >
       <RefreshCw
         size={18}
@@ -352,7 +355,7 @@
         : 'text-text-muted hover:text-text-main'}"
     >
       <Flag size={16} />
-      Signalements
+      {m.moderation_reports_tab()}
       {#if pendingReports.length > 0}
         <span class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-red-500 text-white">
           {pendingReports.length}
@@ -367,7 +370,7 @@
         : 'text-text-muted hover:text-text-main'}"
     >
       <EyeOff size={16} />
-      Posts masqués
+      {m.moderation_hidden_tab()}
       {#if hiddenPosts.length > 0}
         <span
           class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-orange-500 text-white"
@@ -384,7 +387,7 @@
         : 'text-text-muted hover:text-text-main'}"
     >
       <UserX size={16} />
-      Utilisateurs mutés
+      {m.moderation_muted_tab()}
       {#if mutedUsers.length > 0}
         <span class="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-gray-500 text-white">
           {mutedUsers.length}
@@ -413,13 +416,13 @@
     {:else if reports.length === 0}
       <div class="text-center py-16 text-text-muted">
         <Flag size={40} class="mx-auto mb-3 opacity-30" />
-        <p class="font-medium">Aucun signalement pour le moment.</p>
+        <p class="font-medium">{m.moderation_no_reports()}</p>
       </div>
     {:else}
       <!-- Pending reports -->
       {#if pendingReports.length > 0}
         <h2 class="text-sm font-bold text-text-muted uppercase tracking-wider mb-3">
-          En attente - {pendingReports.length}
+          {m.moderation_pending_header_label({ count: pendingReports.length })}
         </h2>
         <div class="space-y-3 mb-8">
           {#each pendingReports as report (report.id)}
@@ -448,7 +451,7 @@
                 <div class="flex items-center gap-2 text-xs text-text-muted">
                   <Flag size={12} class="shrink-0 opacity-60" />
                   <span>
-                    Signalé par :
+                    {m.moderation_signale_par()} :
                     <span class="font-medium text-text-main">
                       {names[report.reporterId] ?? report.reporterId.slice(0, 8) + '…'}
                     </span>
@@ -458,7 +461,7 @@
                   <div class="flex items-center gap-2 text-xs text-text-muted">
                     <UserX size={12} class="shrink-0 opacity-60" />
                     <span>
-                      Auteur du contenu :
+                      {m.moderation_auteur_contenu()} :
                       <span class="font-medium text-text-main">
                         {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
                       </span>
@@ -482,7 +485,7 @@
                       type="button"
                       onclick={() => openPostPreview(report.contentId)}
                       class="text-left w-full text-xs text-text-main leading-relaxed hover:opacity-80 transition-opacity"
-                      title="Aperçu complet de la publication"
+                      title={m.moderation_preview_full_label()}
                     >
                       {excerpt(report.contentPreview, 200)}
                     </button>
@@ -499,7 +502,7 @@
                 <button
                   onclick={() => copyId(report.contentId)}
                   class="flex items-center gap-1 text-[10px] text-text-muted/50 hover:text-text-muted font-mono transition-colors"
-                  title="Copier l'ID"
+                  title={m.moderation_copy_id_label()}
                 >
                   {report.contentId.slice(0, 8)}…
                   <Copy size={10} />
@@ -509,29 +512,29 @@
                     type="button"
                     onclick={() => openPostPreview(report.contentId)}
                     class="flex items-center gap-1 text-[11px] font-semibold text-cn-yellow hover:underline ml-auto"
-                    title="Aperçu de la publication"
+                    title={m.moderation_preview_post_label()}
                   >
                     <Eye size={11} />
-                    Aperçu
+                    {m.moderation_apercu()}
                   </button>
                   <a
                     href="/posts/{report.contentId}"
                     target="_blank"
                     class="flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-text-main"
-                    title="Ouvrir la publication"
+                    title={m.moderation_open_post_label()}
                   >
                     <ExternalLink size={11} />
-                    Ouvrir
+                    {m.moderation_ouvrir()}
                   </a>
                 {:else if report.contentType === 'comment' && report.postId}
                   <a
                     href="/posts/{report.postId}"
                     target="_blank"
                     class="flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-text-main ml-auto"
-                    title="Ouvrir le post contenant ce commentaire"
+                    title={m.moderation_open_post_with_comment_label()}
                   >
                     <ExternalLink size={11} />
-                    Voir le post
+                    {m.moderation_voir_post_label()}
                   </a>
                 {/if}
               </div>
@@ -546,7 +549,7 @@
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
                   >
                     <Check size={13} />
-                    Marquer traité
+                    {m.moderation_marquer_traite()}
                   </button>
                   <button
                     type="button"
@@ -555,7 +558,7 @@
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-gray-600 hover:border-gray-400 transition-colors disabled:opacity-40"
                   >
                     <X size={13} />
-                    Ignorer
+                    {m.moderation_ignorer()}
                   </button>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -569,10 +572,10 @@
                       )}
                     disabled={processingId === report.id}
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-orange-600 hover:border-orange-400 transition-colors disabled:opacity-40"
-                    title="Restreindre le compte de la personne qui a signalé"
+                    title={m.moderation_mute_reporter_hint()}
                   >
                     <UserX size={13} />
-                    Muter le signaleur
+                    {m.moderation_muter_signaleur()}
                   </button>
                   {#if report.reportedUserId}
                     <button
@@ -585,10 +588,10 @@
                         )}
                       disabled={processingId === report.id}
                       class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
-                      title="Restreindre l'auteur du contenu signalé"
+                      title={m.moderation_mute_author_hint()}
                     >
                       <UserX size={13} />
-                      Muter l'auteur
+                      {m.moderation_muter_auteur()}
                     </button>
                   {/if}
                 </div>
@@ -601,7 +604,7 @@
                       class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-amber-600 hover:border-amber-400 transition-colors disabled:opacity-40"
                     >
                       <EyeOff size={13} />
-                      Masquer le post
+                      {m.moderation_masquer_post()}
                     </button>
                     <button
                       type="button"
@@ -610,7 +613,7 @@
                       class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
                     >
                       <Trash2 size={13} />
-                      Supprimer le post
+                      {m.moderation_supprimer_post()}
                     </button>
                   </div>
                 {:else if report.contentType === 'comment'}
@@ -621,7 +624,7 @@
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40"
                   >
                     <Trash2 size={13} />
-                    Supprimer le commentaire
+                    {m.moderation_supprimer_commentaire()}
                   </button>
                 {/if}
               </div>
@@ -633,7 +636,7 @@
       <!-- Resolved reports -->
       {#if resolvedReports.length > 0}
         <h2 class="text-sm font-bold text-text-muted uppercase tracking-wider mb-3">
-          Traités / Ignorés - {resolvedReports.length}
+          {m.moderation_resolved_header_label({ count: resolvedReports.length })}
         </h2>
         <div class="space-y-2">
           {#each resolvedReports as report (report.id)}
@@ -659,7 +662,7 @@
                   type="button"
                   onclick={() => openPostPreview(report.contentId)}
                   class="flex items-center gap-1 text-[11px] text-cn-yellow hover:underline shrink-0"
-                  title="Aperçu de la publication"
+                  title={m.moderation_preview_post_label()}
                 >
                   <Eye size={11} />
                 </button>
@@ -667,7 +670,7 @@
                   href="/posts/{report.contentId}"
                   target="_blank"
                   class="text-[11px] text-text-muted/60 hover:text-text-muted shrink-0"
-                  title="Ouvrir la publication"
+                  title={m.moderation_open_post_label()}
                 >
                   <ExternalLink size={11} />
                 </a>
@@ -676,7 +679,7 @@
                   href="/posts/{report.postId}"
                   target="_blank"
                   class="text-[11px] text-text-muted/60 hover:text-text-muted shrink-0"
-                  title="Ouvrir le post"
+                  title={m.moderation_open_post_short_label()}
                 >
                   <ExternalLink size={11} />
                 </a>
@@ -706,16 +709,14 @@
     {:else if hiddenPosts.length === 0}
       <div class="text-center py-16 text-text-muted">
         <EyeOff size={40} class="mx-auto mb-3 opacity-30" />
-        <p class="font-medium">Aucun post masqué actuellement.</p>
+        <p class="font-medium">{m.moderation_no_hidden()}</p>
         <p class="text-sm mt-1">
-          Les posts atteignant 5 signalements sont automatiquement masqués ici.
+          {m.moderation_auto_hide_hint()}
         </p>
       </div>
     {:else}
       <p class="text-xs text-text-muted mb-4">
-        Ces posts ont été masqués automatiquement après avoir atteint 5 signalements. Ils ne sont
-        plus visibles dans les fils d'actualité. Restaurez-les si le signalement est infondé, ou
-        supprimez-les s'il est justifié.
+        {m.moderation_hidden_desc()}
       </p>
       <div class="space-y-3">
         {#each hiddenPosts as post (post.id)}
@@ -732,7 +733,7 @@
                   </span>
                 </div>
               {:else}
-                <span class="text-xs text-text-muted italic">Publication d'association</span>
+                <span class="text-xs text-text-muted italic">{m.moderation_association_post_label()}</span>
               {/if}
               <span class="ml-auto text-[11px] text-text-muted/60"
                 >{formatDate(post.createdAt)}</span
@@ -744,7 +745,7 @@
               type="button"
               onclick={() => openPostPreview(post.id)}
               class="text-left w-full text-sm text-text-main leading-relaxed mb-3 hover:opacity-90 transition-opacity"
-              title="Aperçu complet"
+              title={m.moderation_preview_full_short_label()}
             >
               {excerpt(post.markdown)}
             </button>
@@ -752,12 +753,12 @@
             <!-- Report count + ID -->
             <div class="flex items-center gap-2 mb-3">
               <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
-                {post.pendingReportCount} signalement{post.pendingReportCount > 1 ? 's' : ''} en attente
+                {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
               </span>
               <button
                 onclick={() => copyId(post.id)}
                 class="flex items-center gap-1 text-[10px] text-text-muted/50 hover:text-text-muted font-mono transition-colors"
-                title="Copier l'ID"
+                title={m.moderation_copy_id_label()}
               >
                 {post.id.slice(0, 12)}…
                 <Copy size={10} />
@@ -772,18 +773,18 @@
                 type="button"
                 onclick={() => openPostPreview(post.id)}
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-cn-yellow hover:border-amber-400 transition-colors"
-                title="Aperçu complet de la publication"
+                title={m.moderation_preview_full_label()}
               >
                 <Eye size={13} />
-                Aperçu
+                {m.moderation_apercu()}
               </button>
               <button
                 onclick={() => handleRestore(post.id)}
                 disabled={processingId === post.id}
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
-                title="Remettre le post dans les fils d'actualité"
+                title={m.moderation_restore_hint()}
               >
-                Restaurer
+                {m.moderation_restaurer()}
               </button>
               {#if post.authorId}
                 <button
@@ -798,20 +799,20 @@
                   }}
                   disabled={processingId === post.id}
                   class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-orange-600 hover:border-orange-400 transition-colors disabled:opacity-40"
-                  title="Supprime le post et mute l'auteur"
+                  title={m.moderation_delete_mute_hint()}
                 >
                   <UserX size={13} />
-                  Supprimer + muter
+                  {m.moderation_supprimer_muter()}
                 </button>
               {/if}
               <button
                 onclick={() => handleDeleteHidden(post.id)}
                 disabled={processingId === post.id}
                 class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-red-600 hover:border-red-400 transition-colors disabled:opacity-40 ml-auto"
-                title="Supprime définitivement le post"
+                title={m.moderation_delete_permanently_hint()}
               >
                 <Trash2 size={13} />
-                Supprimer
+                {m.moderation_supprimer()}
               </button>
             </div>
           </div>
@@ -833,7 +834,7 @@
     {:else if mutedUsers.length === 0}
       <div class="text-center py-16 text-text-muted">
         <UserCheck size={40} class="mx-auto mb-3 opacity-30" />
-        <p class="font-medium">Aucun utilisateur muté actuellement.</p>
+        <p class="font-medium">{m.moderation_no_muted()}</p>
       </div>
     {:else}
       <div class="space-y-3">
@@ -852,9 +853,9 @@
               {/if}
               {#if user.mutedAt}
                 <p class="text-[11px] text-text-muted/60 mt-1">
-                  Muté le {formatDate(user.mutedAt)}
+                  {m.moderation_muted_on_label({ date: formatDate(user.mutedAt) })}
                   {#if user.mutedBy}
-                    par {names[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…'}
+                    {m.moderation_muted_by_label({ name: names[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…' })}
                   {/if}
                 </p>
               {/if}
@@ -865,7 +866,7 @@
               class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-cn-border text-text-muted hover:text-green-600 hover:border-green-400 transition-colors disabled:opacity-40"
             >
               <UserCheck size={14} />
-              Démuter
+              {m.moderation_demuter()}
             </button>
           </div>
         {/each}

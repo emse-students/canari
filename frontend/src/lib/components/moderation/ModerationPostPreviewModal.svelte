@@ -7,6 +7,7 @@
   import { getPost, type PostEntity } from '$lib/posts/api';
   import { getToken } from '$lib/stores/auth';
   import { Loader2, FileX } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -46,7 +47,7 @@
       })
       .catch((e) => {
         if (open && postId === id) {
-          error = e instanceof Error ? e.message : 'Impossible de charger la publication.';
+          error = e instanceof Error ? e.message : m.moderation_load_post_error();
         }
       })
       .finally(() => {
@@ -58,7 +59,7 @@
 <Modal
   {open}
   {onClose}
-  title="Publication signalée"
+  title={m.moderation_reported_post_title()}
   maxWidth="max-w-xl"
   dismissible={!loading}
 >
@@ -66,7 +67,7 @@
     {#if loading}
       <div class="flex flex-col items-center justify-center gap-3 py-16 text-text-muted">
         <Loader2 size={32} class="animate-spin opacity-60" />
-        <p class="text-sm">Chargement…</p>
+        <p class="text-sm">{m.common_loading_label()}</p>
       </div>
     {:else if error}
       <div class="py-12 text-center px-4">

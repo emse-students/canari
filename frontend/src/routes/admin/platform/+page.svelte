@@ -6,6 +6,7 @@
   import { coreUrl } from '$lib/utils/apiUrl';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
   import { Wrench, Save, RefreshCw } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   type PlatformConfig = {
     maintenanceEnabled: boolean;
@@ -34,7 +35,7 @@
       maintenanceMessage = data.maintenanceMessage ?? '';
       minClientVersion = data.minClientVersion;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de charger la configuration';
+      error = e instanceof Error ? e.message : m.admin_platform_load_error();
     } finally {
       loading = false;
     }
@@ -62,10 +63,10 @@
       maintenanceEnabled = data.maintenanceEnabled;
       maintenanceMessage = data.maintenanceMessage ?? '';
       minClientVersion = data.minClientVersion;
-      savedMessage = 'Configuration enregistrée.';
+      savedMessage = m.admin_platform_saved_label();
       void refreshAppVersionCheck();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Enregistrement impossible';
+      error = e instanceof Error ? e.message : m.admin_platform_save_error();
     } finally {
       saving = false;
     }
@@ -86,9 +87,9 @@
       <Wrench size={20} />
     </span>
     <div>
-      <h2 class="text-lg font-extrabold text-text-main">Plateforme</h2>
+      <h2 class="text-lg font-extrabold text-text-main">{m.admin_platform_label()}</h2>
       <p class="text-sm text-text-muted mt-0.5">
-        Maintenance et version minimale exigée côté client (vérifiée avant le PIN).
+        {m.admin_platform_subtitle()}
       </p>
     </div>
   </header>
@@ -114,30 +115,30 @@
           class="mt-1 h-4 w-4 rounded border-cn-border text-cn-yellow focus:ring-cn-yellow"
         />
         <span>
-          <span class="block text-sm font-bold text-text-main">Mode maintenance</span>
+          <span class="block text-sm font-bold text-text-main">{m.admin_platform_maintenance_toggle_label()}</span>
           <span class="block text-xs text-text-muted mt-0.5">
-            Bloque l'accès à tous les utilisateurs sauf les administrateurs globaux.
+            {m.admin_platform_maintenance_toggle_desc()}
           </span>
         </span>
       </label>
 
       <div class="space-y-1.5">
         <label for="maintenance-message" class="text-sm font-bold text-text-main">
-          Message de maintenance
+          {m.admin_platform_message_label()}
         </label>
         <textarea
           id="maintenance-message"
           bind:value={maintenanceMessage}
           rows="3"
           maxlength="2000"
-          placeholder="Ex. : Mise à jour serveur en cours, retour prévu vers 14h."
+          placeholder={m.admin_platform_message_placeholder()}
           class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
         ></textarea>
       </div>
 
       <div class="space-y-1.5">
         <label for="min-client-version" class="text-sm font-bold text-text-main">
-          Version client minimale
+          {m.admin_platform_min_version_label()}
         </label>
         <input
           id="min-client-version"
@@ -147,7 +148,7 @@
           required
           class="w-full max-w-xs rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
         />
-        <p class="text-xs text-text-muted">Format semver <code>major.minor.patch</code> (ex. 0.4.0).</p>
+        <p class="text-xs text-text-muted">{m.admin_platform_min_version_hint_prefix()} <code>major.minor.patch</code> {m.admin_platform_min_version_hint_suffix()}</p>
       </div>
 
       {#if error}

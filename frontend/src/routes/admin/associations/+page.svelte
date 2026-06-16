@@ -5,6 +5,7 @@
   import { listAssociations, updateAssociation, type Association } from '$lib/associations/api';
   import { Building2, Search, Loader2, ShieldCheck } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  import { m } from '$lib/paraglide/messages';
 
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -30,7 +31,7 @@
     try {
       associations = await listAssociations();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de charger les associations';
+      error = e instanceof Error ? e.message : m.admin_assoc_load_error();
     } finally {
       loading = false;
     }
@@ -49,7 +50,7 @@
       associations = associations.map((a) =>
         a.id === assoc.id ? { ...a, isBDE: previous } : a
       );
-      error = e instanceof Error ? e.message : `Échec de la mise à jour de ${assoc.name}`;
+      error = e instanceof Error ? e.message : m.admin_assoc_update_error({ name: assoc.name });
     } finally {
       savingIds.delete(assoc.id);
     }
@@ -70,10 +71,9 @@
       <Building2 size={20} />
     </span>
     <div>
-      <h2 class="text-lg font-extrabold text-text-main">Associations & BDE</h2>
+      <h2 class="text-lg font-extrabold text-text-main">{m.admin_assoc_title()}</h2>
       <p class="text-sm text-text-muted mt-0.5">
-        Marquez les associations " BDE ". Une asso BDE débloque les super-rôles
-        (valider les évènements, créer des associations, modérer) pour ses membres habilités.
+        {m.admin_assoc_subtitle()}
       </p>
     </div>
   </header>
@@ -89,14 +89,14 @@
         <input
           type="text"
           bind:value={query}
-          placeholder="Rechercher une association…"
-          aria-label="Rechercher une association"
+          placeholder={m.admin_assoc_search_placeholder()}
+          aria-label={m.admin_assoc_search_aria_label()}
           class="w-full rounded-xl border border-cn-border bg-transparent py-2 pl-9 pr-3 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
         />
       </div>
       <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted">
         <ShieldCheck size={14} class="text-emerald-500" />
-        {bdeCount} BDE / {associations.length} associations
+        {m.admin_assoc_bde_count_label({ bdeCount, total: associations.length })}
       </span>
     </div>
 
@@ -106,7 +106,7 @@
 
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] divide-y divide-cn-border/70 overflow-hidden">
       {#if filtered.length === 0}
-        <p class="px-4 py-8 text-center text-sm text-text-muted">Aucune association trouvée.</p>
+        <p class="px-4 py-8 text-center text-sm text-text-muted">{m.admin_assoc_empty()}</p>
       {:else}
         {#each filtered as assoc (assoc.id)}
           <div class="flex items-center justify-between gap-3 px-4 py-3">
@@ -127,7 +127,7 @@
                 disabled={savingIds.has(assoc.id)}
                 onchange={(e) => toggleBde(assoc, (e.currentTarget as HTMLInputElement).checked)}
                 class="h-4 w-4 rounded border-cn-border text-cn-yellow focus:ring-cn-yellow disabled:opacity-50"
-                aria-label="Marquer {assoc.name} comme BDE"
+                aria-label={m.admin_assoc_mark_bde_aria_label({ name: assoc.name })}
               />
             </label>
           </div>
