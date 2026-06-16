@@ -18,6 +18,13 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
+import { ApnsService } from './apns.service';
+import {
+  buildPushDataFields,
+  buildApnsRequest,
+  partitionTokensByPlatform,
+  PushMessageInput,
+} from './push-payload';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
@@ -119,6 +126,7 @@ export class MessagingService {
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly apns: ApnsService,
   ) {}
 
   /**
@@ -257,32 +265,33 @@ export class MessagingService {
     const inlineProto =
       Buffer.byteLength(protoB64, 'utf8') <= FCM_INLINE_LIMIT ? protoB64 : '';
 
-    for (const pt of pushTokens) {
+    // Shared, transport-agnostic description consumed by both the FCM data
+    // payload and the APNs custom keys (see push-payload.ts).
+    const messageInput: PushMessageInput = {
+      groupId,
+      queuedMessageId: queued.id,
+      senderId,
+      senderName,
+      groupName,
+      // Empty string when proto is too large; the client falls back to fetching
+      // it from the backend or showing a generic notification.
+      proto: inlineProto,
+      // Own-device copies, read receipts and welcome packets are not shown.
+      silent: silent || queued.recipientId === senderId,
+      isWelcome: !!queued.isWelcome,
+      createdAt: queued.createdAt.toISOString(),
+    };
+    const dataFields = buildPushDataFields(messageInput);
+
+    // Route each token through its own gateway: Android via FCM, iOS via APNs.
+    const { android, ios } = partitionTokensByPlatform(pushTokens);
+
+    for (const pt of android) {
       try {
         await admin.messaging().send({
           token: pt.token,
           // Data-only → onMessageReceived() fires for foreground AND background.
-          data: {
-            type: 'message',
-            groupId,
-            queuedMessageId: queued.id,
-            senderId,
-            senderName,
-            groupName,
-            // Empty string when proto is too large; Kotlin falls back to
-            // fetching it from the backend or showing a generic notification.
-            proto: inlineProto,
-            // Kotlin skips showNotification() when true (own-device copy, read
-            // receipts, or welcome packets which are not user-visible messages).
-            silent:
-              silent || queued.recipientId === senderId ? 'true' : 'false',
-            // Tells Kotlin to skip tryDecrypt (welcome bytes ≠ app message) and
-            // go straight to MlsBackgroundWorker for pending-queue processing.
-            isWelcome: queued.isWelcome ? 'true' : 'false',
-            // Server queue time so the Android service can display the correct
-            // message timestamp on the notification even before decryption.
-            createdAt: queued.createdAt.toISOString(),
-          },
+          data: dataFields,
           android: {
             priority: 'high',
             ttl: 86_400_000,
@@ -305,6 +314,35 @@ export class MessagingService {
         this.logger.warn(
           `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
         );
+      }
+    }
+
+    // iOS path: inert until APNS_* env is configured (apns.sendDataNotification
+    // returns { skipped: true }). No iOS tokens exist yet, so this is a no-op in
+    // production today; it is wired so the iOS client can be enabled without
+    // further backend changes.
+    if (ios.length > 0) {
+      const apnsRequest = buildApnsRequest(messageInput, dataFields);
+      for (const pt of ios) {
+        try {
+          const res = await this.apns.sendDataNotification(
+            pt.token,
+            apnsRequest,
+          );
+          if (res.terminal) {
+            await this.pushTokenRepo.delete({ id: pt.id });
+            this.logger.warn(
+              `[PUSH_SEND][${traceId}] Deleted invalid APNs token user=${queued.recipientId} device=${pt.deviceId} reason=${res.reason}`,
+            );
+          }
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] APNs user=${queued.recipientId} device=${pt.deviceId} skipped=${res.skipped} status=${res.status ?? '-'}`,
+          );
+        } catch (e) {
+          this.logger.warn(
+            `[PUSH_SEND][${traceId}] APNs failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
+          );
+        }
       }
     }
   }

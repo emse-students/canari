@@ -653,17 +653,19 @@ export class MlsDeliveryApi {
   /**
    * Atomic CAS: claims `successorId` as the replacement for dead group `deadGroupId`.
    * Returns `{ claimed: true }` if this device won the race, or `{ claimed: false, successorId }` with the winner's ID if another device was faster.
+   * `claimedByDeviceId` is recorded server-side (diagnostic only) to attribute the reboot to the initiating device.
    */
   async claimGroupSuccessor(
     deadGroupId: string,
-    successorId: string
+    successorId: string,
+    claimedByDeviceId?: string
   ): Promise<{ claimed: boolean; successorId: string | null }> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/groups/${encodeURIComponent(deadGroupId)}/successor`,
       {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ successorId }),
+        body: JSON.stringify({ successorId, claimedByDeviceId }),
       }
     );
     const json: Record<string, unknown> = await res.json().catch(() => ({}));

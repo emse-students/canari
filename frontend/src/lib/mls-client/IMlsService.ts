@@ -287,10 +287,12 @@ export interface IMlsService {
   /**
    * Atomically claims `successorId` as the replacement for a dead group (CAS).
    * On conflict, returns `claimed: false` and the winning `successorId`.
+   * `claimedByDeviceId` is recorded server-side (diagnostic only) to attribute the reboot.
    */
   claimGroupSuccessor(
     deadGroupId: string,
-    successorId: string
+    successorId: string,
+    claimedByDeviceId?: string
   ): Promise<{ claimed: boolean; successorId: string | null }>;
 
   // DeviceGroupMembership tracking

@@ -1049,6 +1049,13 @@
         </div>
       </div>
     </div>
+
+    <!-- Identifiant d'appareil (diagnostic discret, utile pour tracer les reboots MLS) -->
+    {#if session.myDeviceId}
+      <p class="text-center text-[0.65rem] font-mono text-text-muted/40 select-all pt-2">
+        device: {session.myDeviceId}
+      </p>
+    {/if}
   {/if}
 </div>
 

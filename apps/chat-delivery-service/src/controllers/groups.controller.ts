@@ -176,19 +176,28 @@ export class GroupsController {
    *  or 409 with claimed=false and the real successorId if another device already claimed it. */
   async claimSuccessor(
     @Param('groupId') groupId: string,
-    @Body() body: { successorId: string },
+    @Body() body: { successorId: string; claimedByDeviceId?: string },
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     if (!body.successorId || typeof body.successorId !== 'string') {
       throw new BadRequestException('successorId is required');
     }
+    // Diagnostic-only: record which device triggered the reboot. Never gates the CAS.
+    const claimedByDeviceId =
+      typeof body.claimedByDeviceId === 'string'
+        ? body.claimedByDeviceId
+        : null;
     // Atomic CAS: only update if no successor has been claimed yet AND the group
     // has not been intentionally deleted. Without the deletedAt guard a reboot
     // racing with deleteGroup would resurrect a group the user just removed.
     const result = await this.groupRepo
       .createQueryBuilder()
       .update(Group)
-      .set({ successorId: body.successorId, deletedAt: () => 'NOW()' })
+      .set({
+        successorId: body.successorId,
+        successorClaimedByDeviceId: claimedByDeviceId,
+        deletedAt: () => 'NOW()',
+      })
       .where('id = :id AND "successorId" IS NULL AND "deletedAt" IS NULL', {
         id: safeGroupId,
       })
@@ -272,7 +281,7 @@ export class GroupsController {
     await this.redis.del(`group:members:${safeGroupId}`);
 
     this.logger.log(
-      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${successorId} members=${members.length} devices=${deviceMemberships.length}`,
+      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${successorId} claimedByDevice=${claimedByDeviceId ?? 'unknown'} members=${members.length} devices=${deviceMemberships.length}`,
     );
     return { claimed: true, successorId };
   }

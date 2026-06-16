@@ -244,8 +244,13 @@ export async function reboot(
     throw e;
   }
 
-  // Étape 4 : CAS - premier arrivé premier servi
-  const claim = await mlsService.claimGroupSuccessor(groupId, candidateId);
+  // Étape 4 : CAS - premier arrivé premier servi.
+  // On transmet le device courant pour pouvoir attribuer le reboot (diagnostic serveur).
+  const claim = await mlsService.claimGroupSuccessor(
+    groupId,
+    candidateId,
+    mlsService.getDeviceId()
+  );
 
   if (!claim.claimed) {
     // CAS perdu - nettoyer le candidat orphelin et rejoindre le gagnant

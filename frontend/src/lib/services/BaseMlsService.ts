@@ -803,9 +803,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async claimGroupSuccessor(
     deadGroupId: string,
-    successorId: string
+    successorId: string,
+    claimedByDeviceId?: string
   ): Promise<{ claimed: boolean; successorId: string | null }> {
-    return this.delivery.claimGroupSuccessor(deadGroupId, successorId);
+    return this.delivery.claimGroupSuccessor(deadGroupId, successorId, claimedByDeviceId);
   }
 
   async getPendingInvitations(

@@ -46,6 +46,12 @@ export class Group {
   @Column({ type: 'uuid', nullable: true, default: null })
   successorId?: string | null;
 
+  /** Device id that won the successor CAS and triggered this reboot. Diagnostic only:
+   *  lets us attribute a reboot to the device that initiated it. Set together with
+   *  `successorId` and never updated afterwards. */
+  @Column({ type: 'text', nullable: true, default: null })
+  successorClaimedByDeviceId?: string | null;
+
   /** Soft-delete timestamp. Null = active. Set on explicit deletion or when a successor is claimed.
    *  The row is intentionally kept as a tombstone so devices can detect the transition. */
   @Column({ type: 'timestamp', nullable: true, default: null })
