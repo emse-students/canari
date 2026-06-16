@@ -475,13 +475,14 @@ export class MlsDeliveryApi {
   /** Fetches the Redis Stream history for a group, optionally paginated after `afterStreamId`. Returns `[]` on error. */
   async fetchHistory(
     groupId: string,
-    afterStreamId?: string
+    afterStreamId?: string,
+    limit?: number
   ): Promise<import('$lib/mls-client/historyTypes').HistoryStreamRow[]> {
     try {
       const url = new URL(`${this.historyUrl}/api/mls/history/${groupId}`);
       if (afterStreamId) url.searchParams.set('after', afterStreamId);
-      const limit = afterStreamId ? '200' : '1000';
-      url.searchParams.set('limit', limit);
+      const effectiveLimit = limit !== undefined ? String(limit) : afterStreamId ? '200' : '1000';
+      url.searchParams.set('limit', effectiveLimit);
       const res = await this.f(url.toString(), {
         headers: await this.auth(),
       });

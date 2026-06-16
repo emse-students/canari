@@ -215,10 +215,54 @@ export function useConversations() {
       replayConversationHistory,
       mapStoredMessagesToChatMessages,
       retroactivelyResolveHexIds,
+      readHistoryStreamCursor,
     } = await import('$lib/utils/chat/history');
     const isSelected = selectedContact === contactName;
     if (isSelected) isLoadingHistory = true;
     try {
+      // Fast-path: when user clicks a conversation, probe the server cursor with `limit=1`.
+      // If there is nothing new, skip the heavy decrypt/replay and just render the latest
+      // IndexedDB page we already have.
+      if (!options?.force && ctx.storage) {
+        const cursor = readHistoryStreamCursor(ctx.userId, id);
+        if (cursor) {
+          const existingPage = await ctx.storage.getMessagesPage(
+            id,
+            ctx.pin,
+            INITIAL_MESSAGES_PAGE
+          );
+          // If local DB is empty, let `replayConversationHistory` handle cursor reset safely.
+          if (existingPage.length > 0) {
+            try {
+              const probeRows = await ctx.ensureMls().fetchHistory(id, cursor, 1);
+              if (probeRows.length === 0) {
+                const msgs = await retroactivelyResolveHexIds(
+                  mapStoredMessagesToChatMessages(existingPage, ctx.userId),
+                  ctx.storage,
+                  id,
+                  ctx.pin
+                );
+                const current = conversations.get(contactName);
+                if (current) {
+                  conversations.set(contactName, {
+                    ...current,
+                    messages: [...msgs].sort(compareMessageOrder),
+                  });
+                  for (const m of msgs) {
+                    if (m.reactions && m.reactions.length > 0) {
+                      ctx.messageReactions.set(m.id, m.reactions);
+                    }
+                  }
+                }
+                return;
+              }
+            } catch {
+              /* non-blocking: fallback to full replay */
+            }
+          }
+        }
+      }
+
       // Fetch from network → decrypt → save to DB (no direct UI update).
       // The replay runs in a bulk-ingest window so an encrypted checkpoint flushes on close;
       // its progress markers are committed only afterwards (never ahead of persisted state).

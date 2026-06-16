@@ -229,7 +229,9 @@ export interface IMlsService {
   /** Fetches the Redis Stream history for a group, optionally starting after a given stream entry ID. */
   fetchHistory(
     groupId: string,
-    afterStreamId?: string
+    afterStreamId?: string,
+    /** Optional page size override (server clamps). */
+    limit?: number
   ): Promise<import('./historyTypes').HistoryStreamRow[]>;
   /**
    * Fetches the first page of history for multiple groups in one HTTP round-trip.

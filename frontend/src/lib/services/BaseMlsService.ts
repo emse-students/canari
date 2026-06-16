@@ -751,9 +751,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async fetchHistory(
     groupId: string,
-    afterStreamId?: string
+    afterStreamId?: string,
+    limit?: number
   ): Promise<import('$lib/mls-client/historyTypes').HistoryStreamRow[]> {
-    return this.delivery.fetchHistory(groupId, afterStreamId);
+    return this.delivery.fetchHistory(groupId, afterStreamId, limit);
   }
 
   async fetchHistoryBatch(
