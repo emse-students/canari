@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CornerDownRight, Info, Hash } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
@@ -493,13 +494,13 @@
         {/if}
       </div>
       <p class="text-xs text-text-muted leading-relaxed">
-        Vous avez été invité à rejoindre ce canal chiffré.
+        {m.msg_channel_invite_description()}
       </p>
       <a
         href="/chat"
         class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
       >
-        <Hash size={12} strokeWidth={3} /> Rejoindre le canal
+        <Hash size={12} strokeWidth={3} /> {m.msg_channel_invite_join_button()}
       </a>
     </div>
   {:else}
@@ -765,24 +766,24 @@
 
   <Modal
     open={showDeleteModal}
-    title="Supprimer le message"
+    title={m.msg_supprimer_message()}
     onClose={() => (showDeleteModal = false)}
   >
     <p class="text-sm text-text-muted leading-relaxed">
-      Supprimer définitivement ce message ? Cette action est irréversible.
+      {m.msg_supprimer_definitif()}
     </p>
     {#snippet footer()}
       <button
         onclick={() => (showDeleteModal = false)}
         class="px-4 py-2.5 text-sm font-semibold rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
-        Annuler
+        {m.common_cancel_button()}
       </button>
       <button
         onclick={confirmDelete}
         class="px-4 py-2.5 text-sm rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 hover:-translate-y-0.5 shadow-md shadow-red-500/20 transition-all"
       >
-        Supprimer
+        {m.common_delete_button()}
       </button>
     {/snippet}
   </Modal>

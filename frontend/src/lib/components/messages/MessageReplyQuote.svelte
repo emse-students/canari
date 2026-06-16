@@ -1,5 +1,6 @@
 <script lang="ts">
   import { shortenReplyPreview } from '$lib/utils/chat/messageDisplay';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** ID of the quoted message, used for scroll-to navigation. */
@@ -26,8 +27,8 @@
     e.stopPropagation();
     if (replyId) onNavigateToMessage?.(replyId);
   }}
-  title="Aller au message cité"
-  aria-label="Aller au message cité"
+  title={m.msg_go_to_quoted_message_label()}
+  aria-label={m.msg_go_to_quoted_message_label()}
 >
   <a
     href="/profile/{encodeURIComponent(senderId)}"

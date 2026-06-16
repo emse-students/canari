@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Reply, Forward, Pencil, Trash2, SmilePlus, Copy, Pin, PinOff } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
+  import { m } from '$lib/paraglide/messages';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
   const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡'] as const;
@@ -74,7 +75,7 @@
     <button
       type="button"
       class="absolute inset-0 bg-black/45 backdrop-blur-sm cursor-default outline-none"
-      aria-label="Fermer le menu des actions"
+      aria-label={m.msg_close_actions_label()}
       onclick={onClose}
       transition:fade={{ duration: 180 }}
     ></button>
@@ -96,7 +97,7 @@
               class="w-11 h-11 rounded-full text-2xl leading-none flex items-center justify-center transition-transform active:scale-75 {isActive
                 ? 'bg-amber-400/20 ring-2 ring-amber-400'
                 : 'hover:bg-black/5 dark:hover:bg-white/10'}"
-              aria-label="Réagir avec {emoji}"
+              aria-label={m.msg_react_with_emoji({ emoji })}
               aria-pressed={isActive}
               onclick={() => {
                 onReactEmoji?.(emoji);
@@ -109,7 +110,7 @@
           <button
             type="button"
             class="w-11 h-11 rounded-full flex items-center justify-center text-text-muted hover:bg-black/5 dark:hover:bg-white/10 transition-transform active:scale-75"
-            aria-label="Plus de réactions"
+            aria-label={m.msg_more_reactions_label()}
             onclick={() => {
               onOpenFullPicker?.();
               onClose?.();
@@ -131,10 +132,10 @@
               onClose?.();
             }}
             class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
-            aria-label="Répondre"
+            aria-label={m.msg_reply_label()}
           >
             <Reply size={20} />
-            <span class="text-[10px] font-medium text-text-muted">Répondre</span>
+            <span class="text-[10px] font-medium text-text-muted">{m.msg_reply_label()}</span>
           </button>
         {/if}
 
@@ -145,10 +146,10 @@
               onClose?.();
             }}
             class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
-            aria-label="Transférer"
+            aria-label={m.msg_forward_label()}
           >
             <Forward size={20} />
-            <span class="text-[10px] font-medium text-text-muted">Transférer</span>
+            <span class="text-[10px] font-medium text-text-muted">{m.msg_forward_label()}</span>
           </button>
         {/if}
 
@@ -159,10 +160,10 @@
               onClose?.();
             }}
             class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
-            aria-label="Copier"
+            aria-label={m.msg_copy_label()}
           >
             <Copy size={20} />
-            <span class="text-[10px] font-medium text-text-muted">Copier</span>
+            <span class="text-[10px] font-medium text-text-muted">{m.msg_copy_label()}</span>
           </button>
         {/if}
 
@@ -173,10 +174,10 @@
               onClose?.();
             }}
             class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-amber-600 dark:text-amber-500 active:scale-95 transition-transform hover:bg-amber-500/10"
-            aria-label={pinned ? 'Désépingler' : 'Épingler'}
+            aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
           >
             {#if pinned}<PinOff size={20} />{:else}<Pin size={20} />{/if}
-            <span class="text-[10px] font-medium">{pinned ? 'Désépingler' : 'Épingler'}</span>
+            <span class="text-[10px] font-medium">{pinned ? m.msg_unpin_label() : m.msg_pin_label()}</span>
           </button>
         {/if}
 
@@ -187,10 +188,10 @@
               onClose?.();
             }}
             class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-blue-500 active:scale-95 transition-transform hover:bg-blue-500/10"
-            aria-label="Modifier"
+            aria-label={m.common_edit_label()}
           >
             <Pencil size={20} />
-            <span class="text-[10px] font-medium">Modifier</span>
+            <span class="text-[10px] font-medium">{m.common_edit_label()}</span>
           </button>
         {/if}
 
@@ -201,10 +202,10 @@
               onClose?.();
             }}
             class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-red-500 active:scale-95 transition-transform hover:bg-red-500/10"
-            aria-label="Supprimer"
+            aria-label={m.common_delete_button()}
           >
             <Trash2 size={20} />
-            <span class="text-[10px] font-medium">Supprimer</span>
+            <span class="text-[10px] font-medium">{m.common_delete_button()}</span>
           </button>
         {/if}
       </div>

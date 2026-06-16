@@ -3,6 +3,8 @@
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import {
     MAX_DISTINCT_MESSAGE_REACTIONS,
     canAddDistinctReactionEmoji,
@@ -92,13 +94,13 @@
     categoriesLabel: 'Catégories',
     emojiUnsupportedMessage: "Votre navigateur ne supporte pas les emojis en couleur.",
     favoritesLabel: 'Favoris',
-    loadingMessage: 'Chargement…',
+    loadingMessage: 'Chargement...',
     networkErrorMessage: 'Impossible de charger les emojis.',
     regionLabel: "Sélecteur d'emoji",
-    searchDescription: 'Quand des résultats sont disponibles, utilisez les flèches haut/bas et Entrée pour sélectionner.',
+    searchDescription: "Quand des résultats sont disponibles, utilisez les flèches haut/bas et Entrée pour sélectionner.",
     searchLabel: 'Recherche',
     searchResultsLabel: 'Résultats de recherche',
-    skinToneDescription: 'Quand le sélecteur est ouvert, utilisez les flèches haut/bas et Entrée pour sélectionner.',
+    skinToneDescription: "Quand le sélecteur est ouvert, utilisez les flèches haut/bas et Entrée pour sélectionner.",
     skinTonesLabel: 'Tons de peau',
     skinTones: ['Défaut', 'Clair', 'Moyen-clair', 'Moyen', 'Moyen-foncé', 'Foncé'],
     categories: {
@@ -115,9 +117,37 @@
     },
   };
 
+  const EMOJI_PICKER_EN_I18N = {
+    categoriesLabel: 'Categories',
+    emojiUnsupportedMessage: 'Your browser does not support color emoji.',
+    favoritesLabel: 'Favorites',
+    loadingMessage: 'Loading...',
+    networkErrorMessage: 'Could not load emoji.',
+    regionLabel: 'Emoji picker',
+    searchDescription: 'When search results are available, press up or down to select and enter to choose.',
+    searchLabel: 'Search',
+    searchResultsLabel: 'Search results',
+    skinToneDescription: 'When expanded, press up or down to select and enter to choose.',
+    skinTonesLabel: 'Skin tones',
+    skinTones: ['Default', 'Light', 'Medium-Light', 'Medium', 'Medium-Dark', 'Dark'],
+    categories: {
+      custom: 'Custom',
+      'smileys-emotion': 'Smileys & Emotion',
+      'people-body': 'People & Body',
+      'animals-nature': 'Animals & Nature',
+      'food-drink': 'Food & Drink',
+      'travel-places': 'Travel & Places',
+      activities: 'Activities',
+      objects: 'Objects',
+      symbols: 'Symbols',
+      flags: 'Flags',
+    },
+  };
+
   function attachEmojiPicker(node: HTMLElement) {
     // Set as a JS property (not an attribute) so the web component picks up the translations.
-    (node as unknown as { i18n: typeof EMOJI_PICKER_FR_I18N }).i18n = EMOJI_PICKER_FR_I18N;
+    const i18n = getLocale() === 'en' ? EMOJI_PICKER_EN_I18N : EMOJI_PICKER_FR_I18N;
+    (node as unknown as { i18n: typeof EMOJI_PICKER_FR_I18N }).i18n = i18n;
     const handleEmoji = (event: any) => {
       handleEmojiClick(event.detail.unicode);
     };
@@ -157,11 +187,11 @@
     <div
       class="px-4 py-3 border-b border-black/5 dark:border-white/10 text-xs font-semibold text-text-muted flex items-center gap-2 bg-white/40 dark:bg-black/20"
     >
-      <Smile size={14} class="text-amber-500" /> Réagir au message
+      <Smile size={14} class="text-amber-500" /> {m.msg_react_to_message_label()}
     </div>
     {#if reactionsAtLimit}
       <p class="px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20">
-        Maximum de {MAX_DISTINCT_MESSAGE_REACTIONS} réactions différentes sur ce message.
+        {m.msg_max_reactions_label({ max: MAX_DISTINCT_MESSAGE_REACTIONS })}
       </p>
     {/if}
 
@@ -171,14 +201,14 @@
         class="px-3 py-2 border-b border-black/5 dark:border-white/10 flex items-center gap-1.5 flex-wrap bg-white/20 dark:bg-black/10"
       >
         <span class="text-[0.65rem] font-bold uppercase tracking-widest text-text-muted/80 mr-2">
-          Récents
+          {m.msg_recent_reactions_label()}
         </span>
         {#each recentEmojis as emoji (emoji)}
           <button
             type="button"
             onclick={() => handleEmojiClick(emoji)}
             class="w-8 h-8 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 hover:scale-110 transition-all text-lg inline-flex items-center justify-center shadow-sm hover:shadow-md cursor-pointer"
-            aria-label={`Réagir avec ${emoji}`}
+            aria-label={m.msg_react_with_emoji({ emoji })}
           >
             {emoji}
           </button>
@@ -196,8 +226,8 @@
       style="height: min(22rem, calc(var(--popover-max-h, 22rem) - {recentEmojis.length > 0
         ? '5.5rem'
         : '3rem'}));"
-      locale="fr"
-      data-source="/emoji-data-fr.json"
+      locale={getLocale() === 'en' ? 'en' : 'fr'}
+      data-source={getLocale() === 'en' ? undefined : '/emoji-data-fr.json'}
     ></emoji-picker>
   </div>
 {/if}

@@ -4,6 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { Clock, Pencil, CheckCheck } from '@lucide/svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether the tooltip is currently visible. */
@@ -73,7 +74,7 @@
     <div class="flex items-center gap-1.5 opacity-90">
       <Clock size={12} class="text-text-muted shrink-0" />
       <span>
-        Envoyé à <span class="font-semibold">{formatTime24(timestamp)}</span>
+        {m.msg_envoye_a()} <span class="font-semibold">{formatTime24(timestamp)}</span>
       </span>
     </div>
 
@@ -82,8 +83,7 @@
       <div class="flex items-center gap-1.5 opacity-90">
         <Pencil size={12} class="text-text-muted shrink-0" />
         <span>
-          Modifié {#if editedAt}à <span class="font-semibold">{formatTime24(editedAt)}</span
-            >{/if}
+          {m.msg_modifie_a()}{#if editedAt} <span class="font-semibold">{formatTime24(editedAt)}</span>{/if}
         </span>
       </div>
     {/if}
@@ -95,7 +95,7 @@
       >
         <CheckCheck size={14} strokeWidth={2.5} class="text-amber-500 shrink-0" />
         <span class="font-medium text-text-muted">
-          Lu par <span class="font-bold text-text-main">{readByLabels.join(', ')}</span>
+          {m.msg_lu_par()} <span class="font-bold text-text-main">{readByLabels.join(', ')}</span>
         </span>
       </div>
     {/if}

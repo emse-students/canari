@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Reply, Forward, Smile, Pencil, Trash2, Pin, PinOff } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   /** Quick-reaction emojis shown inline in the web hover toolbar (mirrors mobile). */
   const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡'] as const;
@@ -77,9 +78,9 @@
         class="w-7 h-7 rounded-full text-base leading-none flex items-center justify-center transition-transform hover:scale-125 active:scale-95 {isActive
           ? 'bg-amber-400/20 ring-1 ring-amber-400'
           : 'hover:bg-black/5 dark:hover:bg-white/10'}"
-        aria-label="Réagir avec {emoji}"
+        aria-label={m.msg_react_with_emoji({ emoji })}
         aria-pressed={isActive}
-        title="Réagir avec {emoji}"
+        title={m.msg_react_with_emoji({ emoji })}
       >
         {emoji}
       </button>
@@ -90,8 +91,8 @@
     <button
       onclick={() => onReply?.()}
       class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
-      aria-label="Répondre"
-      title="Répondre"
+      aria-label={m.msg_reply_label()}
+      title={m.msg_reply_label()}
     >
       <Reply size={16} />
     </button>
@@ -103,8 +104,8 @@
         onForward?.();
       }}
       class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
-      aria-label="Transférer"
-      title="Transférer"
+      aria-label={m.msg_forward_label()}
+      title={m.msg_forward_label()}
     >
       <Forward size={16} />
     </button>
@@ -116,8 +117,8 @@
         onToggleEmojiPicker?.();
       }}
       class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500 transition-colors"
-      aria-label={onReact ? 'Plus de réactions' : 'Réagir'}
-      title={onReact ? 'Plus de réactions' : 'Réagir'}
+      aria-label={onReact ? m.msg_more_reactions_label() : m.msg_react_label()}
+      title={onReact ? m.msg_more_reactions_label() : m.msg_react_label()}
     >
       <Smile size={16} />
     </button>
@@ -131,8 +132,8 @@
       class="p-1.5 rounded-full transition-colors {pinned
         ? 'text-amber-500'
         : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
-      aria-label={pinned ? 'Désépingler' : 'Épingler'}
-      title={pinned ? 'Désépingler' : 'Épingler'}
+      aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
+      title={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
     >
       {#if pinned}<PinOff size={16} />{:else}<Pin size={16} />{/if}
     </button>
@@ -144,8 +145,8 @@
         onEdit?.();
       }}
       class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-blue-500 transition-colors"
-      aria-label="Modifier"
-      title="Modifier"
+      aria-label={m.common_edit_label()}
+      title={m.common_edit_label()}
     >
       <Pencil size={16} />
     </button>
@@ -157,8 +158,8 @@
         onDelete?.();
       }}
       class="p-1.5 rounded-full hover:bg-red-500/10 hover:text-red-500 transition-colors"
-      aria-label="Supprimer"
-      title="Supprimer"
+      aria-label={m.common_delete_button()}
+      title={m.common_delete_button()}
     >
       <Trash2 size={16} />
     </button>

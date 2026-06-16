@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
   import {
     FileText,
     Download,
@@ -93,13 +94,13 @@
             type="button"
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
-            aria-label="Ouvrir l'image en plein écran"
+            aria-label={m.msg_open_image_fullscreen_label()}
             class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-full max-w-[14rem] sm:w-56"
             style={imageAspectStyle}
           >
             <img
               src={blobUrl}
-              alt={mediaRef.fileName ?? 'Image partagée'}
+              alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
               class="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 md:group-hover/media:scale-[1.02]"
             />
           </button>
@@ -111,8 +112,8 @@
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
             }}
             class="absolute right-2.5 bottom-2.5 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 md:opacity-0 md:group-hover/media:opacity-100 hover:bg-black/70 hover:scale-110 focus:opacity-100 outline-none"
-            aria-label="Télécharger l'image"
-            title="Télécharger"
+            aria-label={m.msg_download_image_label()}
+            title={m.common_download_label()}
           >
             <Download size={16} strokeWidth={2.5} />
           </button>
@@ -125,8 +126,8 @@
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention
-              ? 'Média expiré (rétention 30 jours).'
-              : "Impossible de charger l'image."}
+              ? m.msg_media_expired_label()
+              : m.msg_image_load_error()}
           </span>
         </div>
       {:else}
@@ -158,10 +159,10 @@
             type="button"
             onclick={openLightbox}
             class="absolute left-2.5 bottom-2.5 px-2.5 h-8 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 hover:bg-black/70"
-            aria-label="Ouvrir la vidéo en plein écran"
-            title="Plein écran"
+            aria-label={m.msg_open_video_fullscreen_label()}
+            title={m.msg_fullscreen_label()}
           >
-            Plein écran
+            {m.msg_fullscreen_label()}
           </button>
 
           <button
@@ -171,8 +172,8 @@
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'video.mp4');
             }}
             class="absolute right-2.5 top-2.5 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 md:opacity-0 md:group-hover/media:opacity-100 hover:bg-black/70 hover:scale-110 focus:opacity-100 outline-none z-10"
-            aria-label="Télécharger la vidéo"
-            title="Télécharger"
+            aria-label={m.msg_download_video_label()}
+            title={m.common_download_label()}
           >
             <Download size={16} strokeWidth={2.5} />
           </button>
@@ -184,8 +185,8 @@
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
             {mediaPurgedByRetention
-              ? 'Vidéo expirée (rétention 30 jours).'
-              : 'Impossible de charger la vidéo.'}
+              ? m.msg_video_expired_label()
+              : m.msg_video_load_error()}
           </span>
         </div>
       {:else}
@@ -213,7 +214,7 @@
           class="w-full sm:w-56 h-14 rounded-xl border border-dashed {glassBoxClass} flex items-center justify-center px-4 text-center"
         >
           <span class="text-[0.7rem] font-medium leading-snug {textMutedClass}">
-            {mediaPurgedByRetention ? 'Audio expiré (30j)' : 'Erreur de chargement audio'}
+            {mediaPurgedByRetention ? m.msg_audio_expired_label() : m.msg_audio_load_error()}
           </span>
         </div>
       {:else}
@@ -246,7 +247,7 @@
         <!-- Méta-données -->
         <div class="flex-1 min-w-0 overflow-hidden">
           <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
-            {mediaRef.fileName ?? 'Fichier joint'}
+            {mediaRef.fileName ?? m.msg_attached_file_label()}
           </p>
           {#if !mediaPurgedByRetention}
             <p class="text-[0.65rem] uppercase tracking-wider font-semibold opacity-60">
@@ -263,8 +264,8 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef!.fileName ?? 'fichier');
             }}
-            aria-label="Télécharger le fichier"
-            title="Télécharger"
+            aria-label={m.msg_download_file_label()}
+            title={m.common_download_label()}
             class="p-2.5 rounded-xl hover:bg-current/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current shrink-0"
           >
             <Download
@@ -277,7 +278,7 @@
           <span
             class="text-[0.65rem] font-bold text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-1 rounded-md shrink-0"
           >
-            Expiré
+            {m.msg_expired_label()}
           </span>
         {:else if loadError}
           <CircleAlert size={18} class="opacity-50 text-red-500 shrink-0" />
@@ -308,13 +309,13 @@
   <MediaLightbox
     open={showLightbox}
     onClose={closeLightbox}
-    title={mediaRef.fileName ?? 'Média'}
+    title={mediaRef.fileName ?? m.msg_media_label()}
     onDownload={() => downloadBlob(blobUrl, mediaRef.fileName ?? 'media')}
   >
     {#if mediaRef.type === 'image'}
       <img
         src={blobUrl}
-        alt={mediaRef.fileName ?? 'Image'}
+        alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
         class="max-h-full max-w-full object-contain select-none"
       />
     {:else}

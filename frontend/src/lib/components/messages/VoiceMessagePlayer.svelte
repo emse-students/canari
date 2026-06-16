@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Pause, Play, Download } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Audio source URL (object URL or remote URL) to load and play. */
@@ -129,7 +130,7 @@
   {#if cannotPlay}
     <!-- Format audio non supporté (ex : webm sur iOS) -->
     <div class="flex-1 min-w-0 flex items-center gap-2 opacity-70">
-      <span class="text-xs font-medium">Format non supporté</span>
+      <span class="text-xs font-medium">{m.msg_audio_format_unsupported_label()}</span>
       {#if onDownload}
         <button
           type="button"
@@ -138,7 +139,7 @@
             onDownload?.();
           }}
           class="text-xs font-bold underline"
-          aria-label="Télécharger le message vocal">Télécharger</button
+          aria-label={m.msg_download_voice_message_label()}>{m.common_download_label()}</button
         >
       {/if}
     </div>
@@ -151,7 +152,7 @@
         togglePlay();
       }}
       class="shrink-0 w-11 h-11 rounded-full bg-amber-500 text-[#151B2C] inline-flex items-center justify-center shadow-md hover:bg-amber-400 hover:scale-105 active:scale-95 transition-all outline-none focus-visible:ring-4 focus-visible:ring-amber-500/40"
-      aria-label={isPlaying ? 'Mettre en pause' : 'Lire le message vocal'}
+      aria-label={isPlaying ? m.msg_pause_voice_message_label() : m.msg_play_voice_message_label()}
     >
       {#if isPlaying}
         <Pause size={18} strokeWidth={2.5} />
@@ -171,7 +172,7 @@
         onclick={(e) => e.stopPropagation()}
         oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
         class="w-full h-1.5 rounded-full accent-amber-500 bg-black/10 dark:bg-white/20 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
-        aria-label="Position de lecture"
+        aria-label={m.msg_playback_position_label()}
       />
       <div class="text-[0.65rem] font-bold opacity-70 flex items-center justify-between">
         <span>{formatTime(currentTime)}</span>
@@ -189,8 +190,8 @@
         cycleSpeed();
       }}
       class="w-9 h-9 rounded-full inline-flex items-center justify-center text-[0.7rem] font-bold opacity-70 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current"
-      aria-label={`Vitesse de lecture actuelle: x${speed}`}
-      title="Changer la vitesse"
+      aria-label={m.msg_playback_speed_label({ speed: String(speed) })}
+      title={m.msg_change_speed_title()}
     >
       x{speed}
     </button>
@@ -203,8 +204,8 @@
           onDownload?.();
         }}
         class="w-9 h-9 rounded-full inline-flex items-center justify-center opacity-70 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current"
-        aria-label="Télécharger le message vocal"
-        title="Télécharger"
+        aria-label={m.msg_download_voice_message_label()}
+        title={m.common_download_label()}
       >
         <Download size={16} strokeWidth={2.5} />
       </button>

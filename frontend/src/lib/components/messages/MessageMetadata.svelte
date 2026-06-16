@@ -2,6 +2,7 @@
   import { LoaderCircle, TriangleAlert, Check, CheckCheck } from '@lucide/svelte';
   import { formatTime24 } from '$lib/utils/dates';
   import Avatar from '../shared/Avatar.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** When true, shows an "(modifié)" label. */
@@ -74,18 +75,18 @@
       </span>
     {/if}
     {#if showEdited}
-      <span class="italic text-[0.65rem] opacity-65 font-medium">(modifié)</span>
+      <span class="italic text-[0.65rem] opacity-65 font-medium">{m.msg_modifie()}</span>
     {/if}
     {#if showSendStatus}
       {#if status === 'sending'}
         <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
           <LoaderCircle size={12} class="animate-spin" />
-          Envoi...
+          {m.msg_envoi()}
         </span>
       {:else if status === 'error'}
         <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold text-red-500">
           <TriangleAlert size={12} />
-          Échec
+          {m.msg_echec()}
         </span>
       {/if}
     {:else if showSent}

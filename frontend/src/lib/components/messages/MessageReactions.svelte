@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { m } from '$lib/paraglide/messages';
 
   function firstNameOnly(value: string): string {
     const cleaned = value.trim();
@@ -53,7 +54,7 @@
       ? 'justify-end'
       : 'justify-start'}"
     role="group"
-    aria-label="Réactions au message"
+    aria-label={m.msg_reactions_label()}
   >
     {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
       <!-- On vérifie si l'utilisateur actuel a réagi avec cet émoji -->
@@ -71,7 +72,7 @@
         }}
         title={resolveNames(users)}
         aria-pressed={hasReacted}
-        aria-label="{emoji} ({users.length} personnes)"
+        aria-label={m.msg_reaction_aria_label({ emoji, count: users.length })}
       >
         <span class="text-[1.1rem] leading-none drop-shadow-sm">{emoji}</span>
         {#if users.length > 1}
