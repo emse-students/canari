@@ -224,6 +224,11 @@
                 Synchronisation...
               {/if}
             </div>
+            {#if groupId}
+              <div class="text-[0.65rem] font-mono text-text-muted/60 mt-0.5 select-all">
+                ID {groupId.slice(0, 8)}&hellip;
+              </div>
+            {/if}
           </div>
         </div>
 

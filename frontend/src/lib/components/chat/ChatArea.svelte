@@ -22,6 +22,7 @@
   import { typingUsersFor } from '$lib/stores/typingStore.svelte';
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -339,10 +340,10 @@
 
   /** Resolves a short preview for a pinned message, or null when it isn't loaded in memory. */
   function pinnedPreview(messageId: string): string | null {
-    const m = chatView?.conversation.messages.find((x) => x.id === messageId);
-    if (!m) return null;
-    const text = searchableText(m).replace(/\s+/g, ' ').trim();
-    return text.length > 80 ? `${text.slice(0, 77)}…` : text || 'Message';
+    const msg = chatView?.conversation.messages.find((x) => x.id === messageId);
+    if (!msg) return null;
+    const text = searchableText(msg).replace(/\s+/g, ' ').trim();
+    return text.length > 80 ? `${text.slice(0, 77)}…` : text || m.chat_pinned_message_default_label();
   }
 
   /** Reactive "X écrit…" label for the active conversation, excluding the current user. */
@@ -353,9 +354,9 @@
     const typers = typingUsersFor(convId).filter((u) => u !== me);
     if (typers.length === 0) return '';
     const names = typers.map((u) => getUserDisplayNameSync(u, u));
-    if (names.length === 1) return `${names[0]} écrit…`;
-    if (names.length === 2) return `${names[0]} et ${names[1]} écrivent…`;
-    return 'Plusieurs personnes écrivent…';
+    if (names.length === 1) return m.chat_typing_one_person({ names: names[0] });
+    if (names.length === 2) return m.chat_typing_two_people({ name1: names[0], name2: names[1] });
+    return m.chat_typing_multiple_people();
   });
 
   // Group messages by date and time gaps
@@ -647,7 +648,7 @@
               type="text"
               value={searchQuery}
               oninput={(e) => (searchQuery = e.currentTarget.value)}
-              placeholder="Rechercher dans la conversation"
+              placeholder={m.chat_search_in_conversation_placeholder()}
               class="chat-search-input"
             />
             {#if searchQuery}
@@ -660,7 +661,7 @@
                   searchLimitedToLoaded = false;
                 }}
                 class="chat-search-action"
-                aria-label="Effacer la recherche"
+                aria-label={m.chat_clear_search_label()}
               >
                 <X size={15} />
               </button>
@@ -676,7 +677,7 @@
               type="button"
               onclick={() => void jumpSearch(-1)}
               class="chat-search-action"
-              aria-label="Occurrence précédente"
+              aria-label={m.chat_previous_match_label()}
               disabled={searchMatches.length === 0}
             >
               <ChevronUp size={16} />
@@ -685,7 +686,7 @@
               type="button"
               onclick={() => void jumpSearch(1)}
               class="chat-search-action"
-              aria-label="Occurrence suivante"
+              aria-label={m.chat_next_match_label()}
               disabled={searchMatches.length === 0}
             >
               <ChevronDown size={16} />
@@ -693,10 +694,7 @@
           </div>
         </div>
         {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
-          <p class="px-1 pt-1 text-[0.7rem] text-text-muted">
-            Recherche limitée aux messages chargés. Faites défiler vers le haut pour en charger
-            davantage.
-          </p>
+          <p class="px-1 pt-1 text-[0.7rem] text-text-muted">{m.chat_search_limited_loaded_warning()}</p>
         {/if}
       </div>
     {/if}
@@ -709,12 +707,7 @@
           class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         >
           <ChartColumn size={14} class="shrink-0 text-cn-yellow" />
-          <span class="font-semibold"
-            >{activePolls.length} sondage{activePolls.length > 1 ? 's' : ''} actif{activePolls.length >
-            1
-              ? 's'
-              : ''}</span
-          >
+          <span class="font-semibold">{m.chat_active_polls_count({ activePolls: activePolls.length })}</span>
           <ChevronDown size={15} class="ml-auto transition-transform {showPolls ? 'rotate-180' : ''}" />
         </button>
         {#if showPolls}
@@ -747,11 +740,7 @@
           class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         >
           <Pin size={14} class="shrink-0 text-amber-500" />
-          <span class="font-semibold"
-            >{pinnedIds.length} message{pinnedIds.length > 1 ? 's' : ''} épinglé{pinnedIds.length > 1
-              ? 's'
-              : ''}</span
-          >
+          <span class="font-semibold">{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span>
           <ChevronDown size={15} class="ml-auto transition-transform {showPinned ? 'rotate-180' : ''}" />
         </button>
         {#if showPinned}
@@ -771,15 +760,15 @@
                     void navigateToMessageEnsureLoaded(pid);
                   }}
                 >
-                  {pinnedPreview(pid) ?? 'Message épinglé'}
+                  {pinnedPreview(pid) ?? m.chat_pinned_message_default_label()}
                 </button>
                 {#if onTogglePin}
                   <button
                     type="button"
                     onclick={() => onTogglePin?.(pid)}
                     class="shrink-0 rounded-lg p-1 text-text-muted hover:bg-red-500/10 hover:text-red-500"
-                    aria-label="Désépingler"
-                    title="Désépingler"
+                    aria-label={m.chat_unpin_label()}
+                    title={m.chat_unpin_title()}
                   >
                     <X size={14} />
                   </button>
@@ -852,8 +841,8 @@
         type="button"
         onclick={jumpToLatest}
         class="chat-scroll-bottom-button"
-        aria-label="Revenir en bas de la discussion"
-        title="Revenir en bas"
+        aria-label={m.chat_scroll_to_bottom_label()}
+        title={m.chat_scroll_to_bottom_title()}
       >
         <span class="inline-flex items-center justify-center w-full h-full">
           <ArrowDown size={18} />
@@ -877,14 +866,12 @@
       <div
         class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
       >
-        <p class="text-sm text-[var(--color-text-muted)] text-center">
-          Cette conversation a été supprimée.
-        </p>
+        <p class="text-sm text-[var(--color-text-muted)] text-center">{m.chat_conversation_deleted_message()}</p>
         <button
           onclick={() => onGroupDeleteLocally?.()}
           class="px-4 py-1.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 active:scale-95 transition-all"
         >
-          Supprimer localement
+          {m.chat_delete_locally_button()}
         </button>
       </div>
     {:else}
@@ -925,7 +912,7 @@
         aria-busy="true"
       >
         <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
-        Synchronisation MLS en cours - envoi temporairement indisponible
+        {m.chat_mls_sync_in_progress()}
       </div>
     {/if}
   {:else}
@@ -937,7 +924,7 @@
       >
         <button
           onclick={onBack}
-          aria-label="Retour au menu"
+          aria-label={m.chat_back_label()}
           class="p-1 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all"
         >
           <ChevronLeft size={24} />
@@ -946,8 +933,8 @@
     {/if}
     <EmptyState
       icon={ShieldCheck}
-      title="Aucun échange sélectionné"
-      description="Canari protège vos communications avec le protocole MLS."
+      title={m.chat_no_conversation_selected_title()}
+      description={m.chat_mls_protection_description()}
     />
   {/if}
 </section>

@@ -11,6 +11,7 @@
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { m } from '$lib/paraglide/messages';
 
   interface ReplyTo {
     id: string;
@@ -405,7 +406,7 @@
           <div
             class="text-xs font-bold text-amber-600 dark:text-amber-500 mb-0.5 flex items-center gap-1.5"
           >
-            <span class="truncate">Répondre à {replySenderDisplayName || replyingTo.senderId}</span>
+            <span class="truncate">{m.chat_reply_to_message({ replySenderDisplayName: replySenderDisplayName || replyingTo.senderId })}</span>
           </div>
           <div class="text-[0.85rem] font-medium text-text-muted truncate leading-snug">
             {replyPreviewText}
@@ -415,7 +416,7 @@
           <button
             onclick={onCancelReply}
             class="p-2 ml-2 rounded-full bg-black/5 dark:bg-white/5 text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 flex-shrink-0 active:scale-95"
-            aria-label="Annuler la réponse"
+            aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />
           </button>
@@ -429,7 +430,7 @@
     {#if pendingFiles.length > 0}
       <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
         <div class="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-2 px-1">
-          {pendingFiles.length} fichier{pendingFiles.length > 1 ? 's' : ''} en attente
+          {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
         </div>
         <div class="flex flex-wrap gap-3">
           {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
@@ -448,7 +449,7 @@
                 <button
                   type="button"
                   class="block w-full h-full p-0 border-0 cursor-zoom-in"
-                  aria-label="Agrandir l'aperçu"
+                  aria-label={m.chat_enlarge_preview_label()}
                   onclick={(e) => { e.stopPropagation(); openLightbox(key); }}
                   onpointerdown={(e) => e.stopPropagation()}
                 >
@@ -493,8 +494,8 @@
                   type="button"
                   class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 backdrop-blur-md hover:bg-red-500 inline-flex items-center justify-center text-white shadow-sm opacity-100 sm:opacity-0 sm:group-hover/file:opacity-100 transition-all duration-200 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 scale-90 hover:scale-105 active:scale-95"
                   onclick={() => onRemovePendingFile(index)}
-                  aria-label="Retirer le fichier"
-                  title="Retirer"
+                  aria-label={m.chat_remove_file_label()}
+                  title={m.common_remove_label()}
                 >
                   <X size={14} strokeWidth={2.5} />
                 </button>
@@ -508,7 +509,7 @@
     <!-- Barre de saisie principale -->
     <div
       role="group"
-      aria-label="Zone de saisie et dépôt de fichiers"
+      aria-label={m.chat_composer_group_label()}
       class="chat-composer-panel {isDragOver ? 'is-dragover' : ''}"
       ondragover={!isMobileViewport ? handleDragOver : undefined}
       ondragleave={!isMobileViewport ? handleDragLeave : undefined}
@@ -523,7 +524,7 @@
           <span
             class="px-4 py-2.5 bg-amber-500 text-[#151B2C] font-extrabold rounded-full shadow-xl shadow-amber-500/20 text-sm flex items-center gap-2 whitespace-nowrap"
           >
-            <UploadCloud size={18} strokeWidth={2.5} /> Déposez vos fichiers ici
+            <UploadCloud size={18} strokeWidth={2.5} /> {m.chat_drag_files_badge()}
           </span>
         </div>
       {/if}
@@ -533,8 +534,8 @@
         <button
           onclick={() => fileInput?.click()}
           disabled={isUploading || interactionLocked}
-          title="Envoyer une image, vidéo ou fichier"
-          aria-label="Joindre un fichier"
+          title={m.chat_attach_file_title()}
+          aria-label={m.chat_attach_file_label()}
           class="chat-composer-icon-button"
         >
           {#if isUploading}
@@ -552,8 +553,8 @@
             type="button"
             onclick={() => onCreatePoll()}
             disabled={interactionLocked}
-            title="Créer un sondage"
-            aria-label="Créer un sondage"
+            title={m.chat_create_poll_title()}
+            aria-label={m.chat_create_poll_label()}
             class="chat-composer-icon-button"
           >
             <ChartColumn size={20} strokeWidth={2} />
@@ -568,8 +569,8 @@
             type="button"
             onclick={() => (showGifPicker = true)}
             disabled={interactionLocked}
-            title="Envoyer un GIF"
-            aria-label="Envoyer un GIF"
+            title={m.chat_send_gif_title()}
+            aria-label={m.chat_send_gif_label()}
             class="chat-composer-icon-button text-[0.7rem] font-extrabold tracking-tight"
           >
             GIF
@@ -600,7 +601,7 @@
         onchange={handleMessageChange}
         class="flex-1 min-w-0"
         editorClass="chat-composer-textarea"
-        placeholder={interactionLocked ? 'Synchronisation MLS…' : 'Écrivez un message...'}
+        placeholder={interactionLocked ? m.chat_mls_syncing_placeholder() : m.chat_message_placeholder()}
         minHeight="44px"
         disabled={interactionLocked}
         onfocus={() => onFocusChange?.(true)}
@@ -615,7 +616,7 @@
           onmousedown={(e) => e.preventDefault()}
           onclick={() => { mentionComposer?.commitComposition(); onSend(); stopTyping(); mentionComposer?.clearEditor(); }}
           disabled={isSendDisabled}
-          aria-label="Envoyer le message"
+          aria-label={m.chat_send_message_label()}
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
         >
           <!-- Léger décalage de l'icône Send pour un centrage optique parfait -->

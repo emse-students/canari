@@ -4,6 +4,7 @@
   import UserName from '$lib/components/shared/UserName.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** ID of the channel whose members are displayed. */
@@ -75,13 +76,13 @@
         <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
           <Users size={16} strokeWidth={2.5} />
         </div>
-        Membres du canal
+        {m.chat_channel_members_title()}
       </h2>
       <button
         type="button"
         onclick={() => onClose?.()}
         class="p-2 rounded-full bg-black/5 dark:bg-white/10 text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label="Fermer"
+        aria-label={m.common_close_label()}
       >
         <X size={18} strokeWidth={2.5} />
       </button>
@@ -96,7 +97,7 @@
           class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2"
         >
           <ShieldAlert size={14} class="text-amber-500" strokeWidth={2.5} />
-          Administrateurs - {admins.length}
+          {m.chat_admins_count_label({ admins: admins.length })}
         </h3>
         <div class="space-y-1.5">
           {#each admins as member (member.id)}
@@ -131,7 +132,7 @@
           class="text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 flex items-center gap-2"
         >
           <User size={14} class="text-text-muted/70" strokeWidth={2.5} />
-          Membres - {regulars.length}
+          {m.chat_members_count_label({ regulars: regulars.length })}
         </h3>
         <div class="space-y-1.5">
           {#each regulars as member (member.id)}

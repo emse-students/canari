@@ -15,6 +15,7 @@
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import type { IMlsService } from '$lib/mls-client';
+  import { m } from '$lib/paraglide/messages';
 
   interface DeviceMembership {
     id: string;
@@ -68,11 +69,11 @@
     if (os === 'android') return 'Android';
     if (os === 'ios') return 'iOS';
     if (os === 'desktop') return 'Desktop';
-    if (os === 'web') return 'Navigateur';
+    if (os === 'web') return m.chat_device_os_browser();
     if (device.deviceId.startsWith('tauri-')) return 'Desktop (Tauri)';
-    if (device.deviceId.startsWith('web-')) return 'Navigateur';
+    if (device.deviceId.startsWith('web-')) return m.chat_device_os_browser();
     if (device.deviceId.startsWith('mobile-')) return 'Mobile';
-    return 'Inconnu';
+    return m.chat_device_os_unknown();
   }
 
   function isMobileOs(device: DeviceInfo): boolean {
@@ -108,7 +109,7 @@
       }
     } catch (e) {
       console.error('[DevicePanel] Failed to load device data', e);
-      error = 'Impossible de charger les appareils liés à votre compte.';
+      error = m.chat_devices_load_error();
     } finally {
       loading = false;
     }
@@ -120,7 +121,7 @@
     try {
       const result = await mlsService.deleteDevice(userId, deviceId);
       if (result.status !== 'device_deleted') {
-        error = "La suppression de l'appareil a échoué (auth/serveur).";
+        error = m.chat_device_delete_auth_error();
         return;
       }
       console.log(
@@ -129,7 +130,7 @@
       await loadDeviceData();
     } catch (e) {
       console.error('[DevicePanel] Failed to delete device', e);
-      error = 'Impossible de supprimer cet appareil.';
+      error = m.chat_device_remove_error();
     }
   }
 
@@ -155,7 +156,7 @@
       await loadDeviceData();
     } catch (e) {
       console.error('[DevicePanel] Failed to rename device', e);
-      error = 'Impossible de renommer cet appareil.';
+      error = m.chat_device_rename_error();
     }
   }
 
@@ -185,12 +186,12 @@
   }
 </script>
 
-<Modal {open} title="Gestion des appareils" {onClose} maxWidth="max-w-xl">
+<Modal {open} title={m.chat_device_management_title()} {onClose} maxWidth="max-w-xl">
   <div class="px-1">
     {#if loading}
       <div class="flex flex-col items-center justify-center py-12 gap-4 text-text-muted">
         <Loader size={28} class="animate-spin text-amber-500" />
-        <span class="text-sm font-semibold tracking-wide">Synchronisation des appareils...</span>
+        <span class="text-sm font-semibold tracking-wide">{m.chat_syncing_devices()}</span>
       </div>
     {:else if error}
       <div
@@ -203,9 +204,7 @@
       <div class="space-y-5 pb-2">
         <div class="flex items-center justify-between">
           <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">
-            {devices.length} appareil{devices.length > 1 ? 's' : ''} connecté{devices.length > 1
-              ? 's'
-              : ''}
+            {m.chat_devices_count_label({ devices: devices.length })}
           </p>
         </div>
 
@@ -243,7 +242,7 @@
                       <input
                         type="text"
                         bind:value={editingName}
-                        placeholder="Nom de l'appareil"
+                        placeholder={m.chat_device_name_placeholder()}
                         maxlength="80"
                         class="flex-1 px-3 py-1.5 rounded-lg text-sm bg-white/50 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-amber-500"
                       />
@@ -251,7 +250,7 @@
                         onclick={() => void saveName()}
                         class="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition-all active:scale-95"
                       >
-                        OK
+                        {m.common_ok_button()}
                       </button>
                       <button
                         onclick={cancelEditing}
@@ -274,7 +273,7 @@
                         <span
                           class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-[#151B2C] font-extrabold uppercase tracking-wider shadow-sm"
                         >
-                          Cet appareil
+                          {m.chat_current_device_badge()}
                         </span>
                       {/if}
                     </div>
@@ -283,16 +282,16 @@
                         class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate flex-1"
                         title={device.deviceId}
                       >
-                        ID: {device.deviceId.slice(0, 24)}…
+                        {m.chat_device_id_label({ device: device.deviceId.slice(0, 24) })}
                         {#if isMobileOs(device) && device.deviceAppVersion}
-                          <span class="ml-2 font-semibold">v{device.deviceAppVersion}</span>
+                          <span class="ml-2 font-semibold">{m.chat_device_version_label({ device: device.deviceAppVersion ?? '' })}</span>
                         {/if}
                       </div>
                       <button
                         onclick={() => startEditing(device.deviceId)}
                         class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                        title="Renommer cet appareil"
-                        aria-label="Renommer"
+                        title={m.chat_rename_device_title()}
+                        aria-label={m.chat_rename_device_label()}
                       >
                         <Edit2 size={14} strokeWidth={2} />
                       </button>
@@ -304,8 +303,8 @@
                   <button
                     onclick={() => handleRemoveDevice(device.deviceId)}
                     class="p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 shrink-0"
-                    title="Supprimer cet appareil de votre compte"
-                    aria-label="Supprimer l'appareil"
+                    title={m.chat_delete_device_title()}
+                    aria-label={m.chat_delete_device_label()}
                   >
                     <Trash2 size={18} strokeWidth={2.5} />
                   </button>
@@ -319,7 +318,7 @@
                     class="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl font-medium"
                   >
                     <CheckCircle size={14} />
-                    {stats.active} actif{stats.active > 1 ? 's' : ''}
+                    {m.chat_device_active_count({ stats: stats.active })}
                   </span>
                 {/if}
                 {#if stats.pending > 0}
@@ -327,7 +326,7 @@
                     class="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2.5 py-1.5 rounded-xl font-medium"
                   >
                     <Clock size={14} />
-                    {stats.pending} en attente
+                    {m.chat_device_pending_count({ stats: stats.pending })}
                   </span>
                 {/if}
                 {#if stats.inProgress > 0}
@@ -335,12 +334,12 @@
                     class="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1.5 rounded-xl font-medium"
                   >
                     <Loader size={14} class="animate-spin" />
-                    {stats.inProgress} en cours
+                    {m.chat_device_in_progress_count({ stats: stats.inProgress })}
                   </span>
                 {/if}
                 {#if stats.total === 0}
                   <span class="text-text-muted/70 italic px-1 font-medium"
-                    >Aucun groupe synchronisé</span
+                    >{m.chat_no_synced_groups()}</span
                   >
                 {/if}
               </div>
@@ -351,13 +350,8 @@
                   class="flex items-start gap-3 p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 sm:ml-16 mt-2"
                 >
                   <TriangleAlert size={18} class="text-orange-500 mt-0.5 shrink-0" />
-                  <p
-                    class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium"
-                  >
-                    <span class="font-bold"
-                      >{staleGroups.length} groupe{staleGroups.length > 1 ? 's' : ''}</span
-                    > en attente de synchronisation. L'appareil se mettra à jour automatiquement lors
-                    de sa prochaine connexion au réseau.
+                  <p class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium">
+                    {m.chat_device_stale_groups_warning({ staleGroups: staleGroups.length })}
                   </p>
                 </div>
               {/if}
@@ -369,7 +363,7 @@
           <div
             class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-[1.5rem] bg-black/5 dark:bg-white/5"
           >
-            Aucun appareil enregistré
+            {m.chat_no_devices_registered()}
           </div>
         {/if}
       </div>
@@ -383,7 +377,7 @@
       class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-text-main bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
     >
       <RefreshCw size={16} strokeWidth={2.5} class={loading ? 'animate-spin' : ''} />
-      Actualiser
+      {m.common_refresh_button()}
     </button>
   {/snippet}
 </Modal>

@@ -179,7 +179,7 @@
   "chat_conversation_deleted_message": "Cette conversation a été supprimée.",
   "chat_delete_locally_button": "Supprimer localement",
   "chat_typing_one_person": "{names} écrit…",
-  "chat_typing_two_people": "{names} et {names} écrivent…",
+  "chat_typing_two_people": "{name1} et {name2} écrivent…",
   "chat_typing_multiple_people": "Plusieurs personnes écrivent…",
   "chat_back_label": "Retour au menu",
 
@@ -218,6 +218,12 @@
   "chat_no_shared_files": "Aucun fichier partagé.",
   "chat_file_label": "Fichier",
 
+  "chat_device_delete_auth_error": "La suppression de l'appareil a echoue (auth/serveur).",
+  "chat_device_remove_error": "Impossible de supprimer cet appareil.",
+  "chat_device_rename_error": "Impossible de renommer cet appareil.",
+  "chat_device_os_browser": "Navigateur",
+  "chat_device_os_unknown": "Inconnu",
+  "chat_panel_close_label": "Fermer le panneau",
   "chat_device_management_title": "Gestion des appareils",
   "chat_syncing_devices": "Synchronisation des appareils…",
   "chat_devices_load_error": "Impossible de charger les appareils liés à votre compte.",

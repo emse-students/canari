@@ -8,6 +8,7 @@
   import MediaLightbox from '../shared/MediaLightbox.svelte';
   import SharedMediaThumb from './SharedMediaThumb.svelte';
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -132,9 +133,9 @@
   }
 
   const tabs: { id: Tab; label: string; count: number }[] = $derived([
-    { id: 'media', label: 'Médias', count: content.media.length },
-    { id: 'links', label: 'Liens', count: content.links.length },
-    { id: 'files', label: 'Fichiers', count: content.files.length },
+    { id: 'media', label: m.chat_media_tab(), count: content.media.length },
+    { id: 'links', label: m.chat_links_tab(), count: content.links.length },
+    { id: 'files', label: m.chat_files_tab(), count: content.files.length },
   ]);
 </script>
 
@@ -143,7 +144,7 @@
     <button
       type="button"
       class="absolute inset-0 bg-black/40 backdrop-blur-sm"
-      aria-label="Fermer le panneau"
+      aria-label={m.chat_panel_close_label()}
       onclick={onClose}
       transition:fade={{ duration: 180 }}
     ></button>
@@ -154,15 +155,15 @@
     >
       <!-- Header -->
       <div class="flex items-center justify-between gap-2 border-b border-cn-border px-4 py-3">
-        <h2 class="text-base font-bold text-text-main">Médias, liens & fichiers</h2>
+        <h2 class="text-base font-bold text-text-main">{m.chat_media_links_files_title()}</h2>
         <div class="flex items-center gap-1">
           {#if onOpenSearch}
             <button
               type="button"
               onclick={triggerSearch}
               class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
-              title="Rechercher dans la conversation"
-              aria-label="Rechercher dans la conversation"
+              title={m.chat_search_in_conversation_title()}
+              aria-label={m.chat_search_in_conversation_label()}
             >
               <Search size={18} />
             </button>
@@ -171,7 +172,7 @@
             type="button"
             onclick={onClose}
             class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
-            aria-label="Fermer"
+            aria-label={m.common_close_label()}
           >
             <X size={18} />
           </button>
@@ -208,7 +209,7 @@
           </div>
         {:else if activeTab === 'media'}
           {#if content.media.length === 0}
-            <p class="py-12 text-center text-sm text-text-muted">Aucun média partagé.</p>
+            <p class="py-12 text-center text-sm text-text-muted">{m.chat_no_shared_media()}</p>
           {:else}
             <div class="grid grid-cols-3 gap-1.5">
               {#each content.media.slice(0, mediaWindow) as item (item.messageId + item.media.mediaId)}
@@ -225,13 +226,13 @@
                 onclick={() => (mediaWindow += 60)}
                 class="mt-3 w-full rounded-xl border border-cn-border py-2 text-sm font-semibold text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
               >
-                Voir plus ({content.media.length - mediaWindow})
+                {m.chat_see_more_media_button({ content: content.media.length - mediaWindow })}
               </button>
             {/if}
           {/if}
         {:else if activeTab === 'links'}
           {#if content.links.length === 0}
-            <p class="py-12 text-center text-sm text-text-muted">Aucun lien partagé.</p>
+            <p class="py-12 text-center text-sm text-text-muted">{m.chat_no_shared_links()}</p>
           {:else}
             <div class="flex flex-col gap-1">
               {#each content.links as link (link.messageId + link.url)}
@@ -252,7 +253,7 @@
             </div>
           {/if}
         {:else if content.files.length === 0}
-          <p class="py-12 text-center text-sm text-text-muted">Aucun fichier partagé.</p>
+          <p class="py-12 text-center text-sm text-text-muted">{m.chat_no_shared_files()}</p>
         {:else}
           <div class="flex flex-col gap-1">
             {#each content.files as file (file.messageId + file.media.mediaId)}
@@ -268,7 +269,7 @@
                 </span>
                 <span class="min-w-0 flex-1">
                   <span class="block truncate text-sm font-medium text-text-main"
-                    >{file.media.fileName ?? 'Fichier'}</span
+                    >{file.media.fileName ?? m.chat_file_label()}</span
                   >
                   <span class="block text-xs text-text-muted"
                     >{formatBytes(file.media.size)} · {senderName(file.senderId)} · {dateFmt.format(

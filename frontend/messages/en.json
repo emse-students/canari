@@ -179,7 +179,7 @@
   "chat_conversation_deleted_message": "This conversation has been deleted.",
   "chat_delete_locally_button": "Delete locally",
   "chat_typing_one_person": "{names} is typing…",
-  "chat_typing_two_people": "{names} and {names} are typing…",
+  "chat_typing_two_people": "{name1} and {name2} are typing…",
   "chat_typing_multiple_people": "Multiple people are typing…",
   "chat_back_label": "Back to menu",
 
@@ -218,6 +218,12 @@
   "chat_no_shared_files": "No shared files.",
   "chat_file_label": "File",
 
+  "chat_device_delete_auth_error": "Device deletion failed (auth/server).",
+  "chat_device_remove_error": "Unable to remove this device.",
+  "chat_device_rename_error": "Unable to rename this device.",
+  "chat_device_os_browser": "Browser",
+  "chat_device_os_unknown": "Unknown",
+  "chat_panel_close_label": "Close panel",
   "chat_device_management_title": "Device management",
   "chat_syncing_devices": "Syncing devices…",
   "chat_devices_load_error": "Unable to load devices linked to your account.",
