@@ -1,6 +1,7 @@
 <script lang="ts">
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -65,7 +66,7 @@
   }
 </script>
 
-<Modal {open} {onClose} title="Nouvelle discussion">
+<Modal {open} {onClose} title={m.chat_new_discussion_title()}>
   <!-- Système d'onglets accessible -->
   <div
     role="tablist"
@@ -79,7 +80,7 @@
       class="{baseTabClass} {activeTab === 'contact' ? activeTabClass : inactiveTabClass}"
       onclick={() => onTabChange('contact')}
     >
-      Contact
+      {m.chat_modal_contact_tab()}
     </button>
     <button
       id="tab-group"
@@ -89,7 +90,7 @@
       class="{baseTabClass} {activeTab === 'group' ? activeTabClass : inactiveTabClass}"
       onclick={() => onTabChange('group')}
     >
-      Groupe
+      {m.chat_modal_group_tab()}
     </button>
   </div>
 
@@ -99,12 +100,12 @@
       <form class="space-y-4" onsubmit={handleContactSubmit}>
         <div>
           <label for="new-contact-id" class="block text-sm font-medium text-text-main mb-1">
-            Contact
+            {m.chat_modal_contact_label()}
           </label>
           <UserAutocomplete
             value={contactId}
             onValueChange={onContactIdChange}
-            placeholder="Rechercher un nom..."
+            placeholder={m.chat_modal_search_user_placeholder()}
             inputId="new-contact-id"
             onSubmit={onSubmitContact}
           />
@@ -114,11 +115,11 @@
           disabled={!contactId.trim() || isSelf}
           class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Démarrer la discussion
+          {m.chat_modal_start_discussion_button()}
         </button>
         {#if isSelf}
           <p class="text-xs text-red-500 font-medium text-center -mt-1">
-            Vous ne pouvez pas démarrer une discussion avec vous-même.
+            {m.chat_modal_self_conversation_error()}
           </p>
         {/if}
       </form>
@@ -128,14 +129,14 @@
       <form class="space-y-4" onsubmit={handleGroupSubmit}>
         <div>
           <label for="new-group-name" class="block text-sm font-medium text-text-main mb-1">
-            Nom du groupe
+            {m.chat_modal_group_name_label()}
           </label>
           <input
             id="new-group-name"
             type="text"
             value={groupName}
             oninput={(e) => onGroupNameChange(e.currentTarget.value)}
-            placeholder="ex: Projet Canari"
+            placeholder={m.chat_modal_group_name_placeholder()}
             class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/50 transition-all placeholder:text-text-muted/70"
             autocomplete="off"
           />
@@ -145,7 +146,7 @@
           disabled={!groupName.trim()}
           class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Créer le groupe
+          {m.chat_modal_create_group_button()}
         </button>
       </form>
     </div>

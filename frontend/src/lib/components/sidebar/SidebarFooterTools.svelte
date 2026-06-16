@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Download, Upload, ScanLine, Smartphone, Monitor } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Callback fired with the selected backup file to import. */
@@ -61,8 +62,8 @@
         onclick={triggerImport}
         disabled={isImporting}
         class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
-        title="Importer une sauvegarde"
-        aria-label="Importer une sauvegarde"
+        title={m.chat_import_backup_title()}
+        aria-label={m.chat_import_backup_label()}
       >
         <Upload size={16} />
       </button>
@@ -70,8 +71,8 @@
         onclick={onExport}
         disabled={isExporting}
         class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
-        title="Exporter les conversations"
-        aria-label="Exporter les conversations"
+        title={m.chat_export_conversations_title()}
+        aria-label={m.chat_export_conversations_label()}
       >
         <Download size={16} />
       </button>
@@ -79,8 +80,8 @@
         onclick={onStartSync}
         disabled={isSyncing}
         class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
-        title="Démarrer une synchronisation QR"
-        aria-label="Démarrer une synchronisation QR"
+        title={m.chat_start_sync_qr_title()}
+        aria-label={m.chat_start_sync_qr_label()}
       >
         <ScanLine size={16} />
       </button>
@@ -88,16 +89,16 @@
         onclick={onJoinSync}
         disabled={isSyncing}
         class="h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors disabled:opacity-50"
-        title="Rejoindre une synchronisation QR"
-        aria-label="Rejoindre une synchronisation QR"
+        title={m.chat_join_sync_qr_title()}
+        aria-label={m.chat_join_sync_qr_label()}
       >
         <Smartphone size={16} />
       </button>
       <button
         onclick={onOpenDevicePanel}
         class="relative h-10 rounded-xl bg-white/60 dark:bg-black/30 border border-white/50 dark:border-white/10 text-text-main inline-flex items-center justify-center hover:bg-white/75 dark:hover:bg-black/45 transition-colors"
-        title="Gérer les appareils"
-        aria-label="Gérer les appareils"
+        title={m.chat_manage_devices_title()}
+        aria-label={m.chat_manage_devices_label()}
       >
         <Monitor size={16} />
         {#if pendingInvitationCount > 0}

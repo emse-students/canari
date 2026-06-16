@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   async function handleLogout() {
     await clearAuth();
@@ -30,9 +31,9 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
-          title="Mon profil"
+          title={m.nav_my_profile_title()}
           class="rounded-2xl ring-2 ring-transparent hover:ring-amber-400 transition-all duration-200"
-          aria-label="Accéder au profil"
+          aria-label={m.nav_my_profile_label()}
         >
           <Avatar userId={globalSession.userId} size="sm" />
         </button>

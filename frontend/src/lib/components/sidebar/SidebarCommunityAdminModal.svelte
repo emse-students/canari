@@ -10,6 +10,7 @@
   import { getToken } from '$lib/stores/auth';
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { m } from '$lib/paraglide/messages';
 
   interface ChannelItem {
     id: string;
@@ -101,9 +102,9 @@
   }
 
   function roleLabel(role: 'member' | 'moderator' | 'admin'): string {
-    if (role === 'admin') return 'Administrateur';
-    if (role === 'moderator') return 'Modérateur';
-    return 'Membre';
+    if (role === 'admin') return m.chat_role_admin();
+    if (role === 'moderator') return m.chat_role_moderator();
+    return m.chat_role_member();
   }
 
   function roleBadgeClass(role: 'member' | 'moderator' | 'admin'): string {
@@ -179,7 +180,7 @@
       }
     } catch (e) {
       if (loadToken !== membersLoadToken) return;
-      membersError = e instanceof Error ? e.message : 'Impossible de charger les membres.';
+      membersError = e instanceof Error ? e.message : m.chat_community_load_members_error();
       communityMembers = [];
     } finally {
       if (loadToken === membersLoadToken) membersLoading = false;
@@ -207,17 +208,17 @@
   async function handleGenerateInvitation() {
     const memberId = inviteUserId.trim();
     if (!selectedWorkspace?.name) {
-      inviteStatus = "Sélectionnez d'abord une communauté.";
+      inviteStatus = m.chat_community_select_first_error();
       return;
     }
 
     if (!memberId) {
-      inviteStatus = 'Sélectionnez un utilisateur dans la liste.';
+      inviteStatus = m.chat_community_select_user_error();
       return;
     }
 
     if (!onInviteCommunityMember) {
-      inviteStatus = "L'invitation communautaire n'est pas disponible dans ce contexte.";
+      inviteStatus = m.chat_community_invite_unavailable_error();
       return;
     }
 
@@ -229,11 +230,11 @@
     inviteRole = 'member';
     try {
       await onInviteCommunityMember(savedId, savedRole);
-      inviteStatus = `Invitation envoyée à ${savedId}.`;
+      inviteStatus = m.chat_community_invite_sent_message({ savedId });
       setTimeout(() => { inviteStatus = ''; }, 4000);
       void loadCommunityMembers();
     } catch (e) {
-      inviteStatus = e instanceof Error ? e.message : 'Échec de la distribution de clé.';
+      inviteStatus = e instanceof Error ? e.message : m.chat_community_key_distribution_error();
       inviteUserId = savedId;
       inviteRole = savedRole;
     } finally {
@@ -244,10 +245,10 @@
   /** Confirms then leaves/removes the selected community, closing the modal on success. */
   async function leaveCommunity() {
     if (
-      !(await showConfirm(`Quitter la communauté " ${selectedWorkspace?.name} " ?`, {
-        danger: true,
-        confirmLabel: 'Quitter',
-      }))
+      !(await showConfirm(
+        m.chat_community_leave_confirm({ selectedWorkspace: selectedWorkspace?.name ?? '' }),
+        { danger: true, confirmLabel: m.common_leave_button() }
+      ))
     ) {
       return;
     }
@@ -261,7 +262,7 @@
     if (!file || !selectedWorkspace?.id) return;
 
     if (!file.type.startsWith('image/')) {
-      imageUploadError = 'Veuillez sélectionner une image.';
+      imageUploadError = m.chat_community_select_image_error();
       return;
     }
 
@@ -274,7 +275,7 @@
       const targetId = selectedWorkspace.workspaceDbId ?? selectedWorkspace.id;
       onUpdateWorkspaceImage?.(targetId, mediaId);
     } catch (e) {
-      imageUploadError = e instanceof Error ? e.message : 'Échec du téléversement.';
+      imageUploadError = e instanceof Error ? e.message : m.chat_community_upload_error();
     } finally {
       imageUploading = false;
       input.value = '';
@@ -282,7 +283,7 @@
   }
 </script>
 
-<Modal {open} {onClose} title="Paramètres de la communauté" maxWidth="max-w-4xl">
+<Modal {open} {onClose} title={m.chat_community_settings_title()} maxWidth="max-w-4xl">
   <div class="flex flex-col md:flex-row min-h-0 border-t border-cn-border/40">
     <!-- Barre de menu à gauche -->
     <div
@@ -291,7 +292,7 @@
       <h3
         class="hidden md:block text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2"
       >
-        {selectedWorkspace ? selectedWorkspace.name : 'Communauté'}
+        {selectedWorkspace ? selectedWorkspace.name : m.chat_community_fallback_name()}
       </h3>
 
       <button
@@ -302,7 +303,7 @@
           : 'text-text-main hover:bg-black/5'}"
       >
         <Settings size={18} />
-        Vue d'ensemble
+        {m.chat_community_overview_tab()}
       </button>
       <button
         onclick={() => (activeTab = 'members')}
@@ -312,7 +313,7 @@
           : 'text-text-main hover:bg-black/5'}"
       >
         <Users size={18} />
-        Membres
+        {m.chat_community_members_tab()}
       </button>
 
       <div class="hidden md:block mt-auto pt-4 space-y-2">
@@ -321,7 +322,7 @@
           onclick={leaveCommunity}
         >
           <Trash2 size={18} />
-          Quitter la communauté
+          {m.chat_community_leave_button()}
         </button>
       </div>
     </div>
@@ -330,7 +331,7 @@
     <div class="flex-1 bg-white/50 p-6 overflow-y-auto min-h-[300px]">
       {#if activeTab === 'overview'}
         <div class="space-y-6 max-w-2xl">
-          <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>
+          <h2 class="text-xl font-bold text-text-main">{m.chat_community_overview_tab()}</h2>
 
           <div class="flex items-center gap-6">
             <div class="relative flex-shrink-0">
@@ -345,7 +346,7 @@
               </div>
               <label
                 class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
-                title="Changer l'image"
+                title={m.chat_community_change_image_title()}
               >
                 {#if imageUploading}
                   <Loader size={14} class="animate-spin" />
@@ -366,7 +367,7 @@
                 <p class="text-xs text-red-600">{imageUploadError}</p>
               {/if}
               <label class="text-xs font-bold uppercase text-text-muted" for="server-name"
-                >Nom de la communauté</label
+                >{m.chat_community_name_label()}</label
               >
               <input
                 id="server-name"
@@ -381,10 +382,8 @@
           >
             <ShieldCheck size={24} class="text-green-500" />
             <div class="flex-1">
-              <span class="font-bold block">Chiffrement E2E Actif</span>
-              <span class="text-xs text-text-muted"
-                >Les canaux de cette communauté utilisent Secure Group Messaging (MLS).</span
-              >
+              <span class="font-bold block">{m.chat_community_e2e_active_title()}</span>
+              <span class="text-xs text-text-muted">{m.chat_community_e2e_description()}</span>
             </div>
           </div>
         </div>
@@ -392,21 +391,19 @@
 
       {#if activeTab === 'members'}
         <div class="space-y-6 max-w-3xl">
-          <h2 class="text-xl font-bold text-text-main">Membres</h2>
-          <p class="text-sm text-text-muted">
-            Gestion des membres de la communauté et de leurs rôles globaux.
-          </p>
+          <h2 class="text-xl font-bold text-text-main">{m.chat_community_members_tab()}</h2>
+          <p class="text-sm text-text-muted">{m.chat_community_members_description()}</p>
 
           <!-- Placer ici une liste factice ou une vraie table -->
           <div class="border border-cn-border rounded-xl bg-white overflow-hidden text-sm">
             <div class="p-4 flex items-center justify-between border-b border-cn-border bg-black/5">
-              <span class="font-semibold text-text-main">{communityMembers.length} Membre(s)</span>
+              <span class="font-semibold text-text-main">{communityMembers.length} {m.chat_community_member_count_label()}</span>
               <button
                 class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 onclick={handleGenerateInvitation}
                 disabled={inviteLoading}
               >
-                {inviteLoading ? 'Envoi…' : 'Générer une invitation'}
+                {inviteLoading ? m.common_sending_label() : m.chat_community_generate_invite_button()}
               </button>
             </div>
             <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
@@ -414,16 +411,16 @@
                 <UserAutocomplete
                   value={inviteUserId}
                   onValueChange={(v) => (inviteUserId = v)}
-                  placeholder="Rechercher un utilisateur…"
+                  placeholder={m.chat_community_search_user_placeholder()}
                   inputId="community-invite-autocomplete"
                 />
                 <select
                   bind:value={inviteRole}
                   class="bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
                 >
-                  <option value="member">Membre</option>
-                  <option value="moderator">Modérateur</option>
-                  <option value="admin">Administrateur</option>
+                  <option value="member">{m.chat_role_member()}</option>
+                  <option value="moderator">{m.chat_role_moderator()}</option>
+                  <option value="admin">{m.chat_role_admin()}</option>
                 </select>
               </div>
             </div>
@@ -433,13 +430,11 @@
               </div>
             {/if}
             {#if membersLoading}
-              <div class="p-6 text-center text-text-muted">Chargement des membres...</div>
+              <div class="p-6 text-center text-text-muted">{m.chat_community_loading_members()}</div>
             {:else if membersError}
               <div class="p-6 text-center text-red-600">{membersError}</div>
             {:else if communityMembers.length === 0}
-              <div class="p-6 text-center text-text-muted">
-                Aucun membre à afficher pour le moment.
-              </div>
+              <div class="p-6 text-center text-text-muted">{m.chat_community_no_members()}</div>
             {:else}
               <div class="divide-y divide-cn-border/70">
                 {#each communityMembers as member (member.userId)}
@@ -471,7 +466,7 @@
           onclick={leaveCommunity}
         >
           <Trash2 size={18} />
-          Quitter la communauté
+          {m.chat_community_leave_button()}
         </button>
       </div>
     </div>

@@ -4,6 +4,7 @@
   import PostNotificationBell from './PostNotificationBell.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { m } from '$lib/paraglide/messages';
 </script>
 
 <!--
@@ -19,7 +20,7 @@
   <div class="w-[4.5rem]"></div>
 
   <!-- Logo centré -->
-  <a href="/posts" aria-label="Accueil" class="flex items-center">
+  <a href="/posts" aria-label={m.nav_home_label()} class="flex items-center">
     <CanariBrand subtitle="" />
   </a>
 
@@ -31,8 +32,8 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
-          title="Mon profil"
-          aria-label="Accéder au profil"
+          title={m.nav_my_profile_title()}
+          aria-label={m.nav_my_profile_label()}
           class="rounded-2xl ring-2 ring-transparent hover:ring-amber-400 transition-all duration-200 ml-0.5"
         >
           <Avatar userId={globalSession.userId} size="sm" />

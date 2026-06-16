@@ -1,6 +1,7 @@
 <script lang="ts">
   import Modal from '../shared/Modal.svelte';
   import { tick } from 'svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -24,11 +25,11 @@
   });
 </script>
 
-<Modal {open} {onClose} title="Nouveau canal">
+<Modal {open} {onClose} title={m.chat_modal_channel_name_label()}>
   <div class="space-y-4 pt-2">
     <div>
       <label for="new-channel-name" class="block text-sm font-medium text-text-main mb-1"
-        >Nom du canal</label
+        >{m.chat_modal_channel_name_label()}</label
       >
       <input
         bind:this={channelInput}
@@ -36,7 +37,7 @@
         type="text"
         value={channelName}
         oninput={(e) => onChannelNameChange((e.target as HTMLInputElement).value)}
-        placeholder="ex: Général"
+        placeholder={m.chat_modal_channel_name_placeholder()}
         class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
         onkeydown={(e) => e.key === 'Enter' && onSubmitChannel()}
       />
@@ -46,7 +47,7 @@
       disabled={!channelName.trim()}
       class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      Créer le canal
+      {m.chat_modal_create_channel_button()}
     </button>
   </div>
 </Modal>

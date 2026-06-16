@@ -21,6 +21,7 @@
   }
 
   let { isTouchDevice }: Props = $props();
+
 </script>
 
 <div
@@ -31,7 +32,7 @@
     <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
       <Settings size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-lg font-extrabold text-text-main">Préférences</h2>
+    <h2 class="text-lg font-extrabold text-text-main">{m.profile_preferences_title()}</h2>
   </div>
 
   <div class="space-y-5">
@@ -45,9 +46,9 @@
           {/if}
         </div>
         <div>
-          <p class="text-sm font-bold text-text-main">Bruitages</p>
+          <p class="text-sm font-bold text-text-main">{m.profile_bruitages()}</p>
           <p class="text-xs font-medium text-text-muted mt-0.5">
-            Sons de réception, envoi et lecture des messages
+            {m.profile_bruitages_desc()}
           </p>
         </div>
       </div>
@@ -78,9 +79,9 @@
             {/if}
           </div>
           <div>
-            <p class="text-sm font-bold text-text-main">Vibrations</p>
+            <p class="text-sm font-bold text-text-main">{m.profile_vibrations()}</p>
             <p class="text-xs font-medium text-text-muted mt-0.5">
-              Retour haptique sur les actions (réactions, réponses…)
+              {m.profile_vibrations_desc()}
             </p>
           </div>
         </div>
@@ -113,8 +114,8 @@
           {/if}
         </div>
         <div>
-          <p class="text-sm font-bold text-text-main">Thème</p>
-          <p class="text-xs font-medium text-text-muted mt-0.5">Apparence de l'interface</p>
+          <p class="text-sm font-bold text-text-main">{m.profile_theme()}</p>
+          <p class="text-xs font-medium text-text-muted mt-0.5">{m.profile_theme_desc()}</p>
         </div>
       </div>
 
@@ -123,7 +124,7 @@
         aria-label="Thème de l'interface"
         class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
       >
-        {#each [{ value: 'system', label: 'Système', Icon: Monitor }, { value: 'light', label: 'Clair', Icon: Sun }, { value: 'dark', label: 'Sombre', Icon: Moon }] as opt (opt.value)}
+        {#each [{ value: 'system', label: m.profile_system(), Icon: Monitor }, { value: 'light', label: m.profile_light(), Icon: Sun }, { value: 'dark', label: m.profile_dark(), Icon: Moon }] as opt (opt.value)}
           {@const Icon = opt.Icon}
           <button
             type="button"

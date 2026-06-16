@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Plus, ChevronDown, ChevronRight, Hash, Lock } from '@lucide/svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface ChannelItem {
     id: string;
@@ -75,7 +76,7 @@
           type="button"
           onclick={onOpenNewGroup}
           class="w-7 h-7 rounded-full hover:bg-[color-mix(in_srgb,var(--surface-elevated)_75%,transparent)] text-text-muted inline-flex items-center justify-center flex-shrink-0"
-          aria-label="Ajouter un canal"
+          aria-label={m.chat_add_channel_label()}
         >
           <Plus size={14} />
         </button>
@@ -115,6 +116,6 @@
   {/each}
 
   {#if filteredChannelWorkspaces.length === 0}
-    <div class="text-center py-8 px-4 text-text-muted text-sm">Aucun canal correspondant.</div>
+    <div class="text-center py-8 px-4 text-text-muted text-sm">{m.chat_no_matching_channels()}</div>
   {/if}
 </div>
