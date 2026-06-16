@@ -1,5 +1,4 @@
 import type { IMlsService, MlsBatchProcessResult } from './IMlsService';
-import { wasmClientDecryptPage } from './mlsBatchDecrypt';
 
 /**
  * A stateful decrypt session for one group's history catch-up.
