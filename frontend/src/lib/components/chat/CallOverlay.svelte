@@ -19,6 +19,7 @@
   } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
   import type { CallState } from '$lib/services/CallService';
+  import { m } from '$lib/paraglide/messages';
 
   let {
     callService,
@@ -98,7 +99,7 @@
   let userMinimized = $state(false);
   /**
    * Compact, non-blocking widget mode: used for audio-only calls (so the user can
-   * keep navigating the app, à la Messenger/Discord) and whenever the user minimizes.
+   * keep navigating the app, a la Messenger/Discord) and whenever the user minimizes.
    * Incoming rings always use the prominent expanded prompt.
    */
   let compact = $derived(callState !== 'incoming' && (userMinimized || !hasAnyVideo));
@@ -295,20 +296,20 @@
       class="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 font-bold text-emerald-300 {small
         ? 'px-1.5 py-0.5 text-[10px]'
         : 'px-2 py-1 text-xs'}"
-      title="Appel chiffré de bout en bout"
+      title={m.call_e2e_encrypted_title()}
     >
       <ShieldCheck size={small ? 12 : 14} strokeWidth={2.5} />
-      {#if !small}Chiffré{/if}
+      {#if !small}{m.call_encrypted_label()}{/if}
     </span>
   {:else}
     <span
       class="inline-flex items-center gap-1 rounded-full bg-amber-500/20 font-bold text-amber-300 {small
         ? 'px-1.5 py-0.5 text-[10px]'
         : 'px-2 py-1 text-xs'}"
-      title="Appel NON chiffré de bout en bout - chiffrement de transport uniquement (le serveur peut voir le flux)"
+      title={m.call_not_e2e_encrypted_title()}
     >
       <ShieldAlert size={small ? 12 : 14} strokeWidth={2.5} />
-      Non chiffré E2E
+      {m.call_not_e2e_encrypted_label()}
     </span>
   {/if}
 {/snippet}
@@ -345,7 +346,7 @@
       </div>
       <div class="min-w-0 flex-1">
         {#if isGroupCall}
-          <p class="truncate text-sm font-bold text-white">{participants.length} participants</p>
+          <p class="truncate text-sm font-bold text-white">{m.call_participants_count({ participants: participants.length })}</p>
         {:else if primaryParticipant}
           <UserName
             userId={primaryParticipant.userId}
@@ -354,17 +355,17 @@
             class="block truncate text-sm font-bold text-white"
           />
         {:else}
-          <p class="truncate text-sm font-bold text-white">Appel</p>
+          <p class="truncate text-sm font-bold text-white">{m.call_label()}</p>
         {/if}
         <p class="truncate text-xs font-medium text-white/55">
           {#if remoteAudioConnected}
-            Appel audio
+            {m.call_audio_only_label()}
           {:else if callState === 'calling'}
-            Appel en cours…
+            {m.call_calling_label()}
           {:else if callState === 'incall'}
-            Connecté
+            {m.call_connected_label()}
           {:else}
-            Connexion…
+            {m.call_connecting_label()}
           {/if}
         </p>
       </div>
@@ -372,8 +373,8 @@
       <button
         class="rounded-full p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
         onclick={() => (userMinimized = false)}
-        title="Agrandir"
-        aria-label="Agrandir l'appel"
+        title={m.call_expand_label()}
+        aria-label={m.call_expand_call_label()}
       >
         <Maximize2 size={18} />
       </button>
@@ -385,7 +386,7 @@
           ? 'bg-white text-[#151B2C]'
           : 'bg-white/10 text-white hover:bg-white/20'}"
         onclick={() => callService.toggleMute()}
-        aria-label={isMuted ? 'Activer le micro' : 'Couper le micro'}
+        aria-label={isMuted ? m.call_unmute_label() : m.call_mute_label()}
       >
         {#if isMuted}<MicOff size={20} />{:else}<Mic size={20} />{/if}
       </button>
@@ -395,15 +396,15 @@
           userMinimized = false;
           void callService.toggleVideo();
         }}
-        title="Passer en vidéo"
-        aria-label="Activer la caméra"
+        title={m.call_enable_video_label()}
+        aria-label={m.call_enable_camera_label()}
       >
         <Video size={20} />
       </button>
       <button
         class="rounded-full bg-red-500 p-3 text-white transition-all hover:bg-red-400 hover:scale-105"
         onclick={endCall}
-        aria-label="Raccrocher"
+        aria-label={m.call_hang_up_label()}
       >
         <PhoneOff size={20} />
       </button>
@@ -504,20 +505,20 @@
             : 'animate-pulse'}"
         >
           {#if remoteAudioConnected}
-            Appel audio
+            {m.call_audio_only_label()}
           {:else if callState === 'calling'}
-            Appel en cours...
+            {m.call_calling_label()}
           {:else if callState === 'incall'}
-            En attente du flux distant…
+            {m.call_waiting_for_remote_label()}
           {:else}
-            Connexion en cours...
+            {m.call_connecting_label()}
           {/if}
         </p>
       </div>
     {:else}
       <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1">
         <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
-          {callState === 'calling' ? 'Appel en cours...' : 'Connexion en cours...'}
+          {callState === 'calling' ? m.call_calling_label() : m.call_connecting_label()}
         </p>
       </div>
     {/if}
@@ -530,7 +531,7 @@
         <div
           bind:this={pipEl}
           role="button"
-          aria-label="Déplacer votre retour vidéo"
+          aria-label={m.call_move_pip_label()}
           tabindex="0"
           onpointerdown={handlePipPointerDown}
           onpointermove={handlePipPointerMove}
@@ -556,7 +557,7 @@
                   userId={currentUserId}
                   fill
                   shape="circle"
-                  fallbackLabel="Vous"
+                  fallbackLabel={m.call_you_label()}
                 />
               </div>
             </div>
@@ -572,7 +573,7 @@
             class="absolute bottom-2 left-2 right-2 flex justify-center pointer-events-none"
           >
             <span class="text-[10px] font-bold uppercase tracking-wider text-white/80 bg-black/40 px-2 py-0.5 rounded-full"
-              >Vous</span
+              >{m.call_you_label()}</span
             >
           </div>
         </div>
@@ -589,16 +590,16 @@
       ></span>
       {#if currentUserId}
         <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
-          <Avatar userId={currentUserId} fill shape="circle" fallbackLabel="Vous" />
+          <Avatar userId={currentUserId} fill shape="circle" fallbackLabel={m.call_you_label()} />
         </div>
       {/if}
       {callState === 'calling'
-        ? 'Appel sortant'
+        ? m.call_outgoing_label()
         : callState === 'incoming'
-          ? 'Appel entrant'
-          : 'En ligne'}
+          ? m.call_incoming_label()
+          : m.call_online_label()}
       {#if remoteEntries.length > 1}
-        <span class="text-white/60 font-normal">· {remoteEntries.length + 1} participants</span>
+        <span class="text-white/60 font-normal">· {m.call_participants_count({ participants: remoteEntries.length + 1 })}</span>
       {:else if primaryParticipant}
         <UserName
           userId={primaryParticipant.userId}
@@ -627,16 +628,16 @@
             callService.currentGroupId ?? '',
             callService.currentCallId ?? ''
           )}
-        title="Accepter l'appel"
-        aria-label="Accepter l'appel entrant"
+        title={m.call_accept_label()}
+        aria-label={m.call_accept_incoming_label()}
       >
         <Phone size={28} class="fill-current" />
       </button>
       <button
         class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110 active:scale-95"
         onclick={endCall}
-        title="Refuser"
-        aria-label="Refuser l'appel entrant"
+        title={m.call_decline_label()}
+        aria-label={m.call_decline_incoming_label()}
       >
         <PhoneOff size={28} />
       </button>
@@ -646,7 +647,7 @@
           ? 'bg-white text-[#151B2C]'
           : 'bg-white/10 text-white hover:bg-white/20'}"
         onclick={() => callService.toggleMute()}
-        aria-label={isMuted ? 'Activer le micro' : 'Couper le micro'}
+        aria-label={isMuted ? m.call_unmute_label() : m.call_mute_label()}
       >
         {#if isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
       </button>
@@ -655,7 +656,7 @@
           ? 'bg-white text-[#151B2C]'
           : 'bg-white/10 text-white hover:bg-white/20'}"
         onclick={() => void callService.toggleVideo()}
-        aria-label={isVideoOff ? 'Activer la caméra' : 'Couper la caméra'}
+        aria-label={isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label()}
       >
         {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
       </button>
@@ -663,8 +664,8 @@
         <button
           class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
           onclick={() => void togglePictureInPicture()}
-          title="Lecteur flottant (Picture-in-Picture)"
-          aria-label="Ouvrir la vidéo dans un lecteur flottant"
+          title={m.call_pip_label()}
+          aria-label={m.call_open_pip_label()}
         >
           <PictureInPicture2 size={24} />
         </button>
@@ -672,15 +673,15 @@
       <button
         class="p-4 rounded-full bg-white/10 text-white hover:bg-white/20"
         onclick={() => (userMinimized = true)}
-        title="Réduire l'appel"
-        aria-label="Réduire l'appel dans un coin"
+        title={m.call_minimize_label()}
+        aria-label={m.call_minimize_call_label()}
       >
         <Minimize2 size={24} />
       </button>
       <button
         class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
         onclick={toggleFullscreen}
-        aria-label="Plein écran"
+        aria-label={m.call_fullscreen_label()}
       >
         {#if isFullscreen}<Minimize size={24} />{:else}<Maximize size={24} />{/if}
       </button>
@@ -688,7 +689,7 @@
       <button
         class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110"
         onclick={endCall}
-        aria-label="Raccrocher"
+        aria-label={m.call_hang_up_label()}
       >
         <PhoneOff size={28} />
       </button>

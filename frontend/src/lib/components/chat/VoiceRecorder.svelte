@@ -2,6 +2,7 @@
   import { Mic, Square, Trash2 } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Callback fired with the recorded audio blob when the user stops recording. */
@@ -73,8 +74,8 @@
         recordingDuration += 1;
       }, 1000);
     } catch (error) {
-      console.error('Erreur accès micro:', error);
-      showToast("Impossible d'accéder au microphone. Vérifiez les permissions.");
+      console.error('Erreur acces micro:', error);
+      showToast(m.chat_mic_permission_error());
       cleanup();
     }
   }
@@ -121,8 +122,8 @@
   <button
     onclick={startRecording}
     class="w-11 h-11 text-cn-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-cn-bg transition-colors"
-    aria-label="Enregistrer un message vocal"
-    title="Enregistrer un message vocal"
+    aria-label={m.chat_record_voice_message_label()}
+    title={m.chat_record_voice_message_title()}
   >
     <Mic size={20} />
   </button>
@@ -136,8 +137,8 @@
     <button
       onclick={stopRecording}
       class="p-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
-      aria-label="Arrêter l'enregistrement"
-      title="Arrêter et envoyer"
+      aria-label={m.chat_stop_recording_label()}
+      title={m.chat_stop_and_send_title()}
     >
       <Square size={16} />
     </button>
@@ -145,8 +146,8 @@
     <button
       onclick={cancelRecording}
       class="p-1.5 rounded-lg text-cn-muted hover:bg-cn-bg transition-colors"
-      aria-label="Annuler l'enregistrement"
-      title="Annuler"
+      aria-label={m.chat_cancel_recording_label()}
+      title={m.common_cancel_button()}
     >
       <Trash2 size={16} />
     </button>

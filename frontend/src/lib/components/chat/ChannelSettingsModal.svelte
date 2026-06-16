@@ -20,6 +20,7 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { channelService } from '$lib/services/ChannelService';
+  import { m } from '$lib/paraglide/messages';
 
   interface ChannelSidebarItem {
     id: string;
@@ -101,7 +102,7 @@
 
   let channelNameInput = $state('');
 
-  // S'assurer que l'input se met à jour quand on change de canal
+  // S'assurer que l'input se met a jour quand on change de canal
   $effect(() => {
     if (open && selectedChannel) {
       channelNameInput = selectedChannel.name;
@@ -123,7 +124,7 @@
   async function generateShareLink() {
     const wsId = selectedWorkspace?.workspaceDbId;
     if (!wsId) {
-      shareError = 'Communauté introuvable.';
+      shareError = m.chat_channel_community_not_found_error();
       return;
     }
     shareLoading = true;
@@ -140,7 +141,7 @@
         // Clipboard may be blocked; the link is shown for manual copy.
       }
     } catch (e) {
-      shareError = e instanceof Error ? e.message : 'Échec de la génération du lien';
+      shareError = e instanceof Error ? e.message : m.chat_channel_invite_link_error();
     } finally {
       shareLoading = false;
     }
@@ -158,7 +159,7 @@
     try {
       await onInviteMember(selectedChannelId, savedId, savedRole);
     } catch (e) {
-      inviteError = e instanceof Error ? e.message : 'Échec de la distribution de clé';
+      inviteError = e instanceof Error ? e.message : m.chat_channel_invite_key_error();
       permissionMembersId = savedId;
       permissionRole = savedRole;
     } finally {
@@ -212,7 +213,7 @@
       accessAllowedUserIds = data.allowedUsers ?? [];
       accessLoaded = true;
     } catch (e) {
-      accessError = e instanceof Error ? e.message : 'Erreur chargement accès';
+      accessError = e instanceof Error ? e.message : m.chat_channel_access_load_error();
     } finally {
       accessLoading = false;
     }
@@ -234,7 +235,7 @@
         accessSaved = false;
       }, 2500);
     } catch (e) {
-      accessError = e instanceof Error ? e.message : 'Erreur sauvegarde';
+      accessError = e instanceof Error ? e.message : m.chat_channel_access_save_error();
     } finally {
       accessSaving = false;
     }
@@ -262,7 +263,7 @@
     const file = input.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      imageUploadError = 'Veuillez sélectionner une image.';
+      imageUploadError = m.chat_community_select_image_error();
       return;
     }
     imageUploading = true;
@@ -272,7 +273,7 @@
       const mediaId = await mediaService.uploadRaw(file, token);
       onUpdateChannelImage?.(selectedChannelId, mediaId);
     } catch (e) {
-      imageUploadError = e instanceof Error ? e.message : 'Échec du téléversement.';
+      imageUploadError = e instanceof Error ? e.message : m.chat_community_upload_error();
     } finally {
       imageUploading = false;
       input.value = '';
@@ -287,29 +288,29 @@
   }
 
   async function handleDeleteChannel() {
-    if (!await showConfirm(`Supprimer définitivement le canal #${selectedChannel?.name} ?`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.chat_delete_channel_confirm({ channel: selectedChannel?.name ?? '' }), { danger: true, confirmLabel: m.common_delete_button() })) return;
     onDeleteChannel?.(selectedChannelId);
     onClose();
   }
 
   async function handleLeaveChannel() {
-    if (!await showConfirm(`Quitter le canal #${selectedChannel?.name} ?`, { danger: true, confirmLabel: 'Quitter' })) return;
+    if (!await showConfirm(m.chat_leave_channel_confirm({ channel: selectedChannel?.name ?? '' }), { danger: true, confirmLabel: m.common_leave_button() })) return;
     onLeaveChannel?.(selectedChannelId);
     onClose();
   }
 </script>
 
-<Modal {open} {onClose} title="Paramètres du canal" maxWidth="max-w-4xl">
+<Modal {open} {onClose} title={m.chat_channel_settings_title()} maxWidth="max-w-4xl">
   <div class="-mx-6 -my-4 flex flex-col md:flex-row h-full md:h-[65vh] max-h-[800px]">
-    <!-- Barre de menu latérale (Onglets sur mobile) -->
+    <!-- Barre de menu laterale (Onglets sur mobile) -->
     <div
       class="w-full md:w-64 shrink-0 bg-white/40 dark:bg-black/20 border-b md:border-b-0 md:border-r border-black/5 dark:border-white/10 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-3 md:p-5 gap-2 md:gap-1 custom-scrollbar"
     >
       <h3
         class="hidden md:flex text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 items-center gap-2"
       >
-        <span class="text-amber-500 text-lg leading-none">#</span>
-        <span class="truncate">{selectedChannel ? selectedChannel.name : 'Canal'}</span>
+        <span class="text-amber-500 text-lg leading-none">{m.chat_channel_prefix()}</span>
+        <span class="truncate">{selectedChannel ? selectedChannel.name : m.chat_channel_label()}</span>
       </h3>
 
       <button
@@ -320,7 +321,7 @@
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Settings size={18} strokeWidth={2.5} />
-        Vue d'ensemble
+        {m.chat_channel_overview_tab()}
       </button>
 
       <button
@@ -331,7 +332,7 @@
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Shield size={18} strokeWidth={2.5} />
-        Permissions
+        {m.chat_channel_permissions_tab()}
       </button>
 
       <button
@@ -342,10 +343,10 @@
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Users size={18} strokeWidth={2.5} />
-        Invitations & Rôles
+        {m.chat_channel_invitations_roles_tab()}
       </button>
 
-      <!-- Boutons de danger (Desktop uniquement, placés en bas) -->
+      <!-- Boutons de danger (Desktop uniquement, places en bas) -->
       <div class="hidden md:flex md:flex-col mt-auto pt-6 gap-2">
         <button
           type="button"
@@ -353,7 +354,7 @@
           class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 transition-colors w-full outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
         >
           <LogOut size={18} strokeWidth={2.5} />
-          Quitter le canal
+          {m.chat_leave_channel_button()}
         </button>
         <button
           type="button"
@@ -361,7 +362,7 @@
           class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 transition-colors w-full outline-none focus-visible:ring-2 focus-visible:ring-red-500"
         >
           <Trash2 size={18} strokeWidth={2.5} />
-          Supprimer le canal
+          {m.chat_delete_channel_button()}
         </button>
       </div>
     </div>
@@ -371,7 +372,7 @@
       <!-- ================= ONGLET : VUE D'ENSEMBLE ================= -->
       {#if activeTab === 'overview'}
         <div class="space-y-6 max-w-2xl">
-          <h2 class="text-xl font-bold text-text-main">Vue d'ensemble</h2>
+          <h2 class="text-xl font-bold text-text-main">{m.chat_channel_overview_tab()}</h2>
           <div class="space-y-4">
             <!-- Channel image -->
             <div class="flex items-center gap-5">
@@ -386,7 +387,7 @@
                 </div>
                 <label
                   class="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
-                  title="Changer l'image"
+                  title={m.chat_community_change_image_title()}
                 >
                   {#if imageUploading}
                     <Loader size={12} class="animate-spin" />
@@ -407,13 +408,13 @@
                   <p class="text-xs text-red-600 mb-2">{imageUploadError}</p>
                 {/if}
                 <p class="text-sm text-text-muted">
-                  Cliquez sur l'icône pour changer l'image du canal.
+                  {m.chat_change_channel_image_description()}
                 </p>
               </div>
             </div>
             <div class="space-y-2">
               <label class="text-xs font-bold uppercase text-text-muted" for="channel-name"
-                >Nom du canal</label
+                >{m.chat_channel_name_label()}</label
               >
               <div class="flex gap-2">
                 <input
@@ -421,7 +422,7 @@
                   class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all"
                   bind:value={channelNameInput}
                   onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
-                  placeholder="nom-du-canal"
+                  placeholder={m.chat_channel_name_placeholder()}
                 />
               </div>
               <button
@@ -431,7 +432,7 @@
                   channelNameInput.trim() === selectedChannel?.name}
                 class="rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-amber-500/20 disabled:shadow-none"
               >
-                Renommer
+                {m.chat_rename_channel_button()}
               </button>
             </div>
           </div>
@@ -439,7 +440,7 @@
           <!-- Zone de danger (Visible uniquement sur mobile dans cet onglet) -->
           <div class="md:hidden pt-6 border-t border-black/10 dark:border-white/10 space-y-3">
             <h3 class="text-xs font-bold uppercase tracking-wider text-red-500 px-1 mb-2">
-              Zone de danger
+              {m.chat_danger_zone_label()}
             </h3>
             <button
               type="button"
@@ -447,7 +448,7 @@
               class="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 active:scale-[0.98] transition-all"
             >
               <LogOut size={18} strokeWidth={2.5} />
-              Quitter le canal
+              {m.chat_leave_channel_button()}
             </button>
             <button
               type="button"
@@ -455,7 +456,7 @@
               class="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 bg-red-500/10 border border-red-500/20 active:scale-[0.98] transition-all"
             >
               <Trash2 size={18} strokeWidth={2.5} />
-              Supprimer le canal
+              {m.chat_delete_channel_button()}
             </button>
           </div>
         </div>
@@ -465,16 +466,15 @@
       {#if activeTab === 'permissions'}
         <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">Accès au canal</h2>
+            <h2 class="text-xl font-extrabold text-text-main mb-1">{m.chat_channel_access_title()}</h2>
             <p class="text-sm font-medium text-text-muted leading-relaxed">
-              Définissez si le canal est ouvert à tous les membres ou restreint à certains
-              utilisateurs.
+              {m.chat_channel_access_description()}
             </p>
           </div>
 
           {#if accessLoading}
             <div class="flex items-center gap-2 text-sm text-text-muted">
-              <Loader size={16} class="animate-spin" /> Chargement…
+              <Loader size={16} class="animate-spin" /> {m.common_loading_label()}
             </div>
           {:else if accessError}
             <div
@@ -494,9 +494,9 @@
                       <Lock size={18} strokeWidth={2.5} />
                     </div>
                     <div>
-                      <p class="font-bold text-text-main text-sm">Canal privé</p>
+                      <p class="font-bold text-text-main text-sm">{m.chat_channel_private_label()}</p>
                       <p class="text-xs text-text-muted">
-                        Seuls les membres autorisés peuvent accéder
+                        {m.chat_channel_private_description()}
                       </p>
                     </div>
                   {:else}
@@ -504,9 +504,9 @@
                       <Globe size={18} strokeWidth={2.5} />
                     </div>
                     <div>
-                      <p class="font-bold text-text-main text-sm">Canal public</p>
+                      <p class="font-bold text-text-main text-sm">{m.chat_channel_public_label()}</p>
                       <p class="text-xs text-text-muted">
-                        Tous les membres de la communauté peuvent accéder
+                        {m.chat_channel_public_description()}
                       </p>
                     </div>
                   {/if}
@@ -522,7 +522,7 @@
                   role="switch"
                   aria-checked={accessIsPrivate}
                 >
-                  <span class="sr-only">Rendre le canal privé</span>
+                  <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
                   <span
                     class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
                       ? 'translate-x-6'
@@ -537,13 +537,13 @@
                   <p
                     class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                   >
-                    <Users size={13} /> Membres autorisés
+                    <Users size={13} /> {m.chat_allowed_members_label()}
                   </p>
 
                   <!-- Existing allowed users -->
                   {#if accessAllowedUserIds.length === 0}
                     <p class="text-sm text-text-muted italic">
-                      Aucun membre autorisé - le canal sera inaccessible.
+                      {m.chat_no_allowed_members_warning()}
                     </p>
                   {:else}
                     <ul class="space-y-1.5">
@@ -556,7 +556,7 @@
                             type="button"
                             onclick={() => removeAllowedUser(uid)}
                             class="text-red-500 hover:text-red-700 transition-colors flex-shrink-0"
-                            title="Retirer"
+                            title={m.common_remove_label()}
                           >
                             <Minus size={14} strokeWidth={3} />
                           </button>
@@ -570,14 +570,14 @@
                     <p
                       class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                     >
-                      <UserPlus size={13} /> Ajouter un membre
+                      <UserPlus size={13} /> {m.chat_add_member_label()}
                     </p>
                     <div class="flex gap-2 items-start">
                       <div class="flex-1">
                         <UserAutocomplete
                           value={addingUserId}
                           onValueChange={(v) => (addingUserId = v)}
-                          placeholder="Rechercher un utilisateur…"
+                          placeholder={m.chat_search_user_placeholder()}
                         />
                       </div>
                       <button
@@ -586,7 +586,7 @@
                         disabled={!addingUserId.trim()}
                         class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
                       >
-                        <Check size={14} strokeWidth={3} /> Ajouter
+                        <Check size={14} strokeWidth={3} /> {m.common_add_button()}
                       </button>
                     </div>
                   </div>
@@ -604,14 +604,14 @@
                   class="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-md shadow-amber-500/20"
                 >
                   {#if accessSaving}
-                    <Loader size={14} class="animate-spin" /> Sauvegarde…
+                    <Loader size={14} class="animate-spin" /> {m.common_saving_label()}
                   {:else}
-                    <Check size={14} strokeWidth={3} /> Enregistrer
+                    <Check size={14} strokeWidth={3} /> {m.common_save_button()}
                   {/if}
                 </button>
                 {#if accessSaved}
                   <span class="text-xs font-medium text-emerald-600 flex items-center gap-1">
-                    <Check size={12} strokeWidth={3} /> Sauvegardé
+                    <Check size={12} strokeWidth={3} /> {m.common_saved_label()}
                   </span>
                 {/if}
               </div>
@@ -620,26 +620,25 @@
         </div>
       {/if}
 
-      <!-- ================= ONGLET : INVITATIONS & RÔLES ================= -->
+      <!-- ================= ONGLET : INVITATIONS & ROLES ================= -->
       {#if activeTab === 'invites'}
         <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">Invitations & Rôles</h2>
+            <h2 class="text-xl font-extrabold text-text-main mb-1">{m.chat_channel_invitations_roles_title()}</h2>
             <p class="text-sm font-medium text-text-muted leading-relaxed">
-              Invitez de nouveaux membres dans le canal ou modifiez le rôle d'un membre existant.
+              {m.chat_channel_invitations_description()}
             </p>
           </div>
 
-          <!-- Lien d'invitation partageable (communauté entière) -->
+          <!-- Lien d'invitation partageable (communaute entiere) -->
           <div
             class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-3 shadow-sm backdrop-blur-md"
           >
             <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-              Lien d'invitation à la communauté
+              {m.chat_community_invite_link_label()}
             </p>
             <p class="text-sm text-text-muted leading-relaxed">
-              Partagez ce lien (même hors de Canari) : toute personne qui l'ouvre et se connecte
-              rejoint automatiquement la communauté.
+              {m.chat_community_invite_link_description()}
             </p>
             {#if shareLink}
               <div class="flex items-center gap-2">
@@ -654,11 +653,11 @@
                   onclick={generateShareLink}
                   class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
                 >
-                  Régénérer
+                  {m.chat_regenerate_link_button()}
                 </button>
               </div>
               {#if shareCopied}
-                <p class="text-xs font-semibold text-emerald-600">Lien copié dans le presse-papiers ✓</p>
+                <p class="text-xs font-semibold text-emerald-600">{m.chat_link_copied_success()}</p>
               {/if}
             {:else}
               <button
@@ -667,7 +666,7 @@
                 disabled={shareLoading}
                 class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
               >
-                {shareLoading ? 'Génération…' : 'Générer un lien d\'invitation'}
+                {shareLoading ? m.common_generating_label() : m.chat_generate_invite_link_button()}
               </button>
             {/if}
             {#if shareError}
@@ -684,23 +683,23 @@
                 class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                 for="invite-autocomplete"
               >
-                <Users size={14} /> Rechercher un utilisateur
+                <Users size={14} /> {m.chat_search_user_label()}
               </label>
               <UserAutocomplete
                 value={permissionMembersId}
                 onValueChange={(v) => (permissionMembersId = v)}
-                placeholder="Nom ou identifiant…"
+                placeholder={m.chat_search_user_name_or_id_placeholder()}
                 inputId="invite-autocomplete"
               />
             </div>
 
-            <!-- Select Rôle -->
+            <!-- Select Role -->
             <div class="space-y-2">
               <label
                 class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                 for="role-select"
               >
-                <Shield size={14} /> Rôle à attribuer
+                <Shield size={14} /> {m.chat_assign_role_label()}
               </label>
               <select
                 id="role-select"
@@ -708,13 +707,13 @@
                 bind:value={permissionRole}
               >
                 <option value="member" class="bg-white dark:bg-zinc-900 font-medium"
-                  >Membre (Lecture et Écriture)</option
+                  >{m.chat_role_member_description()}</option
                 >
                 <option value="moderator" class="bg-white dark:bg-zinc-900 font-medium"
-                  >Modérateur (Gestion des membres)</option
+                  >{m.chat_role_moderator_description()}</option
                 >
                 <option value="admin" class="bg-white dark:bg-zinc-900 font-medium"
-                  >Administrateur (Contrôle total)</option
+                  >{m.chat_role_admin_description()}</option
                 >
               </select>
             </div>
@@ -730,7 +729,7 @@
                 class="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 disabled:shadow-none"
               >
                 <UserPlus size={18} strokeWidth={2.5} />
-                {inviteLoading ? 'Envoi…' : "Envoyer l'invitation"}
+                {inviteLoading ? m.common_sending_label() : m.chat_send_invitation_button()}
               </button>
 
               <button
@@ -739,7 +738,7 @@
                 disabled={!permissionMembersId.trim()}
                 class="flex-1 rounded-xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <Shield size={18} strokeWidth={2.5} /> Mettre à jour
+                <Shield size={18} strokeWidth={2.5} /> {m.common_update_button()}
               </button>
             </div>
             {#if inviteError}
@@ -753,7 +752,7 @@
 </Modal>
 
 <style>
-  /* Scrollbar discrète pour le menu et le contenu */
+  /* Scrollbar discrete pour le menu et le contenu */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;

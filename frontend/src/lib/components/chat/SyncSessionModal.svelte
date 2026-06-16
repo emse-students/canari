@@ -5,6 +5,7 @@
   import { portal } from '$lib/actions/portal';
   import { fade, fly } from 'svelte/transition';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Whether the sync session modal is visible. */
@@ -156,7 +157,7 @@
 
     scanError = '';
     if (!hasScannerSupport) {
-      scanError = 'Scan QR non supporté sur cet appareil. Collez le payload manuellement.';
+      scanError = m.sync_qr_not_supported_error();
       return;
     }
 
@@ -179,21 +180,20 @@
       });
 
       if (!videoEl) {
-        throw new Error('Vidéo indisponible');
+        throw new Error(m.sync_video_unavailable_error());
       }
 
       videoEl.srcObject = mediaStream;
       await videoEl.play();
       detector = DetectorCtor ? new DetectorCtor({ formats: ['qr_code'] }) : null;
       if (!detector) {
-        scanError =
-          'Mode compatibilité activé: scan logiciel (si instable, utilisez le collage manuel).';
+        scanError = m.sync_compatibility_mode_info();
       }
       void scanLoop();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       cleanupStream();
-      scanError = `Impossible d'activer la caméra: ${msg}`;
+      scanError = m.sync_camera_activation_error({ msg });
       showManualPaste = true;
     }
   }
@@ -240,45 +240,44 @@
     <!-- Overlay Assombri -->
     <button
       class="absolute inset-0 bg-black/50 backdrop-blur-sm border-0 pointer-events-auto transition-opacity"
-      aria-label="Fermer la fenêtre de synchronisation"
+      aria-label={m.sync_close_window_label()}
       onclick={handleClose}
       transition:fade={{ duration: 250 }}
     ></button>
 
-    <!-- Fenêtre Modale -->
+    <!-- Fenetre Modale -->
     <section
       class="keyboard-aware-modal-panel relative pointer-events-auto w-full md:w-[36rem] max-h-[92dvh] overflow-y-auto bg-white/90 dark:bg-[#151B2C]/95 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 md:p-8 flex flex-col gap-6"
       transition:fly={{ y: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
-      <!-- En-tête -->
+      <!-- En-tete -->
       <div class="flex items-center justify-between">
         <h3 class="text-lg font-bold text-text-main inline-flex items-center gap-2.5">
           {#if mode === 'offer'}
             <div class="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
               <QrCode size={20} strokeWidth={2.5} />
             </div>
-            Synchronisation<span class="opacity-60 font-medium">| Source</span>
+            {m.sync_source_title()}
           {:else}
             <div class="p-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
               <Smartphone size={20} strokeWidth={2.5} />
             </div>
-            Synchronisation<span class="opacity-60 font-medium">| Cible</span>
+            {m.sync_target_title()}
           {/if}
         </h3>
         <button
           class="p-2 rounded-full text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-red-500 transition-colors focus-visible:ring-2 focus-visible:ring-text-muted outline-none"
           onclick={handleClose}
-          aria-label="Fermer"
+          aria-label={m.common_close_label()}
         >
           <X size={20} />
         </button>
       </div>
 
-      <!-- Mode: Source (Générateur de QR) -->
+      <!-- Mode: Source (Generateur de QR) -->
       {#if mode === 'offer'}
         <p class="text-sm text-text-muted leading-relaxed">
-          Scannez ce QR code avec l'appareil que vous souhaitez synchroniser, puis attendez la fin
-          de l'opération.
+          {m.sync_scan_qr_description()}
         </p>
 
         {#if qrDataUrl}
@@ -286,7 +285,7 @@
             <div class="rounded-[2rem] border border-black/10 bg-white p-5 shadow-inner">
               <img
                 src={qrDataUrl}
-                alt="QR code de synchronisation"
+                alt={m.sync_qr_code_alt()}
                 class="w-56 h-56 max-w-full rendering-pixelated"
               />
             </div>
@@ -298,7 +297,7 @@
             onclick={() => (showPayloadFallback = !showPayloadFallback)}
             class="text-xs font-semibold text-text-muted hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
           >
-            {showPayloadFallback ? 'Masquer le code texte' : 'Impossible de scanner le QR code ?'}
+            {showPayloadFallback ? m.sync_hide_text_code_label() : m.sync_cant_scan_qr_label()}
           </button>
         </div>
 
@@ -314,7 +313,7 @@
               onclick={onCopyPayload}
               class="w-full px-4 py-3 rounded-xl bg-black/5 dark:bg-white/10 text-text-main font-bold text-sm inline-flex items-center justify-center gap-2 hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             >
-              <Copy size={16} /> Copier le code (Dernier recours)
+              <Copy size={16} /> {m.sync_copy_code_button()}
             </button>
           </div>
         {/if}
@@ -327,7 +326,7 @@
             class="w-full px-4 py-3.5 rounded-2xl border-2 border-transparent bg-amber-500 hover:bg-amber-400 text-[#151B2C] font-bold inline-flex items-center justify-center gap-2.5 active:scale-[0.98] transition-all shadow-md shadow-amber-500/20 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
           >
             <Camera size={18} strokeWidth={2.5} />
-            {isScanning ? 'Arrêter la caméra' : 'Scanner le QR Code'}
+            {isScanning ? m.sync_stop_camera_button() : m.sync_start_scanner_button()}
           </button>
         {/if}
 
@@ -336,7 +335,7 @@
             class="rounded-[2rem] border border-black/10 dark:border-white/10 bg-black overflow-hidden shadow-inner relative"
             transition:fade={{ duration: 200 }}
           >
-            <!-- Repère de scan (Guide visuel) -->
+            <!-- Repere de scan (Guide visuel) -->
             <div
               class="absolute inset-0 pointer-events-none border-[40px] border-black/40 z-10"
             ></div>
@@ -361,7 +360,7 @@
               value={joinPayload}
               rows="4"
               oninput={(e) => onJoinPayloadChange(e.currentTarget.value)}
-              placeholder="Collez ici le code texte de synchronisation généré par l'autre appareil..."
+              placeholder={m.sync_paste_code_placeholder()}
               class="w-full text-xs font-mono px-4 py-3 border border-black/10 dark:border-white/10 rounded-2xl bg-black/5 dark:bg-black/40 text-text-main shadow-inner focus:outline-none focus:ring-2 focus:ring-amber-500/50 resize-none placeholder:font-sans placeholder:text-text-muted/70"
             ></textarea>
 
@@ -372,9 +371,9 @@
             >
               {#if isBusy}
                 <Loader2 size={16} class="animate-spin" />
-                Synchronisation en cours...
+                {m.sync_in_progress_label()}
               {:else}
-                Lancer la synchronisation
+                {m.sync_launch_button()}
               {/if}
             </button>
           </div>
@@ -384,7 +383,7 @@
               onclick={() => (showManualPaste = true)}
               class="text-xs font-semibold text-text-muted hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
             >
-              Je ne peux pas scanner - Coller le code texte manuellement
+              {m.sync_paste_manually_label()}
             </button>
           </div>
         {/if}
