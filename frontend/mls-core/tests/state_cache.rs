@@ -58,6 +58,34 @@ fn save_state_rebuilds_after_mutation() {
     assert_ne!(before, after);
 }
 
+/// Guards the cache invariant: each kind of mutation must invalidate the snapshot so the
+/// next save_state rebuilds. A regression here means a mutation forgot mark_state_dirty.
+#[test]
+fn each_mutation_invalidates_the_snapshot() {
+    let mut manager = make_manager("mut-user", "mut-device");
+    manager
+        .create_group("mut-group".to_string())
+        .expect("create_group");
+
+    // send_message advances the sender ratchet -> snapshot must change.
+    let before_send = manager.save_state().expect("save before send");
+    manager.send_message("mut-group", b"hello").expect("send");
+    let after_send = manager.save_state().expect("save after send");
+    assert_ne!(before_send, after_send, "send_message must invalidate");
+
+    // generate_key_package writes a key package bundle to storage.
+    let before_kp = after_send;
+    manager.generate_key_package().expect("kp");
+    let after_kp = manager.save_state().expect("save after kp");
+    assert_ne!(before_kp, after_kp, "generate_key_package must invalidate");
+
+    // forget_group records a min-epoch -> mutates forgotten_group_min_epochs.
+    let before_forget = after_kp;
+    manager.forget_group("mut-group", 0);
+    let after_forget = manager.save_state().expect("save after forget");
+    assert_ne!(before_forget, after_forget, "forget_group must invalidate");
+}
+
 #[test]
 fn loaded_state_seeds_cache_without_reserialize() {
     let mut manager = make_manager("seed-user", "seed-device");

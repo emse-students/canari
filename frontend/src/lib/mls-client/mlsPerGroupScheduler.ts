@@ -46,9 +46,6 @@ export class MlsPerGroupScheduler {
   private readonly pendingWelcomeGroups = new Map<string, MlsQueuedMessage[]>();
   private readonly queueIdleWaiters: Array<() => void> = [];
   private mlsLock: Promise<void> = Promise.resolve();
-  /** Reentrancy depth for {@link acquireMlsLock} (history catch-up under queue drain). */
-  private mlsLockDepth = 0;
-  private mlsLockRelease: (() => void) | null = null;
 
   constructor(private readonly mode: MlsPerGroupQueueMode) {}
 
@@ -96,41 +93,25 @@ export class MlsPerGroupScheduler {
    * Use when a single logical operation spans several awaits (e.g. a paged catch-up
    * decrypt session) and must keep exclusive access to the client the whole time.
    * The returned release is idempotent; the caller MUST call it (typically in `finally`).
+   *
+   * Non-reentrant: the lock has no notion of "current holder" in async JS, so a depth
+   * counter would grant access to any concurrent acquirer while the lock is held - not just
+   * a genuinely nested one. History catch-up (createDecryptSession) is decoupled from the
+   * drain via a fire-and-forget onWelcomeProcessed callback, so it queues behind the drain
+   * here rather than re-entering; never re-acquire while already holding the lock.
    */
   async acquireMlsLock(): Promise<() => void> {
-    if (this.mlsLockDepth > 0) {
-      this.mlsLockDepth += 1;
-      let released = false;
-      return () => {
-        if (released) return;
-        released = true;
-        this.mlsLockDepth -= 1;
-        if (this.mlsLockDepth === 0 && this.mlsLockRelease) {
-          const release = this.mlsLockRelease;
-          this.mlsLockRelease = null;
-          release();
-        }
-      };
-    }
-
     const prev = this.mlsLock;
     let release!: () => void;
     this.mlsLock = new Promise<void>((r) => {
       release = r;
     });
     await prev;
-    this.mlsLockDepth = 1;
-    this.mlsLockRelease = release;
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      this.mlsLockDepth -= 1;
-      if (this.mlsLockDepth === 0 && this.mlsLockRelease) {
-        const releaseOuter = this.mlsLockRelease;
-        this.mlsLockRelease = null;
-        releaseOuter();
-      }
+      release();
     };
   }
 

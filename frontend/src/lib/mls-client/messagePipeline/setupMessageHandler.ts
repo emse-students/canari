@@ -267,14 +267,26 @@ async function handleWelcome({
     // ne doit pas tomber dans le catch de processWelcome et déclencher un welcome_request parasite.
     try {
       const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
-      for (const predId of otherLocalIds) {
-        const m = await mlsService.getGroupMeta(predId).catch(() => null);
+      // Pré-fetch des métas en parallèle : enchaîner les getGroupMeta en séquence
+      // multiplierait les aller-retours réseau tenus sous le verrou MLS.
+      const metas = await Promise.all(
+        otherLocalIds.map((predId) =>
+          mlsService.getGroupMeta(predId).then(
+            (m) => ({ predId, m }),
+            () => ({ predId, m: null })
+          )
+        )
+      );
+      let purgedAny = false;
+      for (const { predId, m } of metas) {
         if (m?.successorId === joinedGroupId) {
           mlsService.forgetGroup(predId);
-          statePersister.persistNow();
+          purgedAny = true;
           log(`[WELCOME] Prédécesseur ${predId.slice(0, 8)}… purgé du WASM (successeur rejoint)`);
         }
       }
+      // Un seul checkpoint chiffré (Argon2) pour l'ensemble des purges, pas un par prédécesseur.
+      if (purgedAny) statePersister.persistNow();
     } catch (e) {
       log(`[WELCOME] Erreur purge prédécesseur (non bloquant) : ${String(e).slice(0, 80)}`);
     }
@@ -290,8 +302,10 @@ async function handleWelcome({
 
     // Enregistrement côté serveur (idempotent - safety net si l'invitant n'a pas encore
     // appelé registerMember pour cet userId, ex. race dans inviteMembers/reboot).
-    await mlsService.registerMember(joinedGroupId, userId).catch(() => {});
-    await mlsService
+    // Résultats non utilisés : lancés sans await pour ne pas retenir le verrou MLS pendant
+    // deux aller-retours réseau (le groupe est déjà rejoint localement).
+    void mlsService.registerMember(joinedGroupId, userId).catch(() => {});
+    void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
       .catch(() => {});
 

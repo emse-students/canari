@@ -141,6 +141,12 @@ pub struct MlsManager {
 
 impl MlsManager {
     /// Marks the CBOR snapshot stale after any MLS state mutation.
+    ///
+    /// INVARIANT: every method that mutates `self.provider` storage, `self.groups`,
+    /// `self.keypair`, or `forgotten_group_min_epochs` MUST call this (or invalidate the
+    /// snapshot directly, as `process_incoming_on_group` does). Forgetting it makes
+    /// `save_state` persist a stale snapshot - silent state loss / ratchet desync.
+    /// Over-invalidating only costs a rebuild and is always safe.
     fn mark_state_dirty(&self) {
         self.state_snapshot.borrow_mut().invalidate();
     }
@@ -793,9 +799,14 @@ impl MlsManager {
             _ => return Err(MlsError::InvalidData),
         };
 
+        // Both fields are always cleartext in the MLS frame header - safe to read
+        // before decryption and invaluable for diagnosing epoch-mismatch errors.
         let msg_epoch = protocol_message.epoch();
         let group_epoch = group.epoch();
 
+        // Epoch-gap fast-fail: a future epoch means we missed at least one commit.
+        // Returning early avoids consuming any ratchet key material needlessly and
+        // lets the caller queue the message for gap recovery.
         if msg_epoch.as_u64() > group_epoch.as_u64() {
             log::warn!(
                 "Gap détecté : msg_epoch={} > group_epoch={} pour group={}. \
@@ -813,6 +824,11 @@ impl MlsManager {
         let processed_message = match group.process_message(provider, protocol_message) {
             Ok(pm) => pm,
             Err(e) => {
+                // If the message is from a past epoch, it's almost certainly our own
+                // echoed commit (already merged via merge_pending_commit) or a stale
+                // commit that another device already applied. The decryption keys for
+                // commits are consumed during merge, so re-processing always fails with
+                // AeadError. Silently succeed so the caller ACKs it on the gateway.
                 if msg_epoch.as_u64() < group_epoch.as_u64() {
                     log::debug!(
                         "Stale message ignored: msg_epoch={} < group_epoch={} ({})",
@@ -848,7 +864,13 @@ impl MlsManager {
                 state_snapshot.borrow_mut().invalidate();
                 Ok(None)
             }
-            _ => Ok(None),
+            // A standalone (External)Proposal queues a pending proposal in the group state,
+            // which is persisted OpenMLS state - invalidate so the next save_state rebuilds.
+            ProcessedMessageContent::ProposalMessage(_)
+            | ProcessedMessageContent::ExternalJoinProposalMessage(_) => {
+                state_snapshot.borrow_mut().invalidate();
+                Ok(None)
+            }
         }
     }
 
@@ -885,7 +907,8 @@ impl MlsManager {
         let storage = self.provider.storage();
         let storage_lock = storage.values.read().unwrap();
 
-        // 3. Collecter les IDs des groupes actifs (triés pour un CBOR déterministe)
+        // 3. Collecter les IDs des groupes actifs (triés pour un ordre stable ; note :
+        //    storage_values reste un HashMap non trié, le CBOR global n'est donc pas déterministe)
         let mut group_ids: Vec<Vec<u8>> = self
             .groups
             .keys()

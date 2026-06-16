@@ -1825,6 +1825,8 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .map_err(|e| e.to_string())?;
 
         for group_id in group_ids {
+            // Exclure les messages ayant dépassé 3 tentatives : un message corrompu
+            // bloquait sinon toute la queue du groupe (les suivants n'étaient jamais traités).
             let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
                 "SELECT id, ciphertext FROM pending_mls_messages \
                  WHERE group_id = ? AND is_ready = 0 AND attempt_count < 3 \
@@ -1850,6 +1852,9 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                     state_mutated = true;
                     ready_ids.push(id.clone());
                 } else {
+                    // Message irrécupérable : incrémenter le compteur sans interrompre la boucle
+                    // (un `break` ici bloquerait tous les messages suivants du groupe jusqu'à
+                    // l'expiration 7j). Au-delà de 3 tentatives, la requête ci-dessus l'exclut.
                     let _ = sqlx::query(
                         "UPDATE pending_mls_messages SET attempt_count = attempt_count + 1 WHERE id = ?",
                     )

@@ -20,6 +20,7 @@ import {
   flushActiveMlsStateEncrypted,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
+import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
 import {
   setupMessageHandler,
   initializeConnection,
@@ -846,6 +847,8 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();
     unregisterMlsStatePersister();
+    // Dispose after the final flush: flushEncrypted relies on the encrypt worker.
+    disposeMlsEncryptWorker();
   });
   const tokenForPushCleanup = ctx.getAuthToken();
   const deviceForPushCleanup = ctx.getMyDeviceId();

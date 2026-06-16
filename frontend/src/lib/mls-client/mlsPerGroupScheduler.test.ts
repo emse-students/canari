@@ -100,11 +100,41 @@ describe('MlsPerGroupScheduler', () => {
     expect(scheduler.isIdle()).toBe(true);
   });
 
-  it('allows reentrant MLS lock acquire (nested history under queue drain)', async () => {
+  it('serialises concurrent MLS lock acquires (no reentrant grant)', async () => {
     const scheduler = new MlsPerGroupScheduler('web');
-    const releaseOuter = await scheduler.acquireMlsLock();
-    const releaseInner = await scheduler.acquireMlsLock();
-    releaseInner();
-    releaseOuter();
+    const order: string[] = [];
+
+    const releaseA = await scheduler.acquireMlsLock();
+    order.push('A-acquired');
+
+    // B must NOT be granted while A holds the lock (would be a concurrency bug).
+    let bAcquired = false;
+    const bPromise = scheduler.acquireMlsLock().then((releaseB) => {
+      bAcquired = true;
+      order.push('B-acquired');
+      return releaseB;
+    });
+
+    // Let any microtasks settle: B must still be blocked.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bAcquired).toBe(false);
+
+    releaseA();
+    const releaseB = await bPromise;
+    expect(bAcquired).toBe(true);
+    expect(order).toEqual(['A-acquired', 'B-acquired']);
+    releaseB();
+  });
+
+  it('release is idempotent', async () => {
+    const scheduler = new MlsPerGroupScheduler('web');
+    const release = await scheduler.acquireMlsLock();
+    release();
+    release(); // second call is a no-op, must not throw or double-release
+
+    // Lock is free again: next acquire resolves promptly.
+    const next = await scheduler.acquireMlsLock();
+    next();
   });
 });
