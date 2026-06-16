@@ -75,18 +75,36 @@ export class MessagingController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Post('mls/history/batch')
+  async getHistoryBatch(
+    @Body()
+    body: { groups?: { groupId: string; after?: string; limit?: number }[] },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ) {
+    return this.messagingService.getHistoryBatch(
+      body?.groups ?? [],
+      headerUserId,
+      headerGlobalAdmin,
+    );
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Get('mls/history/:groupId')
   async getHistory(
     @Param('groupId') groupId: string,
     @Query('after') after?: string,
+    @Query('limit') limitRaw?: string,
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string,
   ): Promise<Record<string, unknown>[]> {
+    const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
     return this.messagingService.getHistory(
       groupId,
       after,
       headerUserId,
       headerGlobalAdmin,
+      Number.isFinite(limit) ? limit : undefined,
     );
   }
 

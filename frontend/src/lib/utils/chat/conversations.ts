@@ -7,15 +7,16 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
+  readHistoryStreamCursor,
   replayConversationHistory,
   retroactivelyResolveHexIds,
   type MlsReplayCommit,
 } from './history';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
+import { buildUserGroupSyncIndex } from './groupSyncEligibility';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
-import { apiFetch } from '$lib/utils/apiFetch';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
@@ -490,8 +491,7 @@ export interface LoadConversationsContext {
  * is required because the WASM MLS client is not concurrency-safe.
  *
  * The function also runs a one-time localStorage migration, deduplicates direct
- * conversations, prunes stale archived IDs, and resolves ambiguous conversation types
- * via the members API.
+ * conversations, prunes stale archived IDs, and reclassifies DMs via `getUserGroups`.
  */
 export async function loadExistingConversations(ctx: LoadConversationsContext) {
   await migrateFromLocalStorage(ctx.userId, ctx.pin, ctx.storage, ctx.log);
@@ -575,6 +575,33 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // the persisted ratchet state.
   const pendingCommits: MlsReplayCommit[] = [];
   await withMlsBulkIngest(ctx.mlsService, async () => {
+    let serverGroupIndex = null;
+    try {
+      const groups = await ctx.mlsService.getUserGroups(ctx.userId);
+      serverGroupIndex = buildUserGroupSyncIndex(groups);
+    } catch {
+      ctx.log('[WARN] getUserGroups indisponible — classification DM/groupe depuis le cache local');
+    }
+
+    const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
+    let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]> =
+      new Map();
+    if (replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
+      try {
+        batchFirstPages = await ctx.mlsService.fetchHistoryBatch(
+          replayMetas.map((meta) => ({
+            groupId: meta.id,
+            afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
+          }))
+        );
+        ctx.log(`[CATCHUP] batch history: ${batchFirstPages.size} groupe(s) en 1 requête`);
+      } catch (e) {
+        ctx.log(
+          `[WARN] batch history échoué: ${e instanceof Error ? e.message : String(e)} — fallback séquentiel`
+        );
+      }
+    }
+
     for (const meta of mergedConvMetas) {
       if (isChannelConversationId(meta.id)) {
         await ctx.storage.deleteMessagesForConversation(meta.id).catch(() => {});
@@ -585,61 +612,29 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         if (
           existingConvo &&
           (existingConvo.conversationType ?? 'group') === 'group' &&
-          !isChannelConversationId(meta.id)
+          !isChannelConversationId(meta.id) &&
+          serverGroupIndex
         ) {
-          try {
-            // First check the explicit isGroup flag from the backend - this is
-            // authoritative and prevents multi-user groups with only 2 members
-            // from being misclassified as direct conversations.
-            let isGroupFromApi: boolean | null = null;
-            try {
-              const gRes = await apiFetch(`${ctx.historyBaseUrl}/api/mls/groups/${meta.id}`);
-              if (gRes.ok) {
-                const gData = await gRes.json();
-                if (typeof gData?.isGroup === 'boolean') {
-                  isGroupFromApi = gData.isGroup;
-                }
-              }
-            } catch {
-              // Non-blocking
-            }
-
-            // If the backend explicitly says this is a group, skip member-count heuristic.
-            if (isGroupFromApi !== true) {
-              const res = await apiFetch(`${ctx.historyBaseUrl}/api/mls/groups/${meta.id}/members`);
-              if (res.ok) {
-                const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
-                if (contentType.includes('application/json')) {
-                  const rows = (await res.json()) as Array<{ userId?: string }>;
-                  const memberIds = [
-                    ...new Set(rows.map((r) => String(r.userId ?? '').toLowerCase())),
-                  ].filter(Boolean);
-                  if (memberIds.length === 2 && memberIds.includes(ctx.userId.toLowerCase())) {
-                    const peer = memberIds.find((m) => m !== ctx.userId.toLowerCase()) ?? '';
-                    if (peer) {
-                      ctx.conversations.set(meta.id, {
-                        ...existingConvo,
-                        conversationType: 'direct',
-                        directPeerId: peer,
-                        contactName: peer,
-                        name: peer,
-                      });
-
-                      const normalizedName = `${ctx.userId.toLowerCase()}::${peer}`;
-                      if (meta.name !== normalizedName) {
-                        await ctx.storage.saveConversation({
-                          ...meta,
-                          name: normalizedName,
-                          updatedAt: Date.now(),
-                        });
-                      }
-                    }
-                  }
-                }
+          const row = serverGroupIndex.byGroupId.get(meta.id);
+          if (row?.isGroup === false) {
+            const peerFromName = parseDirectPeerFromName(row.name ?? meta.name, ctx.userId);
+            if (peerFromName && peerFromName !== ctx.userId.toLowerCase()) {
+              ctx.conversations.set(meta.id, {
+                ...existingConvo,
+                conversationType: 'direct',
+                directPeerId: peerFromName,
+                contactName: peerFromName,
+                name: peerFromName,
+              });
+              const normalizedName = `${ctx.userId.toLowerCase()}::${peerFromName}`;
+              if (meta.name !== normalizedName) {
+                await ctx.storage.saveConversation({
+                  ...meta,
+                  name: normalizedName,
+                  updatedAt: Date.now(),
+                });
               }
             }
-          } catch {
-            // Non-blocking: keep existing type when members endpoint is unavailable.
           }
         }
 
@@ -678,6 +673,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           setConversation: (name, next) => ctx.conversations.set(name, next),
           messageReactions: ctx.messageReactions,
           log: ctx.log,
+          primedFirstPage: batchFirstPages.get(meta.id),
         });
         if (commit) pendingCommits.push(commit);
         // Reload from DB after network sync so display reflects new messages

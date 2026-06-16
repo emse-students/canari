@@ -230,7 +230,14 @@ export interface IMlsService {
   fetchHistory(
     groupId: string,
     afterStreamId?: string
-  ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]>;
+  ): Promise<import('./historyTypes').HistoryStreamRow[]>;
+  /**
+   * Fetches the first page of history for multiple groups in one HTTP round-trip.
+   * Groups the caller cannot read return an empty array.
+   */
+  fetchHistoryBatch?(
+    groups: Array<{ groupId: string; afterStreamId?: string }>
+  ): Promise<Map<string, import('./historyTypes').HistoryStreamRow[]>>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /**

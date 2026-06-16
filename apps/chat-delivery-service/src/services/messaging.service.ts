@@ -76,6 +76,24 @@ export interface NotifyWelcomeRequestBody {
   requesterDeviceId: string;
 }
 
+/** One group cursor for batch history fetch. */
+export interface HistoryBatchRequestItem {
+  groupId: string;
+  after?: string;
+  limit?: number;
+}
+
+export interface HistoryBatchResponse {
+  histories: Record<string, Record<string, unknown>[]>;
+}
+
+/** Redis stream MAXLEN (~1000) — upper bound for a full catch-up page. */
+const HISTORY_FULL_PAGE_LIMIT = 1000;
+/** Smaller default when `after` is set (incremental catch-up). */
+const HISTORY_INCREMENTAL_DEFAULT_LIMIT = 200;
+/** Max groups per batch request (guards payload size and Redis fan-out). */
+const HISTORY_BATCH_MAX_GROUPS = 50;
+
 export interface AckMessagesBody {
   userId: string;
   deviceId: string;
@@ -1148,6 +1166,112 @@ export class MessagingService {
   }
 
   /**
+   * Clamps history page size: full catch-up may read up to the stream MAXLEN;
+   * incremental (`after` set) defaults to a smaller page.
+   */
+  private resolveHistoryLimit(
+    after: string | undefined,
+    limitRaw?: number,
+  ): number {
+    if (limitRaw !== undefined && Number.isFinite(limitRaw)) {
+      return Math.min(
+        Math.max(Math.trunc(limitRaw), 1),
+        HISTORY_FULL_PAGE_LIMIT,
+      );
+    }
+    return after ? HISTORY_INCREMENTAL_DEFAULT_LIMIT : HISTORY_FULL_PAGE_LIMIT;
+  }
+
+  /** Maps Redis stream entries to the JSON shape expected by clients. */
+  private mapHistoryEntries(
+    entries: [string, string[]][],
+  ): Record<string, unknown>[] {
+    return entries.map(([id, fields]) => {
+      const msg: Record<string, unknown> = { id };
+      for (let i = 0; i < fields.length; i += 2) {
+        msg[fields[i]] = fields[i + 1];
+      }
+      return msg;
+    });
+  }
+
+  /**
+   * Reads one page from `history:{groupId}` (no auth — caller must gate access).
+   * `after` is an exclusive Redis stream ID (`(${after}` in XRANGE).
+   */
+  private async readHistoryStreamPage(
+    groupId: string,
+    after: string | undefined,
+    limit: number,
+  ): Promise<Record<string, unknown>[]> {
+    const streamKey = `history:${groupId}`;
+    const startId = after ? `(${after}` : '-';
+    const entries = await this.redis.xrange(
+      streamKey,
+      startId,
+      '+',
+      'COUNT',
+      limit,
+    );
+    this.logger.log(
+      `[HISTORY] group=${groupId} after=${after ?? 'start'} limit=${limit} entries=${entries.length}`,
+    );
+    return this.mapHistoryEntries(entries);
+  }
+
+  /**
+   * Returns group IDs the caller may read. Orphans are purged once per batch;
+   * non-members are omitted (batch) or rejected (single-group).
+   */
+  private async authorizeHistoryGroups(
+    groupIds: string[],
+    headerUserId: string | undefined,
+    headerGlobalAdmin: string | undefined,
+    rejectForbidden: boolean,
+  ): Promise<Set<string>> {
+    if (groupIds.length === 0) return new Set();
+
+    const existingIds = await this.purgeOrphanGroups(groupIds);
+    const deliverable = groupIds.filter((id) => existingIds.has(id));
+
+    if (headerGlobalAdmin === 'true') {
+      return new Set(deliverable);
+    }
+
+    const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (!authUserId) {
+      throw new ForbiddenException(
+        'History requires authenticated user context',
+      );
+    }
+
+    if (deliverable.length === 0) {
+      if (rejectForbidden && groupIds.length === 1) {
+        return new Set();
+      }
+      return new Set();
+    }
+
+    const memberships = await this.groupMemberRepo.find({
+      where: { userId: authUserId, groupId: In(deliverable) },
+      select: ['groupId'],
+    });
+    const memberIds = new Set(memberships.map((m) => m.groupId));
+
+    if (rejectForbidden && groupIds.length === 1) {
+      const gid = groupIds[0];
+      if (!existingIds.has(gid)) {
+        return new Set();
+      }
+      if (!memberIds.has(gid)) {
+        throw new ForbiddenException('Not a member of this group');
+      }
+    }
+
+    return memberIds;
+  }
+
+  /**
    * Returns the Redis stream history for a group, with optional cursor-based
    * pagination via an afterStreamId parameter.
    * Enforces group membership for non-admin callers.
@@ -1157,62 +1281,86 @@ export class MessagingService {
     after: string | undefined,
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
+    limitRaw?: number,
   ): Promise<Record<string, unknown>[]> {
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
-    const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const limit = this.resolveHistoryLimit(after, limitRaw);
 
-    // Groupe totalement absent de dm_groups → orphelin : purge le résidu (dont le
-    // stream history:) et renvoie un historique vide. Effectué AVANT le contrôle
-    // d'appartenance, car des lignes dm_group_members peuvent survivre à la
-    // suppression de la ligne groupe et feraient passer le contrôle, servant alors
-    // un historique fantôme indéchiffrable au client.
-    const existingIds = await this.purgeOrphanGroups([groupId]);
-    if (!existingIds.has(groupId)) {
+    const authorized = await this.authorizeHistoryGroups(
+      [groupId],
+      headerUserId,
+      headerGlobalAdmin,
+      true,
+    );
+    if (!authorized.has(groupId)) {
       this.logger.warn(`[HISTORY] group=${groupId} orphaned - purged, empty`);
       return [];
     }
 
-    if (headerGlobalAdmin !== 'true') {
-      if (!authUserId) {
-        throw new ForbiddenException(
-          'History requires authenticated user context',
-        );
-      }
-      const membership = await this.groupMemberRepo.findOne({
-        where: { groupId, userId: authUserId },
-      });
-      if (!membership) {
-        throw new ForbiddenException('Not a member of this group');
-      }
-    }
-
-    const streamKey = `history:${groupId}`;
     try {
-      // `after` = exclusive Redis stream ID (e.g. "1712345678901-0").
-      // Using `(${after}` makes XRANGE exclusive (skips the entry itself).
-      // COUNT 1000 matches the stream MAXLEN and guards against future MAXLEN bumps.
-      const startId = after ? `(${after}` : '-';
-      const entries = await this.redis.xrange(
-        streamKey,
-        startId,
-        '+',
-        'COUNT',
-        1000,
-      );
-      this.logger.log(
-        `[HISTORY] group=${groupId} after=${after ?? 'start'} entries=${entries.length}`,
-      );
-      return entries.map(([id, fields]) => {
-        const msg: Record<string, unknown> = { id };
-        for (let i = 0; i < fields.length; i += 2) {
-          msg[fields[i]] = fields[i + 1];
-        }
-        return msg;
-      });
+      return await this.readHistoryStreamPage(groupId, after, limit);
     } catch (e) {
       this.logger.error(`[HISTORY] group=${groupId} error=${e}`);
       throw new ServiceUnavailableException('History stream unavailable');
     }
+  }
+
+  /**
+   * Fetches the first page of history for multiple groups in one round-trip.
+   * Unauthorized or orphaned groups return an empty array (no error).
+   */
+  async getHistoryBatch(
+    items: HistoryBatchRequestItem[],
+    headerUserId: string | undefined,
+    headerGlobalAdmin: string | undefined,
+  ): Promise<HistoryBatchResponse> {
+    if (!Array.isArray(items)) {
+      throw new BadRequestException('groups must be an array');
+    }
+    if (items.length > HISTORY_BATCH_MAX_GROUPS) {
+      throw new BadRequestException(
+        `At most ${HISTORY_BATCH_MAX_GROUPS} groups per batch`,
+      );
+    }
+
+    const normalized = items.map((item) => ({
+      groupId: sanitizeQueryValue(item.groupId, 'groupId'),
+      after: item.after?.trim() || undefined,
+      limit: this.resolveHistoryLimit(item.after, item.limit),
+    }));
+
+    const groupIds = [...new Set(normalized.map((i) => i.groupId))];
+    const authorized = await this.authorizeHistoryGroups(
+      groupIds,
+      headerUserId,
+      headerGlobalAdmin,
+      false,
+    );
+
+    const histories: Record<string, Record<string, unknown>[]> = {};
+    await Promise.all(
+      normalized.map(async ({ groupId, after, limit }) => {
+        if (!authorized.has(groupId)) {
+          histories[groupId] = [];
+          return;
+        }
+        try {
+          histories[groupId] = await this.readHistoryStreamPage(
+            groupId,
+            after,
+            limit,
+          );
+        } catch (e) {
+          this.logger.error(`[HISTORY_BATCH] group=${groupId} error=${e}`);
+          histories[groupId] = [];
+        }
+      }),
+    );
+
+    this.logger.log(
+      `[HISTORY_BATCH] groups=${normalized.length} authorized=${authorized.size}`,
+    );
+    return { histories };
   }
 
   /**

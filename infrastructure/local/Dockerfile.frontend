@@ -15,6 +15,9 @@ RUN printf 'server {\n\
     index index.html;\n\
     # Limite d\'upload pour les médias (évite les 413 nginx par défaut ~1MB)\n\
     client_max_body_size 100m;\n\
+    gzip on;\n\
+    gzip_types application/json;\n\
+    gzip_min_length 256;\n\
     proxy_buffering off;\n\
     tcp_nodelay on;\n\
     \n\

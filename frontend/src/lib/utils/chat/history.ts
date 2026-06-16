@@ -1,3 +1,4 @@
+import type { HistoryStreamRow } from '$lib/mls-client/historyTypes';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
@@ -28,8 +29,12 @@ function lastStreamIdKey(userId: string, groupId: string): string {
 }
 
 /** Read the last-processed Redis stream ID from localStorage; returns undefined if not set. */
-function loadLastStreamId(userId: string, groupId: string): string | undefined {
+export function readHistoryStreamCursor(userId: string, groupId: string): string | undefined {
   return localStorage.getItem(lastStreamIdKey(userId, groupId)) ?? undefined;
+}
+
+function loadLastStreamId(userId: string, groupId: string): string | undefined {
+  return readHistoryStreamCursor(userId, groupId);
 }
 
 /** Persist the latest processed Redis stream ID so the next history fetch is incremental. */
@@ -113,6 +118,8 @@ export async function replayConversationHistory(params: {
   setConversation: (contactName: string, next: Conversation) => void;
   messageReactions: Map<string, MessageReaction[]>;
   log: (msg: string) => void;
+  /** First page already fetched (e.g. login batch history) — skipped on the first loop iteration. */
+  primedFirstPage?: HistoryStreamRow[];
 }): Promise<MlsReplayCommit | undefined> {
   const {
     mlsService,
@@ -125,6 +132,7 @@ export async function replayConversationHistory(params: {
     setConversation,
     messageReactions,
     log,
+    primedFirstPage,
   } = params;
 
   let session: MlsDecryptSession | null = null;
@@ -136,6 +144,7 @@ export async function replayConversationHistory(params: {
     // the cursor points past messages that no longer exist locally. Reset it so the full
     // history is re-fetched.
     let afterStreamId = loadLastStreamId(userId, id);
+    const cursorBeforeDbCheck = afterStreamId;
     if (afterStreamId && storage) {
       try {
         const storedMsgs = await storage.getMessages(id, pin);
@@ -195,12 +204,32 @@ export async function replayConversationHistory(params: {
     // to the live client once by session.finish() (run in the outer `finally`, always).
     session = await mlsService.createDecryptSession(id);
 
+    // Batch login may have prefetched with a cursor we just invalidated (DB wipe).
+    let pendingPrimedPage: HistoryStreamRow[] | undefined =
+      cursorBeforeDbCheck && !afterStreamId ? undefined : primedFirstPage;
+    let prefetchedNextPage: Promise<HistoryStreamRow[]> | null = null;
+
     while (true) {
-      const history = await mlsService.fetchHistory(id, fetchCursor);
+      let history: HistoryStreamRow[];
+      if (pendingPrimedPage !== undefined) {
+        history = pendingPrimedPage;
+        pendingPrimedPage = undefined;
+      } else if (prefetchedNextPage) {
+        history = await prefetchedNextPage;
+        prefetchedNextPage = null;
+      } else {
+        history = await mlsService.fetchHistory(id, fetchCursor);
+      }
       if (history.length === 0) {
         break;
       }
       fetchedAnyPage = true;
+
+      const pageLastId = history[history.length - 1]?.id;
+      const hasMore = Boolean(pageLastId && pageLastId !== fetchCursor);
+      if (hasMore && pageLastId) {
+        prefetchedNextPage = mlsService.fetchHistory(id, pageLastId);
+      }
 
       const pageDecryptWork: Array<{
         msg: (typeof history)[number];
@@ -323,9 +352,8 @@ export async function replayConversationHistory(params: {
 
       // Cursor + seen hashes are NOT persisted per page here: they are deferred to the
       // returned commit thunk so they only become durable after the encrypted checkpoint.
-      const pageLastId = history[history.length - 1]?.id;
-      if (!pageLastId || pageLastId === fetchCursor) break;
-      fetchCursor = pageLastId;
+      if (!hasMore) break;
+      fetchCursor = pageLastId!;
     }
 
     // Flush all decoded messages in a single batch DB write.

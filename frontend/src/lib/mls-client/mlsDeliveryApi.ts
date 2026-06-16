@@ -476,10 +476,12 @@ export class MlsDeliveryApi {
   async fetchHistory(
     groupId: string,
     afterStreamId?: string
-  ): Promise<{ id?: string; sender_id: string; content: string; timestamp: string }[]> {
+  ): Promise<import('$lib/mls-client/historyTypes').HistoryStreamRow[]> {
     try {
       const url = new URL(`${this.historyUrl}/api/mls/history/${groupId}`);
       if (afterStreamId) url.searchParams.set('after', afterStreamId);
+      const limit = afterStreamId ? '200' : '1000';
+      url.searchParams.set('limit', limit);
       const res = await this.f(url.toString(), {
         headers: await this.auth(),
       });
@@ -496,6 +498,50 @@ export class MlsDeliveryApi {
       console.error('Fetch History Error:', e);
       return [];
     }
+  }
+
+  /**
+   * Fetches the first history page for multiple groups in one request (login catch-up).
+   * Falls back to sequential {@link fetchHistory} when the batch route is unavailable.
+   */
+  async fetchHistoryBatch(
+    groups: Array<{ groupId: string; afterStreamId?: string }>
+  ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>> {
+    const out = new Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>();
+    if (groups.length === 0) return out;
+
+    try {
+      const res = await this.f(`${this.historyUrl}/api/mls/history/batch`, {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          groups: groups.map((g) => ({
+            groupId: g.groupId,
+            after: g.afterStreamId,
+          })),
+        }),
+      });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') ?? '';
+        if (contentType.toLowerCase().includes('application/json')) {
+          const data = (await res.json()) as {
+            histories?: Record<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>;
+          };
+          for (const [groupId, rows] of Object.entries(data.histories ?? {})) {
+            out.set(groupId, rows ?? []);
+          }
+          return out;
+        }
+      }
+      console.warn(`[History] batch fetch failed (${res.status}), falling back to sequential`);
+    } catch (e) {
+      console.warn('[History] batch fetch error, falling back to sequential:', e);
+    }
+
+    for (const g of groups) {
+      out.set(g.groupId, await this.fetchHistory(g.groupId, g.afterStreamId));
+    }
+    return out;
   }
 
   /** Renames a group on the server. Throws on non-2xx. */
