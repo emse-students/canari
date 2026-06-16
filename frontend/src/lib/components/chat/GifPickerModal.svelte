@@ -1,6 +1,7 @@
 <script lang="ts">
   import { X, Search } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -80,7 +81,7 @@
       results = mapData(json?.data?.data ?? []);
     } catch {
       if (seq !== fetchSeq) return;
-      error = 'Impossible de charger les GIF.';
+      error = m.chat_gif_load_error();
       results = [];
     } finally {
       if (seq === fetchSeq) loading = false;
@@ -104,7 +105,7 @@
     <button
       type="button"
       class="absolute inset-0 bg-black/45 backdrop-blur-sm"
-      aria-label="Fermer"
+      aria-label={m.common_close_label()}
       onclick={onClose}
       transition:fade={{ duration: 150 }}
     ></button>
@@ -117,8 +118,8 @@
           <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             bind:value={query}
-            placeholder="Rechercher un GIF…"
-            aria-label="Rechercher un GIF"
+            placeholder={m.chat_gif_search_placeholder()}
+            aria-label={m.chat_gif_search_label()}
             class="w-full rounded-xl border border-cn-border bg-transparent py-2 pl-9 pr-3 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
           />
         </div>
@@ -126,7 +127,7 @@
           type="button"
           onclick={onClose}
           class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
-          aria-label="Fermer"
+          aria-label={m.common_close_label()}
         >
           <X size={18} />
         </button>
@@ -135,7 +136,7 @@
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
         {#if !KLIPY_KEY}
           <p class="py-10 text-center text-sm text-text-muted">
-            Recherche de GIF non configurée (clé KLIPY absente).
+            {m.chat_gif_not_configured()}
           </p>
         {:else if loading && results.length === 0}
           <div class="flex justify-center py-10">
@@ -146,7 +147,7 @@
         {:else if error}
           <p class="py-10 text-center text-sm text-red-500">{error}</p>
         {:else if results.length === 0}
-          <p class="py-10 text-center text-sm text-text-muted">Aucun GIF trouvé.</p>
+          <p class="py-10 text-center text-sm text-text-muted">{m.chat_no_gif_found()}</p>
         {:else}
           <div class="columns-2 gap-2 sm:columns-3">
             {#each results as g (g.id)}
@@ -157,7 +158,7 @@
                   onClose();
                 }}
                 class="mb-2 block w-full overflow-hidden rounded-lg outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-cn-yellow"
-                aria-label="Envoyer ce GIF"
+                aria-label={m.chat_send_gif_action_label()}
               >
                 <img src={g.preview} alt="GIF" loading="lazy" class="w-full" />
               </button>

@@ -3,6 +3,7 @@
   import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { Play, ImageOff } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Encrypted media reference to decrypt and preview. */
@@ -51,7 +52,7 @@
   type="button"
   onclick={onClick}
   class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 dark:bg-white/10 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 hover:opacity-90 transition-opacity"
-  aria-label="Ouvrir le média"
+  aria-label={m.chat_open_media_label()}
 >
   {#if failed}
     <div class="flex h-full w-full items-center justify-center text-text-muted">

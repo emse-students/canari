@@ -7,6 +7,7 @@
   import { extractMentionUserIds } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Raw contact/user ID used for presence lookup and direct-message routing. */
@@ -141,13 +142,13 @@
           <span
             class="bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[0.6rem] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
           >
-            Sync
+            {m.chat_sync_badge_label()}
           </span>
         {/if}
         {#if unreadCount > 0}
           <span
             class="min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[0.7rem] font-bold inline-flex items-center justify-center shadow-sm shadow-red-500/20"
-            aria-label={`${unreadCount} message(s) non lu(s)`}
+            aria-label={m.chat_unread_messages_label({ count: unreadCount })}
           >
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
@@ -161,7 +162,7 @@
         ? 'text-text-main font-semibold'
         : 'text-text-muted opacity-90'}"
     >
-      {previewText || 'Canal E2E établi.'}
+      {previewText || m.chat_e2e_established_preview()}
     </div>
   </div>
 </button>

@@ -7,6 +7,7 @@
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import type { Conversation } from '$lib/types';
   import { SvelteMap } from 'svelte/reactivity';
+  import { m } from '$lib/paraglide/messages';
 
   /** Minimal community-workspace shape needed to resolve a channel's community. */
   interface WorkspaceLike {
@@ -101,22 +102,22 @@
   }
 </script>
 
-<Modal {open} title="Transférer à…" {onClose}>
+<Modal {open} title={m.chat_forward_modal_title()} {onClose}>
   <div class="flex flex-col gap-3">
     <div class="relative">
       <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
       <input
         type="text"
         bind:value={query}
-        placeholder="Rechercher une discussion…"
-        aria-label="Rechercher une discussion"
+        placeholder={m.chat_search_discussion_placeholder()}
+        aria-label={m.chat_search_discussion_label()}
         class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] py-2.5 pl-9 pr-3 text-sm text-text-main outline-none focus:border-cn-yellow"
       />
     </div>
 
     <div class="-mx-1 flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto px-1">
       {#if candidates.length === 0}
-        <p class="py-8 text-center text-sm text-text-muted">Aucune discussion trouvée.</p>
+        <p class="py-8 text-center text-sm text-text-muted">{m.chat_no_discussion_found()}</p>
       {:else}
         {#each candidates as cand (cand.key)}
           <button

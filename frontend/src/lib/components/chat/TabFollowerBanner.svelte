@@ -1,6 +1,7 @@
 <script lang="ts">
   import { MonitorX, ArrowLeftRight } from '@lucide/svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   /** Delay before showing the banner, to avoid flicker during the startup leader election. */
   const SHOW_DELAY_MS = 2500;
@@ -34,7 +35,7 @@
   >
     <div class="flex items-center gap-2 min-w-0">
       <MonitorX size={15} class="flex-shrink-0 opacity-70" />
-      <span class="truncate"> Messagerie chiffrée active dans un autre onglet. </span>
+      <span class="truncate"> {m.chat_tab_follower_message()} </span>
     </div>
 
     <button
@@ -45,7 +46,7 @@
              text-white transition-colors"
     >
       <ArrowLeftRight size={12} />
-      Prendre la main
+      {m.chat_take_over_button()}
     </button>
   </div>
 {/if}

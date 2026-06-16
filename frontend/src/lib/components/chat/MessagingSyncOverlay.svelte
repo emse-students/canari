@@ -1,12 +1,13 @@
 <script lang="ts">
   import { Loader2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Status line shown under the spinner (e.g. catch-up vs unlock). */
     message?: string;
   }
 
-  let { message = 'Synchronisation des messages…' }: Props = $props();
+  let { message = m.chat_sync_overlay_message() }: Props = $props();
 </script>
 
 <div
@@ -18,6 +19,6 @@
   <Loader2 size={28} class="animate-spin text-amber-500 shrink-0" strokeWidth={2} />
   <p class="text-sm font-medium text-text-main">{message}</p>
   <p class="text-xs text-text-muted max-w-sm">
-    Le reste de l'application reste accessible pendant la synchronisation.
+    {m.chat_sync_overlay_description()}
   </p>
 </div>

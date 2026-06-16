@@ -14,6 +14,7 @@
   import ChatGroupPanel from './ChatGroupPanel.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Raw contact/user ID used for presence lookup and avatar resolution. */
@@ -138,7 +139,7 @@
     {#if onBack}
       <button
         onclick={onBack}
-        aria-label="Retour au menu"
+        aria-label={m.chat_back_label()}
         class="p-1 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
       >
         <ChevronLeft size={24} />
@@ -176,7 +177,7 @@
       <span
         class="inline-flex items-center text-[0.7rem] md:text-xs font-semibold text-text-muted uppercase tracking-wider"
       >
-        Canal de communauté
+        {m.chat_community_channel_label()}
       </span>
     {:else}
       <LockKeyhole
@@ -185,7 +186,7 @@
         class={isReady
           ? 'text-emerald-600 dark:text-emerald-400'
           : 'animate-pulse text-amber-600 dark:text-amber-500'}
-        title={isReady ? 'Chiffrement bout-en-bout vérifié' : 'Négociation sécurisée en cours…'}
+        title={isReady ? m.chat_e2e_verified_title() : m.chat_e2e_negotiating_title()}
       />
     {/if}
   </div>
@@ -197,8 +198,8 @@
       {#if onStartAudioCall}
         <button
           onclick={onStartAudioCall}
-          aria-label="Appel audio"
-          title="Appel audio"
+          aria-label={m.chat_audio_call_label()}
+          title={m.chat_audio_call_label()}
           class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
         >
           <Phone size={20} strokeWidth={2.5} />
@@ -207,8 +208,8 @@
       {#if onStartVideoCall}
         <button
           onclick={onStartVideoCall}
-          aria-label="Appel vidéo"
-          title="Appel vidéo"
+          aria-label={m.chat_video_call_label()}
+          title={m.chat_video_call_label()}
           class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
         >
           <Video size={20} strokeWidth={2.5} />
@@ -219,8 +220,8 @@
     {#if onOpenMembers}
       <button
         onclick={onOpenMembers}
-        aria-label="Membres du canal"
-        title="Membres"
+        aria-label={m.chat_channel_members_title()}
+        title={m.common_members_label()}
         class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
       >
         <Users size={20} strokeWidth={2.5} />
@@ -230,8 +231,8 @@
     {#if onOpenMedia}
       <button
         onclick={onOpenMedia}
-        aria-label="Médias, liens et fichiers"
-        title="Médias, liens et fichiers"
+        aria-label={m.chat_media_links_files_label()}
+        title={m.chat_media_links_files_label()}
         class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
       >
         <Images size={20} strokeWidth={2.5} />
@@ -241,8 +242,8 @@
     {#if onToggleSearch}
       <button
         onclick={onToggleSearch}
-        aria-label="Rechercher dans la conversation"
-        title="Rechercher"
+        aria-label={m.chat_search_in_conversation_label()}
+        title={m.chat_search_title()}
         class="p-2.5 rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {searchActive
           ? 'text-amber-500 bg-amber-500/10'
           : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
@@ -258,12 +259,12 @@
             showPanel = true;
           }}
       aria-label={isChannel
-        ? 'Paramètres du canal'
+        ? m.chat_channel_settings_label()
         : isGroupConversation
-          ? 'Paramètres du groupe'
-          : 'Paramètres de la discussion'}
+          ? m.chat_group_settings_label()
+          : m.chat_dm_settings_label()}
       class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
-      title="Paramètres"
+      title={m.chat_settings_title()}
     >
       <Settings size={20} strokeWidth={2.5} />
     </button>

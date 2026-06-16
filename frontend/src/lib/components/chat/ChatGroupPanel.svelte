@@ -17,6 +17,7 @@
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
   import { portal } from '$lib/actions/portal';
   import { fade, fly } from 'svelte/transition';
+  import { m } from '$lib/paraglide/messages';
 
   /**
    * Props for the ChatGroupPanel component.
@@ -86,7 +87,7 @@
   /** Generates a shareable group invite link and copies it to the clipboard. */
   async function generateShareLink() {
     if (!groupId) {
-      shareError = 'Groupe introuvable.';
+      shareError = m.chat_group_no_group_error();
       return;
     }
     shareLoading = true;
@@ -103,7 +104,7 @@
         /* clipboard blocked; link shown for manual copy */
       }
     } catch (e) {
-      shareError = e instanceof Error ? e.message : 'Échec de la génération du lien';
+      shareError = e instanceof Error ? e.message : m.chat_group_link_generation_error();
     } finally {
       shareLoading = false;
     }
@@ -118,11 +119,11 @@
     }
   });
 
-  const panelTitle = $derived(isGroupConversation ? 'Gestion du groupe' : 'Infos de la discussion');
+  const panelTitle = $derived(isGroupConversation ? m.chat_group_management_title() : m.chat_group_dm_info_title());
   const panelSubtitle = $derived(
     isGroupConversation
-      ? 'Organisez les membres, le nom et la suppression.'
-      : 'Cette discussion est privée entre deux participants.'
+      ? m.chat_group_management_subtitle()
+      : m.chat_group_dm_subtitle()
   );
 
   function submitRename() {
@@ -159,7 +160,7 @@
     <button
       type="button"
       class="absolute inset-0 bg-black/40 backdrop-blur-sm border-0 pointer-events-auto outline-none transition-opacity"
-      aria-label="Fermer les paramètres du groupe"
+      aria-label={m.chat_group_close_backdrop_label()}
       onclick={closePanel}
       transition:fade={{ duration: 250 }}
     ></button>
@@ -168,7 +169,7 @@
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Paramètres du groupe"
+      aria-label={m.chat_group_panel_label()}
       class="relative pointer-events-auto w-full md:w-[28rem] h-full bg-white/85 dark:bg-[#151B2C]/95 border-l border-black/5 dark:border-white/10 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)] backdrop-blur-3xl flex flex-col overflow-hidden text-text-main"
       transition:fly={{ x: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
@@ -186,7 +187,7 @@
         <button
           onclick={closePanel}
           class="p-2.5 rounded-full bg-black/5 dark:bg-white/10 text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0"
-          aria-label="Fermer"
+          aria-label={m.common_close_label()}
         >
           <X size={18} strokeWidth={2.5} />
         </button>
@@ -218,10 +219,10 @@
             >
               {#if isReady}
                 <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
-                Sécurisé & Sync
+                {m.chat_group_secured_sync_label()}
               {:else}
                 <Clock size={14} class="text-amber-500 animate-pulse" strokeWidth={2.5} />
-                Synchronisation...
+                {m.chat_group_syncing_label()}
               {/if}
             </div>
             {#if groupId}
@@ -241,7 +242,7 @@
               for="group-rename-input"
               class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider inline-flex items-center gap-2 mb-1"
             >
-              <PencilLine size={14} /> Nom du groupe
+              <PencilLine size={14} /> {m.chat_group_name_label()}
             </label>
             <div class="flex flex-col sm:flex-row gap-3">
               <input
@@ -254,10 +255,10 @@
               <button
                 onclick={submitRename}
                 class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-amber-500 text-[#151B2C] font-bold rounded-xl hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                aria-label="Valider le renommage"
+                aria-label={m.chat_group_validate_rename_label()}
               >
                 <Check size={16} strokeWidth={3} />
-                Valider
+                {m.common_validate_button()}
               </button>
             </div>
           </div>
@@ -269,11 +270,10 @@
             <span
               class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider px-1"
             >
-              Lien d'invitation
+              {m.chat_group_invite_link_title()}
             </span>
             <p class="text-[0.8rem] text-text-muted leading-relaxed px-1">
-              Partagez ce lien : la personne qui l'ouvre et se connecte sera ajoutée au groupe dès
-              qu'un membre est en ligne.
+              {m.chat_group_invite_link_description()}
             </p>
             {#if shareLink}
               <div class="flex items-center gap-2 px-1">
@@ -288,11 +288,11 @@
                   onclick={generateShareLink}
                   class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
                 >
-                  Régénérer
+                  {m.chat_group_regenerate_button()}
                 </button>
               </div>
               {#if shareCopied}
-                <p class="text-xs font-semibold text-emerald-600 px-1">Lien copié ✓</p>
+                <p class="text-xs font-semibold text-emerald-600 px-1">{m.chat_group_link_copied_label()}</p>
               {/if}
             {:else}
               <button
@@ -301,7 +301,7 @@
                 disabled={shareLoading}
                 class="self-start rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 px-3 py-1.5 text-[0.75rem] font-bold transition-colors disabled:opacity-50 mx-1"
               >
-                {shareLoading ? 'Génération…' : 'Générer un lien'}
+                {shareLoading ? m.common_generating_label() : m.chat_group_generate_link_button()}
               </button>
             {/if}
             {#if shareError}
@@ -317,7 +317,7 @@
               <span
                 class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider inline-flex items-center gap-2"
               >
-                <Users size={14} /> Membres ({groupMembers.length})
+                <Users size={14} /> {m.chat_group_members_count_label({ count: groupMembers.length })}
               </span>
               <button
                 type="button"
@@ -327,7 +327,7 @@
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
               >
                 <UserPlus size={14} strokeWidth={2.5} />
-                Ajouter
+                {m.common_add_button()}
               </button>
             </div>
 
@@ -352,7 +352,7 @@
                         {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                           <span
                             class="text-[0.65rem] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-md shrink-0"
-                            >Vous</span
+                            >{m.common_you_label()}</span
                           >
                         {/if}
                       </div>
@@ -360,8 +360,8 @@
                       {#if onRemoveMember}
                         <button
                           onclick={() => onRemoveMember?.(member)}
-                          aria-label="Retirer {member}"
-                          title="Retirer du groupe"
+                          aria-label={m.chat_group_remove_member_label({ member })}
+                          title={m.chat_group_remove_member_title()}
                           class="p-2 rounded-xl bg-black/5 dark:bg-white/5 text-text-muted hover:text-red-500 hover:bg-red-500/10 active:scale-95 transition-all flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                         >
                           <UserMinus size={16} />
@@ -375,7 +375,7 @@
               <div
                 class="rounded-[1.5rem] border border-dashed border-black/10 dark:border-white/20 bg-white/30 dark:bg-black/10 px-4 py-6 text-center text-sm font-medium text-text-muted"
               >
-                Aucun membre à afficher.
+                {m.chat_group_no_members_label()}
               </div>
             {/if}
           </div>
@@ -395,7 +395,7 @@
               class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-orange-600 dark:text-orange-400 font-bold bg-orange-500/10 border border-orange-500/20 rounded-2xl text-[0.95rem] hover:bg-orange-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
             >
               <LogOut size={18} strokeWidth={2.5} />
-              Quitter le groupe
+              {m.chat_group_leave_button()}
             </button>
           {/if}
 
@@ -404,7 +404,7 @@
               <p
                 class="text-[0.8rem] font-bold uppercase tracking-wider text-orange-500 text-center"
               >
-                Quitter ce groupe ?
+                {m.chat_group_leave_confirm_question()}
               </p>
               <div class="flex gap-3">
                 <button
@@ -413,7 +413,7 @@
                   }}
                   class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                 >
-                  Annuler
+                  {m.common_cancel_button()}
                 </button>
                 <button
                   onclick={() => {
@@ -422,7 +422,7 @@
                   }}
                   class="flex-1 px-4 py-3.5 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 active:scale-[0.98] transition-all shadow-md shadow-orange-500/20 outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
                 >
-                  Quitter
+                  {m.common_leave_button()}
                 </button>
               </div>
             </div>
@@ -437,14 +437,14 @@
                 class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-red-600 dark:text-red-400 font-bold bg-red-500/10 border border-red-500/20 rounded-2xl text-[0.95rem] hover:bg-red-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500"
               >
                 <Trash2 size={18} strokeWidth={2.5} />
-                Supprimer {isGroupConversation ? 'le groupe' : 'la discussion'}
+                {isGroupConversation ? m.chat_group_delete_group_button() : m.chat_group_delete_dm_button()}
               </button>
             {:else}
               <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
                 <p
                   class="text-[0.8rem] font-bold uppercase tracking-wider text-red-500 text-center"
                 >
-                  Confirmer la suppression ?
+                  {m.chat_group_delete_confirm_question()}
                 </p>
                 <div class="flex gap-3">
                   <button
@@ -453,7 +453,7 @@
                     }}
                     class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                   >
-                    Annuler
+                    {m.common_cancel_button()}
                   </button>
                   <button
                     onclick={() => {
@@ -462,7 +462,7 @@
                     }}
                     class="flex-1 px-4 py-3.5 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 active:scale-[0.98] transition-all shadow-md shadow-red-500/20 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                   >
-                    Supprimer
+                    {m.common_delete_button()}
                   </button>
                 </div>
               </div>
@@ -481,13 +481,13 @@
     showInviteModal = false;
     newMembers = [];
   }}
-  title="Ajouter des membres"
+  title={m.chat_group_invite_modal_title()}
 >
   <div class="space-y-5 px-1">
     <p class="text-sm font-medium text-text-muted leading-relaxed">
-      Sélectionnez un ou plusieurs utilisateurs à inviter dans <span
+      {m.chat_group_invite_description_prefix()} <span
         class="font-bold text-text-main">{effectiveDisplayName}</span
-      > en une seule opération.
+      > {m.chat_group_invite_description_suffix()}
     </p>
 
     <MultiUserSelector
@@ -495,7 +495,7 @@
       onUsersChange={(users) => {
         newMembers = users;
       }}
-      placeholder="Identifiant de l'utilisateur..."
+      placeholder={m.chat_group_user_id_placeholder()}
     />
 
     <button
@@ -503,7 +503,7 @@
       disabled={newMembers.length === 0}
       class="w-full py-3.5 bg-amber-500 text-[#151B2C] font-extrabold rounded-2xl hover:bg-amber-400 hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 mt-2"
     >
-      Envoyer l'invitation {newMembers.length > 0 ? `(${newMembers.length})` : ''}
+      {m.chat_group_send_invite_button()}{newMembers.length > 0 ? ` (${newMembers.length})` : ''}
     </button>
   </div>
 </Modal>
