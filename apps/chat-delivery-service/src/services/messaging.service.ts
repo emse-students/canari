@@ -373,7 +373,7 @@ export class MessagingService {
    * Persists and delivers an MLS application message to all group members.
    * Handles both the proto path (from gateway) and legacy content path (frontend fallback).
    * For online recipients, publishes via Redis pub/sub and schedules a deferred FCM fallback.
-   * For offline recipients, immediately sends an FCM push notification.
+   * For offline recipients, schedules an immediate FCM push (non-blocking).
    */
   async sendMessage(body: SendMessageBody): Promise<SendMessageResult> {
     const traceId = this.makeTraceId('send');
@@ -632,12 +632,18 @@ export class MessagingService {
         }
       } else {
         // Offline recipient: FCM push (silent for commits/welcomes).
-        await this.sendFcmForQueued(
+        // Fire-and-forget: the message is already persisted; blocking on FCM
+        // (often 2-5 s per device) would stall POST /send for the sender.
+        void this.sendFcmForQueued(
           queued,
           traceId,
           body.groupId ?? '',
           body.senderId ?? '',
           body.isCommit || body.isWelcome ? true : (body.silent ?? false),
+        ).catch((e) =>
+          this.logger.warn(
+            `[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`,
+          ),
         );
       }
     }
