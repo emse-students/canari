@@ -35,6 +35,8 @@ export interface OutboxDeps {
   isGroupHealthy: (groupId: string) => boolean;
   /** Mark a conversation deletedRemotely (banner) when its whole lineage is gone. */
   markDeletedRemotely?: (groupId: string) => void;
+  /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
+  uploadMedia?: (media: NonNullable<OutboxEntry['media']>) => Promise<MediaRef>;
 }
 
 /** Public surface of the per-session outbox controller. */
@@ -122,6 +124,66 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… échoué: ${String(e)}`));
   }
 
+  /** Replace a message's rendered content in memory (queued media -> real attachment on send). */
+  function updateMessageContent(messageId: string, content: string): void {
+    const found = findMessage(messageId);
+    if (!found) return;
+    const messages = [...found.convo.messages];
+    messages[found.idx] = { ...messages[found.idx], content };
+    conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /**
+   * Uploads the queued media file if needed (idempotent via `uploadedRef`), then builds both the
+   * proto to send and the real media envelope to swap into the optimistic placeholder message.
+   */
+  async function prepareMedia(entry: OutboxEntry): Promise<{ proto: Uint8Array; content: string }> {
+    const media = entry.media;
+    if (!media) throw new Error('media entry without payload');
+    let ref = media.uploadedRef;
+    if (!ref) {
+      if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
+      logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
+      const uploaded = await deps.uploadMedia(media);
+      ref = { mediaId: uploaded.mediaId, key: uploaded.key, iv: uploaded.iv };
+      // Persist the ref + drop the raw bytes BEFORE sending: a crash after upload must not re-upload.
+      await storage
+        ?.updateOutboxEntry(
+          entry.id,
+          { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
+          pin
+        )
+        .catch(() => {});
+    }
+    const fullRef: MediaRef = {
+      type: mediaKindToType(media.kind),
+      mediaId: ref.mediaId,
+      key: ref.key,
+      iv: ref.iv,
+      mimeType: media.mimeType,
+      size: media.size,
+      fileName: media.fileName,
+      width: media.width,
+      height: media.height,
+    };
+    const proto = encodeAppMessage({
+      ...mkMedia({
+        kind: media.kind,
+        mediaId: ref.mediaId,
+        key: fromHex(ref.key),
+        iv: fromHex(ref.iv),
+        mimeType: media.mimeType,
+        size: media.size,
+        fileName: media.fileName ?? '',
+        caption: media.caption,
+        ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+      }),
+      messageId: entry.id,
+      sentAt: entry.sentAt,
+    });
+    return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+  }
+
   /** Build the proto AppMessage for a queued text/reply entry (sentAt = original compose time). */
   function buildProto(entry: OutboxEntry): Uint8Array {
     if (entry.kind === 'reply' && entry.replyTo) {
@@ -172,8 +234,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     logMlsMetric({ kind: 'outbox_flush_attempt', conversationId: terminalId });
 
     try {
-      await mlsService.sendMessage(terminalId, buildProto(entry), entry.id);
+      // Media: upload (idempotent) then build proto + the real attachment envelope.
+      let proto: Uint8Array;
+      let mediaContent: string | undefined;
+      if (entry.kind === 'media') {
+        const prepared = await prepareMedia(entry);
+        proto = prepared.proto;
+        mediaContent = prepared.content;
+      } else {
+        proto = buildProto(entry);
+      }
+
+      await mlsService.sendMessage(terminalId, proto, entry.id);
       scheduleOutboundMlsPersist();
+      // Swap the placeholder for the uploaded media before persisting the sent copy.
+      if (mediaContent) updateMessageContent(entry.id, mediaContent);
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
       await storage?.deleteOutboxEntry(entry.id).catch(() => {});

@@ -8,6 +8,9 @@
  */
 
 const HKDF_INFO = new TextEncoder().encode('doc-vault');
+const HKDF_INFO_PW = new TextEncoder().encode('doc-vault-pw');
+/** PBKDF2 work factor for password-protected documents (OWASP 2023 baseline). */
+const PBKDF2_ITERATIONS = 210_000;
 
 /**
  * Derives the AES-256-GCM content encryption key for a single document.
@@ -27,6 +30,82 @@ export async function deriveDocumentCek(vaultKeyHex: string, docId: string): Pro
     false,
     ['encrypt', 'decrypt']
   );
+}
+
+/**
+ * Derives the CEK for a password-protected document.
+ *
+ * CEK = HKDF(vaultKey || PBKDF2(password, pwSalt), salt=docId, info="doc-vault-pw").
+ * Decryption therefore requires BOTH the server-held vault key AND the password,
+ * which the server never sees. This is what keeps a secret document closed even to
+ * a BDE super-admin who legitimately holds the vault key. A lost password is
+ * unrecoverable by design.
+ *
+ * @param vaultKeyHex - hex vault key from `GET /api/associations/:id/vault-key`.
+ * @param docId - per-document salt (same value used by `deriveDocumentCek`).
+ * @param password - the user-supplied secret, never transmitted.
+ * @param pwSaltHex - hex PBKDF2 salt stored alongside the document.
+ */
+export async function deriveDocumentCekWithPassword(
+  vaultKeyHex: string,
+  docId: string,
+  password: string,
+  pwSaltHex: string
+): Promise<CryptoKey> {
+  const vaultKeyBytes = hexToBytes(vaultKeyHex);
+  const pwSaltBytes = hexToBytes(pwSaltHex);
+
+  const pwImport = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const pwBits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: pwSaltBytes, iterations: PBKDF2_ITERATIONS },
+    pwImport,
+    256
+  );
+
+  const baseMaterial = new Uint8Array(vaultKeyBytes.length + 32);
+  baseMaterial.set(vaultKeyBytes, 0);
+  baseMaterial.set(new Uint8Array(pwBits), vaultKeyBytes.length);
+
+  const baseKey = await crypto.subtle.importKey('raw', baseMaterial, 'HKDF', false, ['deriveKey']);
+  const saltBytes = new TextEncoder().encode(docId);
+
+  return crypto.subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: saltBytes, info: HKDF_INFO_PW },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/** Generates a random 16-byte PBKDF2 salt, hex-encoded. */
+export function randomPwSalt(): string {
+  return bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+}
+
+/**
+ * Parses the metadata markers stored in a document's `description` field.
+ * Format: `[s:<cekSalt>]` optionally followed by `[pw:<pwSaltHex>]` for
+ * password-protected documents.
+ */
+export function parseVaultMarkers(description: string | null | undefined): {
+  cekSalt: string | null;
+  pwSalt: string | null;
+} {
+  const cekSalt = description?.match(/^\[s:([^\]]+)\]/)?.[1] ?? null;
+  const pwSalt = description?.match(/\[pw:([0-9a-f]+)\]/)?.[1] ?? null;
+  return { cekSalt, pwSalt };
+}
+
+/** Builds the `description` marker string from a CEK salt and optional password salt. */
+export function buildVaultMarkers(cekSalt: string, pwSalt?: string | null): string {
+  return `[s:${cekSalt}]${pwSalt ? `[pw:${pwSalt}]` : ''}`;
 }
 
 /**
@@ -95,4 +174,8 @@ function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
     bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }

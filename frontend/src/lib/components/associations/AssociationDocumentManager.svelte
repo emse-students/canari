@@ -11,15 +11,21 @@
   } from '$lib/associations/api';
   import {
     deriveDocumentCek,
+    deriveDocumentCekWithPassword,
     encryptDocument,
     decryptDocument,
     packEncryptedBlob,
     unpackEncryptedBlob,
+    randomPwSalt,
+    parseVaultMarkers,
+    buildVaultMarkers,
   } from '$lib/associations/vaultCrypto';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
-  import { FileUp, Trash2, Download, FileText } from '@lucide/svelte';
+  import { FileUp, Trash2, Download, FileText, Lock } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { portal } from '$lib/actions/portal';
+  import Input from '$lib/components/ui/Input.svelte';
 
   interface Props {
     associationId: string;
@@ -35,6 +41,22 @@
   let downloadingId = $state<string | null>(null);
 
   let fileInput = $state<HTMLInputElement | undefined>(undefined);
+
+  // Upload dialog: a chosen file awaits an optional protection password.
+  let pendingFile = $state<File | null>(null);
+  let uploadModalOpen = $state(false);
+  let uploadPassword = $state('');
+
+  // Download password prompt for a protected document.
+  let pwPromptDoc = $state<AssociationDocument | null>(null);
+  let pwPromptValue = $state('');
+  let pwPromptError = $state('');
+  let pwPromptBusy = $state(false);
+
+  /** True when the document is password-protected (has a `[pw:...]` marker). */
+  function isProtected(doc: AssociationDocument): boolean {
+    return parseVaultMarkers(doc.description).pwSalt !== null;
+  }
 
   onMount(load);
 
@@ -53,14 +75,29 @@
     }
   }
 
-  async function handleFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement).files?.[0];
+  function handleFileChange(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
     if (!file) return;
-    await uploadFile(file);
-    (e.target as HTMLInputElement).value = '';
+    // Defer the actual upload: the dialog lets the user attach an optional password.
+    pendingFile = file;
+    uploadPassword = '';
+    uploadError = '';
+    uploadModalOpen = true;
   }
 
-  async function uploadFile(file: File) {
+  async function confirmUpload() {
+    if (!pendingFile) return;
+    const file = pendingFile;
+    const password = uploadPassword.trim();
+    uploadModalOpen = false;
+    pendingFile = null;
+    uploadPassword = '';
+    await uploadFile(file, password || undefined);
+  }
+
+  async function uploadFile(file: File, password?: string) {
     uploading = true;
     uploadError = '';
     try {
@@ -93,7 +130,13 @@
       // (32 hex chars, invisible to users when stripped on display).
       const vaultKeyHex = await getVaultKey(associationId);
       const cekSalt = crypto.randomUUID(); // stable, per-document identifier
-      const cek = await deriveDocumentCek(vaultKeyHex, cekSalt);
+      // A password-protected document derives its CEK from the vault key AND the
+      // password (never sent), so even a BDE super-admin with the vault key cannot
+      // open it. The PBKDF2 salt is stored in the description, the password is not.
+      const pwSalt = password ? randomPwSalt() : null;
+      const cek = password
+        ? await deriveDocumentCekWithPassword(vaultKeyHex, cekSalt, password, pwSalt as string)
+        : await deriveDocumentCek(vaultKeyHex, cekSalt);
 
       const buffer = await file.arrayBuffer();
       const { iv, ciphertext } = await encryptDocument(cek, buffer);
@@ -114,11 +157,11 @@
       const { mediaId } = (await uploadRes.json()) as { mediaId: string };
       console.log(`[Vault] Blob chiffré uploadé: ${mediaId}`);
 
-      // Store the CEK salt in the description so we can retrieve it for decryption.
-      // Format: "[s:<salt>]" - a 36-char UUID, invisible once stripped.
+      // Store the CEK salt (and password salt, if any) in the description so the
+      // download flow can rebuild the key. Format: "[s:<salt>]" optionally "[pw:<salt>]".
       const doc = await createDocument(associationId, {
         name: file.name,
-        description: `[s:${cekSalt}]`,
+        description: buildVaultMarkers(cekSalt, pwSalt),
         mediaId,
         mimeType: file.type || 'application/octet-stream',
         size: file.size,
@@ -137,45 +180,76 @@
     }
   }
 
-  async function handleDownload(doc: AssociationDocument) {
+  function handleDownload(doc: AssociationDocument) {
+    if (isProtected(doc)) {
+      // Protected: ask for the password, then decrypt in submitPwPrompt.
+      pwPromptDoc = doc;
+      pwPromptValue = '';
+      pwPromptError = '';
+      return;
+    }
     downloadingId = doc.id;
+    performDownload(doc)
+      .catch((e) => {
+        console.error('[Vault] Erreur téléchargement:', e);
+        error = e instanceof Error ? e.message : 'Erreur lors du téléchargement';
+      })
+      .finally(() => {
+        downloadingId = null;
+      });
+  }
+
+  /**
+   * Fetches, decrypts and saves a document. Throws on any failure (caller handles
+   * the error). For a protected document, a wrong password surfaces as an AES-GCM
+   * authentication failure thrown by `decryptDocument`.
+   */
+  async function performDownload(doc: AssociationDocument, password?: string) {
+    console.log(`[Vault] Téléchargement: ${doc.id}`);
+
+    const detail = await getDocumentDetail(associationId, doc.id);
+    if (!detail.mediaId) throw new Error('mediaId manquant dans les métadonnées');
+
+    const { cekSalt, pwSalt } = parseVaultMarkers(detail.description);
+    if (!cekSalt) throw new Error('Salt de chiffrement introuvable - document corrompu');
+
+    const vaultKeyHex = await getVaultKey(associationId);
+    const cek =
+      pwSalt && password
+        ? await deriveDocumentCekWithPassword(vaultKeyHex, cekSalt, password, pwSalt)
+        : await deriveDocumentCek(vaultKeyHex, cekSalt);
+
+    const mediaBase = socialUrl() || '';
+    const dlRes = await apiFetch(`${mediaBase}/api/media/${encodeURIComponent(detail.mediaId)}`);
+    if (!dlRes.ok) throw new Error(`Téléchargement échoué: ${dlRes.status}`);
+    const packed = await dlRes.arrayBuffer();
+
+    const { iv, ciphertext } = unpackEncryptedBlob(packed);
+    const plaintext = await decryptDocument(cek, iv, ciphertext);
+
+    const blob = new Blob([plaintext], { type: detail.mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = detail.name;
+    a.click();
+    URL.revokeObjectURL(url);
+    console.log(`[Vault] Téléchargement terminé: ${detail.name}`);
+  }
+
+  async function submitPwPrompt() {
+    if (!pwPromptDoc || !pwPromptValue) return;
+    pwPromptBusy = true;
+    pwPromptError = '';
     try {
-      console.log(`[Vault] Téléchargement: ${doc.id}`);
-
-      const detail = await getDocumentDetail(associationId, doc.id);
-      if (!detail.mediaId) throw new Error('mediaId manquant dans les métadonnées');
-
-      // Extract CEK salt from description
-      const saltMatch = detail.description?.match(/^\[s:([^\]]+)\]/);
-      const cekSalt = saltMatch?.[1];
-      if (!cekSalt) throw new Error('Salt de chiffrement introuvable - document corrompu');
-
-      const vaultKeyHex = await getVaultKey(associationId);
-      const cek = await deriveDocumentCek(vaultKeyHex, cekSalt);
-
-      // Download encrypted blob
-      const mediaBase = socialUrl() || '';
-      const dlRes = await apiFetch(`${mediaBase}/api/media/${encodeURIComponent(detail.mediaId)}`);
-      if (!dlRes.ok) throw new Error(`Téléchargement échoué: ${dlRes.status}`);
-      const packed = await dlRes.arrayBuffer();
-
-      // Decrypt and trigger download
-      const { iv, ciphertext } = unpackEncryptedBlob(packed);
-      const plaintext = await decryptDocument(cek, iv, ciphertext);
-
-      const blob = new Blob([plaintext], { type: detail.mimeType });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = detail.name;
-      a.click();
-      URL.revokeObjectURL(url);
-      console.log(`[Vault] Téléchargement terminé: ${detail.name}`);
+      await performDownload(pwPromptDoc, pwPromptValue);
+      pwPromptDoc = null;
+      pwPromptValue = '';
     } catch (e) {
-      console.error('[Vault] Erreur téléchargement:', e);
-      error = e instanceof Error ? e.message : 'Erreur lors du téléchargement';
+      console.error('[Vault] Erreur déchiffrement protégé:', e);
+      pwPromptError = 'Mot de passe incorrect ou fichier illisible.';
     } finally {
-      downloadingId = null;
+      pwPromptBusy = false;
     }
   }
 
@@ -261,8 +335,15 @@
           >
             <FileText size={18} class="shrink-0 text-text-muted" />
             <div class="min-w-0 flex-1">
-              <p class="font-semibold text-text-main text-sm truncate">{doc.name}</p>
-              <p class="text-xs text-text-muted">{formatBytes(doc.size)} · {doc.mimeType}</p>
+              <p class="font-semibold text-text-main text-sm truncate flex items-center gap-1.5">
+                {#if isProtected(doc)}
+                  <Lock size={13} class="shrink-0 text-amber-600" />
+                {/if}
+                <span class="truncate">{doc.name}</span>
+              </p>
+              <p class="text-xs text-text-muted">
+                {formatBytes(doc.size)} · {doc.mimeType}{#if isProtected(doc)} · protégé{/if}
+              </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button
@@ -295,3 +376,104 @@
     {/if}
   {/if}
 </div>
+
+{#if uploadModalOpen}
+  <div use:portal>
+    <div
+      class="fixed inset-0 z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      role="presentation"
+      onclick={(e) => e.target === e.currentTarget && (uploadModalOpen = false)}
+    >
+      <div
+        class="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-modal-title"
+      >
+        <h3 id="upload-modal-title" class="text-lg font-bold text-text-main">Ajouter un document</h3>
+        <p class="text-sm text-text-muted truncate">{pendingFile?.name}</p>
+        <div class="space-y-1.5">
+          <Input
+            label="Mot de passe (optionnel)"
+            type="password"
+            bind:value={uploadPassword}
+            placeholder="Laisser vide pour aucun mot de passe"
+          />
+          <p class="text-xs text-text-muted">
+            Un document protégé ne peut être ouvert qu'avec ce mot de passe - même un
+            administrateur BDE ne pourra pas y accéder. Un mot de passe perdu est définitivement
+            irrécupérable.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2 justify-end pt-1">
+          <button
+            type="button"
+            onclick={() => (uploadModalOpen = false)}
+            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onclick={confirmUpload}
+            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover"
+          >
+            Téléverser
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if pwPromptDoc}
+  <div use:portal>
+    <div
+      class="fixed inset-0 z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      role="presentation"
+      onclick={(e) => e.target === e.currentTarget && !pwPromptBusy && (pwPromptDoc = null)}
+    >
+      <div
+        class="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pw-prompt-title"
+      >
+        <h3 id="pw-prompt-title" class="text-lg font-bold text-text-main flex items-center gap-2">
+          <Lock size={18} class="text-amber-600" />
+          Document protégé
+        </h3>
+        <p class="text-sm text-text-muted truncate">{pwPromptDoc.name}</p>
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            void submitPwPrompt();
+          }}
+          class="space-y-3"
+        >
+          <Input label="Mot de passe" type="password" bind:value={pwPromptValue} />
+          {#if pwPromptError}
+            <p class="text-sm text-red-600">{pwPromptError}</p>
+          {/if}
+          <div class="flex flex-wrap gap-2 justify-end pt-1">
+            <button
+              type="button"
+              onclick={() => (pwPromptDoc = null)}
+              disabled={pwPromptBusy}
+              class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              disabled={pwPromptBusy || !pwPromptValue}
+              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            >
+              {pwPromptBusy ? 'Déchiffrement…' : 'Ouvrir'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{/if}

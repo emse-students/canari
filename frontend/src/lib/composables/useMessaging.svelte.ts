@@ -11,6 +11,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { getToken } from '$lib/stores/auth';
+import { fromHex } from '$lib/utils/hex';
 import {
   sendChatMessage,
   addReaction,
@@ -47,7 +48,8 @@ import type {
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
-import type { IStorage, StoredMessage } from '$lib/db';
+import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
+import { enqueueOutboxMessage } from '$lib/utils/chat/outbox';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
   isChannelConversationId,
@@ -533,68 +535,109 @@ export function useMessaging() {
     const currentReplyingTo = replyingTo;
     replyingTo = null;
     ctx.setSendError('');
-    const mlsService = !isChannel ? ctx.ensureMls() : null;
     const channelSvc = isChannel ? new ChannelService() : null;
+
+    const kindMap: Record<string, number> = {
+      image: MediaKind.MEDIA_IMAGE,
+      video: MediaKind.MEDIA_VIDEO,
+      audio: MediaKind.MEDIA_AUDIO,
+      file: MediaKind.MEDIA_FILE,
+    };
+    const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
+      mime.startsWith('image/')
+        ? 'image'
+        : mime.startsWith('video/')
+          ? 'video'
+          : mime.startsWith('audio/')
+            ? 'audio'
+            : 'file';
 
     if (fileEntries.length > 0) {
       pendingMediaFiles = [];
-      isUploadingMedia = true;
       try {
-        let { authToken } = ctx;
-        if (!authToken) {
-          authToken = await getToken();
-          ctx.setAuthToken(authToken);
-        }
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
           const captionForFile = index === 0 ? mediaCaption : undefined;
-          const mediaRef = await mediaService.encryptAndUpload(entry.file, authToken, {
-            width: entry.width,
-            height: entry.height,
-          });
           const messageId = crypto.randomUUID();
-          const kindMap: Record<string, number> = {
-            image: MediaKind.MEDIA_IMAGE,
-            video: MediaKind.MEDIA_VIDEO,
-            audio: MediaKind.MEDIA_AUDIO,
-            file: MediaKind.MEDIA_FILE,
-          };
-          const keyBytes = new Uint8Array(
-            (mediaRef.key.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
-          );
-          const ivBytes = new Uint8Array(
-            (mediaRef.iv.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16))
-          );
-          const protoBytes = encodeAppMessage({
-            ...mkMedia({
-              kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE,
-              mediaId: mediaRef.mediaId,
-              key: keyBytes,
-              iv: ivBytes,
-              mimeType: mediaRef.mimeType,
-              size: mediaRef.size,
-              fileName: mediaRef.fileName ?? '',
-              caption: captionForFile,
-              ...(mediaRef.width && mediaRef.height
-                ? { width: mediaRef.width, height: mediaRef.height }
-                : {}),
-            }),
-            messageId,
-            sentAt: Date.now(),
-          });
+          const sentAt = Date.now();
+
           if (isChannel && channelSvc) {
-            // Send media as channel message via REST
+            // Channels are server-authoritative + always available: encrypt + upload + send inline.
+            isUploadingMedia = true;
+            let { authToken } = ctx;
+            if (!authToken) {
+              authToken = await getToken();
+              ctx.setAuthToken(authToken);
+            }
+            const mediaRef = await mediaService.encryptAndUpload(entry.file, authToken, {
+              width: entry.width,
+              height: entry.height,
+            });
+            const protoBytes = encodeAppMessage({
+              ...mkMedia({
+                kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE,
+                mediaId: mediaRef.mediaId,
+                key: fromHex(mediaRef.key),
+                iv: fromHex(mediaRef.iv),
+                mimeType: mediaRef.mimeType,
+                size: mediaRef.size,
+                fileName: mediaRef.fileName ?? '',
+                caption: captionForFile,
+                ...(mediaRef.width && mediaRef.height
+                  ? { width: mediaRef.width, height: mediaRef.height }
+                  : {}),
+              }),
+              messageId,
+              sentAt,
+            });
             const actualChannelId = ctx.selectedContact!.replace('channel_', '');
             await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
-          } else if (mlsService) {
-            await mlsService.sendMessage(convo.id, protoBytes, messageId);
-            scheduleOutboundMlsPersist();
-          }
-          if (!isChannel) {
-            const payload = serializeEnvelope(mkMediaEnvelope({ ...mediaRef }, captionForFile));
-            await addMessageToChat(ctx.userId, payload, ctx.selectedContact!, ctx, {
+          } else {
+            // MLS: queue the media. The flusher uploads then sends once the group is ready
+            // (the optimistic message shows a skeleton + pending clock until then).
+            const type = mediaTypeFromMime(entry.file.type);
+            const placeholder = serializeEnvelope(
+              mkMediaEnvelope(
+                {
+                  type,
+                  mediaId: '',
+                  key: '',
+                  iv: '',
+                  mimeType: entry.file.type,
+                  size: entry.file.size,
+                  fileName: entry.file.name,
+                  width: entry.width,
+                  height: entry.height,
+                },
+                captionForFile
+              )
+            );
+            await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
               messageId,
+              status: 'pending',
+              timestamp: new SvelteDate(sentAt),
             });
+            const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
+            const outboxEntry: OutboxEntry = {
+              id: messageId,
+              conversationId: convo.id,
+              sentAt,
+              kind: 'media',
+              media: {
+                kind: kindMap[type],
+                mimeType: entry.file.type,
+                size: entry.file.size,
+                fileName: entry.file.name,
+                width: entry.width,
+                height: entry.height,
+                caption: captionForFile,
+                fileBytes,
+              },
+              status: 'pending',
+              attempts: 0,
+              createdAt: sentAt,
+            };
+            await enqueueOutboxMessage(outboxEntry);
           }
           sentMediaMessageCount++;
         }

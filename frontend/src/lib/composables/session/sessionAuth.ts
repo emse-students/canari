@@ -114,6 +114,18 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     isGroupHealthy: (groupId: string) => ctx.ensureMls().getLocalGroups().includes(groupId),
     markDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
+    uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {
+      const { MediaService } = await import('$lib/media');
+      const token = await getToken();
+      const bytes = media.fileBytes ?? new Uint8Array(0);
+      const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
+        type: media.mimeType,
+      });
+      return new MediaService().encryptAndUpload(file, token, {
+        width: media.width,
+        height: media.height,
+      });
+    },
   };
 }
 

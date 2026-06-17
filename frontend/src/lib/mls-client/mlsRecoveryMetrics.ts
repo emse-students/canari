@@ -36,6 +36,10 @@ export type MlsMetricEvent =
       conversationId: string;
     }
   | {
+      kind: 'outbox_upload_attempt';
+      conversationId: string;
+    }
+  | {
       kind: 'outbox_flush_success';
       conversationId: string;
       /** Compose-to-sent latency in milliseconds. */

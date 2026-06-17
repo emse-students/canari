@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import { createOutbox, type OutboxDeps } from './outbox';
+import { MediaKind } from '$lib/proto/codec';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
@@ -205,6 +206,81 @@ describe('outbox flusher', () => {
     expect(e.attempts).toBe(1);
     expect(e.nextAttemptAt).toBeGreaterThan(Date.now());
     expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+  });
+
+  it('uploads a queued media, sends it, then swaps the placeholder for the real attachment', async () => {
+    const mediaEntry: OutboxEntry = {
+      id: 'mm',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_IMAGE,
+        mimeType: 'image/png',
+        size: 3,
+        fileName: 'a.png',
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([mediaEntry]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue({
+      type: 'image',
+      mediaId: 'mid-1',
+      key: 'aa',
+      iv: 'bb',
+      mimeType: 'image/png',
+      size: 3,
+      fileName: 'a.png',
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['mm'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, uploadMedia, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm');
+    expect(storage._map.has('mm')).toBe(false);
+    // Placeholder content swapped for the real attachment envelope (now carries the mediaId).
+    expect(conversations.get('g1')!.messages[0].content).toContain('mid-1');
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+  });
+
+  it('does not re-upload media on a retry once uploadedRef is stored', async () => {
+    const mediaEntry: OutboxEntry = {
+      id: 'mm',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_IMAGE,
+        mimeType: 'image/png',
+        size: 3,
+        fileName: 'a.png',
+        uploadedRef: { mediaId: 'mid-1', key: 'aa', iv: 'bb' },
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([mediaEntry]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['mm'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, uploadMedia, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm');
+    expect(storage._map.has('mm')).toBe(false);
   });
 
   it('reassign re-keys queued entries to the successor group', async () => {
