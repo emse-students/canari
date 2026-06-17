@@ -629,9 +629,10 @@ async function handleKnownGroup({
       deps.onMlsFatalError?.('oom');
       return true;
     }
-    if (err.includes('GAP_QUEUED')) {
-      // Tauri : message bufferisé en SQLite. Un gap d'epoch se résorbe normalement
-      // quand les commits manqués arrivent. Mais sur un groupe qu'on détient déjà,
+    if (err.includes('GAP_QUEUED') || err.includes('epoch gap')) {
+      // Tauri : message bufferisé en SQLite (`GAP_QUEUED`). Web WASM : erreur directe
+      // `epoch gap [msg_epoch=…, group_epoch=…]`. Un gap se résorbe normalement quand
+      // les commits manqués arrivent. Mais sur un groupe qu'on détient déjà,
       // si les commits ne reviennent jamais (purgés serveur), le groupe reste figé en
       // retard et tous les messages futurs échouent en boucle - le SYNC_WATCHDOG ne le
       // couvre pas (il ne vise que les groupes absents du WASM). Au-delà du seuil, on

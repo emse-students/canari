@@ -92,6 +92,10 @@ export async function requestReAdd(
         `[READD] ${groupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}… déjà en WASM - migration`
       );
       await migrateConversation(groupId, terminalId, deps).catch(() => {});
+    } else {
+      deps.log(
+        `[READD] ${terminalId.slice(0, 8)}… déjà en WASM - skip (appeler forgetGroup avant recovery si hors-sync)`
+      );
     }
     return;
   }

@@ -424,6 +424,42 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
+  it('epoch gap web (WASM) persistant au-delà du seuil → forget + escalade requestReAdd', async () => {
+    vi.useFakeTimers();
+    const gid = 'c4444444-4444-4444-8444-444444444444';
+    const deps = baseDeps({
+      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: true })]]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=13, group_epoch=7]'));
+    mls.forgetGroup = vi.fn();
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+    expect(ok1).toBe(true);
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+    expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(31_000);
+    await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    vi.useRealTimers();
+  });
+
   it('GAP_QUEUED persistant au-delà du seuil → forget + escalade requestReAdd', async () => {
     vi.useFakeTimers();
     const gid = 'b3333333-3333-4333-8333-333333333333';
