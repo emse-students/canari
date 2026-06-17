@@ -10,11 +10,14 @@ import {
   reboot,
   migrateConversation,
   RECOVERY_TIMEOUT_MS,
+  REBOOT_DEADLINE_MS,
 } from './recovery';
 import { saveMlsState } from '$lib/utils/hex';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
+  // Reboot deadline markers persist in localStorage across tests - reset between cases.
+  if (typeof localStorage !== 'undefined') localStorage.clear();
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -102,14 +105,31 @@ describe('requestReAdd', () => {
     expect(timers.size).toBe(1);
   });
 
-  it(`après ${RECOVERY_TIMEOUT_MS / 1000}s sans Welcome → appelle reboot`, async () => {
+  it(`après ${RECOVERY_TIMEOUT_MS / 1000}s sans Welcome → renvoie welcome_request, pas de reboot (échéance non atteinte)`, async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
+    await vi.advanceTimersByTimeAsync(RECOVERY_TIMEOUT_MS);
 
-    // reboot appelle claimGroupSuccessor et createRemoteGroup
+    // Échéance persistante de 1h non atteinte → pas de reboot, juste un nouveau welcome_request.
+    expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('reboot seulement une fois REBOOT_DEADLINE_MS écoulé en temps réel persistant', async () => {
+    const deps = makeDeps();
+    deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    // Simule un groupe non-prêt depuis plus d'1h (échéance posée lors d'une session précédente).
+    localStorage.setItem(
+      'mls_not_ready_since:user-a:g1',
+      String(Date.now() - REBOOT_DEADLINE_MS - 1_000)
+    );
+
+    await requestReAdd('g1', deps, timers);
     await vi.advanceTimersByTimeAsync(RECOVERY_TIMEOUT_MS);
 
     expect(deps.mlsService.createRemoteGroup).toHaveBeenCalled();

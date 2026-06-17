@@ -131,6 +131,7 @@ export async function requestReAdd(
 
   // Lignée supprimée sans successeur utilisable : abandon (pas de reboot possible).
   if (terminalMeta?.deletedAt) {
+    clearGroupNotReady(deps.userId, terminalId);
     const convo = deps.conversations.get(terminalId) ?? deps.conversations.get(groupId);
     if (!convo || (convo.deletedRemotely && !convo.isReady)) return;
     deps.log(`[READD] ${terminalId.slice(0, 8)}… supprimé sans successeur - abandon`);

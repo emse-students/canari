@@ -4,6 +4,7 @@
  */
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { checkGroupSuccessors, requestReAdd, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
+import { clearGroupNotReady } from '$lib/utils/chat/rebootDeadline';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { getIsTabLeader } from '$lib/utils/chat/connection';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
@@ -61,6 +62,9 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       // pendant la session, le watchdog doit quand même déclencher la recovery.
       if (localGroups.has(id)) {
         notReadySince.delete(id);
+        // Groupe sain : efface l'échéance persistante de reboot (évite qu'une clé périmée
+        // déclenche un reboot immédiat si le groupe redevient non-prêt plus tard).
+        clearGroupNotReady(recoveryDeps.userId, id);
         continue;
       }
       // Channels utilisent AES-GCM, pas MLS - jamais en recovery MLS.
