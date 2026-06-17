@@ -39,7 +39,7 @@ export interface OutboxController {
   /** Persist a queued message and schedule a flush. */
   enqueue: (entry: OutboxEntry) => Promise<void>;
   /** Drain the outbox (tab-leader gated by the caller). Coalesces concurrent calls. */
-  flush: () => void;
+  flush: () => Promise<void>;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
   applyPendingStatuses: () => Promise<void>;
   /** Re-key queued entries from a dead group to its successor (MLS reboot G -> S). */
@@ -260,8 +260,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       runFlush();
     },
 
-    flush(): void {
-      runFlush();
+    flush(): Promise<void> {
+      return runFlush();
     },
 
     async applyPendingStatuses(): Promise<void> {
@@ -317,7 +317,7 @@ export function getOutbox(): OutboxController | null {
 
 /** Trigger a flush on the active controller (no-op when none). */
 export function flushOutbox(): void {
-  active?.flush();
+  void active?.flush();
 }
 
 /** Enqueue a message on the active controller (no-op when none). */

@@ -17,8 +17,13 @@ export enum AssociationPermissionFlag {
   MANAGE_FORMS = 1 << 4,
   /** Validate, modify and delete events from any association (BDE only). */
   VALIDATE_EVENTS = 1 << 5,
-  /** Create a new association without global-admin approval (BDE only). */
-  CREATE_ASSO = 1 << 6,
+  /**
+   * Create new associations and administer ANY association as if a member with
+   * full management rights - dashboard, members, documents, forms, products
+   * (BDE only). Does not include deleting an association or toggling its BDE
+   * status, which stay global-admin-only.
+   */
+  MANAGE_ASSO = 1 << 6,
   /** Delete posts, mute users and review content reports (BDE only). */
   MODERATE = 1 << 7,
   /** Create, edit and delete boutique products. */
@@ -36,7 +41,7 @@ export enum AssociationPermissionFlag {
  * - MANAGE_STRIPE_CONNECT (1 << 9): sensitive financial flag, granted separately via
  *   ASSOCIATION_ADMIN_PRESET in the frontend or via migration 004. Admins who should
  *   manage Stripe onboarding must be explicitly granted this flag.
- * - VALIDATE_EVENTS / CREATE_ASSO / MODERATE: BDE-only flags with no effect in
+ * - VALIDATE_EVENTS / MANAGE_ASSO / MODERATE: BDE-only flags with no effect in
  *   non-BDE associations (guarded by `a.isBDE = true` in service queries).
  */
 export const ALL_CORE_FLAGS =

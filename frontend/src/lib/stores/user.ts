@@ -2,7 +2,11 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { setCurrentUserId, setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 
-export { currentUserId, globalAdminState as isGlobalAdmin } from '$lib/stores/userState.svelte';
+export {
+  currentUserId,
+  globalAdminState as isGlobalAdmin,
+  associationSuperAdminState as isAssociationSuperAdmin,
+} from '$lib/stores/userState.svelte';
 
 /** Full profile returned by the `/api/users/me` and `/api/users/:id` endpoints. */
 export interface UserProfile {

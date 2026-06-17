@@ -909,6 +909,16 @@ export class AssociationsService {
   }
 
   /**
+   * Returns true if userId is a cross-association super-admin: a member of a BDE
+   * association holding `MANAGE_ASSO`. Such a user may administer any association
+   * (members, documents, forms, products) as if a full local admin, mirroring the
+   * `X-Global-Admin` escape hatch.
+   */
+  async isAssociationSuperAdmin(userId: string): Promise<boolean> {
+    return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO);
+  }
+
+  /**
    * Pending calendar rows the caller may see (global admin / BDE admin: all; else own assos).
    * Any member of an association (permissions > 0) sees pending events of their own asso.
    */

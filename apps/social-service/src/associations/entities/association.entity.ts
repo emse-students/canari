@@ -42,7 +42,7 @@ export class Association {
 
   /**
    * When true, members of this association may use BDE-only flags
-   * (VALIDATE_EVENTS, CREATE_ASSO, MODERATE). Set only by global admins.
+   * (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE). Set only by global admins.
    */
   @Column({ default: false })
   isBDE: boolean;

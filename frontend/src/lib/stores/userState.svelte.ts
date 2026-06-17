@@ -38,3 +38,21 @@ export function globalAdminState(): boolean {
 export function setGlobalAdmin(value: boolean): void {
   _isAdmin = value;
 }
+
+let _isAssocSuperAdmin = $state<boolean>(false);
+
+/**
+ * Returns `true` when the current user is a cross-association super-admin:
+ * a member of a BDE association holding `MANAGE_ASSO`. Such a user may administer
+ * any association as if a local admin. Populated lazily by
+ * `ensureAssociationSuperAdmin()` (the status depends on social-service data not
+ * known at login).
+ */
+export function associationSuperAdminState(): boolean {
+  return _isAssocSuperAdmin;
+}
+
+/** Updates the reactive association-super-admin flag. */
+export function setAssociationSuperAdmin(value: boolean): void {
+  _isAssocSuperAdmin = value;
+}

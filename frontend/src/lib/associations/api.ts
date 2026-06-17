@@ -1,6 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
+import { setAssociationSuperAdmin } from '$lib/stores/userState.svelte';
 
 /**
  * Discord-style permission flags for association members (mirrors the backend enum).
@@ -13,7 +14,7 @@ export enum AssociationPermissionFlag {
   MANAGE_DOCUMENTS = 1 << 3,
   MANAGE_FORMS = 1 << 4,
   VALIDATE_EVENTS = 1 << 5,
-  CREATE_ASSO = 1 << 6,
+  MANAGE_ASSO = 1 << 6,
   MODERATE = 1 << 7,
   MANAGE_PRODUCTS = 1 << 8,
   MANAGE_STRIPE_CONNECT = 1 << 9,
@@ -470,6 +471,35 @@ export async function getCalendarEventLinkedToForm(formId: string): Promise<{
 
 export async function listMyAssociations(): Promise<Association[]> {
   return request<Association[]>('/api/associations/me/list');
+}
+
+/** Session cache for the super-admin probe; deduplicates concurrent callers. */
+let superAdminProbe: Promise<boolean> | null = null;
+
+/**
+ * Determines whether the current user is a cross-association super-admin (member
+ * of a BDE association holding `MANAGE_ASSO`) and publishes it to the reactive
+ * user state so `isAssociationSuperAdmin()` reflects it. Result is cached for the
+ * session; pass `force` to re-probe (e.g. after a permission change).
+ */
+export async function ensureAssociationSuperAdmin(force = false): Promise<boolean> {
+  if (force) superAdminProbe = null;
+  if (!superAdminProbe) {
+    superAdminProbe = listMyAssociations()
+      .then((assos) => {
+        const ok = assos.some(
+          (a) =>
+            a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
+        );
+        setAssociationSuperAdmin(ok);
+        return ok;
+      })
+      .catch(() => {
+        setAssociationSuperAdmin(false);
+        return false;
+      });
+  }
+  return superAdminProbe;
 }
 
 export async function listMyFollowedAssociations(): Promise<

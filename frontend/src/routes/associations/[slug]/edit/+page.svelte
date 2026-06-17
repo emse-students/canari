@@ -12,11 +12,12 @@
     isStripeConnectReady,
     type StripeConnectStatusResult,
     hasPermissionFlag,
+    ensureAssociationSuperAdmin,
     AssociationPermissionFlag,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     Users,
@@ -49,6 +50,8 @@
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
+  /** BDE super-admin (MANAGE_ASSO): may administer this association without being a member. */
+  let isSuperAdminUser = $derived(isAssociationSuperAdmin());
 
   let stripeLoading = $state(false);
   let stripeDashboardLoading = $state(false);
@@ -71,6 +74,7 @@
 
   let canManageDocuments = $derived(
     isGlobalAdminUser ||
+      isSuperAdminUser ||
       (!!myMembership &&
         hasPermissionFlag(
           myMembership.permissions ?? 0,
@@ -80,18 +84,21 @@
 
   let canManageMembers = $derived(
     isGlobalAdminUser ||
+      isSuperAdminUser ||
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_MEMBERS))
   );
 
   let canManageProducts = $derived(
     isGlobalAdminUser ||
+      isSuperAdminUser ||
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_PRODUCTS))
   );
 
   let canManageForms = $derived(
     isGlobalAdminUser ||
+      isSuperAdminUser ||
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_FORMS))
   );
@@ -150,7 +157,9 @@
       }
       const uid = currentUserId();
       const mine = members.find((m) => m.userId === uid);
-      const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
+      // Await the BDE super-admin probe so the access decision is deterministic.
+      const superAdmin = await ensureAssociationSuperAdmin();
+      const canEdit = isGlobalAdmin() || superAdmin || (!!mine && mine.isAdmin);
       if (!canEdit) {
         await goto(`/associations/${encodeURIComponent(slug)}`);
         return;

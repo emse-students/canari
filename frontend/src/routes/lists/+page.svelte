@@ -38,11 +38,11 @@
   const activeLists = $derived(lists.filter((a) => !a.archived));
   const archivedLists = $derived(lists.filter((a) => a.archived));
 
-  /** Lists are created by global admins or BDE members holding CREATE_ASSO. */
+  /** Lists are created by global admins or BDE members holding MANAGE_ASSO. */
   const canCreate = $derived(
     isGlobalAdmin() ||
       myAssociations.some(
-        (a) => a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.CREATE_ASSO)
+        (a) => a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
       )
   );
 </script>

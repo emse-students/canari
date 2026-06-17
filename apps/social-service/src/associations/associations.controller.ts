@@ -318,11 +318,11 @@ export class AssociationsController {
     return this.followsService.unfollowAssociation(userId, id);
   }
 
-  // ── Global Admin OR BDE CREATE_ASSO ──────────────────────────────────────
+  // ── Global Admin OR BDE MANAGE_ASSO ──────────────────────────────────────
 
   /**
    * Creates a new association.
-   * Allowed for global admins, or BDE members holding the CREATE_ASSO flag.
+   * Allowed for global admins, or BDE members holding the MANAGE_ASSO flag.
    */
   @UseGuards(NginxAuthGuard)
   @Post()
@@ -333,13 +333,13 @@ export class AssociationsController {
   ) {
     const isGlobalAdmin = ga === 'true';
     if (!isGlobalAdmin) {
-      // isUserBdeAdmin checks VALIDATE_EVENTS; CREATE_ASSO is a separate flag
+      // isUserBdeAdmin checks VALIDATE_EVENTS; MANAGE_ASSO is a separate flag
       const canCreateAsso = await this.service.callerHasAnyBdeFlag(
         userId,
-        AssociationPermissionFlag.CREATE_ASSO
+        AssociationPermissionFlag.MANAGE_ASSO
       );
       if (!canCreateAsso) {
-        throw new ForbiddenException('Global admin or BDE CREATE_ASSO permission required');
+        throw new ForbiddenException('Global admin or BDE MANAGE_ASSO permission required');
       }
     }
     return this.service.create(dto, userId);

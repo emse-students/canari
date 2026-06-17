@@ -1,0 +1,222 @@
+import { describe, it, expect, vi } from 'vitest';
+import { SvelteMap } from 'svelte/reactivity';
+import { createOutbox, type OutboxDeps } from './outbox';
+import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
+import type { OutboxEntry } from '$lib/db';
+import type { Conversation } from '$lib/types';
+
+function textEntry(id: string, conversationId: string, sentAt: number): OutboxEntry {
+  return {
+    id,
+    conversationId,
+    sentAt,
+    kind: 'text',
+    text: `hello ${id}`,
+    status: 'pending',
+    attempts: 0,
+    createdAt: sentAt,
+  };
+}
+
+/** Minimal in-memory IStorage covering the outbox + saveMessage surface the flusher touches. */
+function makeStorage(seed: OutboxEntry[] = []) {
+  const map = new Map<string, OutboxEntry>(seed.map((e) => [e.id, structuredClone(e)]));
+  return {
+    _map: map,
+    saveMessage: vi.fn().mockResolvedValue(undefined),
+    saveOutboxEntry: vi.fn(async (e: OutboxEntry) => {
+      map.set(e.id, structuredClone(e));
+    }),
+    getOutboxEntries: vi.fn(async () =>
+      [...map.values()].sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id))
+    ),
+    getOutboxEntriesForConversation: vi.fn(async (cid: string) =>
+      [...map.values()].filter((e) => e.conversationId === cid)
+    ),
+    updateOutboxEntry: vi.fn(async (id: string, patch: Partial<OutboxEntry>) => {
+      const e = map.get(id);
+      if (e) map.set(id, { ...e, ...patch });
+    }),
+    deleteOutboxEntry: vi.fn(async (id: string) => {
+      map.delete(id);
+    }),
+    reassignOutboxConversation: vi.fn(async (from: string, to: string) => {
+      for (const e of map.values()) if (e.conversationId === from) e.conversationId = to;
+    }),
+  } as any;
+}
+
+/** mlsService stub: a group is "alive" by default; `meta` overrides per-group metadata. */
+function makeMls(opts: { meta?: (id: string) => unknown; send?: () => Promise<void> } = {}) {
+  return {
+    getLocalGroups: vi.fn(() => []),
+    getGroupMeta: vi.fn(async (id: string) =>
+      opts.meta
+        ? opts.meta(id)
+        : { groupId: id, name: '', isGroup: true, successorId: null, deletedAt: null }
+    ),
+    sendMessage: vi.fn(opts.send ?? (async () => {})),
+  } as any;
+}
+
+function convoWith(id: string, messageIds: string[]): Conversation {
+  return {
+    id,
+    name: id,
+    contactName: id,
+    isReady: false,
+    mlsStateHex: null,
+    messages: messageIds.map((mid) => ({
+      id: mid,
+      senderId: 'u',
+      content: 'x',
+      timestamp: new Date(1000),
+      isOwn: true,
+      status: 'pending' as const,
+    })),
+  };
+}
+
+function makeDeps(over: Partial<OutboxDeps> & { mlsService: any; storage: any }): OutboxDeps {
+  return {
+    userId: 'u',
+    pin: 'pin',
+    conversations: new SvelteMap<string, Conversation>(),
+    log: () => {},
+    requestReAdd: vi.fn().mockResolvedValue(undefined),
+    isGroupHealthy: () => true,
+    markDeletedRemotely: vi.fn(),
+    ...over,
+  } as OutboxDeps;
+}
+
+describe('outboxCodec', () => {
+  it('round-trips a text entry through clear columns + encrypted payload', () => {
+    const e = textEntry('m1', 'g1', 123);
+    const decoded = decodeOutboxEntry(outboxClearColumns(e), encodeOutboxSensitive(e));
+    expect(decoded).toMatchObject({
+      id: 'm1',
+      conversationId: 'g1',
+      sentAt: 123,
+      kind: 'text',
+      text: 'hello m1',
+    });
+  });
+
+  it('round-trips media file bytes via base64', () => {
+    const bytes = new Uint8Array([1, 2, 3, 250, 255]);
+    const e: OutboxEntry = {
+      id: 'm2',
+      conversationId: 'g1',
+      sentAt: 1,
+      kind: 'media',
+      media: { kind: 1, mimeType: 'image/png', size: 5, fileBytes: bytes },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 1,
+    };
+    const decoded = decodeOutboxEntry(outboxClearColumns(e), encodeOutboxSensitive(e));
+    expect(Array.from(decoded.media!.fileBytes!)).toEqual([1, 2, 3, 250, 255]);
+  });
+});
+
+describe('outbox flusher', () => {
+  it('sends queued entries in sentAt order then deletes them', async () => {
+    const storage = makeStorage([textEntry('m2', 'g1', 200), textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['m1', 'm2'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+
+    const sentIds = mlsService.sendMessage.mock.calls.map((c: any[]) => c[2]);
+    expect(sentIds).toEqual(['m1', 'm2']);
+    expect(storage._map.size).toBe(0);
+    expect(conversations.get('g1')!.messages.every((m) => m.status === 'sent')).toBe(true);
+  });
+
+  it('does not send into an unhealthy group; emits welcome_request and keeps the entry pending', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, requestReAdd, isGroupHealthy: () => false })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    expect(storage._map.has('m1')).toBe(true);
+  });
+
+  it('marks a deleted-lineage entry as a permanent error', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      meta: (id) => ({
+        groupId: id,
+        name: '',
+        isGroup: true,
+        successorId: null,
+        deletedAt: '2020-01-01',
+      }),
+    });
+    const markDeletedRemotely = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        markDeletedRemotely,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+  });
+
+  it('keeps the entry pending and backs off on a transient send failure', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      send: async () => {
+        throw new Error('WrongEpoch');
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+
+    const e = storage._map.get('m1');
+    expect(e).toBeDefined();
+    expect(e.attempts).toBe(1);
+    expect(e.nextAttemptAt).toBeGreaterThan(Date.now());
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+  });
+
+  it('reassign re-keys queued entries to the successor group', async () => {
+    const storage = makeStorage([textEntry('m1', 'gOld', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>();
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, isGroupHealthy: () => false })
+    );
+
+    await outbox.reassign('gOld', 'gNew');
+
+    expect(storage._map.get('m1')!.conversationId).toBe('gNew');
+  });
+});

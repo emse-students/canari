@@ -7,9 +7,11 @@ import {
   AssociationPermissionFlag,
 } from '../entities/association-member.entity';
 import { PERM_FLAG_KEY } from './association-role.guard';
+import { AssociationsService } from '../associations.service';
 
 /**
- * Allows the request if `X-Global-Admin` is true, else requires association membership
+ * Allows the request if `X-Global-Admin` is true or the caller is a cross-association
+ * super-admin (BDE member with `MANAGE_ASSO`), else requires association membership
  * with the flag declared via `@SetMetadata(PERM_FLAG_KEY, ...)` (default: 0 = any member).
  */
 @Injectable()
@@ -17,7 +19,8 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     @InjectRepository(AssociationMember)
-    private readonly memberRepo: Repository<AssociationMember>
+    private readonly memberRepo: Repository<AssociationMember>,
+    private readonly associationsService: AssociationsService
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -33,6 +36,11 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
     }
 
     if (request.headers['x-global-admin'] === 'true') {
+      return true;
+    }
+
+    // BDE super-admin (MANAGE_ASSO) administers any association like a global admin.
+    if (await this.associationsService.isAssociationSuperAdmin(userId)) {
       return true;
     }
 

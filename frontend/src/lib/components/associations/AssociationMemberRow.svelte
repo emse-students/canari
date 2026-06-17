@@ -21,7 +21,7 @@
       label: 'Gérer Stripe Connect',
     },
     { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: 'Valider les événements' },
-    { flag: AssociationPermissionFlag.CREATE_ASSO, label: 'Créer des associations' },
+    { flag: AssociationPermissionFlag.MANAGE_ASSO, label: 'Gérer les associations' },
     { flag: AssociationPermissionFlag.MODERATE, label: 'Modérer' },
   ];
 
