@@ -14,7 +14,7 @@ export interface ConnectionDeps {
   log: (msg: string) => void;
   /**
    * Appelé pour chaque groupe absent du WASM au moment de la connexion.
-   * Doit envoyer un `welcome_request` ET armer un timer de reboot (30s).
+   * Doit envoyer un `welcome_request` ET armer un timer de reboot (60s).
    * Si absent, fallback sur `sendWelcomeRequest` seul (pas de timer - moins fiable).
    */
   onGroupMissing?: (groupId: string) => Promise<void>;
@@ -93,7 +93,7 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
  *
  * Passe unique sur getUserGroups (plus de Bloc1/Bloc2 distincts).
  * Pour chaque groupe actif sur le serveur sans état WASM local :
- *   - si `onGroupMissing` est fourni : l'appelle (envoie welcome_request + arme timer reboot 30s).
+ *   - si `onGroupMissing` est fourni : l'appelle (envoie welcome_request + arme timer reboot 60s).
  *   - sinon : sendWelcomeRequest seul (le watchdog useChatSession prend le relai si disponible).
  *
  * Successeurs : si un groupe a un successeur, l'état WASM de l'ancien est purgé.
@@ -192,7 +192,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       if (targetEntry?.deletedAt && !targetEntry?.successorId) {
         // Successeur terminal soft-deleted sans successeur.
         // deleteGroup a effacé dm_group_members → le serveur ne peut forwarder personne.
-        // On déclenche quand même onGroupMissing(targetId) : requestReAdd arme un timer 30s
+        // On déclenche quand même onGroupMissing(targetId) : requestReAdd arme un timer 60s
         // qui lance reboot(targetId) → findAncestorWithMembers remonte la chaîne jusqu'à
         // g.groupId dont dm_group_members est intact (claimSuccessor ne le purge pas).
         // Le simple watchdog était insuffisant : il aurait lancé reboot(g.groupId)

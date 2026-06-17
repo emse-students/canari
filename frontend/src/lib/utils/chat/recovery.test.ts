@@ -134,7 +134,7 @@ describe('requestReAdd', () => {
     expect(timers.has('live')).toBe(true);
   });
 
-  it('Welcome reçu avant 30s → cancelReAdd annule le timer, pas de reboot', async () => {
+  it('Welcome reçu avant 60s → cancelReAdd annule le timer, pas de reboot', async () => {
     const deps = makeDeps();
     // Au moment du timeout, le groupe est dans le WASM (Welcome reçu entre-temps)
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue(['g1']);

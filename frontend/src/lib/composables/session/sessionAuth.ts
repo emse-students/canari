@@ -49,7 +49,6 @@ import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleWelcomeRequest, processPendingInvitations } from '$lib/utils/chat/actions';
-import { cancelReAdd } from '$lib/utils/chat/recovery';
 import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import {
   getCallSystemMessageContext,
@@ -526,7 +525,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           );
         }
       },
-      cancelGroupRecovery: (groupId) => cancelReAdd(groupId, ctx.connectionRecoveryTimers),
+      recoveryTimers: ctx.connectionRecoveryTimers,
       log: cb.log,
     });
 

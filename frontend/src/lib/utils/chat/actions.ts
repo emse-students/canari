@@ -103,7 +103,7 @@ export async function processPendingInvitations(params: {
             }
           } else {
             // Groupe présent sur le serveur mais absent du WASM local → welcome_request.
-            // Le watchdog de useChatSession escalade vers reboot après 30s si pas de réponse.
+            // Le watchdog de useChatSession escalade vers reboot après 60s si pas de réponse.
             mlsService.sendWelcomeRequest(resolved).catch(() => {});
             log(
               `[PENDING] Groupe ${origGroupId} absent localement → welcome_request envoyé pour ${resolved}`

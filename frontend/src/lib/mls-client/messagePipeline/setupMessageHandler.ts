@@ -72,8 +72,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     { msgs: PendingMsg[]; timer: ReturnType<typeof setTimeout> }
   >();
 
-  // Timers de recovery par groupe (deduplique les requestReAdd dans une session)
-  const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Timers de recovery par groupe - map partagée avec la couche connexion
+  // (connectionRecoveryTimers) : un seul timer armé par groupe quelle que soit la source.
+  const recoveryTimers = deps.recoveryTimers;
 
   // Timestamp (ms) du 1er gap d'epoch non résolu par groupe. Effacé dès qu'un message
   // se déchiffre (gap résorbé). Sert à escalader un groupe durablement forké-en-retard.
@@ -200,7 +201,6 @@ async function handleWelcome({
       `[WELCOME] Lignée ${(groupId ?? '').slice(0, 8)}…→${terminalId.slice(0, 8)}… supprimée - Welcome ignoré`
     );
     cancelReAdd(groupId ?? '', recoveryTimers);
-    deps.cancelGroupRecovery?.(groupId ?? '');
     return true;
   }
 
@@ -209,7 +209,6 @@ async function handleWelcome({
     const from = (groupId ?? '').slice(0, 8);
     const to = terminalId.slice(0, 8);
     cancelReAdd(groupId ?? '', recoveryTimers);
-    deps.cancelGroupRecovery?.(groupId ?? '');
     if (mlsService.getLocalGroups().includes(terminalId)) {
       log(`[WELCOME] ${from}… → ${to}… déjà dans WASM - Welcome ignoré`);
     } else {
@@ -229,7 +228,6 @@ async function handleWelcome({
   // durablement (group_epoch figé < msg_epoch). On traite donc le Welcome comme idempotent.
   if (mlsService.getLocalGroups().includes(terminalId)) {
     cancelReAdd(terminalId, recoveryTimers);
-    deps.cancelGroupRecovery?.(terminalId);
     noMatchKpFailures.delete(terminalId);
     const convo = deps.conversations.get(terminalId);
     if (convo && !convo.isReady) {
@@ -260,7 +258,6 @@ async function handleWelcome({
         pendingBuffer.delete(joinedGroupId);
       }
       cancelReAdd(joinedGroupId, recoveryTimers);
-      deps.cancelGroupRecovery?.(joinedGroupId); // annule aussi le timer armé par onGroupMissing
       noMatchKpFailures.delete(joinedGroupId); // Welcome traité - reset l'escalade NoMatchingKeyPackage
 
       // Persister immédiatement après Welcome (epoch initialisée)

@@ -79,6 +79,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       historyBaseUrl: 'https://hist',
       conversations,
       messageReactions: createTestMessageReactions(),
+      recoveryTimers: new Map(),
       getSelectedContact: () => null,
       setSelectedContact: vi.fn(),
       saveConversation: vi.fn().mockResolvedValue(undefined),

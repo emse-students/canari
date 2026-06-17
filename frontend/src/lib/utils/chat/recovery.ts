@@ -14,6 +14,13 @@ import { resolveTerminalGroup } from './groupSyncEligibility';
 export const RECOVERY_TIMEOUT_MS = 60_000;
 
 /**
+ * Groupes dont un reboot est en cours. Source de vérité unique partagée par tous les
+ * déclencheurs (timer requestReAdd, SYNC_WATCHDOG, checkGroupSuccessors) pour garantir
+ * qu'un seul pipeline de reboot tourne par groupe à un instant donné.
+ */
+const rebootsInFlight = new Set<string>();
+
+/**
  * Dépendances minimales requises par les fonctions de recovery.
  * Sous-ensemble de MessageHandlerDeps - les deux sont compatibles.
  */
@@ -189,7 +196,7 @@ export async function reboot(
   deps: RecoveryDeps,
   timers: Map<string, ReturnType<typeof setTimeout>> = new Map()
 ): Promise<void> {
-  const { mlsService, userId, pin, log } = deps;
+  const { mlsService, log } = deps;
 
   // Guard : si le groupe est déjà dans le WASM local, la recovery est inutile.
   // Protège contre les races entre un Welcome tardif et les timers de reboot (requestReAdd,
@@ -198,6 +205,33 @@ export async function reboot(
     log(`[REBOOT] ${groupId.slice(0, 8)}… déjà dans WASM - annulé`);
     return;
   }
+
+  // Exclusion mutuelle par groupe : deux déclencheurs concurrents (timer requestReAdd qui
+  // expire pendant que le SYNC_WATCHDOG décompte) créaient chacun un candidat successeur. Le
+  // CAS en élimine un, mais le perdant a déjà pollué le serveur et lancé un joinSuccessor pour
+  // rien. Le verrou garantit un seul pipeline par groupe.
+  if (rebootsInFlight.has(groupId)) {
+    log(`[REBOOT] ${groupId.slice(0, 8)}… déjà en cours - ignoré`);
+    return;
+  }
+  rebootsInFlight.add(groupId);
+  try {
+    await performReboot(groupId, deps, timers);
+  } finally {
+    rebootsInFlight.delete(groupId);
+  }
+}
+
+/**
+ * Corps de la résolution de fork. Toujours invoqué via {@link reboot}, qui garantit
+ * l'exclusion mutuelle par groupe et le guard "déjà présent dans le WASM".
+ */
+async function performReboot(
+  groupId: string,
+  deps: RecoveryDeps,
+  timers: Map<string, ReturnType<typeof setTimeout>>
+): Promise<void> {
+  const { mlsService, userId, pin, log } = deps;
 
   log(`[REBOOT] Lancement pour groupe ${groupId.slice(0, 8)}…`);
 
@@ -246,6 +280,19 @@ export async function reboot(
       mlsService.forgetGroup(candidateId);
     }
     throw e;
+  }
+
+  // Second look anti-faux-positif : la création du candidat (étape 3) a enchaîné plusieurs
+  // aller-retours réseau ; un Welcome tardif a pu rejoindre le groupe original entre-temps.
+  // Le CAS qui suit soft-delete l'original de façon IRRÉVERSIBLE - on s'abstient et on jette
+  // le candidat orphelin si le groupe est redevenu sain dans le WASM local.
+  if (mlsService.getLocalGroups().includes(groupId)) {
+    log(
+      `[REBOOT] ${groupId.slice(0, 8)}… revenu dans WASM avant CAS - candidat ${candidateId.slice(0, 8)}… annulé`
+    );
+    await mlsService.deleteGroupOnServer(candidateId).catch(() => {});
+    mlsService.forgetGroup(candidateId);
+    return;
   }
 
   // Étape 4 : CAS - premier arrivé premier servi.
