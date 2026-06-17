@@ -26,6 +26,24 @@ export type MlsMetricEvent =
       platform: 'tauri';
       groupId: string;
       epoch: number;
+    }
+  | {
+      kind: 'outbox_pending_count';
+      count: number;
+    }
+  | {
+      kind: 'outbox_flush_attempt';
+      conversationId: string;
+    }
+  | {
+      kind: 'outbox_flush_success';
+      conversationId: string;
+      /** Compose-to-sent latency in milliseconds. */
+      latencyMs: number;
+    }
+  | {
+      kind: 'outbox_permanent_error';
+      conversationId: string;
     };
 
 function isMetricsVerbose(): boolean {

@@ -368,6 +368,7 @@
   "msg_supprimer": "Delete",
   "msg_modifie": "(edited)",
   "msg_envoi": "Sending…",
+  "msg_en_attente": "Pending…",
   "msg_echec": "Failed",
   "msg_lu_par": "Read by",
   "msg_envoye_a": "Sent at",

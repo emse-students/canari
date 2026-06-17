@@ -111,7 +111,7 @@
     /** Active search term for in-message text highlighting. */
     searchTerm?: string;
     /** Delivery status of an outbound message; controls the status indicator icon. */
-    status?: 'sending' | 'sent' | 'error';
+    status?: 'pending' | 'sending' | 'sent' | 'error';
     /** When true, enables mobile-specific interactions: long press toolbar, double-tap heart. */
     isMobile?: boolean;
   }

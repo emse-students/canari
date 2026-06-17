@@ -1,0 +1,320 @@
+import type { SvelteMap } from 'svelte/reactivity';
+import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { IStorage, OutboxEntry } from '$lib/db';
+import type { ChatMessage, Conversation } from '$lib/types';
+import { encodeAppMessage, mkText, mkReply } from '$lib/proto/codec';
+import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
+import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
+import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
+
+/**
+ * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
+ * Indexed by attempt count, clamped to the last value.
+ */
+const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+/** Returns the backoff delay for the given (post-increment) attempt count. */
+function backoffFor(attempts: number): number {
+  return BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1)];
+}
+
+/** Dependencies driving the outbox flusher. Built once per session and registered globally. */
+export interface OutboxDeps {
+  mlsService: IMlsService;
+  storage: IStorage | null;
+  userId: string;
+  pin: string;
+  conversations: SvelteMap<string, Conversation>;
+  log: (msg: string) => void;
+  /** Emit a non-destructive welcome_request for a group missing from the WASM. */
+  requestReAdd: (groupId: string) => Promise<void>;
+  /** True when the group can be sent into (in the WASM, not in an unresolved epoch gap). */
+  isGroupHealthy: (groupId: string) => boolean;
+  /** Mark a conversation deletedRemotely (banner) when its whole lineage is gone. */
+  markDeletedRemotely?: (groupId: string) => void;
+}
+
+/** Public surface of the per-session outbox controller. */
+export interface OutboxController {
+  /** Persist a queued message and schedule a flush. */
+  enqueue: (entry: OutboxEntry) => Promise<void>;
+  /** Drain the outbox (tab-leader gated by the caller). Coalesces concurrent calls. */
+  flush: () => void;
+  /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
+  applyPendingStatuses: () => Promise<void>;
+  /** Re-key queued entries from a dead group to its successor (MLS reboot G -> S). */
+  reassign: (fromId: string, toId: string) => Promise<void>;
+  /** Stop the internal backoff timer. */
+  dispose: () => void;
+}
+
+/** Result of attempting to flush a single entry. */
+type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
+
+/**
+ * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
+ * send time (so epoch changes are transparent), resolves the terminal group (so a rebooted group
+ * G is sent into its successor S), is idempotent on the stable messageId (a re-send after a crash
+ * is deduplicated by the receiver), and never sends into an unhealthy group.
+ */
+export function createOutbox(deps: OutboxDeps): OutboxController {
+  const { conversations, storage, mlsService, pin, log } = deps;
+
+  let flushing = false;
+  let rerun = false;
+  let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Locate a message by id across all conversations (it may have migrated to a successor key). */
+  function findMessage(
+    messageId: string
+  ): { key: string; convo: Conversation; idx: number } | null {
+    for (const [key, convo] of conversations) {
+      const idx = convo.messages.findIndex((m) => m.id === messageId);
+      if (idx !== -1) return { key, convo, idx };
+    }
+    return null;
+  }
+
+  /** Patch a message's status in the reactive map (in-memory; status is derived, not persisted). */
+  function patchStatus(messageId: string, status: ChatMessage['status']): void {
+    const found = findMessage(messageId);
+    if (!found) return;
+    const messages = [...found.convo.messages];
+    if (messages[found.idx].status === status) return;
+    messages[found.idx] = { ...messages[found.idx], status };
+    conversations.set(found.key, { ...found.convo, messages });
+  }
+
+  /** Persist the sent message to the encrypted messages store under the live conversation key. */
+  async function persistSent(liveConvId: string, messageId: string): Promise<void> {
+    if (!storage) return;
+    const found = findMessage(messageId);
+    if (!found) return;
+    const m = found.convo.messages[found.idx];
+    await storage
+      .saveMessage(
+        {
+          id: m.id,
+          conversationId: liveConvId,
+          senderId: m.senderId,
+          content: m.content,
+          timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
+          readBy: m.readBy,
+          reactions: m.reactions,
+        },
+        pin
+      )
+      .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… échoué: ${String(e)}`));
+  }
+
+  /** Build the proto AppMessage for a queued text/reply entry (sentAt = original compose time). */
+  function buildProto(entry: OutboxEntry): Uint8Array {
+    if (entry.kind === 'reply' && entry.replyTo) {
+      return encodeAppMessage({
+        ...mkReply(entry.text ?? '', {
+          id: entry.replyTo.id,
+          senderId: entry.replyTo.senderId,
+          preview: entry.replyTo.preview,
+        }),
+        messageId: entry.id,
+        sentAt: entry.sentAt,
+      });
+    }
+    return encodeAppMessage({
+      ...mkText(entry.text ?? ''),
+      messageId: entry.id,
+      sentAt: entry.sentAt,
+    });
+  }
+
+  /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
+  async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
+    if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) return 'skip';
+
+    const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(
+      mlsService,
+      entry.conversationId
+    );
+
+    // Whole lineage deleted without a usable successor: the only permanent failure.
+    if (groupMeta?.deletedAt && !hasChain) {
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… groupe supprimé sans successeur - échec définitif`);
+      patchStatus(entry.id, 'error');
+      deps.markDeletedRemotely?.(terminalId);
+      await storage?.deleteOutboxEntry(entry.id).catch(() => {});
+      logMlsMetric({ kind: 'outbox_permanent_error', conversationId: terminalId });
+      return 'error';
+    }
+
+    // Group not sendable yet: emit a soft welcome_request and retry later. NEVER reboot here -
+    // the persistent reboot deadline (sessionWatchdogs) owns escalation.
+    if (!deps.isGroupHealthy(terminalId)) {
+      await deps.requestReAdd(terminalId).catch(() => {});
+      return 'retry';
+    }
+
+    patchStatus(entry.id, 'sending');
+    logMlsMetric({ kind: 'outbox_flush_attempt', conversationId: terminalId });
+
+    try {
+      await mlsService.sendMessage(terminalId, buildProto(entry), entry.id);
+      scheduleOutboundMlsPersist();
+      await persistSent(terminalId, entry.id);
+      patchStatus(entry.id, 'sent');
+      await storage?.deleteOutboxEntry(entry.id).catch(() => {});
+      logMlsMetric({
+        kind: 'outbox_flush_success',
+        conversationId: terminalId,
+        latencyMs: Date.now() - entry.sentAt,
+      });
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… envoyé dans ${terminalId.slice(0, 8)}…`);
+      return 'sent';
+    } catch (e) {
+      // Transient (WrongEpoch / network): keep pending, back off. The message is never lost.
+      patchStatus(entry.id, 'pending');
+      const attempts = entry.attempts + 1;
+      await storage
+        ?.updateOutboxEntry(
+          entry.id,
+          {
+            status: 'pending',
+            attempts,
+            lastAttemptAt: Date.now(),
+            nextAttemptAt: Date.now() + backoffFor(attempts),
+          },
+          pin
+        )
+        .catch(() => {});
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… échec transitoire (tentative ${attempts}): ${String(e).slice(0, 80)}`
+      );
+      return 'retry';
+    }
+  }
+
+  /** Schedule a single backoff re-flush at the earliest pending `nextAttemptAt`. */
+  function scheduleBackoff(entries: OutboxEntry[]): void {
+    const now = Date.now();
+    const next = entries
+      .map((e) => e.nextAttemptAt ?? 0)
+      .filter((t) => t > now)
+      .sort((a, b) => a - b)[0];
+    if (next === undefined) return;
+    if (backoffTimer) clearTimeout(backoffTimer);
+    backoffTimer = setTimeout(
+      () => {
+        backoffTimer = null;
+        runFlush();
+      },
+      Math.max(1_000, next - now)
+    );
+  }
+
+  async function runFlush(): Promise<void> {
+    if (!storage) return;
+    if (flushing) {
+      rerun = true;
+      return;
+    }
+    flushing = true;
+    try {
+      do {
+        rerun = false;
+        const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+        if (entries.length === 0) break;
+        logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
+        let anySent = false;
+        for (const entry of entries) {
+          const outcome = await flushOne(entry);
+          if (outcome === 'sent') anySent = true;
+        }
+        // Re-read for backoff scheduling (statuses/attempts changed during the loop).
+        const remaining = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+        if (remaining.length > 0) scheduleBackoff(remaining);
+        // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
+        if (!anySent) break;
+      } while (rerun);
+    } finally {
+      flushing = false;
+    }
+  }
+
+  return {
+    async enqueue(entry: OutboxEntry): Promise<void> {
+      if (!storage) return;
+      await storage
+        .saveOutboxEntry(entry, pin)
+        .catch((e) => log(`[OUTBOX] Enqueue échoué: ${String(e)}`));
+      runFlush();
+    },
+
+    flush(): void {
+      runFlush();
+    },
+
+    async applyPendingStatuses(): Promise<void> {
+      if (!storage) return;
+      const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+      for (const entry of entries) {
+        const found = findMessage(entry.id);
+        // Only (re)apply 'pending'; do not clobber a live 'sending' transition.
+        if (found && found.convo.messages[found.idx].status !== 'sending') {
+          patchStatus(entry.id, 'pending');
+        }
+      }
+    },
+
+    async reassign(fromId: string, toId: string): Promise<void> {
+      if (!storage) return;
+      await storage.reassignOutboxConversation(fromId, toId).catch(() => {});
+      runFlush();
+    },
+
+    dispose(): void {
+      if (backoffTimer) clearTimeout(backoffTimer);
+      backoffTimer = null;
+    },
+  };
+}
+
+// ── Registry (module singleton, mirrors mlsStatePersisterRegistry) ────────────
+
+let active: OutboxController | null = null;
+
+/** Register the session's outbox controller, replacing and disposing any previous one. */
+export function registerOutbox(deps: OutboxDeps): OutboxController {
+  active?.dispose();
+  active = createOutbox(deps);
+  return active;
+}
+
+/** Tear down the active controller (logout). */
+export function unregisterOutbox(): void {
+  active?.dispose();
+  active = null;
+}
+
+/** The active controller, or null when logged out. */
+export function getOutbox(): OutboxController | null {
+  return active;
+}
+
+/** Trigger a flush on the active controller (no-op when none). */
+export function flushOutbox(): void {
+  active?.flush();
+}
+
+/** Enqueue a message on the active controller (no-op when none). */
+export function enqueueOutboxMessage(entry: OutboxEntry): Promise<void> {
+  return active ? active.enqueue(entry) : Promise.resolve();
+}
+
+/** Mark loaded messages still queued as `pending` (no-op when none). */
+export function applyOutboxPendingStatuses(): Promise<void> {
+  return active ? active.applyPendingStatuses() : Promise.resolve();
+}
+
+/** Re-key queued entries from a dead group to its successor (no-op when none). */
+export function reassignOutboxConversation(fromId: string, toId: string): Promise<void> {
+  return active ? active.reassign(fromId, toId) : Promise.resolve();
+}

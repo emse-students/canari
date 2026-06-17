@@ -368,6 +368,7 @@
   "msg_supprimer": "Supprimer",
   "msg_modifie": "(modifié)",
   "msg_envoi": "Envoi…",
+  "msg_en_attente": "En attente…",
   "msg_echec": "Échec",
   "msg_lu_par": "Lu par",
   "msg_envoye_a": "Envoyé à",

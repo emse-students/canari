@@ -1,7 +1,19 @@
 import { encryptData, decryptData } from '../encryption';
 import { readStoredTimestampMs } from '$lib/utils/dates';
 import { getOrCreateEncryptionSalt } from './salt';
-import type { ConversationMeta, EncryptedMessageRow, IStorage, StoredMessage } from './types';
+import type {
+  ConversationMeta,
+  EncryptedMessageRow,
+  IStorage,
+  OutboxEntry,
+  StoredMessage,
+} from './types';
+import {
+  decodeOutboxEntry,
+  encodeOutboxSensitive,
+  mergeOutboxEntry,
+  outboxClearColumns,
+} from './outboxCodec';
 
 function rowTimestampMs(raw: unknown): number {
   return readStoredTimestampMs(raw) ?? 0;
@@ -111,6 +123,26 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
     );
+
+    // Outbox : messages sortants en file. Colonnes claires pour le tri/re-key sans le PIN ;
+    // la charge utile sensible (text/replyTo/media) est chiffree dans cipher_text (base64 TEXT).
+    await this.db.execute(`
+            CREATE TABLE IF NOT EXISTS outbox (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                sent_at         INTEGER,
+                kind            TEXT,
+                status          TEXT,
+                attempts        INTEGER DEFAULT 0,
+                last_attempt_at INTEGER,
+                next_attempt_at INTEGER,
+                created_at      INTEGER,
+                iv              TEXT,
+                salt            TEXT,
+                cipher_text     TEXT
+            )
+        `);
+    await this.db.execute('CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conversation_id)');
 
     // Migration v1→v2 : colonnes BLOB → TEXT (base64).
     // Détecte les lignes dont iv/salt/cipher_text ne sont pas des chaînes base64 valides
@@ -374,11 +406,117 @@ export class SqliteStorage implements IStorage {
     return result?.rowsAffected ?? 0;
   }
 
+  // -- Outbox --------------------------------------------------------------
+
+  /** Decrypt one outbox row into an entry, or null if it cannot be decrypted. */
+  private async decodeOutboxRow(row: any, pin: string): Promise<OutboxEntry | null> {
+    try {
+      const iv = base64ToUint8(row.iv);
+      const salt = base64ToUint8(row.salt);
+      const cipherText = base64ToUint8(row.cipher_text);
+      const payload = await decryptData(cipherText, iv, salt, pin);
+      return decodeOutboxEntry(
+        {
+          id: row.id,
+          conversationId: row.conversation_id,
+          sentAt: rowTimestampMs(row.sent_at),
+          kind: row.kind,
+          status: row.status,
+          attempts: typeof row.attempts === 'number' ? row.attempts : 0,
+          lastAttemptAt: row.last_attempt_at ?? undefined,
+          nextAttemptAt: row.next_attempt_at ?? undefined,
+          createdAt: rowTimestampMs(row.created_at),
+        },
+        payload
+      );
+    } catch {
+      console.warn('Failed to decrypt outbox row', row.id);
+      return null;
+    }
+  }
+
+  /** Encrypt the sensitive payload and upsert a queued outbound message. */
+  async saveOutboxEntry(entry: OutboxEntry, pin: string): Promise<void> {
+    const stableSalt = getOrCreateEncryptionSalt(this.dbPath);
+    const encrypted = await encryptData(encodeOutboxSensitive(entry), pin, stableSalt);
+    const c = outboxClearColumns(entry);
+    await this.db.execute(
+      `INSERT OR REPLACE INTO outbox
+         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at, iv, salt, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        c.id,
+        c.conversationId,
+        c.sentAt,
+        c.kind,
+        c.status,
+        c.attempts,
+        c.lastAttemptAt ?? null,
+        c.nextAttemptAt ?? null,
+        c.createdAt,
+        uint8ToBase64(encrypted.iv),
+        uint8ToBase64(encrypted.salt),
+        uint8ToBase64(encrypted.cipherText),
+      ]
+    );
+  }
+
+  /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
+  async getOutboxEntries(pin: string): Promise<OutboxEntry[]> {
+    const rows: any[] = await this.db.select('SELECT * FROM outbox ORDER BY sent_at ASC');
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      const entry = await this.decodeOutboxRow(row, pin);
+      if (entry) out.push(entry);
+    }
+    return out;
+  }
+
+  /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
+  async getOutboxEntriesForConversation(
+    conversationId: string,
+    pin: string
+  ): Promise<OutboxEntry[]> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM outbox WHERE conversation_id = $1 ORDER BY sent_at ASC',
+      [conversationId]
+    );
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      const entry = await this.decodeOutboxRow(row, pin);
+      if (entry) out.push(entry);
+    }
+    return out;
+  }
+
+  /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
+  async updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void> {
+    const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
+    if (rows.length === 0) return;
+    const entry = await this.decodeOutboxRow(rows[0], pin);
+    if (!entry) return;
+    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), pin);
+  }
+
+  /** Remove a queued entry (after a confirmed send or a permanent failure). */
+  async deleteOutboxEntry(id: string): Promise<void> {
+    await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
+  }
+
+  /** Re-key every queued entry from `fromId` to `toId` (MLS reboot migration). */
+  async reassignOutboxConversation(fromId: string, toId: string): Promise<void> {
+    await this.db.execute('UPDATE outbox SET conversation_id = $1 WHERE conversation_id = $2', [
+      toId,
+      fromId,
+    ]);
+  }
+
   // -- Misc ----------------------------------------------------------------
 
-  /** Delete all rows from both tables (used for account reset or testing). */
+  /** Delete all rows from the messages, conversations, and outbox tables (account reset / testing). */
   async clear(): Promise<void> {
     await this.db.execute('DELETE FROM messages');
     await this.db.execute('DELETE FROM conversations');
+    await this.db.execute('DELETE FROM outbox');
   }
 }

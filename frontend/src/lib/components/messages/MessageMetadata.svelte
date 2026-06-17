@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { LoaderCircle, TriangleAlert, Check, CheckCheck } from '@lucide/svelte';
+  import { LoaderCircle, TriangleAlert, Check, CheckCheck, Clock } from '@lucide/svelte';
   import { formatTime24 } from '$lib/utils/dates';
   import Avatar from '../shared/Avatar.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -9,12 +9,12 @@
     isEdited: boolean;
     /** When true, enables delivery status display. */
     isOwn: boolean;
-    /** When true, shows send status (sending / error / sent) on the last own message. */
+    /** When true, shows send status (pending / sending / error / sent) on the last own message. */
     isLastOwn: boolean;
     /** When true, shows the read receipt on the last message read by interlocutor(s). */
     isReadReceiptAnchor: boolean;
     /** Current send status of the message. */
-    status?: 'sending' | 'sent' | 'error';
+    status?: 'pending' | 'sending' | 'sent' | 'error';
     /** List of user IDs who have read the message. */
     readBy: string[];
     /** Timestamp of first read receipt - kept for API compat, detail shown in tooltip. */
@@ -49,7 +49,10 @@
   );
   const showEdited = $derived(isEdited && !outsideBubble);
   const showSendStatus = $derived(
-    isOwn && isLastOwn && !outsideBubble && (status === 'sending' || status === 'error')
+    isOwn &&
+      isLastOwn &&
+      !outsideBubble &&
+      (status === 'sending' || status === 'error' || status === 'pending')
   );
   const showSent = $derived(
     isOwn &&
@@ -57,6 +60,7 @@
       outsideBubble &&
       status !== 'sending' &&
       status !== 'error' &&
+      status !== 'pending' &&
       readBy.length === 0
   );
   const showRead = $derived(isOwn && isReadReceiptAnchor && outsideBubble && readBy.length > 0);
@@ -78,7 +82,12 @@
       <span class="italic text-[0.65rem] opacity-65 font-medium">{m.msg_modifie()}</span>
     {/if}
     {#if showSendStatus}
-      {#if status === 'sending'}
+      {#if status === 'pending'}
+        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
+          <Clock size={12} />
+          {m.msg_en_attente()}
+        </span>
+      {:else if status === 'sending'}
         <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
           <LoaderCircle size={12} class="animate-spin" />
           {m.msg_envoi()}

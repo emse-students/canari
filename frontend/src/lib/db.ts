@@ -6,7 +6,15 @@
  * work without modification.
  */
 
-export type { ConversationMeta, EncryptedMessageRow, IStorage, StoredMessage } from './db/types';
+export type {
+  ConversationMeta,
+  EncryptedMessageRow,
+  IStorage,
+  OutboxEntry,
+  OutboxMediaPayload,
+  OutboxMediaUploadedRef,
+  StoredMessage,
+} from './db/types';
 export { IndexedDbStorage } from './db/indexeddb';
 export { SqliteStorage } from './db/sqlite';
 

@@ -17,7 +17,7 @@ export interface AddMessageToChatOptions {
   isSystem?: boolean;
   messageId?: string;
   timestamp?: Date;
-  status?: 'sending' | 'sent' | 'error';
+  status?: 'pending' | 'sending' | 'sent' | 'error';
   /** True when content came from FCM preview cache (plain text, upgradeable by MLS envelope). */
   isFcmPreview?: boolean;
   /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
@@ -40,8 +40,12 @@ export interface ChatMessage {
   editedAt?: Date;
   isOwn: boolean;
   isSystem?: boolean;
-  /** Optimistic send state: undefined = received/confirmed, 'sending' = in-flight, 'error' = failed */
-  status?: 'sending' | 'sent' | 'error';
+  /**
+   * Optimistic send state: undefined = received/confirmed, 'pending' = queued in the outbox
+   * (group not yet sendable / offline), 'sending' = handed to MLS and in-flight, 'sent' =
+   * confirmed by the server, 'error' = permanent failure (lineage deleted without successor).
+   */
+  status?: 'pending' | 'sending' | 'sent' | 'error';
   replyTo?: MessageReference;
   reactions?: MessageReaction[];
   readBy?: string[];

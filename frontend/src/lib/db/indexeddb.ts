@@ -1,6 +1,18 @@
 import { encryptData, decryptData } from '../encryption';
 import { getOrCreateEncryptionSalt } from './salt';
-import type { ConversationMeta, EncryptedMessageRow, IStorage, StoredMessage } from './types';
+import type {
+  ConversationMeta,
+  EncryptedMessageRow,
+  IStorage,
+  OutboxEntry,
+  StoredMessage,
+} from './types';
+import {
+  decodeOutboxEntry,
+  encodeOutboxSensitive,
+  mergeOutboxEntry,
+  outboxClearColumns,
+} from './outboxCodec';
 
 // ---------------------------------------------------------------------------
 // IndexedDB implementation (Web / PWA)
@@ -20,13 +32,14 @@ export class IndexedDbStorage implements IStorage {
     this.dbName = `CanariDB_${userId}`;
   }
 
-  /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 4. */
+  /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 5. */
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
       // Migration: the conversations store is recreated (same keyPath 'id') and all existing
       // rows are migrated by setting id = groupId (old rows had a separate groupId field).
-      const request = indexedDB.open(this.dbName, 4);
+      // Version 5: adds the `outbox` store (queued outbound messages).
+      const request = indexedDB.open(this.dbName, 5);
 
       request.onerror = () => reject('IndexedDB open error');
       request.onsuccess = () => {
@@ -62,6 +75,15 @@ export class IndexedDbStorage implements IStorage {
           }
           const freshMsgStore = db.createObjectStore('messages', { keyPath: 'id' });
           freshMsgStore.createIndex('byConversation', 'conversationId', { unique: false });
+        }
+
+        if (oldVersion < 5) {
+          // Queued outbound messages (sensitive payload encrypted with the user PIN).
+          if (!db.objectStoreNames.contains('outbox')) {
+            const outboxStore = db.createObjectStore('outbox', { keyPath: 'id' });
+            outboxStore.createIndex('byConversation', 'conversationId', { unique: false });
+            outboxStore.createIndex('bySentAt', 'sentAt', { unique: false });
+          }
         }
 
         if (oldVersion < 3 && oldVersion >= 2) {
@@ -425,15 +447,130 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  // -- Outbox --------------------------------------------------------------
+
+  /** Decrypt a batch of outbox rows, skipping any that fail, sorted by `sentAt` (compose order). */
+  private async decodeOutboxRows(rows: any[], pin: string): Promise<OutboxEntry[]> {
+    const out: OutboxEntry[] = [];
+    for (const row of rows) {
+      try {
+        const payload = await decryptData(row.cipherText, row.iv, row.salt, pin);
+        out.push(decodeOutboxEntry(row, payload));
+      } catch {
+        console.warn('Failed to decrypt outbox entry', row.id);
+      }
+    }
+    return out.sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id));
+  }
+
+  /** Encrypt the sensitive payload and upsert a queued outbound message. */
+  async saveOutboxEntry(entry: OutboxEntry, pin: string): Promise<void> {
+    const db = this.ensureDb();
+    const stableSalt = getOrCreateEncryptionSalt(this.dbName);
+    const encrypted = await encryptData(encodeOutboxSensitive(entry), pin, stableSalt);
+    const row = { ...outboxClearColumns(entry), ...encrypted };
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readwrite');
+      tx.objectStore('outbox').put(row);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
+  async getOutboxEntries(pin: string): Promise<OutboxEntry[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const req = tx.objectStore('outbox').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this.decodeOutboxRows(rows, pin);
+  }
+
+  /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
+  async getOutboxEntriesForConversation(
+    conversationId: string,
+    pin: string
+  ): Promise<OutboxEntry[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const req = tx
+        .objectStore('outbox')
+        .index('byConversation')
+        .getAll(IDBKeyRange.only(conversationId));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this.decodeOutboxRows(rows, pin);
+  }
+
+  /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
+  async updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void> {
+    const db = this.ensureDb();
+    const existing: any = await new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readonly');
+      const req = tx.objectStore('outbox').get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!existing) return;
+    let entry: OutboxEntry;
+    try {
+      const payload = await decryptData(existing.cipherText, existing.iv, existing.salt, pin);
+      entry = decodeOutboxEntry(existing, payload);
+    } catch {
+      return;
+    }
+    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), pin);
+  }
+
+  /** Remove a queued entry (after a confirmed send or a permanent failure). */
+  async deleteOutboxEntry(id: string): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readwrite');
+      tx.objectStore('outbox').delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  /** Re-key every queued entry from `fromId` to `toId` (MLS reboot migration). */
+  async reassignOutboxConversation(fromId: string, toId: string): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('outbox', 'readwrite');
+      const cursorReq = tx
+        .objectStore('outbox')
+        .index('byConversation')
+        .openCursor(IDBKeyRange.only(fromId));
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (cursor) {
+          cursor.update({ ...cursor.value, conversationId: toId });
+          cursor.continue();
+        }
+      };
+      cursorReq.onerror = () =>
+        console.error('[IDB] reassignOutboxConversation cursor error', cursorReq.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   // -- Misc ----------------------------------------------------------------
 
-  /** Erase all rows from both the conversations and messages stores in a single transaction. */
+  /** Erase all rows from the conversations, messages, and outbox stores in a single transaction. */
   async clear(): Promise<void> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['conversations', 'messages'], 'readwrite');
+      const tx = db.transaction(['conversations', 'messages', 'outbox'], 'readwrite');
       tx.objectStore('conversations').clear();
       tx.objectStore('messages').clear();
+      tx.objectStore('outbox').clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });

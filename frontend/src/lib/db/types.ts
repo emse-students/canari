@@ -63,6 +63,65 @@ export interface EncryptedMessageRow {
   cipherText: Uint8Array;
 }
 
+/** Encrypted-blob reference for a media file already uploaded to the media-service. */
+export interface OutboxMediaUploadedRef {
+  mediaId: string;
+  /** Hex-encoded AES-256-GCM content-encryption key (CEK). */
+  key: string;
+  /** Hex-encoded IV for the media blob. */
+  iv: string;
+}
+
+/** Sensitive media descriptor for a queued media message. */
+export interface OutboxMediaPayload {
+  /** MediaKind enum value (image/video/audio/file). */
+  kind: number;
+  mimeType: string;
+  size: number;
+  fileName?: string;
+  caption?: string;
+  width?: number;
+  height?: number;
+  /**
+   * Raw (already client-compressed) file bytes, kept until the blob is uploaded.
+   * Cleared once `uploadedRef` is set so the queue does not hold the file twice.
+   */
+  fileBytes?: Uint8Array;
+  /** Set after a successful encryptAndUpload; makes the flush idempotent (no re-upload). */
+  uploadedRef?: OutboxMediaUploadedRef;
+}
+
+/**
+ * A queued outbound message awaiting delivery. Persisted (payload encrypted with the user
+ * PIN) so it survives reload, reconnection, MLS reboot, and app kill. The flusher re-encodes
+ * the proto and sends it against the current epoch once the target group is healthy.
+ *
+ * Clear columns (id, conversationId, sentAt, kind, status, attempts, nextAttemptAt) mirror the
+ * StoredMessage convention (timestamp/conversationId clear, content encrypted): they are
+ * authoritative for querying/sorting/re-keying without needing the PIN.
+ */
+export interface OutboxEntry {
+  /** Stable message UUID, shared with the optimistic StoredMessage and the proto messageId. */
+  id: string;
+  /** Logical conversation key (= MLS groupId); re-keyed to the successor on reboot. */
+  conversationId: string;
+  /** Compose time (Unix ms) - IMMUTABLE; the canonical ordering key, sent as proto sentAt. */
+  sentAt: number;
+  kind: 'text' | 'reply' | 'media';
+  /** Sensitive payload (encrypted at rest): plain text body for text/reply. */
+  text?: string;
+  /** Quoted message reference for replies. */
+  replyTo?: { id: string; senderId: string; preview: string };
+  /** Sensitive media descriptor + (until uploaded) file bytes. */
+  media?: OutboxMediaPayload;
+  status: 'pending' | 'sending';
+  attempts: number;
+  lastAttemptAt?: number;
+  /** Earliest time (Unix ms) the next flush attempt may run (backoff). */
+  nextAttemptAt?: number;
+  createdAt: number;
+}
+
 /**
  * Storage backend abstraction for Canari's local message store.
  *
@@ -126,6 +185,21 @@ export interface IStorage {
    */
   importEncryptedRow(row: EncryptedMessageRow): Promise<void>;
 
-  /** Wipe all conversations and messages from the local store (used in tests / account reset). */
+  // Outbox (queued outbound messages; sensitive payload encrypted with user PIN)
+
+  /** Encrypt and upsert a queued outbound message. */
+  saveOutboxEntry(entry: OutboxEntry, pin: string): Promise<void>;
+  /** Decrypt and return all queued entries, sorted by `sentAt` ascending (compose order). */
+  getOutboxEntries(pin: string): Promise<OutboxEntry[]>;
+  /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
+  getOutboxEntriesForConversation(conversationId: string, pin: string): Promise<OutboxEntry[]>;
+  /** Merge `patch` into the stored entry (read-modify-write; re-encrypts the payload). No-op if absent. */
+  updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void>;
+  /** Remove a queued entry (after a confirmed send or a permanent failure). */
+  deleteOutboxEntry(id: string): Promise<void>;
+  /** Re-key every queued entry from `fromId` to `toId` (MLS reboot G -> S migration). */
+  reassignOutboxConversation(fromId: string, toId: string): Promise<void>;
+
+  /** Wipe all conversations, messages, and outbox entries from the local store (tests / account reset). */
   clear(): Promise<void>;
 }
