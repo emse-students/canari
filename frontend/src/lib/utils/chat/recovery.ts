@@ -6,13 +6,24 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { sendFullHistoryBundle } from './groupActions';
 import { resolveTerminalGroup } from './groupSyncEligibility';
 import { reassignOutboxConversation } from './outbox';
+import { markGroupNotReady, clearGroupNotReady, groupNotReadyForMs } from './rebootDeadline';
 
 /**
- * Délai avant d'escalader de welcome_request vers reboot.
- * 60s laisse le temps au FCM iOS (background) de réveiller le pair
- * et de recevoir le Welcome avant de recréer un groupe successeur.
+ * Cadence de (ré)émission des welcome_request pour un groupe non-prêt. À chaque expiration, si
+ * le groupe n'est toujours pas dans le WASM ET que l'échéance persistante de reboot n'est pas
+ * atteinte, on renvoie simplement une welcome_request (le SYNC_WATCHDOG ré-arme aussi ce cycle).
+ * 60s laisse le temps au FCM iOS (background) de réveiller le pair et de recevoir le Welcome.
  */
 export const RECOVERY_TIMEOUT_MS = 60_000;
+
+/**
+ * Échéance wall-clock PERSISTANTE avant de recréer un groupe (reboot), dernier recours. Mesurée
+ * depuis le 1er instant où le groupe a été vu non-prêt (localStorage, survit reload/kill) : le
+ * compteur ne repart pas à chaque reconnexion. Tant qu'elle n'est pas atteinte, on se contente
+ * de (ré)émettre des welcome_request - la coopération cross-device récupère le groupe bien avant
+ * dans le cas courant. Voir {@link groupNotReadyForMs}.
+ */
+export const REBOOT_DEADLINE_MS = 60 * 60_000;
 
 /**
  * Groupes dont un reboot est en cours. Source de vérité unique partagée par tous les
@@ -50,9 +61,11 @@ export interface RecoveryDeps {
  *  4. Terminal d'une chaîne de successeurs sans métadonnée serveur (groupe successeur
  *     inexistant/injoignable) → abort sans welcome_request ni reboot.
  *  5. Si le groupe est supprimé sans successeur → marquer `deletedRemotely`, abort.
- *  6. Envoyer `welcome_request` vers les membres actifs du groupe.
- *  7. Armer un timer `RECOVERY_TIMEOUT_MS` (60 s). À expiration : `reboot(groupId)` si le
- *     groupe n'est toujours pas dans le WASM.
+ *  6. Envoyer `welcome_request` vers les membres actifs du groupe et poser l'échéance
+ *     persistante de reboot (`markGroupNotReady`).
+ *  7. Armer un timer `RECOVERY_TIMEOUT_MS` (60 s). À expiration, si le groupe n'est toujours pas
+ *     dans le WASM : `reboot(groupId)` seulement si l'échéance wall-clock persistante
+ *     `REBOOT_DEADLINE_MS` (1 h) est atteinte ; sinon, simple ré-émission de `welcome_request`.
  */
 export async function requestReAdd(
   groupId: string,
@@ -95,6 +108,7 @@ export async function requestReAdd(
   const localGroups = deps.mlsService.getLocalGroups();
 
   if (localGroups.includes(terminalId)) {
+    clearGroupNotReady(deps.userId, terminalId);
     if (hasChain && groupId !== terminalId && deps.conversations.has(groupId)) {
       deps.log(
         `[READD] ${groupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}… déjà en WASM - migration`
@@ -130,24 +144,40 @@ export async function requestReAdd(
     return;
   }
 
+  // Démarre (ou conserve) l'échéance wall-clock persistante de reboot pour ce groupe.
+  markGroupNotReady(deps.userId, terminalId);
+
   await deps.mlsService
     .sendWelcomeRequest(terminalId)
     .catch((e) =>
       deps.log(`[READD] welcome_request échoué pour ${terminalId.slice(0, 8)}…: ${String(e)}`)
     );
   deps.log(
-    `[READD] welcome_request envoyé pour ${terminalId.slice(0, 8)}… (timeout ${RECOVERY_TIMEOUT_MS / 1000}s)`
+    `[READD] welcome_request envoyé pour ${terminalId.slice(0, 8)}… (cadence ${RECOVERY_TIMEOUT_MS / 1000}s, reboot après ${REBOOT_DEADLINE_MS / 60_000}min)`
   );
 
   const t = setTimeout(async () => {
     timers.delete(terminalId);
-    if (!deps.mlsService.getLocalGroups().includes(terminalId)) {
+    if (deps.mlsService.getLocalGroups().includes(terminalId)) {
+      clearGroupNotReady(deps.userId, terminalId);
+      return;
+    }
+    // Reboot = dernier recours : uniquement après REBOOT_DEADLINE_MS en temps réel PERSISTANT
+    // (survit reload/reconnexion). Avant l'échéance, on renvoie juste une welcome_request ; le
+    // SYNC_WATCHDOG ré-arme ce cycle toutes les RECOVERY_TIMEOUT_MS sans jamais relancer le compteur.
+    const notReadyMs = groupNotReadyForMs(deps.userId, terminalId);
+    if (notReadyMs !== null && notReadyMs >= REBOOT_DEADLINE_MS) {
       deps.log(
-        `[READD] ${RECOVERY_TIMEOUT_MS / 1000}s écoulées sans Welcome pour ${terminalId.slice(0, 8)}… - reboot`
+        `[READD] ${terminalId.slice(0, 8)}… non-prêt depuis ${Math.round(notReadyMs / 60_000)}min (≥${REBOOT_DEADLINE_MS / 60_000}min) - reboot`
       );
       await reboot(terminalId, deps, timers).catch((e) =>
         deps.log(`[READD] reboot échoué pour ${terminalId.slice(0, 8)}…: ${String(e)}`)
       );
+    } else {
+      deps.log(
+        `[READD] ${terminalId.slice(0, 8)}… toujours non-prêt - welcome_request renvoyée, reboot différé`
+      );
+      await deps.mlsService.sendWelcomeRequest(terminalId).catch(() => {});
     }
   }, RECOVERY_TIMEOUT_MS);
   timers.set(terminalId, t);

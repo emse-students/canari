@@ -8,6 +8,7 @@
     unfollowAssociation,
     getAssociationFollowStatus,
     hasPermissionFlag,
+    ensureAssociationSuperAdmin,
     AssociationPermissionFlag,
     listAssociationProducts,
     type Association,
@@ -15,7 +16,7 @@
     type AssociationProduct,
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     Bell,
@@ -55,7 +56,9 @@
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
-  let canManage = $derived(isGlobalAdmin() || (!!myMembership && myMembership.isAdmin));
+  let canManage = $derived(
+    isGlobalAdmin() || isAssociationSuperAdmin() || (!!myMembership && myMembership.isAdmin)
+  );
   /** Whether the current user can propose / edit events (PROPOSE_EVENT flag or global admin). */
   let canProposeEvent = $derived(
     isGlobalAdmin() ||
@@ -74,6 +77,9 @@
   async function loadData() {
     loading = true;
     error = '';
+    // Resolve cross-association super-admin status so the management entry appears
+    // on associations the user does not belong to.
+    void ensureAssociationSuperAdmin();
     try {
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.

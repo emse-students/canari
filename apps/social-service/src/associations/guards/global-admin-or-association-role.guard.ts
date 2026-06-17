@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,6 +22,8 @@ import { AssociationsService } from '../associations.service';
  */
 @Injectable()
 export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
+  private readonly logger = new Logger(GlobalAdminOrAssociationRoleGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     @InjectRepository(AssociationMember)
@@ -41,6 +49,9 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
 
     // BDE super-admin (MANAGE_ASSO) administers any association like a global admin.
     if (await this.associationsService.isAssociationSuperAdmin(userId)) {
+      this.logger.debug(
+        `BDE super-admin ${userId} granted cross-association access to ${associationId}`
+      );
       return true;
     }
 
