@@ -108,46 +108,6 @@ export function useMessaging() {
 
   // ── Incoming message ──────────────────────────────────────────────────────
 
-  /** Updates the status (e.g. 'sending' → 'sent' / 'error') of a single message in the reactive map and persists the change to IndexedDB. */
-  function patchMessage(
-    messageId: string,
-    contactName: string,
-    patch: { status: ChatMessage['status'] },
-    ctx: MessagingContext
-  ) {
-    const key = contactName.toLowerCase();
-    const convo = ctx.conversations.get(key);
-    if (!convo) return;
-    const idx = convo.messages.findIndex((m) => m.id === messageId);
-    if (idx === -1) return;
-    const msgs = [...convo.messages];
-    msgs[idx] = { ...msgs[idx], ...patch };
-    ctx.conversations.set(key, { ...convo, messages: msgs });
-
-    if (ctx.storage && !isChannelConversationId(key)) {
-      const target = msgs[idx];
-      ctx.storage
-        .saveMessage(
-          {
-            id: target.id,
-            conversationId: key,
-            senderId: target.senderId,
-            content: target.content,
-            timestamp:
-              target.timestamp instanceof Date
-                ? target.timestamp.getTime()
-                : new SvelteDate(target.timestamp as any).getTime(),
-            readBy: target.readBy,
-            reactions: target.reactions,
-            isDeleted: target.isDeleted,
-            isEdited: target.isEdited,
-          },
-          ctx.pin
-        )
-        .catch((e) => console.error('[DB] Failed to persist patched message:', e));
-    }
-  }
-
   /**
    * Opens a UI catch-up window for a bulk-ingest phase: buffers incoming messages for one grouped
    * flush per conversation (`bufferUi`) and/or shows the blocking sync overlay (`showOverlay`).
@@ -541,11 +501,6 @@ export function useMessaging() {
       ctx.log('[SEND] Abort: pas de texte ni de fichier');
       return;
     }
-    if (isMessageCatchupActive) {
-      ctx.log('[SEND] Abort: synchronisation MLS en cours');
-      ctx.setSendError('Synchronisation en cours - réessayez dans un instant');
-      return;
-    }
     if (!ctx.selectedContact) {
       ctx.log('[SEND] Abort: aucun contact sélectionné');
       return;
@@ -559,11 +514,16 @@ export function useMessaging() {
     const isChannel = isChannelConversationId(ctx.selectedContact);
     ctx.log(`[SEND] convo: groupId="${convo.id}" isReady=${convo.isReady} isChannel=${isChannel}`);
 
-    // Channels don't use MLS - skip MLS membership verification
-    if (!isChannel) {
-      ctx.log('[SEND] Vérification membership MLS...');
+    // Media (inline upload+send) still requires a ready MLS group; queuing media is a later
+    // increment. Text/reply are captured into the outbox and never blocked here - they flush
+    // automatically once the group becomes sendable.
+    if (filesToSend.length > 0 && !isChannel) {
+      if (isMessageCatchupActive) {
+        ctx.log('[SEND] Abort media: synchronisation MLS en cours');
+        ctx.setSendError('Synchronisation en cours - réessayez dans un instant');
+        return;
+      }
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
-      ctx.log(`[SEND] membership: stillMember=${stillMember} convo.isReady=${convo.isReady}`);
       if (!stillMember || !convo.isReady) {
         ctx.setSendError('Session sécurisée en cours de négociation. Réessaie dans un instant.');
         return;
@@ -656,65 +616,24 @@ export function useMessaging() {
     if (sentMediaMessageCount > 0 || !text) return;
 
     const result = await sendChatMessage(text, ctx.selectedContact!, currentReplyingTo, {
-      mlsService: isChannel ? (null as any) : mlsService!,
       userId: ctx.userId,
-      pin: ctx.pin,
       conversation: convo,
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         addMessageToChat(sid, content, contactName, ctx, options),
-      patchMessage: (
-        msgId: string,
-        contactName: string,
-        patch: { status: ChatMessage['status'] }
-      ) => patchMessage(msgId, contactName, patch, ctx),
       log: ctx.log,
     });
 
+    // Text/reply now always succeed (captured into the outbox); only a hard block
+    // (deleted lineage) or a channel error surfaces a message to the user.
     if (!result.success) {
-      const errStr = result.error || "Echec de l'envoi";
-      const isGroupNotFound =
-        errStr.toLowerCase().includes('groupe introuvable') ||
-        errStr.toLowerCase().includes('group not found');
-      if (isGroupNotFound && ctx.selectedContact) {
-        const staleConvo = ctx.conversations.get(ctx.selectedContact);
-        if (staleConvo) {
-          ctx.conversations.set(ctx.selectedContact, { ...staleConvo, isReady: false });
-          ctx.saveConversation(ctx.selectedContact).catch(() => {});
-          try {
-            const { isGroupActiveOnServer } = await import('$lib/utils/chat/groupActions');
-            const active = await isGroupActiveOnServer(ctx.ensureMls(), ctx.userId, staleConvo.id);
-            if (active !== false) {
-              ctx
-                .ensureMls()
-                .sendWelcomeRequest(staleConvo.id)
-                .catch(() => {});
-              ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
-              ctx.log(
-                `[SEND] GroupNotFound → isReady=false + welcome_request (${ctx.selectedContact})`
-              );
-            } else {
-              ctx.setSendError('Ce groupe a été supprimé.');
-              ctx.log(
-                `[SEND] GroupNotFound → groupe supprimé, skip reinvite (${ctx.selectedContact})`
-              );
-            }
-          } catch {
-            /* non-blocking */
-          }
-        } else {
-          ctx.setSendError('Groupe désynchronisé. Resynchronisation en cours…');
-        }
-        if (!staleConvo) {
-          ctx.log(`[SEND] GroupNotFound → isReady=false (${ctx.selectedContact})`);
-        }
-      } else {
-        ctx.setSendError(errStr);
-        ctx.log(`[SEND] Échec: ${errStr}`);
+      if (result.error) {
+        ctx.setSendError(result.error);
+        ctx.log(`[SEND] Échec: ${result.error}`);
       }
       return;
     }
 
-    ctx.log(`[SEND] handleSendChat terminé avec succès`);
+    ctx.log('[SEND] handleSendChat terminé (message en file)');
     ctx.playSendTone?.();
   }
 
@@ -929,13 +848,14 @@ export function useMessaging() {
   ): Promise<{ success: boolean; error?: string }> {
     const convo = ctx.conversations.get(targetName);
     if (!convo) return { success: false, error: 'Conversation introuvable.' };
-    if (!convo.isReady) return { success: false, error: 'Conversation non prête.' };
 
     const env = parseEnvelope(sourceContent);
     const mlsService = ctx.ensureMls();
 
     try {
       if (env.kind === 'media') {
+        // Media forward is an inline upload+send: it still needs a ready MLS group.
+        if (!convo.isReady) return { success: false, error: 'Conversation non prête.' };
         const m = env.media;
         const kindMap: Record<string, number> = {
           image: MediaKind.MEDIA_IMAGE,
@@ -971,17 +891,10 @@ export function useMessaging() {
       const text = env.kind === 'text' ? env.text.trim() : '';
       if (!text) return { success: false, error: 'Rien à transférer.' };
       return await sendChatMessage(text, targetName, null, {
-        mlsService,
         userId: ctx.userId,
-        pin: ctx.pin,
         conversation: convo,
         addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
           addMessageToChat(sid, content, contactName, ctx, options),
-        patchMessage: (
-          msgId: string,
-          contactName: string,
-          patch: { status: ChatMessage['status'] }
-        ) => patchMessage(msgId, contactName, patch, ctx),
         log: ctx.log,
       });
     } catch (e) {

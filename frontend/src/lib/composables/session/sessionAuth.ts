@@ -51,6 +51,12 @@ import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleWelcomeRequest, processPendingInvitations } from '$lib/utils/chat/actions';
 import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import {
+  registerOutbox,
+  unregisterOutbox,
+  flushOutbox,
+  applyOutboxPendingStatuses,
+} from '$lib/utils/chat/outbox';
+import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
   recordCallEnded,
@@ -88,6 +94,26 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id: string) => st.deleteConversation(id) : undefined,
     log: cb.log,
+  };
+}
+
+/**
+ * Builds the OutboxDeps for the per-session message flusher. Recovery is non-destructive
+ * (welcome_request only); a group is "healthy" to send into when its MLS state is in the WASM.
+ */
+export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  return {
+    mlsService: ctx.ensureMls(),
+    storage: ctx.getStorage(),
+    userId: ctx.getUserId(),
+    pin: ctx.getPin(),
+    conversations: cb.conversations,
+    log: cb.log,
+    requestReAdd: (groupId: string) =>
+      requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
+    isGroupHealthy: (groupId: string) => ctx.ensureMls().getLocalGroups().includes(groupId),
+    markDeletedRemotely: (groupId: string) =>
+      markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
   };
 }
 
@@ -365,6 +391,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         cb.log(`[WARN] Echec enregistrement push: ${e instanceof Error ? e.message : String(e)}`)
       );
 
+    // Outbox de messages : enregistrer le flusher avant de charger les conversations pour que
+    // applyOutboxPendingStatuses puisse remettre le statut "pending" sur les messages restaurés.
+    registerOutbox(makeOutboxDeps(ctx, cb));
+
     // Charger les conversations d'abord : consumeFcmCache peut accéder
     // à la Map conversations via addMessageToChat une fois qu'elle est peuplée.
     beginStartupCatchupPhase('load_conversations');
@@ -376,6 +406,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         messageCount: stats.localMessageCount,
       });
     }
+    // Re-marquer "pending" les messages encore en file (statut dérivé de l'outbox, non persisté).
+    await applyOutboxPendingStatuses();
 
     beginStartupCatchupPhase('fcm_cache');
     const fcmInjected = await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(
@@ -480,6 +512,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onGroupReady: (() => {
         let t: ReturnType<typeof setTimeout> | null = null;
         return (readyGroupId: string) => {
+          // Le groupe vient de devenir envoyable (Welcome traité / reboot terminé) : draine
+          // l'outbox pour livrer les messages en attente, et rafraîchir leur statut.
+          flushOutbox();
+          void applyOutboxPendingStatuses();
           const deferred = ctx.deferredWelcomeRequests.get(readyGroupId);
           if (deferred?.length) {
             ctx.deferredWelcomeRequests.delete(readyGroupId);
@@ -631,6 +667,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       });
     }
     finishStartupCatchupBench(cb.log);
+
+    // Connexion établie et groupes réconciliés : draine l'outbox (couvre la reconnexion, qui
+    // ré-exécute initializeConnection).
+    flushOutbox();
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
     const lastActiveKey = `canari_last_active:${ctx.getUserId()}`;
@@ -865,6 +905,7 @@ export async function recoverPinImpl(
  */
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Déconnexion de userId=${ctx.getUserId()?.slice(0, 8) ?? 'inconnu'}...`);
+  unregisterOutbox();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();
     unregisterMlsStatePersister();

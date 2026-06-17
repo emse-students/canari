@@ -5,6 +5,7 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendFullHistoryBundle } from './groupActions';
 import { resolveTerminalGroup } from './groupSyncEligibility';
+import { reassignOutboxConversation } from './outbox';
 
 /**
  * Délai avant d'escalader de welcome_request vers reboot.
@@ -626,6 +627,11 @@ export async function migrateConversation(
   } else {
     messagesCopied = true; // pas de storage : rien à protéger
   }
+
+  // Outbox : re-clé les messages en attente fromGroup → toGroup pour qu'ils partent dans le
+  // successeur (resolve-at-flush le couvre déjà, ce re-key garde l'état persistant cohérent et
+  // relance un flush vers le nouveau groupe).
+  await reassignOutboxConversation(fromGroupId, toGroupId).catch(() => {});
 
   // Persister la nouvelle conversation avant de supprimer l'ancienne
   if (storage) {

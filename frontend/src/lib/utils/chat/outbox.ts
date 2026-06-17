@@ -64,6 +64,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let rerun = false;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Flush opportunistically when connectivity or foreground is regained.
+  const onOnline = (): void => {
+    runFlush();
+  };
+  const onVisible = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') runFlush();
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+  }
+
   /** Locate a message by id across all conversations (it may have migrated to a successor key). */
   function findMessage(
     messageId: string
@@ -273,6 +285,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     dispose(): void {
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onOnline);
+        document.removeEventListener('visibilitychange', onVisible);
+      }
     },
   };
 }

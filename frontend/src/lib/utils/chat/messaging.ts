@@ -1,5 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
+import type { OutboxEntry } from '$lib/db';
+import { enqueueOutboxMessage } from './outbox';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
@@ -13,9 +15,7 @@ import {
  * Passed as a single object to avoid long argument lists and make unit testing easier.
  */
 interface SendMessageDeps {
-  mlsService: IMlsService;
   userId: string;
-  pin: string;
   conversation: Conversation;
   addMessageToChat: (
     senderId: string,
@@ -30,24 +30,22 @@ interface SendMessageDeps {
       skipDbSave?: boolean;
     }
   ) => Promise<void>;
-  patchMessage?: (
-    messageId: string,
-    contactName: string,
-    patch: { status: ChatMessage['status'] }
-  ) => void;
   log: (msg: string) => void;
 }
 
 /**
  * Sends a text message in a conversation, optionally as a reply to a previous message.
  *
- * For direct/group MLS conversations the message is encrypted by the WASM MLS service
- * and displayed optimistically (status `'sending'`) before the network call confirms it.
- * For channel conversations (`contactName` starts with `'channel_'`) the message is
- * encrypted via `sendEncryptedChannelMessage` and the local copy is never persisted to DB.
+ * For direct/group MLS conversations the message is captured into the persistent outbox and
+ * displayed optimistically with status `'pending'`; the outbox flusher encrypts and delivers it
+ * as soon as the group is sendable (now, on reconnect, after a Welcome, or after a reboot),
+ * surviving reload/kill. The user never sees a transient "send failed" error - the only hard
+ * block is a conversation whose whole lineage was deleted (`deletedRemotely`).
  *
- * Returns `{ success: false }` silently when the text is empty or the conversation
- * is not yet ready, and `{ success: false, error }` with a user-facing message on failure.
+ * For channel conversations (`contactName` starts with `'channel_'`) the message is server-
+ * authoritative and sent directly via `sendEncryptedChannelMessage` (no outbox).
+ *
+ * Returns `{ success: false }` silently when the text is empty.
  */
 export async function sendChatMessage(
   text: string,
@@ -55,94 +53,91 @@ export async function sendChatMessage(
   replyingTo: ChatMessage | null,
   deps: SendMessageDeps
 ): Promise<{ success: boolean; error?: string }> {
-  const { mlsService, userId, conversation, addMessageToChat } = deps;
+  const { userId, conversation, addMessageToChat } = deps;
 
   deps.log(
     `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" isReady=${conversation.isReady} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
   );
 
-  if (!text.trim() || !conversation.isReady) {
-    deps.log(`[SEND] Abort: text vide ou convo non prête (isReady=${conversation.isReady})`);
+  if (!text.trim()) {
+    deps.log('[SEND] Abort: texte vide');
     return { success: false };
   }
 
-  try {
-    // Build proto payload based on reply state
-    let payload: Uint8Array;
-    let replyToData: ChatMessage['replyTo'] = undefined;
-    const messageId = crypto.randomUUID();
+  const messageId = crypto.randomUUID();
+  const sentAt = Date.now();
 
-    const sentAt = Date.now();
+  // Reply preview (from the quoted message envelope), shared by the proto and the local echo.
+  let replyToData: ChatMessage['replyTo'] = undefined;
+  if (replyingTo) {
+    const replyEnv = parseEnvelope(replyingTo.content);
+    const replyPreview =
+      replyEnv.kind === 'text' || replyEnv.kind === 'system'
+        ? replyEnv.text.slice(0, 100)
+        : replyEnv.kind === 'media'
+          ? (replyEnv.caption?.slice(0, 100) ?? '[media]')
+          : `[Sondage] ${replyEnv.question}`.slice(0, 100);
+    replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
+  }
 
-    if (replyingTo) {
-      // Extract the display text from the envelope for the reply preview.
-      const replyEnv = parseEnvelope(replyingTo.content);
-      const replyPreview =
-        replyEnv.kind === 'text' || replyEnv.kind === 'system'
-          ? replyEnv.text.slice(0, 100)
-          : replyEnv.kind === 'media'
-            ? (replyEnv.caption?.slice(0, 100) ?? '[media]')
-            : `[Sondage] ${replyEnv.question}`.slice(0, 100);
-      payload = encodeAppMessage({
-        ...mkReply(text, {
-          id: replyingTo.id,
-          senderId: replyingTo.senderId,
-          preview: replyPreview,
-        }),
-        messageId,
-        sentAt,
-      });
-      replyToData = {
-        id: replyingTo.id,
-        senderId: replyingTo.senderId,
-        content: replyPreview,
-      };
-    } else {
-      payload = encodeAppMessage({ ...mkText(text), messageId, sentAt });
-    }
-
-    if (isChannelConversationId(contactName)) {
+  // Channels: server-authoritative, no outbox - encode and send directly.
+  if (isChannelConversationId(contactName)) {
+    const payload = replyingTo
+      ? encodeAppMessage({
+          ...mkReply(text, {
+            id: replyingTo.id,
+            senderId: replyingTo.senderId,
+            preview: replyToData?.content ?? '',
+          }),
+          messageId,
+          sentAt,
+        })
+      : encodeAppMessage({ ...mkText(text), messageId, sentAt });
+    try {
       const rawChannelId = contactName.replace(/^channel_/, '');
       await sendEncryptedChannelMessage(rawChannelId, payload, messageId);
-      // No optimistic add: the backend echoes channel.message.created to all members
-      // including the sender, so the WS handler will add the message.
-    } else {
-      const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
-
-      await addMessageToChat(userId, envelope, contactName, {
-        messageId,
-        status: 'sending',
-        skipDbSave: true,
-      });
-      deps.log(`[SEND] Message affiché (optimiste)...`);
-
-      try {
-        await mlsService.sendMessage(conversation.id, payload, messageId);
-        deps.log(`[SEND] mlsService.sendMessage confirmé - persistance MLS coalescée`);
-        scheduleOutboundMlsPersist();
-        deps.patchMessage?.(messageId, contactName, { status: 'sent' });
-        deps.log(`[SEND] Message envoyé pour messageId=${messageId}`);
-      } catch (sendErr) {
-        deps.patchMessage?.(messageId, contactName, { status: 'error' });
-        throw sendErr;
-      }
-    }
-    return { success: true };
-  } catch (error: any) {
-    const msg = error.message || String(error);
-    console.error('[SEND] sendChatMessage failed:', msg);
-    if (msg.includes('NotMember') || msg.includes('NotAMember')) {
-      return {
-        success: false,
-        error: "Tu n'es plus membre de ce groupe. Supprime-le et demande une nouvelle invitation.",
-      };
-    } else {
-      return {
-        success: false,
-        error: `Échec de l'envoi : ${msg}`,
-      };
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: `Échec de l'envoi : ${error.message || String(error)}` };
     }
   }
+
+  // Whole lineage deleted without a successor: the only hard block (deletion banner is shown).
+  if (conversation.deletedRemotely) {
+    return { success: false, error: 'Cette conversation a été supprimée.' };
+  }
+
+  // Optimistic echo (status pending, persisted so it survives reload), then enqueue.
+  const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
+  await addMessageToChat(userId, envelope, contactName, {
+    messageId,
+    status: 'pending',
+    timestamp: new Date(sentAt),
+    ...(replyToData ? { replyTo: replyToData } : {}),
+  });
+
+  const entry: OutboxEntry = {
+    id: messageId,
+    conversationId: conversation.id,
+    sentAt,
+    kind: replyingTo ? 'reply' : 'text',
+    text,
+    ...(replyToData
+      ? {
+          replyTo: {
+            id: replyToData.id,
+            senderId: replyToData.senderId,
+            preview: replyToData.content,
+          },
+        }
+      : {}),
+    status: 'pending',
+    attempts: 0,
+    createdAt: sentAt,
+  };
+  await enqueueOutboxMessage(entry);
+  deps.log(`[SEND] ${messageId.slice(0, 8)}… mis en file (pending)`);
+  return { success: true };
 }
 
 /** Minimal dependencies shared by reaction, edit, delete, and read-receipt helpers. */
