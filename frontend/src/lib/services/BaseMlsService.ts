@@ -745,6 +745,14 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.releaseAddLock(groupId);
   }
 
+  async acquireRebootLock(groupId: string, ttlMs = 60_000): Promise<boolean> {
+    return this.delivery.acquireRebootLock(groupId, ttlMs);
+  }
+
+  async releaseRebootLock(groupId: string): Promise<void> {
+    return this.delivery.releaseRebootLock(groupId);
+  }
+
   async createRemoteGroup(name: string, isGroup = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }

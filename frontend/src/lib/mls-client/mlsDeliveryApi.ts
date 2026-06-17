@@ -368,6 +368,43 @@ export class MlsDeliveryApi {
     }
   }
 
+  /**
+   * Acquires the cross-device reboot lock for `groupId` (fork-resolution mutual exclusion).
+   * Returns `false` if another device already owns the reboot - the caller must then abstain
+   * and rely on the successor being joined via retries (watchdog / checkGroupSuccessors).
+   * TTL default 60s : a reboot chains candidate creation + CAS + member invitations.
+   */
+  async acquireRebootLock(groupId: string, ttlMs = 60_000): Promise<boolean> {
+    try {
+      const res = await this.f(`${this.historyUrl}/api/mls/reboot-lock`, {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.acquired === true;
+    } catch {
+      // Fail-safe : Redis indisponible → on suppose le lock NON acquis. Le CAS reste le
+      // garde-fou de correction (un seul successeur), ce verrou n'est qu'une optimisation
+      // anti-pollution ; mieux vaut s'abstenir que de lancer un reboot non protégé.
+      return false;
+    }
+  }
+
+  /** Releases the reboot-lock previously acquired by {@link acquireRebootLock}. Best-effort. */
+  async releaseRebootLock(groupId: string): Promise<void> {
+    try {
+      await this.f(`${this.historyUrl}/api/mls/reboot-lock`, {
+        method: 'DELETE',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
+      });
+    } catch {
+      /* non-bloquant */
+    }
+  }
+
   /** Creates a new group row on the delivery service and returns the assigned `groupId`. */
   async createRemoteGroup(name: string, isGroup: boolean): Promise<string> {
     try {

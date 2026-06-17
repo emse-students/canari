@@ -206,17 +206,32 @@ export async function reboot(
     return;
   }
 
-  // Exclusion mutuelle par groupe : deux déclencheurs concurrents (timer requestReAdd qui
-  // expire pendant que le SYNC_WATCHDOG décompte) créaient chacun un candidat successeur. Le
-  // CAS en élimine un, mais le perdant a déjà pollué le serveur et lancé un joinSuccessor pour
-  // rien. Le verrou garantit un seul pipeline par groupe.
+  // Exclusion mutuelle INTRA-device par groupe : deux déclencheurs concurrents (timer
+  // requestReAdd qui expire pendant que le SYNC_WATCHDOG décompte) créaient chacun un candidat
+  // successeur. Le CAS en élimine un, mais le perdant a déjà pollué le serveur et lancé un
+  // joinSuccessor pour rien. Le verrou garantit un seul pipeline par groupe sur cet appareil.
   if (rebootsInFlight.has(groupId)) {
     log(`[REBOOT] ${groupId.slice(0, 8)}… déjà en cours - ignoré`);
     return;
   }
   rebootsInFlight.add(groupId);
   try {
-    await performReboot(groupId, deps, timers);
+    // Exclusion mutuelle CROSS-device : sans ce verrou Redis, deux appareils détectant le même
+    // groupe desynchronise creent chacun un candidat avant que le CAS ne tranche (pollution
+    // serveur de groupes orphelins). Le perdant s'abstient : le successeur du gagnant sera
+    // rejoint via les retries (SYNC_WATCHDOG → requestReAdd, checkGroupSuccessors, ou le Welcome
+    // recu lors de l'inviteMembers du gagnant). Le CAS reste le garde-fou de correction si le
+    // verrou expire en cours de reboot.
+    const locked = await mlsService.acquireRebootLock(groupId).catch(() => false);
+    if (!locked) {
+      log(`[REBOOT] ${groupId.slice(0, 8)}… verrou cross-device détenu ailleurs - abstention`);
+      return;
+    }
+    try {
+      await performReboot(groupId, deps, timers);
+    } finally {
+      await mlsService.releaseRebootLock(groupId).catch(() => {});
+    }
   } finally {
     rebootsInFlight.delete(groupId);
   }

@@ -40,6 +40,8 @@ export function createMlsServiceStub(
     registerMember: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
+    acquireRebootLock: vi.fn().mockResolvedValue(true),
+    releaseRebootLock: vi.fn().mockResolvedValue(undefined),
     fetchHistory: vi.fn().mockResolvedValue([]),
     fetchHistoryBatch: vi.fn().mockResolvedValue(new Map()),
     getDeviceId: vi.fn().mockReturnValue('device-test'),

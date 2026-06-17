@@ -226,6 +226,12 @@ export interface IMlsService {
   acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
+  /** Acquires a distributed Redis lock serialising a dead group's reboot pipeline ACROSS devices.
+   *  Returns true if acquired, false if another device already owns the reboot (caller should
+   *  abort and let the successor be joined via the retry mechanisms). Longer TTL than add-lock. */
+  acquireRebootLock(groupId: string, ttlMs?: number): Promise<boolean>;
+  /** Releases the lock acquired via acquireRebootLock. */
+  releaseRebootLock(groupId: string): Promise<void>;
   /** Fetches the Redis Stream history for a group, optionally starting after a given stream entry ID. */
   fetchHistory(
     groupId: string,

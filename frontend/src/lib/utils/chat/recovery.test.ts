@@ -44,6 +44,8 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     sendMessage: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
+    acquireRebootLock: vi.fn().mockResolvedValue(true),
+    releaseRebootLock: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(0),
     getDeviceId: vi.fn().mockReturnValue('self-device'),
     ...overrides,
@@ -196,6 +198,31 @@ describe('reboot', () => {
     // Rejoindre le gagnant
     expect(mls.registerMember).toHaveBeenCalledWith('winner-id', 'user-a');
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('winner-id');
+  });
+
+  it('verrou reboot cross-device détenu ailleurs → abstention, aucun candidat créé', async () => {
+    const mls = makeMls({
+      acquireRebootLock: vi.fn().mockResolvedValue(false),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await reboot('dead', deps);
+
+    // Le perdant ne crée aucun candidat ni ne tente le CAS (le gagnant s'en charge).
+    expect(mls.createRemoteGroup).not.toHaveBeenCalled();
+    expect(mls.claimGroupSuccessor).not.toHaveBeenCalled();
+    // Le verrou n'ayant pas été acquis, on ne le relâche pas.
+    expect(mls.releaseRebootLock).not.toHaveBeenCalled();
+  });
+
+  it('verrou reboot relâché après un reboot complet', async () => {
+    const mls = makeMls();
+    const deps = makeDeps({ mlsService: mls });
+
+    await reboot('dead', deps);
+
+    expect(mls.acquireRebootLock).toHaveBeenCalledWith('dead');
+    expect(mls.releaseRebootLock).toHaveBeenCalledWith('dead');
   });
 
   it("aucun autre membre → pas de sendWelcome, pas d'erreur", async () => {
