@@ -432,7 +432,9 @@
   }
 
   $effect(() => {
-    if (!mediaRef || !authToken) return;
+    // Empty mediaId = media still queued in the outbox (upload pending): leave blobUrl null
+    // so MessageMediaRenderer shows its skeleton/spinner. Don't attempt a download (would 404).
+    if (!mediaRef || !mediaRef.mediaId || !authToken) return;
 
     let destroyed = false;
     let acquired = false;

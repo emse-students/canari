@@ -7,6 +7,9 @@
     listAssociations,
     listPendingCalendarEvents,
     listMyAssociations,
+    createAssociationCalendarEvent,
+    hasPermissionFlag,
+    AssociationPermissionFlag,
     type AssociationCalendarFeedEvent,
     type Association,
   } from '$lib/associations/api';
@@ -15,11 +18,16 @@
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
   import CalendarDayEventsPanel from '$lib/components/calendar/CalendarDayEventsPanel.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
+  import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { portal } from '$lib/actions/portal';
   import {
     ChevronLeft,
     ChevronRight,
     CalendarDays,
     CalendarCheck,
+    CalendarPlus,
     ShieldAlert,
     FileDown,
   } from '@lucide/svelte';
@@ -109,12 +117,23 @@
     await loadMonth();
     if (isGlobalAdmin()) {
       canModerateAgenda = true;
+      canDepositEvent = true;
     } else {
       try {
         const mine = await listMyAssociations();
         canModerateAgenda = mine.some((a) => a.isAdmin);
+        // Un validateur BDE (VALIDATE_EVENTS dans une asso BDE) peut deposer pour
+        // n'importe quelle asso ; on retient son asso BDE comme :id d'autorisation.
+        const authority = mine.find(
+          (a) =>
+            a.isBDE &&
+            hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.VALIDATE_EVENTS)
+        );
+        depositAuthorityAssoId = authority?.id ?? '';
+        canDepositEvent = !!authority;
       } catch {
         canModerateAgenda = false;
+        canDepositEvent = false;
       }
     }
     if (canModerateAgenda) {
@@ -162,6 +181,80 @@
   let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
   let detailModalOpen = $state(false);
 
+  // ── Dépôt d'événement (admins globaux + validateurs BDE) ───────────────────
+  // Ces utilisateurs ont le pouvoir d'accepter les événements : leur dépôt est
+  // donc auto-validé. Un admin global poste directement sur l'asso choisie ; un
+  // validateur BDE poste via son asso BDE et redirige avec `targetAssocId`.
+
+  /** Whether the current user may deposit an auto-validated event for any association. */
+  let canDepositEvent = $state(false);
+  /** BDE association id (with VALIDATE_EVENTS) used as the URL :id for non-global-admins. */
+  let depositAuthorityAssoId = $state('');
+  let depositModalOpen = $state(false);
+  let depositTargetAssocId = $state('');
+  let depositTitle = $state('');
+  let depositDescription = $state('');
+  let depositStart = $state('');
+  let depositEnd = $state('');
+  let depositCoOwnerIds = $state<string[]>([]);
+  let depositSaving = $state(false);
+  let depositError = $state('');
+
+  function pad(n: number): string {
+    return n < 10 ? `0${n}` : `${n}`;
+  }
+
+  /** datetime-local value for "now" rounded down to the hour (minutes forced to :00). */
+  function nowHourLocal(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
+  }
+
+  function openDeposit() {
+    depositTargetAssocId = filterAssociationId || associations[0]?.id || '';
+    depositTitle = '';
+    depositDescription = '';
+    depositStart = nowHourLocal();
+    depositEnd = '';
+    depositCoOwnerIds = [];
+    depositError = '';
+    depositModalOpen = true;
+  }
+
+  async function submitDeposit() {
+    if (!depositTargetAssocId) {
+      depositError = 'Choisissez une association.';
+      return;
+    }
+    if (!depositTitle.trim() || !depositStart) {
+      depositError = 'Titre et date de début requis.';
+      return;
+    }
+    const startIso = new Date(depositStart).toISOString();
+    const endIso = depositEnd.trim() ? new Date(depositEnd).toISOString() : undefined;
+    depositSaving = true;
+    depositError = '';
+    try {
+      // Admin global : poste directement sur l'asso cible (auto-validé côté serveur).
+      // Validateur BDE : poste via son asso BDE avec targetAssocId vers l'asso cible.
+      const urlAssocId = isGlobalAdmin() ? depositTargetAssocId : depositAuthorityAssoId;
+      await createAssociationCalendarEvent(urlAssocId, {
+        title: depositTitle.trim(),
+        description: depositDescription.trim() || undefined,
+        startsAt: startIso,
+        endsAt: endIso,
+        ...(isGlobalAdmin() ? {} : { targetAssocId: depositTargetAssocId }),
+        coOwnerIds: depositCoOwnerIds,
+      });
+      depositModalOpen = false;
+      await loadMonth();
+    } catch (e) {
+      depositError = e instanceof Error ? e.message : 'Erreur';
+    } finally {
+      depositSaving = false;
+    }
+  }
+
   const exportHref = $derived.by(() => {
     const m = `${focusDate.getFullYear()}-${String(focusDate.getMonth() + 1).padStart(2, '0')}`;
     const parts = [`month=${encodeURIComponent(m)}`];
@@ -185,6 +278,16 @@
         Calendrier mensuel - cliquez sur un jour pour voir les événements.
       </p>
     </div>
+    {#if canDepositEvent}
+      <button
+        type="button"
+        onclick={openDeposit}
+        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+      >
+        <CalendarPlus size={18} />
+        Déposer un événement
+      </button>
+    {/if}
   </div>
 
   {#if canModerateAgenda}
@@ -293,3 +396,103 @@
     }}
   />
 </div>
+
+{#if depositModalOpen}
+  <div use:portal>
+    <div
+      data-keyboard-aware-overlay
+      class="z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+      role="presentation"
+      onclick={(e) => e.target === e.currentTarget && (depositModalOpen = false)}
+    >
+      <div
+        class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="deposit-modal-title"
+      >
+        <h3 id="deposit-modal-title" class="text-lg font-bold text-text-main">
+          Déposer un événement
+        </h3>
+        <p class="text-xs text-text-muted">
+          L'événement est publié immédiatement au nom de l'association choisie.
+        </p>
+
+        <div>
+          <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-asso"
+            >Au nom de</label
+          >
+          <select
+            id="deposit-asso"
+            bind:value={depositTargetAssocId}
+            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+          >
+            {#each associations as a (a.id)}
+              <option value={a.id}>{a.name}</option>
+            {/each}
+          </select>
+        </div>
+
+        <Input label="Titre" bind:value={depositTitle} />
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-start"
+              >Début</label
+            >
+            <input
+              id="deposit-start"
+              type="datetime-local"
+              bind:value={depositStart}
+              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-end"
+              >Fin (optionnel)</label
+            >
+            <input
+              id="deposit-end"
+              type="datetime-local"
+              bind:value={depositEnd}
+              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+            />
+          </div>
+        </div>
+
+        <div>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</p>
+          <MarkdownComposerField
+            bind:value={depositDescription}
+            placeholder="Décrivez l'événement…"
+            minHeight="100px"
+          />
+        </div>
+
+        <CoOwnerPicker bind:selectedIds={depositCoOwnerIds} excludeId={depositTargetAssocId} />
+
+        {#if depositError}
+          <p class="text-sm text-red-600">{depositError}</p>
+        {/if}
+
+        <div class="flex flex-wrap gap-2 justify-end pt-2">
+          <button
+            type="button"
+            onclick={() => (depositModalOpen = false)}
+            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            onclick={submitDeposit}
+            disabled={depositSaving}
+            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          >
+            {depositSaving ? 'Publication…' : 'Publier'}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
