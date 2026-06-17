@@ -8,14 +8,12 @@
     deleteAssociationCalendarEvent,
     validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
-    listAssociations,
     uploadCalendarEventImage,
     deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
-    type Association,
   } from '$lib/associations/api';
   import {
     buildIcsCalendar,
@@ -40,10 +38,10 @@
     Check,
     ImagePlus,
     X,
-    Users,
   } from '@lucide/svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
 
@@ -262,44 +260,8 @@
     )
   );
 
-  // ── Co-owner picker ───────────────────────────────────────────────────────
-
   /** IDs of co-owner associations selected for the current form. */
   let formCoOwnerIds = $state<string[]>([]);
-  let allAssociations = $state<Association[]>([]);
-  let coOwnerSearchQuery = $state('');
-  let coOwnerDropdownOpen = $state(false);
-
-  async function ensureAllAssociations() {
-    if (allAssociations.length > 0) return;
-    try {
-      allAssociations = await listAssociations();
-    } catch {
-      allAssociations = [];
-    }
-  }
-
-  const coOwnerCandidates = $derived(
-    allAssociations.filter(
-      (a) =>
-        a.id !== associationId &&
-        !formCoOwnerIds.includes(a.id) &&
-        (coOwnerSearchQuery.trim() === '' ||
-          a.name.toLowerCase().includes(coOwnerSearchQuery.toLowerCase()))
-    )
-  );
-
-  const selectedCoOwners = $derived(allAssociations.filter((a) => formCoOwnerIds.includes(a.id)));
-
-  function addCoOwner(id: string) {
-    if (!formCoOwnerIds.includes(id)) formCoOwnerIds = [...formCoOwnerIds, id];
-    coOwnerSearchQuery = '';
-    coOwnerDropdownOpen = false;
-  }
-
-  function removeCoOwner(id: string) {
-    formCoOwnerIds = formCoOwnerIds.filter((x) => x !== id);
-  }
 
   function openEventDetail(ev: AssociationCalendarFeedEvent) {
     detailEvent = ev;
@@ -333,7 +295,7 @@
     formEnd = '';
     formError = '';
     modalOpen = true;
-    await Promise.all([ensureLinkCandidates(), ensureAllAssociations()]);
+    await ensureLinkCandidates();
   }
 
   async function openEdit(ev: AssociationCalendarEvent) {
@@ -347,7 +309,7 @@
     formImageUrl = ev.imageUrl ?? null;
     formError = '';
     modalOpen = true;
-    await Promise.all([ensureLinkCandidates(), ensureAllAssociations()]);
+    await ensureLinkCandidates();
   }
 
   async function handleImageUpload(e: Event) {
@@ -759,75 +721,7 @@
         </p>
       {/if}
       <!-- Co-owner associations picker -->
-      <div class="space-y-2 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
-        <p
-          class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
-        >
-          <Users size={14} />
-          Associations partenaires (optionnel)
-        </p>
-        {#if selectedCoOwners.length > 0}
-          <div class="flex flex-wrap gap-1.5">
-            {#each selectedCoOwners as asso (asso.id)}
-              <span
-                class="inline-flex items-center gap-1 rounded-full border border-cn-border bg-[var(--cn-surface)] px-2.5 py-1 text-xs font-semibold text-text-main"
-              >
-                {#if asso.color}
-                  <span
-                    class="inline-block w-2 h-2 rounded-full shrink-0"
-                    style="background:{asso.color}"
-                  ></span>
-                {/if}
-                {asso.name}
-                <button
-                  type="button"
-                  onclick={() => removeCoOwner(asso.id)}
-                  class="ml-0.5 text-text-muted hover:text-red-500 transition-colors"
-                  aria-label="Retirer {asso.name}"
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            {/each}
-          </div>
-        {/if}
-        <div class="relative">
-          <input
-            type="text"
-            placeholder="Rechercher une association…"
-            bind:value={coOwnerSearchQuery}
-            onfocus={() => (coOwnerDropdownOpen = true)}
-            onblur={() => setTimeout(() => (coOwnerDropdownOpen = false), 150)}
-            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main placeholder:text-text-muted"
-          />
-          {#if coOwnerDropdownOpen && coOwnerCandidates.length > 0}
-            <ul
-              class="absolute z-20 mt-1 w-full rounded-xl border border-cn-border bg-white/95 dark:bg-black/90 backdrop-blur-xl shadow-lg max-h-48 overflow-y-auto"
-            >
-              {#each coOwnerCandidates.slice(0, 12) as asso (asso.id)}
-                <li>
-                  <button
-                    type="button"
-                    onmousedown={(e) => {
-                      e.preventDefault();
-                      addCoOwner(asso.id);
-                    }}
-                    class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-cn-yellow/10 transition-colors text-left"
-                  >
-                    {#if asso.color}
-                      <span
-                        class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                        style="background:{asso.color}"
-                      ></span>
-                    {/if}
-                    {asso.name}
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      </div>
+      <CoOwnerPicker bind:selectedIds={formCoOwnerIds} excludeId={associationId} />
       {#if canEdit && linkCandidates}
         <div class="space-y-3 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
           <p
