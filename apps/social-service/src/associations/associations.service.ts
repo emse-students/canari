@@ -1417,6 +1417,23 @@ export class AssociationsService {
     return key;
   }
 
+  /** Returns the association's vault-encrypted shared notepad ciphertext (empty if unset). */
+  async getNotesCiphertext(associationId: string): Promise<string> {
+    const asso = await this.assoRepo.findOne({
+      where: { id: associationId },
+      select: ['id', 'notesCiphertext'],
+    });
+    if (!asso) throw new NotFoundException('Association not found');
+    return asso.notesCiphertext ?? '';
+  }
+
+  /** Persists the association's vault-encrypted shared notepad ciphertext. */
+  async setNotesCiphertext(associationId: string, ciphertext: string): Promise<void> {
+    await this.findById(associationId);
+    await this.assoRepo.update(associationId, { notesCiphertext: ciphertext || null });
+    this.logger.debug(`Vault notepad updated for association ${sanitizeLog(associationId)}`);
+  }
+
   /** Lists documents in the vault with aggregated usage stats (no mediaId). */
   async listDocuments(associationId: string) {
     await this.findById(associationId);

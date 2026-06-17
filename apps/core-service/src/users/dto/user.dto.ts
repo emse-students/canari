@@ -79,6 +79,15 @@ export class UpdateUserDto {
   stripeCustomerId?: string;
 }
 
+/** Payload for updating the caller's private personal notepad. */
+export class UpdateNotesDto {
+  /** Markdown content of the personal notepad (max 50000 chars). */
+  @IsString()
+  @MaxLength(50000)
+  @IsOptional()
+  notes?: string;
+}
+
 /** Public-facing projection of a user - omits sensitive or internal fields. */
 export class PublicUserDto {
   /** OIDC subject / primary key. */

@@ -6,6 +6,8 @@
     createDocument,
     getDocumentDetail,
     deleteDocument,
+    getAssociationNotesCiphertext,
+    saveAssociationNotesCiphertext,
     type AssociationDocument,
     type DocumentVaultStats,
   } from '$lib/associations/api';
@@ -19,13 +21,16 @@
     randomPwSalt,
     parseVaultMarkers,
     buildVaultMarkers,
+    encryptVaultNote,
+    decryptVaultNote,
   } from '$lib/associations/vaultCrypto';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
-  import { FileUp, Trash2, Download, FileText, Lock } from '@lucide/svelte';
+  import { FileUp, Trash2, Download, FileText, Lock, NotebookPen } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { portal } from '$lib/actions/portal';
   import Input from '$lib/components/ui/Input.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
 
   interface Props {
     associationId: string;
@@ -58,7 +63,52 @@
     return parseVaultMarkers(doc.description).pwSalt !== null;
   }
 
-  onMount(load);
+  // Shared admin notepad, encrypted with the vault key (invisible to the server).
+  let noteText = $state('');
+  let noteLoading = $state(true);
+  let noteSaving = $state(false);
+  let noteError = $state('');
+  let noteSaved = $state(false);
+
+  async function loadNote() {
+    noteLoading = true;
+    noteError = '';
+    try {
+      const [vaultKeyHex, ciphertext] = await Promise.all([
+        getVaultKey(associationId),
+        getAssociationNotesCiphertext(associationId),
+      ]);
+      noteText = await decryptVaultNote(vaultKeyHex, ciphertext);
+    } catch (e) {
+      console.error('[Vault] Erreur chargement bloc-notes:', e);
+      noteError = 'Impossible de charger le bloc-notes.';
+    } finally {
+      noteLoading = false;
+    }
+  }
+
+  async function saveNote() {
+    noteSaving = true;
+    noteError = '';
+    noteSaved = false;
+    try {
+      const vaultKeyHex = await getVaultKey(associationId);
+      const ciphertext = await encryptVaultNote(vaultKeyHex, noteText);
+      await saveAssociationNotesCiphertext(associationId, ciphertext);
+      noteSaved = true;
+      setTimeout(() => (noteSaved = false), 2000);
+    } catch (e) {
+      console.error('[Vault] Erreur sauvegarde bloc-notes:', e);
+      noteError = 'Échec de la sauvegarde.';
+    } finally {
+      noteSaving = false;
+    }
+  }
+
+  onMount(() => {
+    void load();
+    void loadNote();
+  });
 
   async function load() {
     loading = true;
@@ -273,6 +323,41 @@
 </script>
 
 <div class="space-y-5">
+  <!-- Shared admin notepad (vault-encrypted) -->
+  <div class="space-y-2 rounded-2xl border border-cn-border/70 bg-cn-bg/40 p-4">
+    <div class="flex items-center justify-between gap-2">
+      <p class="text-sm font-bold text-text-main flex items-center gap-1.5">
+        <NotebookPen size={16} class="text-cn-dark" />
+        Bloc-notes de l'association
+      </p>
+      <span class="text-[11px] text-text-muted">Chiffré · partagé entre admins</span>
+    </div>
+    {#if noteLoading}
+      <p class="text-xs text-text-muted py-3">Déchiffrement…</p>
+    {:else}
+      <MarkdownComposerField
+        bind:value={noteText}
+        placeholder="Notez tout et n'importe quoi…"
+        minHeight="120px"
+      />
+      <div class="flex items-center justify-end gap-3 pt-1">
+        {#if noteError}
+          <span class="text-xs text-red-600 mr-auto">{noteError}</span>
+        {:else if noteSaved}
+          <span class="text-xs text-green-600 mr-auto">Enregistré ✓</span>
+        {/if}
+        <button
+          type="button"
+          onclick={saveNote}
+          disabled={noteSaving}
+          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+        >
+          {noteSaving ? 'Enregistrement…' : 'Enregistrer'}
+        </button>
+      </div>
+    {/if}
+  </div>
+
   {#if loading}
     <div class="flex justify-center py-10">
       <div

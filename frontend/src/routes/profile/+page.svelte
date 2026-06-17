@@ -4,6 +4,8 @@
   import {
     fetchMyProfile,
     updateMyProfile,
+    fetchMyNotes,
+    saveMyNotes,
     setupPaymentMethod,
     listPaymentMethods,
     deletePaymentMethod,
@@ -50,6 +52,7 @@
     UserRound,
     History,
     Info,
+    NotebookPen,
   } from '@lucide/svelte';
 
   async function changeProfilePhoto() {
@@ -188,6 +191,39 @@
   let bioInput = $state('');
   let saving = $state(false);
 
+  // Personal notepad state (private, plaintext server-side).
+  let noteInput = $state('');
+  let noteLoading = $state(true);
+  let noteSaving = $state(false);
+  let noteSaved = $state(false);
+  let noteError = $state('');
+
+  async function loadMyNotes() {
+    noteLoading = true;
+    try {
+      noteInput = await fetchMyNotes();
+    } catch {
+      noteError = 'Impossible de charger le bloc-notes.';
+    } finally {
+      noteLoading = false;
+    }
+  }
+
+  async function saveNote() {
+    noteSaving = true;
+    noteError = '';
+    noteSaved = false;
+    try {
+      await saveMyNotes(noteInput);
+      noteSaved = true;
+      setTimeout(() => (noteSaved = false), 2000);
+    } catch {
+      noteError = 'Échec de la sauvegarde.';
+    } finally {
+      noteSaving = false;
+    }
+  }
+
   // Account deletion state
   let deletionDialogOpen = $state(false);
   let deletionConfirmText = $state('');
@@ -242,6 +278,7 @@
       profile = await fetchMyProfile();
       bioInput = profile.bio || '';
       void loadProfileExtras(profile.id);
+      void loadMyNotes();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Impossible de charger le profil';
       if (msg.toLowerCase().includes('session') || msg.includes('401')) {
@@ -615,6 +652,44 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Section Bloc-notes personnel -->
+    <div
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500"
+      style="animation-fill-mode: backwards;"
+    >
+      <div class="flex items-center justify-between gap-2 mb-4">
+        <h2 class="text-lg font-bold text-text-main flex items-center gap-2">
+          <NotebookPen size={20} class="text-cn-dark" />
+          Bloc-notes personnel
+        </h2>
+        <span class="text-xs text-text-muted">Privé · visible de toi seul</span>
+      </div>
+      {#if noteLoading}
+        <p class="text-sm text-text-muted py-3">Chargement…</p>
+      {:else}
+        <MarkdownComposerField
+          bind:value={noteInput}
+          placeholder="Notez tout et n'importe quoi…"
+          minHeight="140px"
+        />
+        <div class="flex items-center justify-end gap-3 pt-3">
+          {#if noteError}
+            <span class="text-xs text-red-600 mr-auto">{noteError}</span>
+          {:else if noteSaved}
+            <span class="text-xs text-green-600 mr-auto">Enregistré ✓</span>
+          {/if}
+          <button
+            type="button"
+            onclick={saveNote}
+            disabled={noteSaving}
+            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+          >
+            {noteSaving ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </div>
+      {/if}
     </div>
 
     <!-- Section Préférences -->

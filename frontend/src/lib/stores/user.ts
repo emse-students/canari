@@ -145,6 +145,24 @@ export async function updateMyProfile(data: {
   return (await res.json()) as UserProfile;
 }
 
+/** Fetches the caller's private personal notepad (markdown). Returns "" when unset. */
+export async function fetchMyNotes(): Promise<string> {
+  const res = await apiFetch(`${coreUrl()}/api/users/me/notes`);
+  if (!res.ok) throw new Error(`Failed to fetch notes (${res.status})`);
+  const data = (await res.json()) as { notes: string };
+  return data.notes ?? '';
+}
+
+/** Persists the caller's private personal notepad. */
+export async function saveMyNotes(notes: string): Promise<void> {
+  const res = await apiFetch(`${coreUrl()}/api/users/me/notes`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes }),
+  });
+  if (!res.ok) throw new Error(`Failed to save notes (${res.status})`);
+}
+
 // ── Payment Methods ─────────────────────────────────────────────────────
 
 /** A saved Stripe payment method (card) returned by the core service. */

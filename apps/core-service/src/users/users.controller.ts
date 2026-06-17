@@ -3,6 +3,7 @@ import {
   Get,
   Body,
   Patch,
+  Put,
   Param,
   Headers,
   UseGuards,
@@ -20,6 +21,7 @@ import { AvatarService } from './avatar.service';
 import {
   CreateUserDto,
   UpdateUserDto,
+  UpdateNotesDto,
   DirectoryQueryDto,
 } from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -86,6 +88,25 @@ export class UsersController {
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
+  }
+
+  /** Returns the caller's private personal notepad (markdown). */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/notes')
+  async getMyNotes(@Headers('x-user-id') userId: string) {
+    const notes = await this.usersService.getNotes(userId);
+    return { notes };
+  }
+
+  /** Updates the caller's private personal notepad. */
+  @UseGuards(NginxAuthGuard)
+  @Put('me/notes')
+  async setMyNotes(
+    @Headers('x-user-id') userId: string,
+    @Body() dto: UpdateNotesDto,
+  ) {
+    await this.usersService.setNotes(userId, dto.notes ?? '');
+    return { ok: true };
   }
 
   /** Returns the public profile of the requested user, resolving "me" to the caller. */

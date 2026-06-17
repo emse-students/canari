@@ -25,6 +25,10 @@ export class User {
   @Column({ type: 'text', nullable: true })
   bio?: string | null;
 
+  /** Private personal notepad (markdown). Never exposed in public projections. */
+  @Column({ type: 'text', nullable: true })
+  notes?: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   stripeCustomerId?: string | null;
 

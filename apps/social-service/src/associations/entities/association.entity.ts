@@ -62,6 +62,14 @@ export class Association {
   @Column({ type: 'bigint', default: 524288000 })
   documentQuotaBytes: number;
 
+  /**
+   * Shared admin notepad, encrypted client-side with the document vault key
+   * (AES-256-GCM, packed IV+ciphertext, base64). The server only stores opaque
+   * ciphertext. Null/empty until first written.
+   */
+  @Column({ type: 'text', nullable: true })
+  notesCiphertext: string | null;
+
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend falls back to generateAvatarColor. */
   @Column({ type: 'varchar', length: 7, nullable: true })
   color: string | null;

@@ -205,6 +205,15 @@ export class CreateAssociationDocumentDto {
   size: number;
 }
 
+/** Payload for the association's vault-encrypted shared notepad (opaque ciphertext). */
+export class UpdateAssociationNotesDto {
+  /** Base64-encoded AES-256-GCM packed blob (IV + ciphertext). Empty clears the note. */
+  @IsString()
+  @MaxLength(2_000_000)
+  @IsOptional()
+  ciphertext?: string;
+}
+
 export class CreateAssociationCalendarEventDto {
   @IsString()
   @IsNotEmpty()

@@ -62,6 +62,19 @@ export class UsersService implements OnModuleInit {
     return await this.userRepository.save(user);
   }
 
+  /** Returns the caller's private personal notepad content (empty string if unset). */
+  async getNotes(id: string): Promise<string> {
+    const user = await this.findOne(id);
+    return user.notes ?? '';
+  }
+
+  /** Persists the caller's private personal notepad content. */
+  async setNotes(id: string, notes: string): Promise<void> {
+    const user = await this.findOne(id);
+    user.notes = notes;
+    await this.userRepository.save(user);
+  }
+
   /** Maps a User entity to a PublicUserDto, stripping internal fields. */
   toPublicDto(user: User): PublicUserDto {
     return {

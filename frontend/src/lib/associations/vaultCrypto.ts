@@ -179,3 +179,40 @@ function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/** HKDF salt for the association's single shared notepad (distinct from per-document UUID salts). */
+const NOTES_SALT = 'asso-notes';
+
+function base64FromBuffer(buf: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function base64ToBuffer(b64: string): ArrayBuffer {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/**
+ * Encrypts the association shared notepad with the vault key (AES-256-GCM) and
+ * returns a base64 packed blob suitable for `PUT /api/associations/:id/notes`.
+ */
+export async function encryptVaultNote(vaultKeyHex: string, text: string): Promise<string> {
+  const cek = await deriveDocumentCek(vaultKeyHex, NOTES_SALT);
+  const data = new TextEncoder().encode(text);
+  const { iv, ciphertext } = await encryptDocument(cek, data.buffer as ArrayBuffer);
+  return base64FromBuffer(packEncryptedBlob(iv, ciphertext));
+}
+
+/** Decrypts a base64 notepad blob produced by `encryptVaultNote`. Empty input yields "". */
+export async function decryptVaultNote(vaultKeyHex: string, base64Blob: string): Promise<string> {
+  if (!base64Blob) return '';
+  const cek = await deriveDocumentCek(vaultKeyHex, NOTES_SALT);
+  const { iv, ciphertext } = unpackEncryptedBlob(base64ToBuffer(base64Blob));
+  const plain = await decryptDocument(cek, iv, ciphertext);
+  return new TextDecoder().decode(plain);
+}

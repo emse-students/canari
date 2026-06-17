@@ -675,6 +675,25 @@ export async function getVaultKey(associationId: string): Promise<string> {
   return res.key;
 }
 
+/** Returns the association's vault-encrypted shared notepad ciphertext (base64, empty if unset). */
+export async function getAssociationNotesCiphertext(associationId: string): Promise<string> {
+  const res = await request<{ ciphertext: string }>(
+    `/api/associations/${encodeURIComponent(associationId)}/notes`
+  );
+  return res.ciphertext ?? '';
+}
+
+/** Stores the association's vault-encrypted shared notepad ciphertext (base64). */
+export async function saveAssociationNotesCiphertext(
+  associationId: string,
+  ciphertext: string
+): Promise<void> {
+  await request(`/api/associations/${encodeURIComponent(associationId)}/notes`, {
+    method: 'PUT',
+    body: JSON.stringify({ ciphertext }),
+  });
+}
+
 /** Lists vault documents with quota usage stats. Requires MANAGE_DOCUMENTS. */
 export async function listDocuments(associationId: string): Promise<DocumentVaultStats> {
   return request<DocumentVaultStats>(

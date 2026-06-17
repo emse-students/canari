@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   SetMetadata,
@@ -30,6 +31,7 @@ import {
   AddMemberDto,
   CreateAssociationDto,
   CreateAssociationDocumentDto,
+  UpdateAssociationNotesDto,
   CreateAssociationCalendarEventDto,
   CreateProductDto,
   GrantProductPurchaseDto,
@@ -659,6 +661,24 @@ export class AssociationsController {
     @Headers('authorization') authorization: string | undefined
   ) {
     return this.service.deleteDocument(id, docId, authorization);
+  }
+
+  /** Returns the association's vault-encrypted shared notepad (opaque ciphertext). */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/notes')
+  async getNotes(@Param('id') id: string) {
+    const ciphertext = await this.service.getNotesCiphertext(id);
+    return { ciphertext };
+  }
+
+  /** Stores the association's vault-encrypted shared notepad. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Put(':id/notes')
+  async setNotes(@Param('id') id: string, @Body() dto: UpdateAssociationNotesDto) {
+    await this.service.setNotesCiphertext(id, dto.ciphertext ?? '');
+    return { ok: true };
   }
 
   // ── Forms (MANAGE_FORMS flag) ────────────────────────────────────────────
