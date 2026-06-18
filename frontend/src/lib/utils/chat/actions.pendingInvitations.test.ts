@@ -20,6 +20,7 @@ import { processPendingInvitations } from './actions';
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
     getDeviceId: vi.fn().mockReturnValue('self-device'),
+    getLocalGroups: vi.fn().mockReturnValue(['g1']),
     getPendingInvitations: vi.fn().mockResolvedValue([]),
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
@@ -156,7 +157,7 @@ describe('processPendingInvitations - état local forké en retard', () => {
     // Recovery déclenchée une seule fois pour le groupe, et la 2e invitation n'est pas tentée
     // (break sur le groupe forké) : addMember appelé une seule fois.
     expect(recoverForkedGroup).toHaveBeenCalledTimes(1);
-    expect(recoverForkedGroup).toHaveBeenCalledWith('g1');
+    expect(recoverForkedGroup).toHaveBeenCalledWith('g1', 23);
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
   });
 
@@ -196,5 +197,42 @@ describe('processPendingInvitations - état local forké en retard', () => {
     });
 
     expect(recoverForkedGroup).not.toHaveBeenCalled();
+  });
+
+  it('traite ALREADY_MEMBER comme une invitation remplie (skip, ni kick ni recovery)', async () => {
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev-1', groupId: 'g1', status: 'pending' },
+        ]),
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) }]),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('ALREADY_MEMBER: All KeyPackages already belong to existing group members')
+        ),
+    });
+    const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
+    const log = vi.fn();
+    const recoverForkedGroup = vi.fn().mockResolvedValue(undefined);
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      pin: 'pin',
+      conversations,
+      log,
+      recoverForkedGroup,
+    });
+
+    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('invitation remplie'));
   });
 });

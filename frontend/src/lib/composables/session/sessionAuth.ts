@@ -104,8 +104,8 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
  * périmé et redemande un Welcome pour rejoindre à l'epoch courante.
  */
 export function makeRecoverForkedGroup(ctx: SessionContext, cb: ChatSessionCallbacks) {
-  return (groupId: string) =>
-    recoverForkedGroup(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers);
+  return (groupId: string, minEpoch?: number) =>
+    recoverForkedGroup(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers, minEpoch);
 }
 
 /**

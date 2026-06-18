@@ -13,6 +13,7 @@ import {
   isGroupActiveOnServer,
   handleDuplicateLeafError,
   isStaleForkError,
+  parseForkedEpoch,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import {
@@ -43,9 +44,10 @@ export async function processPendingInvitations(params: {
   /**
    * Recovery d'un groupe dont NOTRE état local est forké en retard (commit rejeté
    * epoch_mismatch). Effectue forget + welcome_request pour rejoindre à l'epoch courante.
+   * `minEpoch` (epoch serveur connue) rejette les Welcomes stale d'une branche divergée.
    * Injecté par la couche session (a besoin des timers/conversations de recovery).
    */
-  recoverForkedGroup?: (groupId: string) => Promise<void>;
+  recoverForkedGroup?: (groupId: string, minEpoch?: number) => Promise<void>;
 }) {
   const { mlsService, storage, userId, pin, conversations, log, recoverForkedGroup } = params;
 
@@ -85,7 +87,13 @@ export async function processPendingInvitations(params: {
     const { terminalId: groupId } = await resolveTerminalGroup(mlsService, origGroupId);
     const resolved = groupId;
 
-    if (!conversations.get(groupId)?.isReady) {
+    // "Prêt pour inviter" = conversation prête ET groupe présent dans le WASM local.
+    // Après un forgetGroup de recovery (fork), la conversation reste isReady mais le groupe
+    // a quitté le WASM : tenter addMember y lèverait "Groupe introuvable" en boucle. On
+    // retombe alors dans la branche non-prêt (welcome_request de recovery déjà en vol).
+    const readyForInvites =
+      conversations.get(groupId)?.isReady === true && mlsService.getLocalGroups().includes(groupId);
+    if (!readyForInvites) {
       if (resolved !== origGroupId) {
         // Le successeur terminal existe mais n'est pas encore prêt (Welcome en transit).
         // onGroupReady() déclenchera un nouveau passage dans 500 ms.
@@ -217,11 +225,23 @@ export async function processPendingInvitations(params: {
 
           // NOTRE état local est forké EN RETARD (commit rejeté, écart > 1) : tous nos
           // commits sur ce groupe seront rejetés. Inutile d'insister - on oublie l'état
-          // périmé et on redemande un Welcome, puis on abandonne CE groupe pour ce cycle.
-          if (isStaleForkError(e)) {
+          // périmé (en rejetant les Welcomes < epoch serveur) et on redemande un Welcome,
+          // puis on abandonne CE groupe pour ce cycle.
+          const forked = parseForkedEpoch(e);
+          if (forked && forked.serverEpoch > forked.sentEpoch + 1) {
             log(`[PENDING] ${groupId.slice(0, 8)}… forké en retard - recovery + abandon du groupe`);
-            if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+            if (recoverForkedGroup)
+              await recoverForkedGroup(groupId, forked.serverEpoch).catch(() => {});
             break;
+          }
+
+          // Device déjà membre de l'arbre : l'invitation est remplie (le device rejoindra via
+          // son Welcome en file). On ne kicke pas - skip silencieux pour stopper le re-essai.
+          if (errStr.includes('ALREADY_MEMBER')) {
+            log(
+              `[PENDING] ${inv.deviceId} déjà membre de ${groupId.slice(0, 8)}… - invitation remplie, skip`
+            );
+            continue;
           }
 
           if (errStr.includes('DuplicateSignatur')) {
@@ -243,7 +263,10 @@ export async function processPendingInvitations(params: {
                 log(
                   `[PENDING] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery + abandon du groupe`
                 );
-                if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+                if (recoverForkedGroup)
+                  await recoverForkedGroup(groupId, parseForkedEpoch(kickErr)?.serverEpoch).catch(
+                    () => {}
+                  );
                 break;
               }
               log(
@@ -701,8 +724,9 @@ export async function handleWelcomeRequest(params: {
   /**
    * Recovery d'un groupe dont NOTRE état local est forké en retard (commit rejeté
    * epoch_mismatch lors de l'ajout). Effectue forget + welcome_request.
+   * `minEpoch` (epoch serveur connue) rejette les Welcomes stale d'une branche divergée.
    */
-  recoverForkedGroup?: (groupId: string) => Promise<void>;
+  recoverForkedGroup?: (groupId: string, minEpoch?: number) => Promise<void>;
 }) {
   const {
     mlsService,
@@ -903,9 +927,13 @@ export async function handleWelcomeRequest(params: {
 
     // NOTRE état local est forké EN RETARD : impossible d'ajouter qui que ce soit, le
     // commit est rejeté. On oublie l'état périmé et on redemande un Welcome pour nous-mêmes.
-    if (isStaleForkError(e)) {
+    const forked = parseForkedEpoch(e);
+    if (forked && forked.serverEpoch > forked.sentEpoch + 1) {
       log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké en retard - recovery`);
-      if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+      if (recoverForkedGroup) await recoverForkedGroup(groupId, forked.serverEpoch).catch(() => {});
+    } else if (errStr.includes('ALREADY_MEMBER')) {
+      // Device déjà membre : la demande est satisfaite (il rejoindra via son Welcome en file).
+      log(`[WELCOME_REQ] ${requesterDeviceId} déjà membre de ${groupId.slice(0, 8)}… - skip`);
     } else if (errStr.includes('DuplicateSignatur')) {
       try {
         await handleDuplicateLeafError({
@@ -918,9 +946,11 @@ export async function handleWelcomeRequest(params: {
           log,
         });
       } catch (kickErr) {
-        if (isStaleForkError(kickErr)) {
+        const kickForked = parseForkedEpoch(kickErr);
+        if (kickForked && kickForked.serverEpoch > kickForked.sentEpoch + 1) {
           log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery`);
-          if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+          if (recoverForkedGroup)
+            await recoverForkedGroup(groupId, kickForked.serverEpoch).catch(() => {});
         } else {
           log(
             `[WELCOME_REQ] Erreur kick pour ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`

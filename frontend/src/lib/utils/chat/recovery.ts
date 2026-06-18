@@ -201,10 +201,13 @@ export async function requestReAdd(
 export async function recoverForkedGroup(
   groupId: string,
   deps: RecoveryDeps,
-  timers: Map<string, ReturnType<typeof setTimeout>>
+  timers: Map<string, ReturnType<typeof setTimeout>>,
+  minEpoch = 0
 ): Promise<void> {
   deps.log(`[FORK] ${groupId.slice(0, 8)}… état local forké en retard - forget + welcome_request`);
-  deps.mlsService.forgetGroup(groupId);
+  // minEpoch = epoch serveur connue : rejette un re-Welcome stale d'une branche divergée
+  // (un commit resté en file à l'ancienne epoch ne doit pas nous re-forker).
+  deps.mlsService.forgetGroup(groupId, minEpoch);
   await requestReAdd(groupId, deps, timers);
 }
 

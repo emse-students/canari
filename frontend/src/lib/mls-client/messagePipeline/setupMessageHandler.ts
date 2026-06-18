@@ -353,17 +353,21 @@ async function handleWelcome({
     } catch (e) {
       const err = String(e);
       if (err.includes('GroupAlreadyExists')) {
-        // Idempotent - on a déjà ce groupe, marquer prêt si besoin
-        if (groupId) {
-          const convo = deps.conversations.get(groupId);
-          if (convo && !convo.isReady) {
-            deps.conversations.set(groupId, { ...convo, isReady: true });
-            await saveConversation(groupId).catch(() => {});
-          }
-          onGroupReady?.(groupId);
+        // process_welcome a jeté AVANT l'insert : l'état OpenMLS du groupe existe dans le
+        // storage provider mais PAS en mémoire (sinon le guard "déjà détenu" l'aurait traité
+        // en amont). Le marquer "prêt" serait faux - le groupe n'est pas réellement joint et
+        // resterait bloqué. On purge le storage (forgetGroup purge désormais mémoire + storage)
+        // puis on redemande un Welcome propre, honoré sans collision de storage.
+        const target = terminalId || (groupId ?? '');
+        noMatchKpFailures.delete(target);
+        if (target) {
+          log(
+            `[WELCOME] GroupAlreadyExists pour ${target.slice(0, 8)}… - forget storage + re-Welcome`
+          );
+          mlsService.forgetGroup(target);
+          statePersister.persistNow();
+          await requestReAdd(target, deps, recoveryTimers);
         }
-        noMatchKpFailures.delete(terminalId || (groupId ?? ''));
-        log(`[WELCOME] GroupAlreadyExists pour ${groupId?.slice(0, 8)}… - noop`);
       } else if (err.includes('NoMatchingKeyPackage')) {
         // Nos KeyPackages publiés ne correspondent plus à nos clés privées locales :
         // l'invitant nous ré-ajoute avec un KeyPackage qu'on ne peut pas honorer.

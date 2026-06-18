@@ -387,17 +387,43 @@ impl MlsManager {
         Some(protocol_message.epoch().as_u64())
     }
 
-    /// Oublie l'état MLS local d'un groupe sans toucher au stockage de clés.
-    /// `min_epoch` : epoch minimale qu'un Welcome doit atteindre pour être accepté.
-    /// Passer 0 pour ne pas imposer de minimum (aucune restriction).
+    /// Supprime l'état OpenMLS persistant d'un groupe du storage provider (best-effort).
+    ///
+    /// Indispensable avant tout re-Welcome sur le MÊME group_id : sans ça,
+    /// `StagedWelcome::new_from_welcome` lit le storage provider et refuse d'écraser un
+    /// groupe déjà présent (`GroupAlreadyExists`), bloquant définitivement la recovery
+    /// "forget + re-Welcome". Ne touche pas à l'identité ni aux KeyPackages du device.
+    fn delete_group_from_storage(&self, group_id: &str) {
+        let group_id_key = GroupId::from_slice(group_id.as_bytes());
+        if let Ok(Some(mut orphan)) = MlsGroup::load(self.provider.storage(), &group_id_key)
+            && let Err(e) = orphan.delete(self.provider.storage())
+        {
+            log::warn!(
+                "delete_group_from_storage: suppression {} échouée: {:?}",
+                group_id,
+                e
+            );
+        }
+    }
+
+    /// Oublie l'état MLS local d'un groupe : mémoire vive ET stockage OpenMLS persistant.
+    /// `min_epoch` : epoch minimale qu'un Welcome doit atteindre pour être accepté
+    /// (protège contre un re-Welcome stale sur une branche divergée). Passer 0 pour ne
+    /// pas imposer de minimum.
+    ///
+    /// Le stockage est purgé (et pas seulement la HashMap mémoire) car OpenMLS rejette
+    /// un re-Welcome sur un group_id encore présent dans le storage provider
+    /// (`GroupAlreadyExists`). Sans cette purge, la recovery "forget + re-Welcome" ne
+    /// converge jamais.
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs
                 .insert(group_id.to_string(), min_epoch);
         }
+        self.delete_group_from_storage(group_id);
         log::info!(
-            "forget_group: groupe {} oublié (min_epoch={}, re-Welcome attendu)",
+            "forget_group: groupe {} oublié (mémoire + storage, min_epoch={}, re-Welcome attendu)",
             group_id,
             min_epoch
         );
@@ -409,21 +435,11 @@ impl MlsManager {
     /// Contrairement à `forget_group`, aucun retour n'est possible après cet appel.
     /// Réserver à la politique "Poison Pill" (groupe irrécupérable).
     pub fn drop_group(&mut self, group_id: &str) {
-        let group_id_key = GroupId::from_slice(group_id.as_bytes());
         self.groups.remove(group_id);
         // u64::MAX : aucun Welcome ne sera jamais accepté pour ce groupId.
         self.forgotten_group_min_epochs
             .insert(group_id.to_string(), u64::MAX);
-        if let Ok(Some(mut orphan)) = MlsGroup::load(self.provider.storage(), &group_id_key)
-            && let Err(e) = orphan.delete(self.provider.storage())
-        {
-            log::warn!(
-                "drop_group: suppression storage {} échouée: {:?}",
-                group_id,
-                e
-            );
-        }
-
+        self.delete_group_from_storage(group_id);
         log::info!(
             "[POISON_PILL] drop_group: {} purgé définitivement",
             group_id
