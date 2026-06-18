@@ -1285,6 +1285,64 @@ fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     entries
 }
 
+// ─── Commandes Tauri : mirror outbox (envoi background app tuée) ──────────────
+
+/// Réécrit {app_data_dir}/outbox_pending.ndjson depuis l'instantané courant de l'outbox.
+/// Chaque entrée porte le proto AppMessage *en clair* (base64) que le service Android chiffrera
+/// contre l'epoch vivant via `nativeSendMessageBackground`. Fichier app-privé en clair, cohérent
+/// avec push_context.json / fcm_message_cache.ndjson. Réécriture complète (pas d'append).
+#[tauri::command]
+fn store_outbox_mirror(app: tauri::AppHandle, entries: Vec<serde_json::Value>) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join("outbox_pending.ndjson");
+    // File vide => supprimer le fichier pour que le natif voie "rien en attente" sans le parser.
+    if entries.is_empty() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[OUTBOX_MIRROR] suppression: {e}");
+            }
+        }
+        return Ok(());
+    }
+    let body = entries
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, body + "\n").map_err(|e| e.to_string())?;
+    log::debug!("[OUTBOX_MIRROR] {} entrée(s) écrite(s)", entries.len());
+    Ok(())
+}
+
+/// Lit {app_data_dir}/outbox_sent.ndjson (un messageId par ligne, écrit par le service Android
+/// après un envoi background réussi), efface le fichier et retourne les ids. Appelé au login pour
+/// supprimer de l'outbox les messages déjà livrés en arrière-plan.
+#[tauri::command]
+fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => { log::warn!("[OUTBOX_MIRROR] app_data_dir() failed: {e}"); return vec![]; }
+    };
+    let path = data_dir.join("outbox_sent.ndjson");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
+        Err(e) => { log::warn!("[OUTBOX_MIRROR] lecture sent: {e}"); return vec![]; }
+    };
+    if let Err(e) = std::fs::remove_file(&path) {
+        log::warn!("[OUTBOX_MIRROR] suppression sent: {e}");
+    }
+    let ids: Vec<String> = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    log::info!("[OUTBOX_MIRROR] {} envoi(s) background à réconcilier", ids.len());
+    ids
+}
+
 // ─── Commandes Tauri : contexte push ─────────────────────────────────────────
 
 /// Sauvegarde le PIN et le contexte de session dans {app_data_dir}/push_context.json
@@ -1748,7 +1806,9 @@ pub fn run() {
             bootstrap_dead_conversation,
             set_native_flag,
             get_native_flags,
-            read_and_clear_fcm_cache
+            read_and_clear_fcm_cache,
+            store_outbox_mirror,
+            read_and_clear_outbox_sent
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
@@ -2117,4 +2177,78 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             0
         }
     }
+}
+
+/// Chiffre et persiste un message sortant en attente (texte/reply) en arrière-plan (app tuée).
+///
+/// Pendant de l'envoi : charge l'état MLS, chiffre le proto AppMessage *en clair* (`proto_b64`)
+/// contre l'epoch vivant via `MlsManager::send_message`, persiste `mls.bin`, et retourne le
+/// ciphertext MLS (base64) que le service Kotlin POST à `/api/mls/push/send`.
+///
+/// - `proto_b64` : bytes du proto AppMessage en clair (base64), construits côté TS au compose.
+/// - Retourne un JSON : `{"ok":true,"ciphertext":"<b64>"}` ou `{"ok":false,"error":"..."}`.
+///   Un échec `GroupNotFound` (groupe pas encore rejoint) ressort en erreur : l'appelant laisse
+///   l'entrée en file et la livrera au prochain foreground.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessageBackground<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    pin: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    proto_b64: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
+        let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
+        let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
+        let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env.get_string(&device_id).map_err(|e| e.to_string())?.into();
+        let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let proto_b64_str: String = env.get_string(&proto_b64).map_err(|e| e.to_string())?.into();
+
+        let proto_bytes = STANDARD
+            .decode(proto_b64_str.trim())
+            .map_err(|e| format!("base64 decode proto: {}", e))?;
+
+        let mut manager =
+            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
+                .map_err(|e| e.to_string())?;
+
+        let ciphertext = manager
+            .send_message(&group_id_str, &proto_bytes)
+            .map_err(|e| format!("send_message: {:?}", e))?;
+
+        // send_message a fait avancer le ratchet : persister mls.bin sinon le message serait
+        // ré-envoyé avec un epoch obsolète au prochain réveil.
+        let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
+        let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
+        write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
+        log::info!(
+            "[BG_SEND] message chiffré group={} (ciphertext {} octets, mls.bin {} octets)",
+            group_id_str,
+            ciphertext.len(),
+            enc.len()
+        );
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "ciphertext": STANDARD.encode(&ciphertext),
+        }))
+    })();
+
+    let json_str = match result {
+        Ok(v) => v.to_string(),
+        Err(e) => {
+            log::error!("[BG_SEND] nativeSendMessageBackground failed: {}", e);
+            format!("{{\"ok\":false,\"error\":{:?}}}", e)
+        }
+    };
+
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }

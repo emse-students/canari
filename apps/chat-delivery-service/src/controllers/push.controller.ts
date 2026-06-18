@@ -397,6 +397,52 @@ export class PushController {
   }
 
   /**
+   * Sends a queued outbound MLS message (text/reply) on behalf of a device whose app is killed.
+   * Called by the Android background service after encrypting the proto against the live epoch via
+   * Rust JNI (nativeSendMessageBackground). `proto` is base64(raw MLS ciphertext); recipients are
+   * resolved from the group membership (same fan-out + push as the gateway send path).
+   * Auth: PushSecret (no JWT - app may be killed).
+   */
+  @Post('mls/push/send')
+  async sendMessagePush(
+    @Headers('authorization') authHeader: string,
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      proto: string;
+      messageId?: string;
+    },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    if (typeof body.proto !== 'string' || !body.proto) {
+      throw new BadRequestException('proto required');
+    }
+
+    const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;
+    this.logger.log(
+      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'}`,
+    );
+
+    const result = await this.messagingService.sendMessage({
+      proto: body.proto,
+      groupId,
+      senderId: userId,
+      senderDeviceId: deviceId,
+    });
+
+    this.logger.log(
+      `[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`,
+    );
+    return { status: 'sent', queued: result.queued, sent: result.sent };
+  }
+
+  /**
    * Diagnostic route: sends a push notification test to every device that has
    * a registered push token (online or offline).
    */

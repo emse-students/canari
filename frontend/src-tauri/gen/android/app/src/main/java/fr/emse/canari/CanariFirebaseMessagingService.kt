@@ -73,6 +73,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** ID réservé pour la notification de résumé du groupe (ne doit pas collisionner avec getStableNotifId). */
         private const val GROUP_SUMMARY_ID   = 9999
 
+        /** ID réservé pour la notification "messages en attente de synchro" (canal messages → auto-effacée à l'ouverture). */
+        private const val PENDING_SYNC_NOTIF_ID = 9998
+
+        /** Mirror app-privé en clair de l'outbox (écrit par le TS) drainé par l'envoi background. */
+        private const val OUTBOX_PENDING_FILE = "outbox_pending.ndjson"
+
+        /** Liste des messageId livrés en background (lue puis effacée par le TS au login). */
+        private const val OUTBOX_SENT_FILE = "outbox_sent.ndjson"
+
         /** Nombre maximum de messages empilés dans une notification MessagingStyle par conversation. */
         private const val MAX_NOTIF_MESSAGES = 6
 
@@ -150,6 +159,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         welcomeB64: String,
         ratchetTreeB64: String,
     ): Boolean
+
+    /**
+     * Chiffre un message sortant en attente (texte/reply) contre l'epoch vivant et persiste
+     * {filesDir}/mls.bin. Retourne JSON : {"ok":true,"ciphertext":"<b64>"} ou {"ok":false,...}.
+     * `protoB64` est le proto AppMessage en clair (base64), construit cote TS au compose.
+     */
+    external fun nativeSendMessageBackground(
+        filesDir: String,
+        stateBytes: ByteArray,
+        pin: String,
+        userId: String,
+        deviceId: String,
+        groupId: String,
+        protoB64: String,
+    ): String
 
     /** Résultat structuré du déchiffrement MLS, extrait depuis le JSON retourné par Rust. */
     data class DecryptedMessage(
@@ -507,6 +531,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // 5. Libérer le verrou Redis dans tous les cas
             releaseAddLock(ctx, secret, groupId)
             Log.d(TAG, "processWelcomeRequestBackground: verrou Redis libéré pour group=$groupId")
+            // 6. Opportuniste : ce device a peut-être lui aussi des messages en attente — tenter de
+            //    les envoyer maintenant que l'app est réveillée, et notifier s'il en reste.
+            val remaining = drainOutboxBackground(ctx)
+            maybeNotifyPendingSync(remaining)
         }
     }
 
@@ -844,6 +872,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } else {
             Log.e(TAG, "processReceivedWelcomeBackground: échec join group=$groupId")
         }
+
+        // Le groupe vient (peut-être) d'être rejoint : tenter d'envoyer les messages sortants en
+        // attente, et notifier l'utilisateur s'il en reste (filet de sécurité de l'envoi background).
+        val remaining = drainOutboxBackground(ctx)
+        maybeNotifyPendingSync(remaining)
     }
 
     /** Récupère la paire (proto, ratchetTree) d'un Welcome en file via l'endpoint PushSecret. */
@@ -882,6 +915,227 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "fetchWelcomeBundle: exception: ${e.message}")
             null
         }
+    }
+
+    // ── Envoi background de l'outbox (messages sortants, app tuée) ────────────
+
+    /** Une entrée du mirror outbox (proto AppMessage en clair, base64). */
+    private data class OutboxMirrorEntry(
+        val id: String,
+        val groupId: String,
+        val proto: String,
+        val sentAt: Long,
+    )
+
+    /**
+     * Draine le mirror outbox : pour chaque message en attente, chiffre le proto contre l'epoch
+     * vivant (JNI sous MlsStateLock), POST le ciphertext, et marque l'envoi. Réécrit le mirror avec
+     * les entrées restantes et journalise les ids livrés pour réconciliation TS au login.
+     * Retourne le nombre d'entrées NON envoyées (groupe pas encore rejoint, réseau, etc.).
+     */
+    private fun drainOutboxBackground(ctx: PushContext): Int {
+        val entries = readOutboxMirror()
+        if (entries.isEmpty()) return 0
+        val secret = retrievePushSecret()
+        if (secret == null) {
+            Log.w(TAG, "drainOutboxBackground: pushSecret absent → ${entries.size} message(s) restent en file")
+            return entries.size
+        }
+        Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) à envoyer")
+        val sentIds = mutableListOf<String>()
+        val remaining = mutableListOf<OutboxMirrorEntry>()
+        for (entry in entries) {
+            val ciphertext = encryptQueuedMessage(ctx, entry)
+            if (ciphertext == null) {
+                remaining.add(entry)
+                continue
+            }
+            if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id)) {
+                sentIds.add(entry.id)
+                Log.d(TAG, "drainOutboxBackground: ✓ envoyé id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
+            } else {
+                remaining.add(entry)
+                Log.w(TAG, "drainOutboxBackground: POST échoué id=${entry.id.take(8)} → reste en file")
+            }
+        }
+        if (sentIds.isNotEmpty()) appendOutboxSent(sentIds)
+        rewriteOutboxMirror(remaining)
+        Log.d(TAG, "drainOutboxBackground: ${sentIds.size} envoyé(s), ${remaining.size} restant(s)")
+        return remaining.size
+    }
+
+    /**
+     * Chiffre un message en attente via JNI sous MlsStateLock (le JNI réécrit mls.bin après avoir
+     * fait avancer le ratchet). Retourne le ciphertext MLS (base64) ou null si l'état est absent,
+     * le verrou indisponible, ou le groupe pas encore rejoint (send_message → GroupNotFound).
+     */
+    private fun encryptQueuedMessage(ctx: PushContext, entry: OutboxMirrorEntry): String? {
+        val lockAcquired = try {
+            MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "encryptQueuedMessage: interrompu pendant tryLock: ${e.message}")
+            return null
+        }
+        if (!lockAcquired) {
+            Log.w(TAG, "encryptQueuedMessage: MlsStateLock non acquis → abandon")
+            return null
+        }
+        try {
+            val stateBytes = MlsContextLoader.loadMlsState(this)
+            if (stateBytes == null) {
+                Log.e(TAG, "encryptQueuedMessage: mls.bin absent → abandon")
+                return null
+            }
+            val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
+            val jsonStr = nativeSendMessageBackground(
+                filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
+            )
+            val json = JSONObject(jsonStr)
+            if (!json.optBoolean("ok", false)) {
+                Log.d(TAG, "encryptQueuedMessage: ok=false (${json.optString("error").take(60)}) group=${entry.groupId.take(8)} - groupe pas encore rejoint ?")
+                return null
+            }
+            return json.optString("ciphertext").takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.e(TAG, "encryptQueuedMessage: exception: ${e.message}")
+            return null
+        } finally {
+            MlsStateLock.LOCK.unlock()
+        }
+    }
+
+    /** POST le ciphertext d'un message en attente à l'endpoint PushSecret. Retourne true si livré. */
+    private fun sendQueuedMessagePush(
+        ctx: PushContext,
+        secret: String,
+        groupId: String,
+        ciphertextB64: String,
+        messageId: String,
+    ): Boolean {
+        return try {
+            val url = URL("${ctx.baseUrl}/api/mls/push/send")
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("groupId", groupId)
+                put("proto", ciphertextB64)
+                put("messageId", messageId)
+            }.toString()
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout    = 10_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val code = conn.responseCode
+                Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
+                code == 200 || code == 201
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
+            false
+        }
+    }
+
+    /** Lit le mirror outbox en clair écrit par le TS. Retourne [] si absent/illisible. */
+    private fun readOutboxMirror(): List<OutboxMirrorEntry> {
+        return try {
+            val file = File(MlsContextLoader.tauriDataDir(this), OUTBOX_PENDING_FILE)
+            if (!file.exists()) return emptyList()
+            file.readLines().filter { it.isNotBlank() }.mapNotNull { line ->
+                try {
+                    val o = JSONObject(line)
+                    val id = o.optString("id")
+                    val groupId = o.optString("groupId")
+                    val proto = o.optString("proto")
+                    if (id.isEmpty() || groupId.isEmpty() || proto.isEmpty()) null
+                    else OutboxMirrorEntry(id, groupId, proto, o.optLong("sentAt", 0L))
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "readOutboxMirror: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /** Réécrit le mirror outbox avec les entrées restantes (supprime le fichier si vide). */
+    private fun rewriteOutboxMirror(remaining: List<OutboxMirrorEntry>) {
+        try {
+            val file = File(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }, OUTBOX_PENDING_FILE)
+            if (remaining.isEmpty()) {
+                if (file.exists()) file.delete()
+                return
+            }
+            val body = remaining.joinToString("\n") { e ->
+                JSONObject().apply {
+                    put("id", e.id)
+                    put("groupId", e.groupId)
+                    put("proto", e.proto)
+                    put("sentAt", e.sentAt)
+                }.toString()
+            }
+            file.writeText(body + "\n")
+        } catch (e: Exception) {
+            Log.w(TAG, "rewriteOutboxMirror: ${e.message}")
+        }
+    }
+
+    /** Ajoute les messageId livrés au journal de réconciliation lu par le TS au login. */
+    private fun appendOutboxSent(ids: List<String>) {
+        try {
+            val file = File(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }, OUTBOX_SENT_FILE)
+            val existing = if (file.exists()) file.readText() else ""
+            file.writeText(existing + ids.joinToString("\n") + "\n")
+        } catch (e: Exception) {
+            Log.w(TAG, "appendOutboxSent: ${e.message}")
+        }
+    }
+
+    /** Affiche le nudge "messages en attente" si des envois restent en file et l'app est fermée. */
+    private fun maybeNotifyPendingSync(remaining: Int) {
+        if (remaining <= 0) return
+        if (MainActivity.isInForeground) return
+        showPendingSyncNotification()
+    }
+
+    /**
+     * Notification douce invitant à ouvrir l'app pour vider l'outbox (filet de sécurité de l'envoi
+     * background). ID stable + canal messages : elle s'efface d'elle-même à l'ouverture de l'app
+     * (cancelAllMessageNotifications dans MainActivity.onResume), pour cette raison ou une autre.
+     */
+    private fun showPendingSyncNotification() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannels(manager)
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            action = Intent.ACTION_MAIN
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, PENDING_SYNC_NOTIF_ID, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val body = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer."
+        val notif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Canari")
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pendingIntent)
+            .build()
+        manager.notify(PENDING_SYNC_NOTIF_ID, notif)
+        Log.d(TAG, "showPendingSyncNotification: nudge affiché (id=$PENDING_SYNC_NOTIF_ID)")
     }
 
     /** Parse le JSON retourné par nativeDecryptMessage et retourne un DecryptedMessage structuré. */

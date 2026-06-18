@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
-import { createOutbox, type OutboxDeps } from './outbox';
+import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
+import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
 import type { OutboxEntry } from '$lib/db';
@@ -118,6 +119,35 @@ describe('outboxCodec', () => {
     };
     const decoded = decodeOutboxEntry(outboxClearColumns(e), encodeOutboxSensitive(e));
     expect(Array.from(decoded.media!.fileBytes!)).toEqual([1, 2, 3, 250, 255]);
+  });
+});
+
+describe('outbox native mirror', () => {
+  it('projects a text entry to a mirror row carrying the base64 plaintext proto', () => {
+    const e = textEntry('m1', 'g1', 123);
+    const mirror = toMirrorEntry(e);
+    expect(mirror).not.toBeNull();
+    expect(mirror).toMatchObject({ id: 'm1', groupId: 'g1', sentAt: 123 });
+    // proto is the same bytes the flusher would send, base64-encoded.
+    const expected = buildOutboxProto(e)!;
+    const decoded = Uint8Array.from(atob(mirror!.proto), (c) => c.charCodeAt(0));
+    expect(Array.from(decoded)).toEqual(Array.from(expected));
+    expect(decoded.length).toBeGreaterThan(0);
+  });
+
+  it('excludes media entries (their proto cannot be built before upload)', () => {
+    const e: OutboxEntry = {
+      id: 'mm',
+      conversationId: 'g1',
+      sentAt: 1,
+      kind: 'media',
+      media: { kind: 1, mimeType: 'image/png', size: 3, fileBytes: new Uint8Array([1, 2, 3]) },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 1,
+    };
+    expect(toMirrorEntry(e)).toBeNull();
+    expect(buildOutboxProto(e)).toBeNull();
   });
 });
 

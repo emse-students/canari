@@ -44,6 +44,7 @@ import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -418,6 +419,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         messageCount: stats.localMessageCount,
       });
     }
+    // Reconcilier d'abord les envois faits en arriere-plan (app tuee) : supprimer de l'outbox les
+    // messages que le service natif a deja livres, AVANT de re-deriver les statuts "pending" (sinon
+    // un message deja envoye serait reaffiche en attente).
+    await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
     // Re-marquer "pending" les messages encore en file (statut dérivé de l'outbox, non persisté).
     await applyOutboxPendingStatuses();
 

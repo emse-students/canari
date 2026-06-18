@@ -9,6 +9,7 @@ import { fromHex } from '$lib/utils/hex';
 import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
+import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 
 /**
  * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
@@ -19,6 +20,31 @@ const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 /** Returns the backoff delay for the given (post-increment) attempt count. */
 function backoffFor(attempts: number): number {
   return BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1)];
+}
+
+/**
+ * Build the plaintext proto AppMessage for a queued text/reply entry (sentAt = original compose
+ * time). Returns null for media (whose proto can only be built once the file is uploaded). Shared
+ * by the flusher and the native-background mirror so both encode the exact same bytes.
+ */
+export function buildOutboxProto(entry: OutboxEntry): Uint8Array | null {
+  if (entry.kind === 'media') return null;
+  if (entry.kind === 'reply' && entry.replyTo) {
+    return encodeAppMessage({
+      ...mkReply(entry.text ?? '', {
+        id: entry.replyTo.id,
+        senderId: entry.replyTo.senderId,
+        preview: entry.replyTo.preview,
+      }),
+      messageId: entry.id,
+      sentAt: entry.sentAt,
+    });
+  }
+  return encodeAppMessage({
+    ...mkText(entry.text ?? ''),
+    messageId: entry.id,
+    sentAt: entry.sentAt,
+  });
 }
 
 /** Dependencies driving the outbox flusher. Built once per session and registered globally. */
@@ -68,6 +94,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let flushing = false;
   let rerun = false;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Rewrite the native background-send mirror from the current queue (Tauri only; best-effort). */
+  async function refreshMirror(): Promise<void> {
+    if (!storage) return;
+    const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+    await syncOutboxMirror(entries);
+  }
 
   // Flush opportunistically when connectivity or foreground is regained.
   const onOnline = (): void => {
@@ -184,26 +217,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
   }
 
-  /** Build the proto AppMessage for a queued text/reply entry (sentAt = original compose time). */
-  function buildProto(entry: OutboxEntry): Uint8Array {
-    if (entry.kind === 'reply' && entry.replyTo) {
-      return encodeAppMessage({
-        ...mkReply(entry.text ?? '', {
-          id: entry.replyTo.id,
-          senderId: entry.replyTo.senderId,
-          preview: entry.replyTo.preview,
-        }),
-        messageId: entry.id,
-        sentAt: entry.sentAt,
-      });
-    }
-    return encodeAppMessage({
-      ...mkText(entry.text ?? ''),
-      messageId: entry.id,
-      sentAt: entry.sentAt,
-    });
-  }
-
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) return 'skip';
@@ -242,7 +255,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         proto = prepared.proto;
         mediaContent = prepared.content;
       } else {
-        proto = buildProto(entry);
+        proto = buildOutboxProto(entry) ?? new Uint8Array(0);
       }
 
       await mlsService.sendMessage(terminalId, proto, entry.id);
@@ -326,6 +339,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       } while (rerun);
     } finally {
       flushing = false;
+      void refreshMirror();
     }
   }
 
@@ -335,6 +349,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await storage
         .saveOutboxEntry(entry, pin)
         .catch((e) => log(`[OUTBOX] Enqueue échoué: ${String(e)}`));
+      await refreshMirror();
       runFlush();
     },
 
@@ -357,6 +372,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     async reassign(fromId: string, toId: string): Promise<void> {
       if (!storage) return;
       await storage.reassignOutboxConversation(fromId, toId).catch(() => {});
+      await refreshMirror();
       runFlush();
     },
 
