@@ -22,9 +22,8 @@ fn make_device(user_id: &str) -> MlsManager {
 /// `user_id:device_id`, donc deux appareils du même utilisateur doivent avoir des device_id
 /// différents pour ne pas être traités comme un seul et même membre par `add_members_bulk`).
 fn make_device_with_id(user_id: &str, device_id: &str) -> MlsManager {
-    MlsManager::load_or_create(user_id, device_id, None).unwrap_or_else(|e| {
-        panic!("Impossible de créer le device '{user_id}:{device_id}': {e}")
-    })
+    MlsManager::load_or_create(user_id, device_id, None)
+        .unwrap_or_else(|e| panic!("Impossible de créer le device '{user_id}:{device_id}': {e}"))
 }
 
 // ---------------------------------------------------------------------------
