@@ -124,7 +124,14 @@ export interface IMlsService {
     groupId: string,
     keyPackageBytes: Uint8Array
   ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
-  /** Adds multiple devices to a group in a single MLS commit, returning the Commit and Welcome. */
+  /**
+   * Adds multiple devices to a group in a single MLS commit, returning the Commit and Welcome.
+   * Devices already present in the group (e.g. a "ghost" member from a prior add whose
+   * Welcome/commit failed to deliver) are silently skipped: `addedDeviceIds` may be a strict
+   * subset of the input. If *every* device in the batch is already a member, the call rejects
+   * with an error whose message contains `ALREADY_MEMBER` - callers should detect this and
+   * recover (e.g. remove then re-add the affected user) instead of surfacing a raw crypto error.
+   */
   addMembersBulk(
     groupId: string,
     devices: Array<{ keyPackage: Uint8Array; deviceId: string }>

@@ -12,6 +12,37 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
 }
 
 /**
+ * Détecte une erreur de commit rejeté indiquant que l'état MLS local est forké EN RETARD
+ * sur le serveur (l'epoch envoyé est strictement inférieur à l'`activeEpoch` serveur).
+ *
+ * Format reconnu (cf. `mlsDeliveryApi.sendValidatedCommit`) :
+ *   `Commit rejected: epoch_mismatch (server epoch: 23, sent: 7)`
+ *
+ * Retourne `{ serverEpoch, sentEpoch }` si l'appareil est en retard, sinon `null`
+ * (erreur d'un autre type, ou epoch serveur <= epoch envoyé).
+ */
+export function parseForkedEpoch(err: unknown): { serverEpoch: number; sentEpoch: number } | null {
+  const m = String(err).match(/server epoch:\s*(\d+),\s*sent:\s*(\d+)/);
+  if (!m) return null;
+  const serverEpoch = Number(m[1]);
+  const sentEpoch = Number(m[2]);
+  if (!Number.isFinite(serverEpoch) || !Number.isFinite(sentEpoch)) return null;
+  if (serverEpoch <= sentEpoch) return null;
+  return { serverEpoch, sentEpoch };
+}
+
+/**
+ * Vrai si l'erreur signale un fork EN RETARD d'au moins 2 epochs (l'appareil a manqué
+ * plusieurs commits). Un écart de 1 est une course concurrente transitoire normale :
+ * le commit manquant arrive en général via la file et l'appareil rattrape seul - on ne
+ * déclenche pas la recovery destructive (forget + re-Welcome) dans ce cas.
+ */
+export function isStaleForkError(err: unknown): boolean {
+  const f = parseForkedEpoch(err);
+  return f !== null && f.serverEpoch > f.sentEpoch + 1;
+}
+
+/**
  * Supprime un groupe MLS :
  *  1. Diffuse un message "groupDeleted" à tous les membres AVANT la suppression serveur.
  *  2. Supprime le groupe côté serveur (DB + Redis).
@@ -317,7 +348,17 @@ export async function kickStaleLeaf(
   log: (msg: string) => void
 ): Promise<void> {
   const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
-  await mlsService.removeMemberDevice(groupId, [deviceIdentity]).catch(() => {});
+  // Le remove génère un commit appliqué LOCALEMENT puis validé côté serveur. Si le serveur
+  // le rejette parce que NOTRE état est forké en retard (epoch_mismatch, écart > 1), il ne
+  // faut surtout pas avaler l'erreur : le commit a déjà avancé l'epoch local de 1, et
+  // réessayer ne ferait que creuser le fork (storm kick/re-add). On remonte l'erreur pour
+  // que l'appelant déclenche la recovery (forget + welcome_request). Les autres erreurs
+  // (leaf déjà absent côté serveur, etc.) restent best-effort.
+  try {
+    await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
+  } catch (e) {
+    if (isStaleForkError(e)) throw e;
+  }
   await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
   log(`[KICK] Leaf stale ${targetUserId}:${targetDeviceId} retiré de ${groupId}`);
 }

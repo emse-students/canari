@@ -31,9 +31,21 @@ pub enum MlsError {
     /// Le frontend doit déclencher un re-bootstrap complet du groupe.
     #[error("UNRECOVERABLE: {0}")]
     Unrecoverable(String),
+    /// Toutes les KeyPackages fournies à `add_members_bulk` correspondent à des identités déjà
+    /// présentes dans l'arbre du groupe (membre "fantôme" : ajouté localement lors d'une tentative
+    /// précédente dont la livraison du Welcome a échoué). Distinct des erreurs de validation pour
+    /// permettre au frontend de déclencher une auto-réparation (retrait puis ré-ajout) plutôt que
+    /// d'afficher une erreur brute à l'utilisateur.
+    #[error("ALREADY_MEMBER: {0}")]
+    AlreadyMember(String),
 }
 
-type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, usize, Option<Vec<u8>>);
+/// (commit_bytes, welcome_bytes, original_indices_added, ratchet_tree_bytes).
+/// `original_indices_added` donne, dans l'ordre, les positions (dans le slice d'entrée
+/// `key_packages_bytes`) des KeyPackages effectivement inclus dans le commit - les positions
+/// invalides ou correspondant à des membres déjà présents sont omises plutôt que de fausser
+/// un simple décompte.
+type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Option<Vec<u8>>);
 type AddMemberResult = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 // --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
@@ -533,8 +545,14 @@ impl MlsManager {
     }
 
     /// Add multiple members in a single commit so all new members share the same epoch.
-    /// Returns (commit_bytes, welcome_bytes, count_added).
-    /// Silently skips key packages that fail validation.
+    /// Returns (commit_bytes, welcome_bytes, original_indices_added, ratchet_tree_bytes).
+    /// Silently skips key packages that fail validation, and key packages whose identity
+    /// is already present in the group's tree (re-adding one would make OpenMLS reject the
+    /// *entire* commit with `ProposalValidationError(DuplicateSignatureKey)`). The latter
+    /// happens when a previous add attempt merged its commit locally but failed to deliver
+    /// the Welcome/commit over the network, leaving a "ghost" member that the caller should
+    /// detect via `MlsError::AlreadyMember` (when nothing else was added) and heal by removing
+    /// then re-adding that identity.
     pub fn add_members_bulk(
         &mut self,
         group_id: &str,
@@ -545,23 +563,59 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        // Deserialise and validate each key package, skip invalid ones
-        let mut key_packages: Vec<KeyPackage> = Vec::new();
-        for kp_bytes in key_packages_bytes {
-            match KeyPackageIn::tls_deserialize(&mut &kp_bytes[..]) {
-                Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
-                    Ok(kp) => key_packages.push(kp),
-                    Err(e) => log::warn!("Skipping invalid KeyPackage: {:?}", e),
-                },
-                Err(e) => log::warn!("Skipping undeserializable KeyPackage: {:?}", e),
+        let mut known_identities: std::collections::HashSet<Vec<u8>> =
+            std::collections::HashSet::new();
+        for member in group.members() {
+            if let Ok(credential) = BasicCredential::try_from(member.credential.clone()) {
+                known_identities.insert(credential.identity().to_vec());
             }
         }
 
-        if key_packages.is_empty() {
-            return Err(MlsError::OpenMls("No valid KeyPackages to add".to_string()));
+        // Deserialise and validate each key package, skip invalid ones and ones whose
+        // identity is already a member (either already in the tree, or a duplicate within
+        // this same batch), tracking the original index of each one kept.
+        let mut key_packages: Vec<KeyPackage> = Vec::new();
+        let mut added_indices: Vec<u32> = Vec::new();
+        let mut any_already_member = false;
+        for (idx, kp_bytes) in key_packages_bytes.iter().enumerate() {
+            let kp = match KeyPackageIn::tls_deserialize(&mut &kp_bytes[..]) {
+                Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
+                    Ok(kp) => kp,
+                    Err(e) => {
+                        log::warn!("Skipping invalid KeyPackage: {:?}", e);
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    log::warn!("Skipping undeserializable KeyPackage: {:?}", e);
+                    continue;
+                }
+            };
+
+            let identity = BasicCredential::try_from(kp.leaf_node().credential().clone())
+                .ok()
+                .map(|c| c.identity().to_vec());
+            if let Some(identity) = &identity {
+                if known_identities.contains(identity) {
+                    log::warn!("Skipping KeyPackage already a member of the group");
+                    any_already_member = true;
+                    continue;
+                }
+                known_identities.insert(identity.clone());
+            }
+
+            added_indices.push(idx as u32);
+            key_packages.push(kp);
         }
 
-        let count = key_packages.len();
+        if key_packages.is_empty() {
+            if any_already_member {
+                return Err(MlsError::AlreadyMember(
+                    "All KeyPackages already belong to existing group members".to_string(),
+                ));
+            }
+            return Err(MlsError::OpenMls("No valid KeyPackages to add".to_string()));
+        }
 
         let (commit_msg_out, welcome_msg_out, _group_info) = group
             .add_members(&self.provider, &self.keypair, &key_packages)
@@ -586,7 +640,7 @@ impl MlsManager {
         Ok((
             commit_bytes,
             Some(welcome_bytes),
-            count,
+            added_indices,
             Some(ratchet_tree_bytes),
         ))
     }

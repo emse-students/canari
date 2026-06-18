@@ -16,6 +16,8 @@
   import Modal from '../shared/Modal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
+  import Avatar from '../shared/Avatar.svelte';
+  import UserName from '../shared/UserName.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
@@ -551,7 +553,13 @@
                         <li
                           class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
                         >
-                          <span class="text-sm font-mono text-text-main truncate">{uid}</span>
+                          <div class="flex items-center gap-2 min-w-0">
+                            <Avatar userId={uid} size="sm" />
+                            <UserName
+                              userId={uid}
+                              class="text-sm font-medium text-text-main truncate"
+                            />
+                          </div>
                           <button
                             type="button"
                             onclick={() => removeAllowedUser(uid)}

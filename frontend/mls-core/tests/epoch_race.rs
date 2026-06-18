@@ -17,6 +17,16 @@ fn make_device(user_id: &str) -> MlsManager {
         .unwrap_or_else(|e| panic!("Impossible de créer le device '{user_id}': {e}"))
 }
 
+/// Comme `make_device`, mais avec un `device_id` distinct du `user_id` - nécessaire pour
+/// simuler deux appareils différents d'un même utilisateur (l'identité de credential est
+/// `user_id:device_id`, donc deux appareils du même utilisateur doivent avoir des device_id
+/// différents pour ne pas être traités comme un seul et même membre par `add_members_bulk`).
+fn make_device_with_id(user_id: &str, device_id: &str) -> MlsManager {
+    MlsManager::load_or_create(user_id, device_id, None).unwrap_or_else(|e| {
+        panic!("Impossible de créer le device '{user_id}:{device_id}': {e}")
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -77,9 +87,9 @@ fn test_scenario1_happy_path() {
         ],
     );
 
-    let mut jolan1 = make_device("jolan");
+    let mut jolan1 = make_device_with_id("jolan", "dev1");
     let mut test1 = make_device("test");
-    let mut jolan3 = make_device("jolan");
+    let mut jolan3 = make_device_with_id("jolan", "dev3");
     let gid = "g-dm-happy";
 
     // Étape 1
@@ -92,7 +102,8 @@ fn test_scenario1_happy_path() {
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
     println!(
-        "  ✓ [3] jolan-dev1 a ajouté test-dev1 ({added1} device(s)), commit {} bytes",
+        "  ✓ [3] jolan-dev1 a ajouté test-dev1 ({} device(s)), commit {} bytes",
+        added1.len(),
         commit1.len()
     );
 
@@ -110,7 +121,8 @@ fn test_scenario1_happy_path() {
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("add jolan3");
     println!(
-        "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({added2} device(s)), commit {} bytes",
+        "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({} device(s)), commit {} bytes",
+        added2.len(),
         commit2.len()
     );
 
@@ -198,9 +210,9 @@ fn test_scenario2_race_condition() {
         ],
     );
 
-    let mut jolan1 = make_device("jolan");
+    let mut jolan1 = make_device_with_id("jolan", "dev1");
     let mut test1 = make_device("test");
-    let mut jolan3 = make_device("jolan");
+    let mut jolan3 = make_device_with_id("jolan", "dev3");
     let gid = "g-dm-race";
 
     // Setup initial (époque 0→1)
@@ -338,9 +350,9 @@ fn test_scenario3_fix_single_adder_guard() {
         ],
     );
 
-    let mut jolan1 = make_device("jolan");
+    let mut jolan1 = make_device_with_id("jolan", "dev1");
     let mut test1 = make_device("test");
-    let mut jolan3 = make_device("jolan");
+    let mut jolan3 = make_device_with_id("jolan", "dev3");
     let gid = "g-dm-fix";
 
     // Setup (epoch 0→1)
@@ -365,7 +377,8 @@ fn test_scenario3_fix_single_adder_guard() {
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");
     println!(
-        "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({added} device(s)), commit {} bytes",
+        "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({} device(s)), commit {} bytes",
+        added.len(),
         commit_a.len()
     );
 
@@ -420,9 +433,9 @@ fn test_scenario3_fix_single_adder_guard() {
 /// Après le fix, tous les participants s'envoient des messages dans les deux sens.
 #[test]
 fn test_scenario4_bidirectional_messaging() {
-    let mut jolan1 = make_device("jolan");
+    let mut jolan1 = make_device_with_id("jolan", "dev1");
     let mut test1 = make_device("test");
-    let mut jolan3 = make_device("jolan");
+    let mut jolan3 = make_device_with_id("jolan", "dev3");
     let gid = "g-dm-bidir";
 
     // Setup complet (même que scénario 3)

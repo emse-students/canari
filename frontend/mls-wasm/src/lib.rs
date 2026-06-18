@@ -225,7 +225,11 @@ impl WasmMlsClient {
 
     /// Add multiple members in a single commit (single epoch increment).
     /// `key_packages` is a JS Array of Uint8Array.
-    /// Returns [commit: Uint8Array, welcome: Uint8Array, added_count: number].
+    /// Returns [commit: Uint8Array, welcome: Uint8Array, added_indices: number[], ratchet_tree: Uint8Array].
+    /// `added_indices` lists, in order, the positions within the input `key_packages` array that
+    /// were actually included in the commit - positions skipped (invalid, or already a member of
+    /// the group) are omitted rather than collapsing to a bare count, so the caller can correctly
+    /// map indices back to its own per-device bookkeeping.
     #[wasm_bindgen]
     pub fn add_members_bulk(
         &mut self,
@@ -253,7 +257,7 @@ impl WasmMlsClient {
 
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
 
-        let (commit, welcome, added, ratchet_tree) = self
+        let (commit, welcome, added_indices, ratchet_tree) = self
             .manager
             .add_members_bulk(&group_id, &kp_slices)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -265,7 +269,11 @@ impl WasmMlsClient {
         } else {
             array.push(&JsValue::UNDEFINED);
         }
-        array.push(&JsValue::from_f64(added as f64));
+        let indices_array = js_sys::Array::new();
+        for idx in added_indices {
+            indices_array.push(&JsValue::from_f64(idx as f64));
+        }
+        array.push(&indices_array);
         if let Some(rt) = ratchet_tree {
             array.push(&js_sys::Uint8Array::from(&rt[..]));
         } else {

@@ -674,9 +674,12 @@ export class WebMlsService extends BaseMlsService {
       return arr;
     }, [] as Uint8Array[]);
     const res = this.client.add_members_bulk(groupId, jsArray);
-    // res = [commit: Uint8Array, welcome: Uint8Array|undefined, added_count: number]
-    const addedCount = res[2] as number;
-    const addedDeviceIds = devices.slice(0, addedCount).map((d) => d.deviceId);
+    // res = [commit: Uint8Array, welcome: Uint8Array|undefined, added_indices: number[], ratchetTree]
+    // `added_indices` are the positions in `devices` actually included in the commit - WASM
+    // silently skips invalid key packages and ones already belonging to an existing member, so
+    // a bare count would misalign with `devices` whenever a skip isn't the very last entry.
+    const addedIndices = res[2] as number[];
+    const addedDeviceIds = addedIndices.map((i) => devices[i].deviceId);
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,

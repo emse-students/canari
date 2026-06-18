@@ -185,6 +185,30 @@ export async function requestReAdd(
 }
 
 /**
+ * Recovery d'un groupe dont l'état MLS local est forké EN RETARD sur le serveur
+ * (epoch local < `activeEpoch` serveur), détecté via le rejet `epoch_mismatch` d'un commit.
+ *
+ * Contrairement à `requestReAdd` seul - qui skippe les groupes encore présents dans le WASM
+ * (cf. garde `localGroups.includes`) -, on `forgetGroup` D'ABORD : le groupe forké quitte le
+ * WASM local, puis la welcome_request émise est honorée par un pair à jour qui nous ré-ajoute
+ * à l'epoch courante (le re-Welcome n'est alors plus ignoré comme idempotent). L'historique
+ * est rebackfillé par le bundle. Sans ce forget, l'appareil resterait bloqué à committer des
+ * epochs périmés que le serveur rejette en boucle (storm kick/re-add observé en prod).
+ *
+ * Pendant analogue, côté ÉCRITURE (commit rejeté), de l'escalade epoch-gap côté LECTURE
+ * (message indéchiffrable) dans `setupMessageHandler`.
+ */
+export async function recoverForkedGroup(
+  groupId: string,
+  deps: RecoveryDeps,
+  timers: Map<string, ReturnType<typeof setTimeout>>
+): Promise<void> {
+  deps.log(`[FORK] ${groupId.slice(0, 8)}… état local forké en retard - forget + welcome_request`);
+  deps.mlsService.forgetGroup(groupId);
+  await requestReAdd(groupId, deps, timers);
+}
+
+/**
  * Annule le timer de recovery armé par `requestReAdd` pour `groupId`.
  *
  * Appelé dès qu'un Welcome est traité avec succès pour ce groupe, afin d'éviter

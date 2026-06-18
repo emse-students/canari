@@ -12,6 +12,7 @@ import {
   kickStaleLeaf,
   isGroupActiveOnServer,
   handleDuplicateLeafError,
+  isStaleForkError,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import {
@@ -39,8 +40,14 @@ export async function processPendingInvitations(params: {
   pin: string;
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
+  /**
+   * Recovery d'un groupe dont NOTRE état local est forké en retard (commit rejeté
+   * epoch_mismatch). Effectue forget + welcome_request pour rejoindre à l'epoch courante.
+   * Injecté par la couche session (a besoin des timers/conversations de recovery).
+   */
+  recoverForkedGroup?: (groupId: string) => Promise<void>;
 }) {
-  const { mlsService, storage, userId, pin, conversations, log } = params;
+  const { mlsService, storage, userId, pin, conversations, log, recoverForkedGroup } = params;
 
   const myDeviceId = mlsService.getDeviceId();
 
@@ -207,19 +214,46 @@ export async function processPendingInvitations(params: {
           );
         } catch (e) {
           const errStr = String(e);
+
+          // NOTRE état local est forké EN RETARD (commit rejeté, écart > 1) : tous nos
+          // commits sur ce groupe seront rejetés. Inutile d'insister - on oublie l'état
+          // périmé et on redemande un Welcome, puis on abandonne CE groupe pour ce cycle.
+          if (isStaleForkError(e)) {
+            log(`[PENDING] ${groupId.slice(0, 8)}… forké en retard - recovery + abandon du groupe`);
+            if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+            break;
+          }
+
           if (errStr.includes('DuplicateSignatur')) {
             log(`[PENDING] ${inv.deviceId} déjà dans l'arbre MLS de ${groupId}`);
-            await handleDuplicateLeafError({
-              mlsService,
-              groupId,
-              targetUserId: inv.userId,
-              targetDeviceId: inv.deviceId,
-              userId,
-              pin,
-              log,
-            });
+            // Le kick déclenché ici génère lui-même un commit : s'il est rejeté pour fork,
+            // handleDuplicateLeafError remonte l'erreur → on bascule en recovery.
+            try {
+              await handleDuplicateLeafError({
+                mlsService,
+                groupId,
+                targetUserId: inv.userId,
+                targetDeviceId: inv.deviceId,
+                userId,
+                pin,
+                log,
+              });
+            } catch (kickErr) {
+              if (isStaleForkError(kickErr)) {
+                log(
+                  `[PENDING] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery + abandon du groupe`
+                );
+                if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+                break;
+              }
+              log(
+                `[PENDING] Erreur kick ${inv.deviceId} dans ${groupId}: ${String(kickErr).slice(0, 100)}`
+              );
+            }
           } else if (errStr.includes('WrongEpoch') || errStr.includes('epoch_mismatch')) {
-            // Someone else committed - check if this invitation was already handled
+            // Course concurrente transitoire (écart 1) : un autre device a committé en même
+            // temps. On vérifie si l'invitation est déjà remplie, sinon on laisse le prochain
+            // cycle réessayer (le commit manquant arrive via la file et on rattrape seul).
             log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} - vérification...`);
             try {
               const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
@@ -664,6 +698,11 @@ export async function handleWelcomeRequest(params: {
   groupId: string;
   /** Appelé quand le groupe terminal existe mais n'est pas encore prêt (Welcome en transit). */
   onNotReady?: (terminalGroupId: string) => void;
+  /**
+   * Recovery d'un groupe dont NOTRE état local est forké en retard (commit rejeté
+   * epoch_mismatch lors de l'ajout). Effectue forget + welcome_request.
+   */
+  recoverForkedGroup?: (groupId: string) => Promise<void>;
 }) {
   const {
     mlsService,
@@ -676,6 +715,7 @@ export async function handleWelcomeRequest(params: {
     requesterDeviceId,
     groupId: requestedGroupId,
     onNotReady,
+    recoverForkedGroup,
   } = params;
 
   // Garde anti-self : le gateway diffuse les welcome_request à TOUS les devices du
@@ -860,16 +900,33 @@ export async function handleWelcomeRequest(params: {
     );
   } catch (e) {
     const errStr = String(e);
-    if (errStr.includes('DuplicateSignatur')) {
-      await handleDuplicateLeafError({
-        mlsService,
-        groupId,
-        targetUserId: requesterUserId,
-        targetDeviceId: requesterDeviceId,
-        userId,
-        pin,
-        log,
-      });
+
+    // NOTRE état local est forké EN RETARD : impossible d'ajouter qui que ce soit, le
+    // commit est rejeté. On oublie l'état périmé et on redemande un Welcome pour nous-mêmes.
+    if (isStaleForkError(e)) {
+      log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké en retard - recovery`);
+      if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+    } else if (errStr.includes('DuplicateSignatur')) {
+      try {
+        await handleDuplicateLeafError({
+          mlsService,
+          groupId,
+          targetUserId: requesterUserId,
+          targetDeviceId: requesterDeviceId,
+          userId,
+          pin,
+          log,
+        });
+      } catch (kickErr) {
+        if (isStaleForkError(kickErr)) {
+          log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery`);
+          if (recoverForkedGroup) await recoverForkedGroup(groupId).catch(() => {});
+        } else {
+          log(
+            `[WELCOME_REQ] Erreur kick pour ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`
+          );
+        }
+      }
     } else {
       log(`[WELCOME_REQ] Erreur pour ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }

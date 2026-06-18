@@ -8,7 +8,11 @@ export class WasmMlsClient {
     /**
      * Add multiple members in a single commit (single epoch increment).
      * `key_packages` is a JS Array of Uint8Array.
-     * Returns [commit: Uint8Array, welcome: Uint8Array, added_count: number].
+     * Returns [commit: Uint8Array, welcome: Uint8Array, added_indices: number[], ratchet_tree: Uint8Array].
+     * `added_indices` lists, in order, the positions within the input `key_packages` array that
+     * were actually included in the commit - positions skipped (invalid, or already a member of
+     * the group) are omitted rather than collapsing to a bare count, so the caller can correctly
+     * map indices back to its own per-device bookkeeping.
      */
     add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
     create_group(group_id: string): void;

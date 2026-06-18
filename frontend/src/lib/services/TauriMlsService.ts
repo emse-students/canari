@@ -594,14 +594,15 @@ export class TauriMlsService extends BaseMlsService {
     // Single bulk Tauri invoke: all key packages are added in one OpenMLS commit
     // so all new members share the same epoch and a single Welcome covers them all.
     const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
-    // Returns (commit: Vec<u8>, welcome: Option<Vec<u8>>, count: usize, ratchetTree: Option<Vec<u8>>)
-    const result = await invoke<[number[], number[] | null, number, number[] | null]>(
+    // Returns (commit: Vec<u8>, welcome: Option<Vec<u8>>, addedIndices: Vec<u32>, ratchetTree: Option<Vec<u8>>)
+    // `addedIndices` are positions in `devices` actually included - entries skipped (invalid, or
+    // already an existing member) are omitted rather than collapsing to a bare count.
+    const result = await invoke<[number[], number[] | null, number[], number[] | null]>(
       'ajouter_membres_bulk',
       { groupId, keyPackagesBytes }
     );
-    const addedCount = result[2] as number;
-    // Map back to device IDs in the same order as the input (first `addedCount` entries).
-    const addedDeviceIds = devices.slice(0, addedCount).map((d) => d.deviceId);
+    const addedIndices = result[2];
+    const addedDeviceIds = addedIndices.map((i) => devices[i].deviceId);
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,

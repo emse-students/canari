@@ -377,7 +377,7 @@ fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     state: tauri::State<AppState>,
-) -> Result<(Vec<u8>, Option<Vec<u8>>, usize, Option<Vec<u8>>), String> {
+) -> Result<(Vec<u8>, Option<Vec<u8>>, Vec<u32>, Option<Vec<u8>>), String> {
     let mut lock = state
         .mls_manager
         .lock()
