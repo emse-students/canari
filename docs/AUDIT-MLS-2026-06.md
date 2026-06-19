@@ -42,7 +42,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H3 | Mutations conversations non atomiques | OPEN (P4) | - |
 | H4 | validateCommit bypass epoch 0 | OPEN (P4) | - |
 | H5 | Push differe + background redondants | OPEN (P4) | - |
-| H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | OPEN (P4) | - |
+| H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
 | S1..S4, M1 | Strictness / veracite | OPEN (P5) | - |
 | M2 | Replay: WrongEpoch marque vu definitivement | OPEN (P5) | - |
 | S5 | Classification d'erreurs MLS dupliquee 4 couches | OPEN (P5) | - |
