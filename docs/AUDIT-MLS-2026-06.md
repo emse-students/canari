@@ -35,8 +35,8 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C1 | Deux moteurs MLS ecrivent mls.bin (garde booleenne) | OPEN (P2, design + verif device) | - |
 | C2 | Foreground ne recharge jamais mls.bin au resume | OPEN (P2, design + verif device) | - |
 | C3 | Double envoi outbox foreground/background | FIXED (P2, reconcile au resume) | ce9232bd |
-| C4 | process_welcome persiste avant les guards -> orphelin | OPEN (P3) | - |
-| C5 | add_members_bulk perte silencieuse de membres | OPEN (P3) | - |
+| C4 | process_welcome persiste avant les guards -> orphelin | FIXED (P3) | 10d8e160 |
+| C5 | add_members_bulk perte silencieuse de membres | OPEN (P4, cross-couche avec inviteMembers) | - |
 | H1 | TTL locks reboot/add < duree reelle | OPEN (P4) | - |
 | H2 | forgetGroup predecesseur premature | OPEN (P4) | - |
 | H3 | Mutations conversations non atomiques | OPEN (P4) | - |
