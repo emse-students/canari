@@ -32,9 +32,9 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C0 | TooDistantInThePast/SecretReuse same-epoch mis en file -> boucle | FIXED (P1) | 9be4663a |
 | C0b | Web: TooDistantInThePast -> requestReAdd | FIXED (P1, via C0 centralise) | 9be4663a |
 | C0c | Config SenderRatchet tolerance 5 -> 2000 | FIXED (P1) | 9be4663a |
-| C1 | Deux moteurs MLS ecrivent mls.bin (garde booleenne) | OPEN (P2) | - |
-| C2 | Foreground ne recharge jamais mls.bin au resume | OPEN (P2) | - |
-| C3 | Double envoi outbox foreground/background | OPEN (P2) | - |
+| C1 | Deux moteurs MLS ecrivent mls.bin (garde booleenne) | OPEN (P2, design + verif device) | - |
+| C2 | Foreground ne recharge jamais mls.bin au resume | OPEN (P2, design + verif device) | - |
+| C3 | Double envoi outbox foreground/background | FIXED (P2, reconcile au resume) | ce9232bd |
 | C4 | process_welcome persiste avant les guards -> orphelin | OPEN (P3) | - |
 | C5 | add_members_bulk perte silencieuse de membres | OPEN (P3) | - |
 | H1 | TTL locks reboot/add < duree reelle | OPEN (P4) | - |
