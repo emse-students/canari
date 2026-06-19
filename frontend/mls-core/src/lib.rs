@@ -737,12 +737,16 @@ impl MlsManager {
             ))
         })?;
 
-        let group = staged_welcome
-            .into_group(&self.provider)
-            .map_err(|e| MlsError::OpenMls(format!("Join error (into_group): {:?}", e)))?;
-
-        let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
-        let welcome_epoch = group.epoch().as_u64();
+        // group_id et epoch sont lisibles depuis le contexte du StagedWelcome SANS rien
+        // écrire dans le storage. `into_group` (qui persiste via .store()) est volontairement
+        // différé jusqu'APRÈS les guards : un Welcome rejeté (parallèle ou stale) ne doit jamais
+        // laisser un groupe orphelin dans le storage provider - groupe que `self.groups` ne
+        // référence pas, qui fuit indéfiniment et bloque tout futur re-Welcome légitime avec
+        // `GroupAlreadyExists`. Avant ce correctif, into_group tournait avant les guards.
+        let group_id =
+            String::from_utf8_lossy(staged_welcome.group_context().group_id().as_slice())
+                .to_string();
+        let welcome_epoch = staged_welcome.group_context().epoch().as_u64();
 
         // ── Guard 1 : groupe déjà actif en mémoire ────────────────────────────
         //
@@ -807,6 +811,12 @@ impl MlsManager {
                 self.forgotten_group_min_epochs.remove(&group_id);
             }
         }
+
+        // Guards passés - on persiste enfin le groupe (into_group → store) puis on l'enregistre
+        // en mémoire. C'est le seul point où le storage provider est écrit pour ce Welcome.
+        let group = staged_welcome
+            .into_group(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("Join error (into_group): {:?}", e)))?;
 
         self.groups.insert(group_id.clone(), group);
         self.mark_state_dirty();
