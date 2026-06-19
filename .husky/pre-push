@@ -26,11 +26,17 @@ echo "$CHANGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/s
 echo "$CHANGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
 echo "$CHANGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
 echo "$CHANGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
+echo "$CHANGED_FILES" | grep -Eq '^frontend/mls-core/' && RUN_MLS_CORE=1 || RUN_MLS_CORE=0
+echo "$CHANGED_FILES" | grep -Eq '^frontend/mls-wasm/' && RUN_MLS_WASM=1 || RUN_MLS_WASM=0
+echo "$CHANGED_FILES" | grep -Eq '^frontend/src-tauri/' && RUN_TAURI=1 || RUN_TAURI=0
 
 if [ "$RUN_ALL" -eq 1 ]; then
   RUN_FRONTEND=1
   RUN_DELIVERY=1
   RUN_GATEWAY=1
+  RUN_MLS_CORE=1
+  RUN_MLS_WASM=1
+  RUN_TAURI=1
 fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
@@ -56,6 +62,32 @@ if [ "$RUN_GATEWAY" -eq 1 ]; then
     cd apps/chat-gateway && cargo fmt -- --check && cargo clippy --all-targets --all-features -- -D warnings
   ) || {
     echo "❌ chat-gateway checks failed (fmt/clippy)."
+    exit 1
+  }
+fi
+
+# Crates Rust sous frontend/ : miroir strict de la CI avant push.
+if [ "$RUN_MLS_CORE" -eq 1 ]; then
+  (
+    cd frontend/mls-core && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings
+  ) || {
+    echo "❌ mls-core checks failed (fmt/clippy)."
+    exit 1
+  }
+fi
+
+if [ "$RUN_MLS_WASM" -eq 1 ]; then
+  # fmt --check seul : clippy de mls-wasm cible le wasm (feature getrandom/js), la CI le couvre.
+  (cd frontend/mls-wasm && cargo fmt -- --check) || {
+    echo "❌ mls-wasm fmt check failed."
+    exit 1
+  }
+fi
+
+if [ "$RUN_TAURI" -eq 1 ]; then
+  # fmt --check seul : clippy de src-tauri compile toute l'app + deps = trop lourd pour un hook.
+  (cd frontend/src-tauri && cargo fmt -- --check) || {
+    echo "❌ src-tauri fmt check failed."
     exit 1
   }
 fi

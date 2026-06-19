@@ -15,6 +15,11 @@ echo "$STAGED_FILES" | grep -Eq '^apps/social-service/' && RUN_SOCIAL=1 || RUN_S
 echo "$STAGED_FILES" | grep -Eq '^apps/core-service/' && RUN_CORE=1 || RUN_CORE=0
 echo "$STAGED_FILES" | grep -Eq '^apps/media-service/' && RUN_MEDIA=1 || RUN_MEDIA=0
 echo "$STAGED_FILES" | grep -Eq '^libs/shared-ts/' && RUN_SHARED_TS=1 || RUN_SHARED_TS=0
+# Crates Rust sous frontend/ : non couvertes par les checks JS du bloc frontend.
+# cargo fmt y est obligatoire (le job CI `cargo fmt -- --check` casse la CD sinon).
+echo "$STAGED_FILES" | grep -Eq '^frontend/mls-core/' && RUN_MLS_CORE=1 || RUN_MLS_CORE=0
+echo "$STAGED_FILES" | grep -Eq '^frontend/mls-wasm/' && RUN_MLS_WASM=1 || RUN_MLS_WASM=0
+echo "$STAGED_FILES" | grep -Eq '^frontend/src-tauri/' && RUN_TAURI=1 || RUN_TAURI=0
 
 if [ "$RUN_ALL" -eq 1 ]; then
   RUN_FRONTEND=1
@@ -24,6 +29,9 @@ if [ "$RUN_ALL" -eq 1 ]; then
   RUN_CORE=1
   RUN_MEDIA=1
   RUN_SHARED_TS=1
+  RUN_MLS_CORE=1
+  RUN_MLS_WASM=1
+  RUN_TAURI=1
 fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
@@ -86,6 +94,32 @@ if [ "$RUN_SHARED_TS" -eq 1 ]; then
     exit 1
   }
   git diff --name-only -- libs/shared-ts/ | xargs -r git add
+fi
+
+# Crates Rust sous frontend/ : auto-formate (cargo fmt) puis re-stage, comme chat-gateway.
+# Detecte le probleme de format au commit au lieu de le laisser casser la CD.
+if [ "$RUN_MLS_CORE" -eq 1 ]; then
+  (cd frontend/mls-core && cargo fmt) || {
+    echo "❌ mls-core cargo fmt échoué."
+    exit 1
+  }
+  git diff --name-only -- frontend/mls-core/ | xargs -r git add
+fi
+
+if [ "$RUN_MLS_WASM" -eq 1 ]; then
+  (cd frontend/mls-wasm && cargo fmt) || {
+    echo "❌ mls-wasm cargo fmt échoué."
+    exit 1
+  }
+  git diff --name-only -- frontend/mls-wasm/ | xargs -r git add
+fi
+
+if [ "$RUN_TAURI" -eq 1 ]; then
+  (cd frontend/src-tauri && cargo fmt) || {
+    echo "❌ src-tauri cargo fmt échoué."
+    exit 1
+  }
+  git diff --name-only -- frontend/src-tauri/ | xargs -r git add
 fi
 
 exit 0
