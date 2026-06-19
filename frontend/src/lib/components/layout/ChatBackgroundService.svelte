@@ -36,6 +36,7 @@
   import { Fingerprint } from '@lucide/svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+  import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import {
     refreshAppVersionCheck,
     shouldBlockSessionUnlock,
@@ -647,13 +648,19 @@
         return;
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
+        const { pin, storage } = globalSession;
+        // Reconcile entries the native background service already delivered (outbox_sent.ndjson)
+        // BEFORE the outbox flusher re-reads the queue on this same `visible` transition. Without
+        // this the foreground would re-send a message already sent in the background, re-encoding
+        // it against a possibly-stale epoch (SecretReuse). Reconciliation was login-only before;
+        // a backgrounded-but-alive app never re-logs in, so it never cleared these until now.
+        if (storage) void reconcileOutboxSent(storage);
         if (!globalSession.isWsConnected) {
           appendLog('Page visible de nouveau - reconnexion...');
           void globalSession.attemptReconnect(sessionCb());
         }
         checkSiblingCallWarning();
         // Injecter les messages FCM mis en cache pendant l'arrière-plan
-        const { pin, storage } = globalSession;
         if (pin && storage) {
           void flushFcmCache(pin, storage);
         }

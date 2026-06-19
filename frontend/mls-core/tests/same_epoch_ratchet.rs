@@ -47,7 +47,10 @@ fn duplicate_same_epoch_frame_is_a_benign_drop_not_an_error() {
     let second = bob
         .process_incoming_message(&gid, &ciphertext)
         .expect("duplicate frame must NOT error");
-    assert_eq!(second, None, "duplicate same-epoch frame should be Ok(None)");
+    assert_eq!(
+        second, None,
+        "duplicate same-epoch frame should be Ok(None)"
+    );
 }
 
 #[test]
