@@ -25,6 +25,30 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 
 ---
 
+## Suivi des findings (statut)
+
+| ID | Sujet | Statut | Commit |
+|----|-------|--------|--------|
+| C0 | TooDistantInThePast/SecretReuse same-epoch mis en file -> boucle | FIXED (P1) | 9be4663a |
+| C0b | Web: TooDistantInThePast -> requestReAdd | FIXED (P1, via C0 centralise) | 9be4663a |
+| C0c | Config SenderRatchet tolerance 5 -> 2000 | FIXED (P1) | 9be4663a |
+| C1 | Deux moteurs MLS ecrivent mls.bin (garde booleenne) | OPEN (P2) | - |
+| C2 | Foreground ne recharge jamais mls.bin au resume | OPEN (P2) | - |
+| C3 | Double envoi outbox foreground/background | OPEN (P2) | - |
+| C4 | process_welcome persiste avant les guards -> orphelin | OPEN (P3) | - |
+| C5 | add_members_bulk perte silencieuse de membres | OPEN (P3) | - |
+| H1 | TTL locks reboot/add < duree reelle | OPEN (P4) | - |
+| H2 | forgetGroup predecesseur premature | OPEN (P4) | - |
+| H3 | Mutations conversations non atomiques | OPEN (P4) | - |
+| H4 | validateCommit bypass epoch 0 | OPEN (P4) | - |
+| H5 | Push differe + background redondants | OPEN (P4) | - |
+| S1..S4, M1 | Strictness / veracite | OPEN (P5) | - |
+
+Note versioning : le bump de version est gere par le bot CI au release (pattern observe :
+commit `9f3afd91` rebuild WASM sans bump). Pas de bump manuel pour eviter un conflit CI.
+
+---
+
 ## CRITIQUE
 
 ### C0 - `TooDistantInThePast` (meme epoch) mis en file SQLite et retente en boucle
