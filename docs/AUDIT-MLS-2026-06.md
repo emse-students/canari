@@ -42,7 +42,26 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H3 | Mutations conversations non atomiques | OPEN (P4) | - |
 | H4 | validateCommit bypass epoch 0 | OPEN (P4) | - |
 | H5 | Push differe + background redondants | OPEN (P4) | - |
+| H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | OPEN (P4) | - |
 | S1..S4, M1 | Strictness / veracite | OPEN (P5) | - |
+| M2 | Replay: WrongEpoch marque vu definitivement | OPEN (P5) | - |
+| S5 | Classification d'erreurs MLS dupliquee 4 couches | OPEN (P5) | - |
+
+### Note architecture Android (pour C1/C2)
+
+Trois moteurs MLS coexistent dans le **meme process** (meme `.so` Rust) :
+1. **Foreground** : `MlsManager` natif en memoire (`AppState`, `src-tauri/src/lib.rs`), lu une
+   fois a `initialiser_mls`, jamais recharge, ecrit `mls.bin` au save.
+2. **FCM service** (`CanariFirebaseMessagingService.kt`) : JNI, `MlsManager` ephemere depuis
+   `mls.bin`, garde `MlsStateLock` + `isInForeground`.
+3. **WorkManager** (`MlsBackgroundWorker.kt`) : JNI, idem, garde `MlsStateLock` (15s) +
+   `isInForeground`, max 3 retries.
+
+Les moteurs 2 et 3 partagent `MlsStateLock` (Kotlin `ReentrantLock`), mais le foreground (1) n'y
+participe PAS. Comme les trois sont dans le meme espace d'adressage, un `static Mutex` cote Rust
+(acquis par les commandes Tauri ET les fonctions JNI avant tout acces `mls.bin`) pourrait unifier
+le verrou des trois sans dependre de Kotlin (C1). Le rechargement de `mls.bin` au resume reste
+necessaire pour la stale en memoire du foreground (C2).
 
 Note versioning : le bump de version est gere par le bot CI au release (pattern observe :
 commit `9f3afd91` rebuild WASM sans bump). Pas de bump manuel pour eviter un conflit CI.
@@ -218,6 +237,24 @@ Lieu : `apps/chat-delivery-service/src/services/messaging.service.ts:359-382`.
 Combine au drain outbox background (C3) et au requeue, multiplie le travail crypto multi-moteur.
 A correler avec les lenteurs.
 
+### H6 - Les evenements de controle MLS contournent l'outbox durable (perte silencieuse)
+
+Reactions, edits, suppressions, pins et accuses de lecture partent en direct via
+`mlsService.sendMessage(..., silent=true)` avec le pattern `if (!conversation.isReady) return;`
+puis `try { ... } catch { console.warn }`. Aucun retry, aucune file durable.
+
+Lieux : `frontend/src/lib/utils/chat/messaging.ts` - `addReaction:188-218`, `removeReaction:224-242`,
+`editMessage:244-261`, `deleteMessage:264-274`, `setMessagePinned:277-293`, `sendReadReceipt:296-311` ;
+declencheurs UI dans `frontend/src/lib/composables/useMessaging.svelte.ts` (handleAddReaction,
+handleEditMessage, handleDeleteMessage, handleTogglePin).
+
+Chaine : l'utilisateur reagit/edite/supprime pendant que le groupe est momentanement non-sendable
+(epoch en transit, reseau coupe, Welcome en cours) -> l'envoi est `return` ou jette -> l'etat local
+optimiste reste, mais le message MLS n'est jamais emis -> les pairs ne convergent jamais. Seuls
+texte/reply/media beneficient de l'outbox durable (cf. C3). Probable cause des reactions/edits/
+read-state qui "ne se propagent pas". A traiter : router ces evenements via l'outbox (nouveau kind
+de controle) ou une mini-file de retry.
+
 ---
 
 ## STRICTNESS / VERACITE (retours ambigus, `any`)
@@ -255,6 +292,25 @@ de type (la source est u64).
 Lieu : `frontend/mls-core/src/lib.rs:894-923`. Avec `max_past_epochs(2)`, un message applicatif
 livre avec plus de 2 epochs de retard renvoie `Ok(None)` (compte comme doublon) -> perte
 possible. En partie par-design.
+
+### M2 - Replay historique : WrongEpoch marque "vu" definitivement
+
+Lieu : `frontend/src/lib/utils/chat/history.ts:316-327`. Dans le replay, `CannotDecryptOwnMessage`,
+`WrongEpoch` et `SecretReuseError` sont ajoutes a `seenCipherHashes` (skip pour toujours).
+`WrongEpoch` peut etre transitoirement non-dechiffrable (commit pas encore applique) ; le marquer
+vu definitivement peut sauter un message recuperable. `GAP_QUEUED` est correctement exclu du skip.
+Note : Passe 1 a deja retire `TooDistantInThePast` de ce chemin (devenu `Ok(None)` -> plus de spam
+"History msg error" ni d'avancement de curseur errone).
+
+### S5 - Classification d'erreurs MLS dupliquee sur 4 couches
+
+Le meme string-matching d'erreurs OpenMLS est reparti dans :
+`frontend/src-tauri/src/lib.rs` (`recevoir_message_bytes`, `map_decrypt_outcome`),
+`frontend/src/lib/mls-client/messagePipeline/setupMessageHandler.ts` (`handleKnownGroup`),
+`frontend/src/lib/utils/chat/history.ts` (replay). Passe 1 a centralise les cas same-epoch benins
+dans `mls-core` (source unique), mais `WrongEpoch`, `NoMatchingKeyPackage`, `GAP_QUEUED`,
+`CannotDecryptOwnMessage` restent matches par sous-chaine a plusieurs endroits -> divergence facile.
+Piste : un type d'erreur structure expose par `mls-core` (enum) consomme partout.
 
 ---
 
