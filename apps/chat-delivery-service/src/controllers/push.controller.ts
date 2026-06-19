@@ -330,6 +330,11 @@ export class PushController {
    * Sends a Welcome to the target device and broadcasts the accompanying commit
    * to all current group members. Called by the background service after creating
    * the Welcome package via Rust JNI (nativeCreateWelcomeBackground).
+   *
+   * When `baseEpoch` is provided, the commit is validated (epoch-gated) before any Welcome or
+   * broadcast, exactly like the foreground `/api/mls/commit` path: this keeps the server's
+   * `activeEpoch` in phase with the real MLS epoch so subsequent foreground commits are not
+   * rejected as `epoch_mismatch` (C6). A rejected commit yields neither a Welcome nor a broadcast.
    * Auth: PushSecret (no JWT).
    */
   @Post('mls/push/send-welcome-and-commit')
@@ -345,6 +350,7 @@ export class PushController {
       welcomePayload: string;
       ratchetTreePayload?: string;
       commitPayload: string;
+      baseEpoch?: number;
     },
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -369,8 +375,34 @@ export class PushController {
 
     const traceId = `bg-wlc-${crypto.randomUUID().slice(0, 8)}`;
     this.logger.log(
-      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId}`,
+      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId} baseEpoch=${body.baseEpoch ?? 'n/a'}`,
     );
+
+    // Le commit background avance l'epoch reel : on le valide d'abord (comme le chemin foreground)
+    // pour garder activeEpoch en phase, sinon le prochain commit foreground est rejete a tort (C6).
+    // On valide AVANT d'envoyer le Welcome : un rejet ne doit ni diffuser le commit ni livrer un
+    // Welcome vers un etat que les autres membres n'adopteront pas. baseEpoch absent (JNI ancien) ->
+    // on conserve l'ancien comportement (diffusion sans validation) pour la retrocompatibilite.
+    if (typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)) {
+      const validation = await this.messagingService.validateCommit({
+        groupId,
+        deviceId,
+        baseEpoch: body.baseEpoch,
+      });
+      if (!validation.accepted) {
+        this.logger.warn(
+          `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - ni Welcome ni diffusion`,
+        );
+        return {
+          status: 'rejected',
+          reason: validation.reason,
+          currentEpoch: validation.currentEpoch,
+        };
+      }
+      this.logger.log(
+        `[BG_WELCOME][${traceId}] commit valide -> activeEpoch=${validation.newEpoch}`,
+      );
+    }
 
     // Send Welcome to target device (null authUserId skips membership check)
     await this.messagingService.sendWelcome(undefined, {

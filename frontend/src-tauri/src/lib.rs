@@ -2091,8 +2091,9 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
 /// - Charge l'état MLS depuis `state_bytes`.
 /// - Appelle `add_member` avec le `key_package_b64` du requester.
 /// - Sauvegarde l'état MLS mis à jour dans `{files_dir}/mls.bin`.
-/// - Retourne un JSON : `{"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>"}`
-///   ou `{"ok":false,"error":"..."}` en cas d'échec.
+/// - Retourne un JSON : `{"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>","baseEpoch":<u64>}`
+///   ou `{"ok":false,"error":"..."}` en cas d'échec. `baseEpoch` est l'epoch AVANT l'ajout : le
+///   backend le valide (validateCommit) pour garder son compteur en phase avec l'epoch reel (C6).
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground<
@@ -2136,10 +2137,18 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
                 .map_err(|e| e.to_string())?;
 
+        // Epoch de base AVANT l'ajout (add_member merge le commit et avance l'epoch). Le backend
+        // valide ce baseEpoch contre activeEpoch (validateCommit) pour garder son compteur en phase
+        // avec l'epoch reel - sinon les commits foreground ulterieurs sont rejetes a tort (C6).
+        let base_epoch = manager
+            .get_epoch(&group_id_str)
+            .map_err(|e| e.to_string())?;
+
         log::debug!(
-            "[BG_WELCOME] add_member group={} kp_len={}",
+            "[BG_WELCOME] add_member group={} kp_len={} base_epoch={}",
             group_id_str,
-            kp_bytes.len()
+            kp_bytes.len(),
+            base_epoch
         );
         let (commit, welcome_opt, ratchet_tree_opt) = manager
             .add_member(&group_id_str, &kp_bytes)
@@ -2165,6 +2174,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             "welcome": STANDARD.encode(&welcome),
             "ratchetTree": ratchet_tree_opt.as_deref().map(|rt| STANDARD.encode(rt)),
             "commit": STANDARD.encode(&commit),
+            "baseEpoch": base_epoch,
         }))
     })();
 

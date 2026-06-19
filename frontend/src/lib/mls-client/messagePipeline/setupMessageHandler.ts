@@ -526,12 +526,14 @@ async function handleKnownGroup({
   try {
     resetWasmDuplicateDeliveryFlag();
     const decrypted = await mlsService.processIncomingMessage(groupId, content);
-    // Tout traitement réussi (commit qui avance l'epoch, ou message déchiffré) résorbe
-    // un éventuel gap d'epoch en cours → on annule l'escalade armée.
-    epochGapSince.delete(groupId);
 
     // Persister : immédiat pour les commits (epoch avancée), différé pour les app msgs
     if (isCommit) {
+      // Seul un commit avance réellement l'epoch et résorbe donc un gap → on annule l'escalade.
+      // Un message applicatif qui se déchiffre (typiquement un pair resté sur la MEME branche
+      // stale qu'un device forké) ne rattrape PAS la branche divergente : remettre le timer à
+      // zéro ici empêcherait à jamais l'escalade forget+re-welcome qui répare le fork (H7).
+      epochGapSince.delete(groupId);
       statePersister.persistNow();
     } else {
       statePersister.scheduleDeferred();

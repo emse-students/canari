@@ -37,6 +37,9 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C3 | Double envoi outbox foreground/background | FIXED (P2, reconcile au resume) | ce9232bd |
 | C4 | process_welcome persiste avant les guards -> orphelin | FIXED (P3) | 10d8e160 |
 | C5 | add_members_bulk perte silencieuse de membres | OPEN (P4, cross-couche avec inviteMembers) | - |
+| C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | OPEN (P-fork, en cours) | - |
+| C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | OPEN (P-fork, apres C6) | - |
+| H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | OPEN (P-fork, en cours) | - |
 | H1 | TTL locks reboot/add < duree reelle | OPEN (P4) | - |
 | H2 | forgetGroup predecesseur premature | OPEN (P4) | - |
 | H3 | Mutations conversations non atomiques | OPEN (P4) | - |
@@ -257,6 +260,77 @@ de controle) ou une mini-file de retry.
 
 ---
 
+## FORK D'EPOCH - messages du mobile invisibles sur les PC (C6/C7/H7)
+
+Diagnostic etabli a partir de `logs.txt` (compte A : PC+mobile ; compte B : PC). Symptome :
+un message envoye par le mobile n'apparait sur aucun PC. Ce n'est PAS le bug same-epoch de
+Passe 1 (deja corrige) : c'est un **fork d'epoch** cause par une desynchronisation du compteur
+d'epoch cote serveur. Pre-existant.
+
+**Preuve (mobile, ligne 515 de logs.txt) :**
+```
+[WELCOME_REQ] Erreur ... Commit rejected: epoch_mismatch (server epoch: 1, sent: 3)
+```
+Le compteur `activeEpoch` serveur est fige a 1 alors que l'epoch MLS reel est monte a 4.
+
+### Chaine causale
+
+1. Le mobile (app en arriere-plan, FCM) traite un `welcome_request` et poste le commit sur
+   `POST /api/mls/push/send-welcome-and-commit`. Cet endpoint **diffuse** le commit (epoch reel
+   1->2) mais **n'appelle jamais `validateCommit`** -> `activeEpoch` reste a 1.
+2. Le seul chemin qui met a jour `activeEpoch` est le foreground (`POST /api/mls/commit` ->
+   `validateCommit`). Le compteur serveur desynchronise donc des membres reels.
+3. Le mobile revenu au premier plan fait un commit foreground (kick+re-add, epoch local 3),
+   valide contre `activeEpoch=1` -> `epoch_mismatch` -> **rejete**.
+4. Mais `mls-core` a deja fait `merge_pending_commit` localement (avant la reponse serveur) ->
+   l'etat local est deja a l'epoch suivant, **forke**, sans rollback.
+5. Le mobile emet ses messages applicatifs sur la branche forkee (epoch 4) -> les PC (epoch 2)
+   tombent en gap -> messages non affiches.
+6. La recovery des PC ne converge jamais a cause de H7 (cf. ci-dessous).
+
+### C6 - Le commit background bypasse `validateCommit` (cause racine)
+
+Lieux : `apps/chat-delivery-service/src/controllers/push.controller.ts:386-393`
+(`sendWelcomeAndCommitPush` diffuse via `messagingService.sendMessage({isCommit:true})` sans
+validation) vs `apps/chat-delivery-service/src/services/messaging.service.ts:704`
+(`validateCommit`, seul a bumper `activeEpoch`, appele uniquement par le chemin foreground).
+
+Consequence : tout commit emis en arriere-plan (ajout de device sur welcome_request) avance
+l'epoch reel sans avancer le compteur serveur -> le prochain commit foreground est rejete a tort.
+
+Fix : le chemin background doit, comme le foreground, faire passer le commit par `validateCommit`
+avant diffusion (le JNI expose l'epoch de base pre-ajout, le Kotlin le transmet, le backend valide
+et bump `activeEpoch`). Touche JNI (Rust) + Kotlin + backend.
+
+### C7 - `merge_pending_commit` avant validation serveur -> fork local permanent
+
+Lieux : `frontend/mls-core/src/lib.rs` (`add_members_bulk:~651`, `remove_members:~492/542`),
+le merge local precede l'aller-retour serveur de validation.
+
+Consequence : si le serveur rejette le commit (C6 ou course reelle), l'etat local a deja avance
+d'une epoch -> branche forkee definitive, aucun rollback ni recovery declenchee.
+
+Fix (robustesse, apres C6) : valider-puis-merger. Generer le commit sans merge -> `validateCommit`
+-> succes : `merge_pending_commit` ; rejet : `clear_pending_commit` + recovery. Elimine la classe
+entiere des forks-sur-rejet. Refactor du flux commit (mls-core + bindings + TS).
+
+### H7 - L'escalade de gap est remise a zero par tout dechiffrement
+
+Lieu : `frontend/src/lib/mls-client/messagePipeline/setupMessageHandler.ts` (`handleKnownGroup`,
+`epochGapSince.delete(groupId)` inconditionnel apres chaque dechiffrement reussi, ~ligne 531).
+
+Consequence : un PC bloque en gap derriere une branche forkee escalade vers forget+re-welcome au
+bout de `EPOCH_GAP_ESCALATION_MS` (30 s). Mais tout message d'un pair reste sur la meme branche
+stale (ex. le compte B) se dechiffre normalement et **reinitialise le timer** -> les 30 s ne sont
+jamais atteintes -> le device forke ne recovery jamais.
+
+Fix (mitigation, sur et testable) : ne remettre `epochGapSince` a zero que sur un **commit** (qui
+avance reellement l'epoch), pas sur un message applicatif d'un pair sur la branche stale. 1 ligne,
+pur TS. Limite : sans C6, le re-add de recovery peut re-forker -> H7 est necessaire mais pas
+suffisant seul.
+
+---
+
 ## STRICTNESS / VERACITE (retours ambigus, `any`)
 
 ### S1 - `getGroupMeta` : `null` pour 404 ET pour echec reseau
@@ -359,6 +433,16 @@ Piste : un type d'erreur structure expose par `mls-core` (enum) consomme partout
 16. `validateCommit` : retirer le bypass `activeEpoch == 0` (ou le restreindre a un vrai etat
     non-initialise).
 17. Verif : tests reboot concurrents, pas de pollution serveur.
+
+### Passe fork - Messages mobile invisibles sur PC - C6/C7/H7 (prioritaire)
+F1. C6 : le chemin background (`send-welcome-and-commit`) valide le commit (bump `activeEpoch`)
+    avant diffusion. JNI expose l'epoch de base, Kotlin le transmet, backend appelle `validateCommit`.
+F2. H7 : `handleKnownGroup` ne reinitialise `epochGapSince` que sur un commit, pas sur un message
+    applicatif d'un pair stale.
+F3. C7 (apres verif device de F1/F2) : valider-puis-merger dans `mls-core` (pas de merge avant
+    acceptation serveur ; rollback `clear_pending_commit` + recovery sur rejet).
+F4. Verif device : mobile envoie -> visible sur tous les PC ; ajout de device en background ->
+    pas de rejet `epoch_mismatch` au prochain commit foreground.
 
 ### Passe 5 - Strictness - S1..S4, M1
 18. `getGroupMeta` et consorts : distinguer not-found / network-error (Result ou type d'erreur).

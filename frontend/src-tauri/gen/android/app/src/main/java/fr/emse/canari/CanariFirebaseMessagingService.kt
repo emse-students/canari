@@ -514,13 +514,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val welcomePayload  = result.getString("welcome")
             val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
             val commitPayload   = result.getString("commit")
-            Log.d(TAG, "processWelcomeRequestBackground: Welcome créé, commit=${commitPayload.take(16)}…")
+            // Epoch de base avant l'ajout : le backend le valide (validateCommit) pour garder son
+            // compteur activeEpoch en phase avec l'epoch reel, sinon les commits foreground sont
+            // rejetes a tort (C6). -1 si absent (JNI ancien) -> le backend skippe la validation.
+            val baseEpoch       = result.optLong("baseEpoch", -1L)
+            Log.d(TAG, "processWelcomeRequestBackground: Welcome créé, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
 
             // 4. Envoyer Welcome + commit au backend (HTTP) - hors MlsStateLock
             val sent = sendWelcomeAndCommit(
                 ctx, secret, groupId,
                 requesterUserId, requesterDeviceId,
-                welcomePayload, ratchetTree, commitPayload,
+                welcomePayload, ratchetTree, commitPayload, baseEpoch,
             )
             if (sent) {
                 Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome envoyé pour group=$groupId target=$requesterUserId:$requesterDeviceId")
@@ -654,6 +658,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         welcomePayload: String,
         ratchetTree: String?,
         commitPayload: String,
+        baseEpoch: Long,
     ): Boolean {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/send-welcome-and-commit")
@@ -666,6 +671,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("welcomePayload", welcomePayload)
                 put("ratchetTreePayload", if (ratchetTree != null) ratchetTree else JSONObject.NULL)
                 put("commitPayload", commitPayload)
+                if (baseEpoch >= 0) put("baseEpoch", baseEpoch)
             }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
