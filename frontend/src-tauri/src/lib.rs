@@ -97,12 +97,14 @@ async fn persist_background_mls_checkpoint(
         .unwrap_or_default()
         .as_millis() as i64;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query("INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)")
-        .bind(enc)
-        .bind(ts)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)",
+    )
+    .bind(enc)
+    .bind(ts)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
     tx.commit().await.map_err(|e| e.to_string())?;
     write_mls_bin_atomically(&files_dir.join("mls.bin"), enc)
 }
@@ -230,7 +232,9 @@ async fn generer_key_packages(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        let generated = manager.generate_key_packages(count).map_err(|e| e.to_string())?;
+        let generated = manager
+            .generate_key_packages(count)
+            .map_err(|e| e.to_string())?;
         Ok::<Vec<Vec<u8>>, String>(generated)
     })
     .await
@@ -281,7 +285,9 @@ async fn generer_key_packages_et_persister(
         );
         let fallback = manager.generate_key_package().map_err(|e| e.to_string())?;
         let pool_packages = if count > 0 {
-            manager.generate_key_packages(count).map_err(|e| e.to_string())?
+            manager
+                .generate_key_packages(count)
+                .map_err(|e| e.to_string())?
         } else {
             Vec::new()
         };
@@ -321,10 +327,7 @@ fn oublier_groupe(
 /// Purge définitive d'un groupe (Poison Pill) : mémoire + stockage OpenMLS + verrou
 /// d'epoch à MAX. Aucun Welcome ne sera jamais accepté pour ce groupId après cet appel.
 #[tauri::command]
-fn supprimer_groupe(
-    group_id: String,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
+fn supprimer_groupe(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -405,7 +408,10 @@ fn trailer_welcome(
     manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
         .map_err(|e| {
-            log::error!("[WELCOME] Erreur critique lors du traitement du Welcome MLS: {:?}", e);
+            log::error!(
+                "[WELCOME] Erreur critique lors du traitement du Welcome MLS: {:?}",
+                e
+            );
             e.to_string()
         })
 }
@@ -753,7 +759,10 @@ async fn bootstrap_dead_conversation(
         .post(&claim_url)
         .header("Authorization", format!("Bearer {}", auth_token))
         .header("Content-Type", "application/json")
-        .body(format!(r#"{{"expectedVersion":{}}}"#, expected_bootstrap_version))
+        .body(format!(
+            r#"{{"expectedVersion":{}}}"#,
+            expected_bootstrap_version
+        ))
         .send()
         .await
         .map_err(|e| format!("claim-bootstrap HTTP error: {}", e))?;
@@ -766,10 +775,7 @@ async fn bootstrap_dead_conversation(
         return Ok(BootstrapOutcome::Conflict);
     }
     if !claim_resp.status().is_success() {
-        return Err(format!(
-            "claim-bootstrap failed: {}",
-            claim_resp.status()
-        ));
+        return Err(format!("claim-bootstrap failed: {}", claim_resp.status()));
     }
     let claim_body: ClaimBootstrapResponse = claim_resp
         .json()
@@ -778,10 +784,7 @@ async fn bootstrap_dead_conversation(
     let new_bootstrap_version = claim_body.bootstrap_version;
 
     // ── Étape 2 : Reset de l'epoch serveur à 0 ───────────────────────────────
-    let reset_url = format!(
-        "{}/api/mls/groups/{}/reset-epoch",
-        base, conversation_id
-    );
+    let reset_url = format!("{}/api/mls/groups/{}/reset-epoch", base, conversation_id);
     let reset_resp = http_client
         .0
         .post(&reset_url)
@@ -824,15 +827,15 @@ async fn bootstrap_dead_conversation(
         {
             Ok(r) if r.status().is_success() => r,
             Ok(r) => {
-                log::warn!(
-                    "[BOOTSTRAP] fetchUserDevices({}) → {}",
-                    user_id,
-                    r.status()
-                );
+                log::warn!("[BOOTSTRAP] fetchUserDevices({}) → {}", user_id, r.status());
                 continue;
             }
             Err(e) => {
-                log::warn!("[BOOTSTRAP] fetchUserDevices({}) network error: {}", user_id, e);
+                log::warn!(
+                    "[BOOTSTRAP] fetchUserDevices({}) network error: {}",
+                    user_id,
+                    e
+                );
                 continue;
             }
         };
@@ -840,7 +843,11 @@ async fn bootstrap_dead_conversation(
         let devices: Vec<DeviceEntry> = match resp.json().await {
             Ok(d) => d,
             Err(e) => {
-                log::warn!("[BOOTSTRAP] fetchUserDevices({}) parse error: {}", user_id, e);
+                log::warn!(
+                    "[BOOTSTRAP] fetchUserDevices({}) parse error: {}",
+                    user_id,
+                    e
+                );
                 continue;
             }
         };
@@ -975,7 +982,9 @@ fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
             log::info!("[PushHealth] pending_push_secret.txt présent → migration en attente, push fonctionnel");
             return serde_json::json!({"ok": true});
         }
-        log::warn!("[PushHealth] keystore_ok.flag et pending_push_secret.txt absents → Keystore perdu");
+        log::warn!(
+            "[PushHealth] keystore_ok.flag et pending_push_secret.txt absents → Keystore perdu"
+        );
         serde_json::json!({"ok": false, "reason": "no_secret"})
     }
     #[cfg(not(target_os = "android"))]
@@ -993,15 +1002,25 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     {
         let data_dir = match app.path().app_data_dir() {
             Ok(d) => d,
-            Err(e) => { log::warn!("[FCM] app_data_dir() failed: {e}"); return None; }
+            Err(e) => {
+                log::warn!("[FCM] app_data_dir() failed: {e}");
+                return None;
+            }
         };
         match std::fs::read_to_string(data_dir.join("fcm_token.txt")) {
             Ok(token) => {
                 let token = token.trim().to_string();
-                if token.is_empty() { log::warn!("[FCM] fcm_token.txt is empty"); None }
-                else { Some(token) }
+                if token.is_empty() {
+                    log::warn!("[FCM] fcm_token.txt is empty");
+                    None
+                } else {
+                    Some(token)
+                }
             }
-            Err(e) => { log::warn!("[FCM] read fcm_token.txt: {e}"); None }
+            Err(e) => {
+                log::warn!("[FCM] read fcm_token.txt: {e}");
+                None
+            }
         }
     }
     #[cfg(not(target_os = "android"))]
@@ -1010,7 +1029,6 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
         None
     }
 }
-
 
 // ─── Protobuf minimal helpers (pas de dépendance externe) ────────────────────
 
@@ -1100,18 +1118,24 @@ fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
                 pos = next;
             }
             1 => {
-                if pos + 8 > bytes.len() { return None; }
+                if pos + 8 > bytes.len() {
+                    return None;
+                }
                 pos += 8;
             }
             2 => {
                 let (len, after_len) = read_varint(bytes, pos)?;
                 pos = after_len;
                 let end = pos + len as usize;
-                if end > bytes.len() { return None; }
+                if end > bytes.len() {
+                    return None;
+                }
                 pos = end;
             }
             5 => {
-                if pos + 4 > bytes.len() { return None; }
+                if pos + 4 > bytes.len() {
+                    return None;
+                }
                 pos += 4;
             }
             _ => return None,
@@ -1160,11 +1184,14 @@ fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         if !content.is_empty() {
             let reply_to = find_length_delimited_field(&reply_msg, 2).map(|ref_bytes| {
                 let id = find_length_delimited_field(&ref_bytes, 1)
-                    .and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_default();
                 let sender_id = find_length_delimited_field(&ref_bytes, 2)
-                    .and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_default();
                 let preview = find_length_delimited_field(&ref_bytes, 3)
-                    .and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_default();
                 serde_json::json!({ "id": id, "senderId": sender_id, "preview": preview })
             });
             return serde_json::json!({
@@ -1180,7 +1207,7 @@ fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
             Some(1) => "image",
             Some(2) => "video",
             Some(3) => "audio",
-            _       => "file",
+            _ => "file",
         };
         let caption = find_length_delimited_field(&media_msg, 8)
             .and_then(|b| String::from_utf8(b).ok())
@@ -1189,7 +1216,7 @@ fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
             "image" => "📷 Photo".to_string(),
             "video" => "🎥 Vidéo".to_string(),
             "audio" => "🎤 Audio".to_string(),
-            _       => "📎 Pièce jointe".to_string(),
+            _ => "📎 Pièce jointe".to_string(),
         });
         return serde_json::json!({
             "ok": true, "text": display_text, "messageId": message_id,
@@ -1231,7 +1258,8 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         // Manager temporaire : avance son propre ratchet, n'écrit rien sur disque.
         // Le MlsManager principal peut traiter le même message normalement au boot.
         let mut manager =
-            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str).ok()?;
+            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
+                .ok()?;
 
         let plaintext = match manager.process_incoming_message(&group_id_str, &cipher_vec) {
             Ok(Some(p)) => p,
@@ -1246,7 +1274,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         };
 
         let info = extract_full_message_info(&plaintext);
-        if info["ok"].as_bool().unwrap_or(false) { Some(info) } else { None }
+        if info["ok"].as_bool().unwrap_or(false) {
+            Some(info)
+        } else {
+            None
+        }
     })()
     .unwrap_or_else(|| serde_json::json!({ "ok": false }));
 
@@ -1264,13 +1296,19 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[FCM_CACHE] app_data_dir() failed: {e}"); return vec![]; }
+        Err(e) => {
+            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+            return vec![];
+        }
     };
     let path = data_dir.join("fcm_message_cache.ndjson");
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
-        Err(e) => { log::warn!("[FCM_CACHE] lecture: {e}"); return vec![]; }
+        Err(e) => {
+            log::warn!("[FCM_CACHE] lecture: {e}");
+            return vec![];
+        }
     };
     // Effacer immédiatement pour éviter les doublons au prochain boot
     if let Err(e) = std::fs::remove_file(&path) {
@@ -1292,7 +1330,10 @@ fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
 /// contre l'epoch vivant via `nativeSendMessageBackground`. Fichier app-privé en clair, cohérent
 /// avec push_context.json / fcm_message_cache.ndjson. Réécriture complète (pas d'append).
 #[tauri::command]
-fn store_outbox_mirror(app: tauri::AppHandle, entries: Vec<serde_json::Value>) -> Result<(), String> {
+fn store_outbox_mirror(
+    app: tauri::AppHandle,
+    entries: Vec<serde_json::Value>,
+) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("outbox_pending.ndjson");
@@ -1322,13 +1363,19 @@ fn store_outbox_mirror(app: tauri::AppHandle, entries: Vec<serde_json::Value>) -
 fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[OUTBOX_MIRROR] app_data_dir() failed: {e}"); return vec![]; }
+        Err(e) => {
+            log::warn!("[OUTBOX_MIRROR] app_data_dir() failed: {e}");
+            return vec![];
+        }
     };
     let path = data_dir.join("outbox_sent.ndjson");
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
-        Err(e) => { log::warn!("[OUTBOX_MIRROR] lecture sent: {e}"); return vec![]; }
+        Err(e) => {
+            log::warn!("[OUTBOX_MIRROR] lecture sent: {e}");
+            return vec![];
+        }
     };
     if let Err(e) = std::fs::remove_file(&path) {
         log::warn!("[OUTBOX_MIRROR] suppression sent: {e}");
@@ -1339,7 +1386,10 @@ fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
-    log::info!("[OUTBOX_MIRROR] {} envoi(s) background à réconcilier", ids.len());
+    log::info!(
+        "[OUTBOX_MIRROR] {} envoi(s) background à réconcilier",
+        ids.len()
+    );
     ids
 }
 
@@ -1396,17 +1446,26 @@ fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
 fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[PushCtx] app_data_dir() failed: {e}"); return None; }
+        Err(e) => {
+            log::warn!("[PushCtx] app_data_dir() failed: {e}");
+            return None;
+        }
     };
     let path = data_dir.join("push_context.json");
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(e) => { log::warn!("[PushCtx] read push_context.json: {e}"); return None; }
+        Err(e) => {
+            log::warn!("[PushCtx] read push_context.json: {e}");
+            return None;
+        }
     };
     match serde_json::from_slice(&bytes) {
         Ok(v) => Some(v),
-        Err(e) => { log::warn!("[PushCtx] parse push_context.json: {e}"); None }
+        Err(e) => {
+            log::warn!("[PushCtx] parse push_context.json: {e}");
+            None
+        }
     }
 }
 
@@ -1417,13 +1476,19 @@ fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
 fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[MLS] app_data_dir() failed: {e}"); return None; }
+        Err(e) => {
+            log::warn!("[MLS] app_data_dir() failed: {e}");
+            return None;
+        }
     };
     let path = data_dir.join("mls.bin");
     match std::fs::read(&path) {
         Ok(b) => Some(b),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => { log::warn!("[MLS] read mls.bin: {e}"); None }
+        Err(e) => {
+            log::warn!("[MLS] read mls.bin: {e}");
+            None
+        }
     }
 }
 
@@ -1477,8 +1542,7 @@ fn set_native_flag(key: String, value: bool, app: tauri::AppHandle) -> Result<()
         serde_json::Map::new()
     };
     flags.insert(key, serde_json::Value::Bool(value));
-    std::fs::write(&path, serde_json::Value::Object(flags).to_string())
-        .map_err(|e| e.to_string())
+    std::fs::write(&path, serde_json::Value::Object(flags).to_string()).map_err(|e| e.to_string())
 }
 
 /// Reads all boolean flags from {app_data_dir}/native_flags.json.
@@ -1487,7 +1551,10 @@ fn set_native_flag(key: String, value: bool, app: tauri::AppHandle) -> Result<()
 fn get_native_flags(app: tauri::AppHandle) -> serde_json::Value {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
-        Err(e) => { log::warn!("[Flags] app_data_dir() failed: {e}"); return serde_json::Value::Object(serde_json::Map::new()); }
+        Err(e) => {
+            log::warn!("[Flags] app_data_dir() failed: {e}");
+            return serde_json::Value::Object(serde_json::Map::new());
+        }
     };
     let path = data_dir.join("native_flags.json");
     if !path.exists() {
@@ -1832,7 +1899,6 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     user_id: jni::objects::JString,
     device_id: jni::objects::JString,
 ) -> jni::sys::jboolean {
-
     let files_dir_str: String = match env.get_string(&files_dir) {
         Ok(s) => s.into(),
         Err(_) => return 0,
@@ -2029,7 +2095,9 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
 ///   ou `{"ok":false,"error":"..."}` en cas d'échec.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground<'a>(
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground<
+    'a,
+>(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
@@ -2041,13 +2109,24 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
     key_package_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
-        let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
-        let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
+        let files_dir_str: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let state_vec = env
+            .convert_byte_array(&state_bytes)
+            .map_err(|e| e.to_string())?;
         let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
         let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
-        let device_id_str: String = env.get_string(&device_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env
+            .get_string(&device_id)
+            .map_err(|e| e.to_string())?
+            .into();
         let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
-        let kp_b64: String = env.get_string(&key_package_b64).map_err(|e| e.to_string())?.into();
+        let kp_b64: String = env
+            .get_string(&key_package_b64)
+            .map_err(|e| e.to_string())?
+            .into();
 
         let kp_bytes = STANDARD
             .decode(&kp_b64)
@@ -2066,14 +2145,15 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             .add_member(&group_id_str, &kp_bytes)
             .map_err(|e| e.to_string())?;
 
-        let welcome = welcome_opt
-            .ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
+        let welcome =
+            welcome_opt.ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
 
         // Sauvegarde atomique de l'état MLS mis à jour.
-        let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
+        let enc = manager
+            .save_encrypted(&pin_str)
+            .map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        write_mls_bin_atomically(&mls_path, &enc)
-            .map_err(|e| format!("write mls.bin: {}", e))?;
+        write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
             "[BG_WELCOME] mls.bin mis à jour ({} octets) pour group={}",
             enc.len(),
@@ -2124,13 +2204,23 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     ratchet_tree_b64: jni::objects::JString,
 ) -> jni::sys::jboolean {
     let result = (|| -> Result<(), String> {
-        let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
-        let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
+        let files_dir_str: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let state_vec = env
+            .convert_byte_array(&state_bytes)
+            .map_err(|e| e.to_string())?;
         let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
         let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
-        let device_id_str: String = env.get_string(&device_id).map_err(|e| e.to_string())?.into();
-        let welcome_b64_str: String =
-            env.get_string(&welcome_b64).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env
+            .get_string(&device_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let welcome_b64_str: String = env
+            .get_string(&welcome_b64)
+            .map_err(|e| e.to_string())?
+            .into();
         let rt_b64_str: String = env
             .get_string(&ratchet_tree_b64)
             .map_err(|e| e.to_string())?
@@ -2159,7 +2249,9 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
             .map_err(|e| format!("process_welcome: {:?}", e))?;
 
-        let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
+        let enc = manager
+            .save_encrypted(&pin_str)
+            .map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
         write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
@@ -2191,7 +2283,9 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
 ///   l'entrée en file et la livrera au prochain foreground.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessageBackground<'a>(
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessageBackground<
+    'a,
+>(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
@@ -2203,13 +2297,24 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     proto_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
-        let files_dir_str: String = env.get_string(&files_dir).map_err(|e| e.to_string())?.into();
-        let state_vec = env.convert_byte_array(&state_bytes).map_err(|e| e.to_string())?;
+        let files_dir_str: String = env
+            .get_string(&files_dir)
+            .map_err(|e| e.to_string())?
+            .into();
+        let state_vec = env
+            .convert_byte_array(&state_bytes)
+            .map_err(|e| e.to_string())?;
         let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
         let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
-        let device_id_str: String = env.get_string(&device_id).map_err(|e| e.to_string())?.into();
+        let device_id_str: String = env
+            .get_string(&device_id)
+            .map_err(|e| e.to_string())?
+            .into();
         let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
-        let proto_b64_str: String = env.get_string(&proto_b64).map_err(|e| e.to_string())?.into();
+        let proto_b64_str: String = env
+            .get_string(&proto_b64)
+            .map_err(|e| e.to_string())?
+            .into();
 
         let proto_bytes = STANDARD
             .decode(proto_b64_str.trim())
@@ -2225,7 +2330,9 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
 
         // send_message a fait avancer le ratchet : persister mls.bin sinon le message serait
         // ré-envoyé avec un epoch obsolète au prochain réveil.
-        let enc = manager.save_encrypted(&pin_str).map_err(|e| e.to_string())?;
+        let enc = manager
+            .save_encrypted(&pin_str)
+            .map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
         write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
