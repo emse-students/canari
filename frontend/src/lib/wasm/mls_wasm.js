@@ -590,7 +590,7 @@ function __wbg_get_imports() {
             const ret = arg0.versions;
             return ret;
         },
-        __wbg_wasm_bindings_log_14ef877e92a0cbb3: function(arg0, arg1, arg2, arg3) {
+        __wbg_wasm_bindings_log_2ff67ee3394fb154: function(arg0, arg1, arg2, arg3) {
             window.wasm_bindings_log(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
         },
         __wbindgen_cast_0000000000000001: function(arg0) {
