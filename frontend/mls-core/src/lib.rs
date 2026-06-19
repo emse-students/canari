@@ -48,6 +48,27 @@ pub enum MlsError {
 type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Option<Vec<u8>>);
 type AddMemberResult = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
+/// Sender-ratchet tolerance for incoming application messages, shared by group
+/// creation and Welcome processing so both decrypt bursts identically.
+///
+/// OpenMLS defaults to `(out_of_order_tolerance = 5, maximum_forward_distance = 1000)`.
+/// A tolerance of 5 is far too small for chat: sending a dozen messages at once, combined
+/// with multi-path delivery (realtime publish + pending queue + FCM + native requeue),
+/// routinely delivers generations out of order by more than 5. Once the secret tree
+/// ratchets past a generation and drops its key, that message yields
+/// `SecretTreeError(TooDistantInThePast)` and can NEVER be decrypted - it is then wrongly
+/// queued for retry, looping forever. Keeping a wide past window (2000) lets out-of-order
+/// bursts decrypt cleanly. `maximum_forward_distance` is bounded (2000) to cap the keys
+/// derived when catching up after a real gap. Both values bound memory (~48 B per kept key
+/// per sender per epoch, with `max_past_epochs(2)`).
+///
+/// This is a LOCAL decryption setting: it does not need to match across members and only
+/// governs how this device tolerates reordering/replay. It is baked into a group's config
+/// at creation/join time, so it only affects groups created or (re)joined after this change.
+fn sender_ratchet_config() -> SenderRatchetConfiguration {
+    SenderRatchetConfiguration::new(2000, 2000)
+}
+
 // --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +294,7 @@ impl MlsManager {
             .ciphersuite(Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
             .use_ratchet_tree_extension(true)
             .max_past_epochs(2)
+            .sender_ratchet_configuration(sender_ratchet_config())
             .build();
 
         let credential_with_key = CredentialWithKey {
@@ -685,6 +707,7 @@ impl MlsManager {
         let group_config = MlsGroupJoinConfig::builder()
             .use_ratchet_tree_extension(true)
             .max_past_epochs(2)
+            .sender_ratchet_configuration(sender_ratchet_config())
             .build();
 
         // If ratchet tree is provided externally (e.g. via specific server endpoint), deserialize it
@@ -908,6 +931,33 @@ impl MlsManager {
                     );
                     return Ok(None);
                 }
+
+                // Same-epoch sender-ratchet failures are PERMANENT - retrying never helps:
+                //  - SecretReuseError    : this generation's key was already consumed
+                //                          (duplicate delivery: realtime + queue + FCM).
+                //  - TooDistantInThePast : the generation is older than the kept ratchet
+                //                          window (out-of-order beyond tolerance). The key
+                //                          is gone for good.
+                // OpenMLS may surface the latter either raw or wrapped as NoPastEpochData;
+                // both Debug strings carry the variant name, so a substring match is robust.
+                // Treat them as a benign duplicate/late frame: ACK + drop (Ok(None)). This is
+                // the single source of truth so every caller (native, WASM, background worker)
+                // stops looping the message through its retry queue. Genuine epoch gaps are
+                // handled by the `msg_epoch > group_epoch` fast-fail above, never here.
+                let err_dbg = format!("{:?}", e);
+                if err_dbg.contains("SecretReuseError")
+                    || err_dbg.contains("TooDistantInThePast")
+                    || err_dbg.contains("NoPastEpochData")
+                {
+                    log::debug!(
+                        "Benign same-epoch ratchet frame dropped: group={} epoch={} ({})",
+                        group_id,
+                        group_epoch,
+                        err_dbg
+                    );
+                    return Ok(None);
+                }
+
                 log::error!(
                     "MLS decryption failed: group={} msg_epoch={} group_epoch={} err={:?}",
                     group_id,

@@ -45,6 +45,9 @@ function toUiDiscussionError(error: unknown): string {
   if (lower.includes("impossible d'envoyer l'invitation sécurisée")) {
     return raw;
   }
+  if (lower.includes('already_member')) {
+    return 'Ce membre est déjà présent localement ; il rejoindra le groupe via la synchronisation automatique.';
+  }
 
   return raw;
 }
