@@ -29,6 +29,9 @@ function backoffFor(attempts: number): number {
  */
 export function buildOutboxProto(entry: OutboxEntry): Uint8Array | null {
   if (entry.kind === 'media') return null;
+  // Control events (reaction/edit/delete/pin/read-receipt) carry their AppMessage proto verbatim:
+  // it was encoded once at enqueue time and is epoch-independent, so it is sent as-is.
+  if (entry.kind === 'control') return entry.controlProto ?? null;
   if (entry.kind === 'reply' && entry.replyTo) {
     return encodeAppMessage({
       ...mkReply(entry.text ?? '', {
@@ -230,7 +233,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (groupMeta?.deletedAt && !hasChain) {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… groupe supprimé sans successeur - échec définitif`);
       patchStatus(entry.id, 'error');
-      deps.markDeletedRemotely?.(terminalId);
+      // A control event (reaction/read-receipt) must not be what raises the "conversation
+      // deleted" banner; only a user-visible text/media send does.
+      if (entry.kind !== 'control') deps.markDeletedRemotely?.(terminalId);
       await storage?.deleteOutboxEntry(entry.id).catch(() => {});
       logMlsMetric({ kind: 'outbox_permanent_error', conversationId: terminalId });
       return 'error';
@@ -258,7 +263,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         proto = buildOutboxProto(entry) ?? new Uint8Array(0);
       }
 
-      await mlsService.sendMessage(terminalId, proto, entry.id);
+      // Control events are MLS state-sync only: send them silent (no push notification).
+      await mlsService.sendMessage(terminalId, proto, entry.id, entry.kind === 'control');
       scheduleOutboundMlsPersist();
       // Swap the placeholder for the uploaded media before persisting the sent copy.
       if (mediaContent) updateMessageContent(entry.id, mediaContent);

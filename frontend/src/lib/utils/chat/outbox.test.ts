@@ -120,6 +120,22 @@ describe('outboxCodec', () => {
     const decoded = decodeOutboxEntry(outboxClearColumns(e), encodeOutboxSensitive(e));
     expect(Array.from(decoded.media!.fileBytes!)).toEqual([1, 2, 3, 250, 255]);
   });
+
+  it('round-trips a control entry proto via base64', () => {
+    const e: OutboxEntry = {
+      id: 'c1',
+      conversationId: 'g1',
+      sentAt: 7,
+      kind: 'control',
+      controlProto: new Uint8Array([9, 8, 7, 254]),
+      status: 'pending',
+      attempts: 0,
+      createdAt: 7,
+    };
+    const decoded = decodeOutboxEntry(outboxClearColumns(e), encodeOutboxSensitive(e));
+    expect(decoded.kind).toBe('control');
+    expect(Array.from(decoded.controlProto!)).toEqual([9, 8, 7, 254]);
+  });
 });
 
 describe('outbox native mirror', () => {
@@ -149,6 +165,21 @@ describe('outbox native mirror', () => {
     expect(toMirrorEntry(e)).toBeNull();
     expect(buildOutboxProto(e)).toBeNull();
   });
+
+  it('excludes control entries from the mirror but still builds their proto for the foreground flusher', () => {
+    const e: OutboxEntry = {
+      id: 'c1',
+      conversationId: 'g1',
+      sentAt: 1,
+      kind: 'control',
+      controlProto: new Uint8Array([1, 2, 3]),
+      status: 'pending',
+      attempts: 0,
+      createdAt: 1,
+    };
+    expect(toMirrorEntry(e)).toBeNull();
+    expect(Array.from(buildOutboxProto(e)!)).toEqual([1, 2, 3]);
+  });
 });
 
 describe('outbox flusher', () => {
@@ -168,6 +199,28 @@ describe('outbox flusher', () => {
     expect(sentIds).toEqual(['m1', 'm2']);
     expect(storage._map.size).toBe(0);
     expect(conversations.get('g1')!.messages.every((m) => m.status === 'sent')).toBe(true);
+  });
+
+  it('sends a control entry silently (silent=true) then deletes it', async () => {
+    const controlEntry: OutboxEntry = {
+      id: 'c1',
+      conversationId: 'g1',
+      sentAt: 50,
+      kind: 'control',
+      controlProto: new Uint8Array([9, 8, 7]),
+      status: 'pending',
+      attempts: 0,
+      createdAt: 50,
+    };
+    const storage = makeStorage([controlEntry]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => true }));
+
+    await outbox.flush();
+
+    // 4th arg = silent = true for control events; the verbatim proto is sent under the entry id.
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'c1', true);
+    expect(storage._map.has('c1')).toBe(false);
   });
 
   it('does not send into an unhealthy group; emits welcome_request and keeps the entry pending', async () => {
@@ -274,7 +327,7 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(uploadMedia).toHaveBeenCalledTimes(1);
-    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm');
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', false);
     expect(storage._map.has('mm')).toBe(false);
     // Placeholder content swapped for the real attachment envelope (now carries the mediaId).
     expect(conversations.get('g1')!.messages[0].content).toContain('mid-1');
@@ -309,7 +362,7 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(uploadMedia).not.toHaveBeenCalled();
-    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm');
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', false);
     expect(storage._map.has('mm')).toBe(false);
   });
 

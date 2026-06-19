@@ -68,6 +68,9 @@ export function encodeOutboxSensitive(entry: OutboxEntry): Record<string, unknow
       ...(fileBytes && fileBytes.length > 0 ? { fileBytesB64: uint8ToBase64(fileBytes) } : {}),
     };
   }
+  if (entry.controlProto && entry.controlProto.length > 0) {
+    payload.controlProtoB64 = uint8ToBase64(entry.controlProto);
+  }
   return payload;
 }
 
@@ -94,6 +97,10 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload: any): Outb
     text: typeof payload?.text === 'string' ? payload.text : undefined,
     replyTo: payload?.replyTo,
     media,
+    controlProto:
+      typeof payload?.controlProtoB64 === 'string'
+        ? base64ToUint8(payload.controlProtoB64)
+        : undefined,
   };
 }
 

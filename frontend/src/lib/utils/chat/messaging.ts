@@ -2,7 +2,6 @@ import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import type { OutboxEntry } from '$lib/db';
 import { enqueueOutboxMessage } from './outbox';
-import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
@@ -151,6 +150,27 @@ interface MessageActionDeps {
 }
 
 /**
+ * Captures a pre-encoded control AppMessage (reaction, edit, delete, pin, read receipt) into the
+ * durable outbox instead of sending it fire-and-forget. The flusher delivers it (silent, retried
+ * with backoff, re-keyed to a rebooted successor) as soon as the group is sendable, so control
+ * events converge across peers even if the group was momentarily unsendable, or the app reloaded
+ * or was killed before the original direct send could go through.
+ */
+async function enqueueControlEvent(conversationId: string, proto: Uint8Array): Promise<void> {
+  const now = Date.now();
+  await enqueueOutboxMessage({
+    id: crypto.randomUUID(),
+    conversationId,
+    sentAt: now,
+    kind: 'control',
+    controlProto: proto,
+    status: 'pending',
+    attempts: 0,
+    createdAt: now,
+  });
+}
+
+/**
  * Notifies the author of a message that the current user reacted to it.
  * Fire-and-forget REST call - the server never sees MLS plaintext.
  * Exported so it can be reused by other callers (e.g. channel reactions).
@@ -181,39 +201,30 @@ export async function notifyReaction(params: {
 }
 
 /**
- * Sends an emoji reaction to a message via the MLS group, then persists the updated MLS state.
- * Also notifies the message author via a server-side push if they are a different user.
- * Silently ignored if the conversation is not ready.
+ * Sends an emoji reaction to a message via the durable outbox (MLS broadcast), and notifies the
+ * message author via a server-side push if they are a different user. The reaction is captured
+ * into the outbox so it converges on peers even if the group is momentarily unsendable.
  */
 export async function addReaction(
   messageId: string,
   emoji: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, userId, conversation, currentUserDisplayName } = deps;
+  const { userId, conversation, currentUserDisplayName } = deps;
 
-  if (!conversation.isReady) return;
+  await enqueueControlEvent(conversation.id, encodeAppMessage(mkReaction(messageId, emoji)));
 
-  try {
-    const payload = encodeAppMessage(mkReaction(messageId, emoji));
-    // silent=true: MLS state sync only, the push notification is sent via notifyReaction instead
-    await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
-
-    // Notify the message author (fire-and-forget, non-fatal)
-    const targetMsg = conversation.messages.find((m) => m.id === messageId);
-    if (targetMsg?.senderId && targetMsg.senderId !== userId) {
-      const preview = String(targetMsg.content ?? '').slice(0, 60);
-      void notifyReaction({
-        groupId: conversation.id,
-        targetSenderId: targetMsg.senderId,
-        emoji,
-        messagePreview: preview,
-        actorName: currentUserDisplayName ?? userId,
-      }).catch(() => {});
-    }
-  } catch (e) {
-    console.warn('Failed to send reaction:', e);
+  // Notify the message author (fire-and-forget, non-fatal).
+  const targetMsg = conversation.messages.find((m) => m.id === messageId);
+  if (targetMsg?.senderId && targetMsg.senderId !== userId) {
+    const preview = String(targetMsg.content ?? '').slice(0, 60);
+    void notifyReaction({
+      groupId: conversation.id,
+      targetSenderId: targetMsg.senderId,
+      emoji,
+      messagePreview: preview,
+      actorName: currentUserDisplayName ?? userId,
+    }).catch(() => {});
   }
 }
 
@@ -226,86 +237,53 @@ export async function removeReaction(
   emoji: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, conversation } = deps;
-
-  if (!conversation.isReady) return;
-
-  try {
-    const payload = encodeAppMessage(
-      mkSystem('remove_reaction', JSON.stringify({ messageId, emoji }))
-    );
-    await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
-  } catch (e) {
-    console.warn('Failed to send remove_reaction:', e);
-  }
+  await enqueueControlEvent(
+    deps.conversation.id,
+    encodeAppMessage(mkSystem('remove_reaction', JSON.stringify({ messageId, emoji })))
+  );
 }
-/** Sends an "edit_message" system message so all peers update the message content in their local history. */
+/** Captures an "edit_message" system event in the durable outbox so all peers update the message content in their local history. */
 export async function editMessage(
   messageId: string,
   newContent: string,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, conversation } = deps;
-  if (!conversation.isReady) return;
-  try {
-    const editedAt = Date.now();
-    const payload = encodeAppMessage(
-      mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt }))
-    );
-    await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
-  } catch (e) {
-    console.warn('Failed to edit message:', e);
-  }
+  const editedAt = Date.now();
+  await enqueueControlEvent(
+    deps.conversation.id,
+    encodeAppMessage(mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt })))
+  );
 }
 
-/** Sends a "delete_message" system message so all peers remove the message from their local history. */
+/** Captures a "delete_message" system event in the durable outbox so all peers remove the message from their local history. */
 export async function deleteMessage(messageId: string, deps: MessageActionDeps): Promise<void> {
-  const { mlsService, conversation } = deps;
-  if (!conversation.isReady) return;
-  try {
-    const payload = encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })));
-    await mlsService.sendMessage(conversation.id, payload, undefined, true);
-    scheduleOutboundMlsPersist();
-  } catch (e) {
-    console.warn('Failed to delete message:', e);
-  }
+  await enqueueControlEvent(
+    deps.conversation.id,
+    encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })))
+  );
 }
 
-/** Sends a "pin"/"unpin" system message so all members share the pinned-messages set. */
+/** Captures a "pin"/"unpin" system event in the durable outbox so all members share the pinned-messages set. */
 export async function setMessagePinned(
   messageId: string,
   pinned: boolean,
   deps: MessageActionDeps
 ): Promise<void> {
-  const { mlsService, conversation } = deps;
-  if (!conversation.isReady) return;
-  try {
-    const payload = encodeAppMessage(
-      mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId }))
-    );
-    await mlsService.sendMessage(conversation.id, payload, undefined, true /* silent */);
-    scheduleOutboundMlsPersist();
-  } catch (e) {
-    console.warn('Failed to (un)pin message:', e);
-  }
+  await enqueueControlEvent(
+    deps.conversation.id,
+    encodeAppMessage(mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId })))
+  );
 }
 
-/** Sends a "read_receipt" system message so peers can update delivered/read status for the given messageIds. Returns false if the group is not ready or the list is empty. */
+/** Captures a "read_receipt" system event in the durable outbox so peers update delivered/read status. Returns false only when the list is empty (the send itself is durable, never dropped). */
 export async function sendReadReceipt(
   messageIds: string[],
   deps: MessageActionDeps
 ): Promise<boolean> {
-  const { mlsService, conversation } = deps;
-  if (!conversation.isReady || messageIds.length === 0) return false;
-  try {
-    const payload = encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })));
-    await mlsService.sendMessage(conversation.id, payload, undefined, true /* silent */);
-    scheduleOutboundMlsPersist();
-    return true;
-  } catch (e) {
-    console.warn('Failed to send read receipt:', e);
-    return false;
-  }
+  if (messageIds.length === 0) return false;
+  await enqueueControlEvent(
+    deps.conversation.id,
+    encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })))
+  );
+  return true;
 }

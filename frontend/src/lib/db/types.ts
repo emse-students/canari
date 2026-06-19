@@ -107,13 +107,22 @@ export interface OutboxEntry {
   conversationId: string;
   /** Compose time (Unix ms) - IMMUTABLE; the canonical ordering key, sent as proto sentAt. */
   sentAt: number;
-  kind: 'text' | 'reply' | 'media';
+  kind: 'text' | 'reply' | 'media' | 'control';
   /** Sensitive payload (encrypted at rest): plain text body for text/reply. */
   text?: string;
   /** Quoted message reference for replies. */
   replyTo?: { id: string; senderId: string; preview: string };
   /** Sensitive media descriptor + (until uploaded) file bytes. */
   media?: OutboxMediaPayload;
+  /**
+   * Pre-encoded AppMessage proto for a `control` entry (reaction, edit, delete, pin,
+   * read receipt). Unlike text/reply, the proto is built once at enqueue time (its content
+   * is epoch-independent and fixed), so the flusher sends it verbatim. Routing control
+   * events through the durable outbox - instead of a fire-and-forget `sendMessage` that was
+   * dropped whenever the group was momentarily unsendable - makes reactions / edits /
+   * read-state converge reliably across peers.
+   */
+  controlProto?: Uint8Array;
   status: 'pending' | 'sending';
   attempts: number;
   lastAttemptAt?: number;

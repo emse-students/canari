@@ -36,8 +36,12 @@ export interface OutboxMirrorEntry {
   sentAt: number;
 }
 
-/** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, no proto). */
+/** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, control, no proto). */
 export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
+  // Control events (reaction/edit/delete/pin/read-receipt) flush only in the foreground: they
+  // are not urgent and keeping them off the native background path avoids adding more cross-engine
+  // mls.bin writes while the foreground/background concurrency (C1/C2) is unresolved.
+  if (entry.kind === 'control') return null;
   const proto = buildOutboxProto(entry);
   if (!proto) return null;
   return {
