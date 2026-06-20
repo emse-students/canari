@@ -76,10 +76,22 @@ if [ "$RUN_MLS_CORE" -eq 1 ]; then
   }
 fi
 
-if [ "$RUN_MLS_WASM" -eq 1 ]; then
-  # fmt --check seul : clippy de mls-wasm cible le wasm (feature getrandom/js), la CI le couvre.
-  (cd frontend/mls-wasm && cargo fmt -- --check) || {
-    echo "❌ mls-wasm fmt check failed."
+# mls-wasm : fmt + BUILD REEL pour la cible wasm32 (miroir du `wasm-pack build` de la CI). Le
+# clippy host ne couvre PAS les erreurs specifiques a wasm32 (feature getrandom/js, codegen) ;
+# sans ce build, une casse WASM n'apparaissait qu'en CD. On la rattrape maintenant au pre-push.
+# Un changement de mls-core (dependance de mls-wasm) declenche aussi ce build.
+if [ "$RUN_MLS_WASM" -eq 1 ] || [ "$RUN_MLS_CORE" -eq 1 ]; then
+  (
+    cd frontend/mls-wasm || exit 1
+    cargo fmt -- --check || exit 1
+    if ! rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
+      echo "⚠️  Cible wasm32-unknown-unknown absente - requise pour verifier le build WASM."
+      echo "   Installez-la : rustup target add wasm32-unknown-unknown"
+      exit 1
+    fi
+    cargo build --target wasm32-unknown-unknown --quiet || exit 1
+  ) || {
+    echo "❌ mls-wasm checks failed (fmt / build wasm32 - miroir du wasm-pack CI)."
     exit 1
   }
 fi

@@ -1,0 +1,19 @@
+# Durcissement reseau pour TOUS les builds Rust/WASM du repo (CI, hooks pre-push, local).
+# Decouvert via la recherche de config par cargo dans les repertoires ancetres : ce fichier a la
+# racine s'applique a frontend/mls-core, frontend/mls-wasm, frontend/src-tauri, apps/chat-gateway.
+#
+# Cause traitee : la CI a echoue sur `curl [16] Error in the HTTP2 framing layer` en mettant a
+# jour l'index crates.io (telechargement d'une dependance via HTTP/2 multiplexe sur le CDN). Ce
+# n'est pas un bug de code mais une fragilite reseau ; on la neutralise au niveau cargo.
+
+[http]
+# Cure directe du framing error : on desactive le multiplexage HTTP/2 et on retombe sur HTTP/1.1,
+# bien plus tolerant face aux proxies/CDN capricieux qui cassent les flux HTTP/2 multiplexes.
+multiplexing = false
+
+[net]
+# Retente les telechargements transitoires (index + crates) au lieu d'echouer au premier echec.
+retry = 10
+# Utilise le git systeme pour les eventuelles dependances git (plus tolerant que l'implementation
+# integree de cargo en environnement CI).
+git-fetch-with-cli = true
