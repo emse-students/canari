@@ -28,6 +28,9 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     clearPendingWelcomeRequests: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
+    // Defaut 'error' = ambiguite reseau -> requestReAdd procede comme avant (pas de purge
+    // fantome). Seul un 'absent' explicite declenche la purge du groupe confirme disparu.
+    getGroupServerStatus: vi.fn().mockResolvedValue('error'),
     getUserGroups: vi.fn().mockResolvedValue([]),
     createRemoteGroup: vi.fn().mockResolvedValue('new-id'),
     createGroup: vi.fn().mockResolvedValue(undefined),
@@ -174,6 +177,49 @@ describe('requestReAdd', () => {
 
     // reboot ne doit pas être appelé
     expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
+  });
+
+  it('groupe confirmé absent du serveur → purge le fantôme, ni welcome_request ni timer', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getGroupMeta: vi.fn().mockResolvedValue(null),
+        getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
+        getLocalGroups: vi.fn().mockReturnValue([]),
+      }),
+      conversations: makeConversations([
+        ['ghost', { id: 'ghost', name: 'Fantôme', isReady: false }],
+      ]),
+    });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('ghost', deps, timers);
+
+    // Boucle coupée : aucune welcome_request, aucun timer armé.
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(timers.has('ghost')).toBe(false);
+    // Conversation locale purgée.
+    expect(deps.deleteConversation).toHaveBeenCalledWith('ghost');
+    expect(deps.conversations.has('ghost')).toBe(false);
+  });
+
+  it('groupe absent mais conversation deletedRemotely → conservée (suppression manuelle), pas de welcome_request', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        getGroupMeta: vi.fn().mockResolvedValue(null),
+        getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
+      }),
+      conversations: makeConversations([
+        ['tomb', { id: 'tomb', name: 'Supprimé', isReady: true, deletedRemotely: true }],
+      ]),
+    });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('tomb', deps, timers);
+
+    // Le tombstone reste jusqu'à suppression manuelle (règles 2 & 4) mais la boucle est coupée.
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.deleteConversation).not.toHaveBeenCalled();
+    expect(deps.conversations.has('tomb')).toBe(true);
   });
 });
 

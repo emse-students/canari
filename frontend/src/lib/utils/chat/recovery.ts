@@ -3,7 +3,11 @@ import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import type { SvelteMap } from 'svelte/reactivity';
-import { sendFullHistoryBundle, warnSkippedKeyPackages } from './groupActions';
+import {
+  sendFullHistoryBundle,
+  warnSkippedKeyPackages,
+  purgeLocalConversationRecord,
+} from './groupActions';
 import { resolveTerminalGroup } from './groupSyncEligibility';
 import { reassignOutboxConversation } from './outbox';
 import { markGroupNotReady, clearGroupNotReady, groupNotReadyForMs } from './rebootDeadline';
@@ -50,6 +54,31 @@ export interface RecoveryDeps {
 }
 
 /**
+ * Retire le résidu local d'un groupe CONFIRMÉ ABSENT du serveur : oublie l'état MLS WASM résiduel
+ * (s'il existe) et supprime la conversation locale. EXCEPTION (règles 2 & 4) : une conversation
+ * marquée `deletedRemotely` (supprimée par un pair / exclusion) reste jusqu'à SUPPRESSION MANUELLE
+ * locale, même si le serveur a hard-purgé sa ligne depuis - on n'y touche pas.
+ *
+ * @returns `true` si l'état MLS WASM a été muté (l'appelant doit alors persister).
+ */
+async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Promise<boolean> {
+  const entry = [...deps.conversations.entries()].find(([, c]) => c.id === groupId);
+  if (entry?.[1].deletedRemotely) return false; // tombstone : conservé jusqu'à suppression manuelle
+  const mutated = deps.mlsService.getLocalGroups().includes(groupId);
+  if (mutated) deps.mlsService.forgetGroup(groupId);
+  if (entry) {
+    await purgeLocalConversationRecord({
+      conversations: deps.conversations,
+      contactKey: entry[0],
+      groupId,
+      deleteConversation: deps.deleteConversation,
+      log: deps.log,
+    });
+  }
+  return mutated;
+}
+
+/**
  * Demande à être ré-invité dans `groupId` quand l'état MLS local est absent ou désynchronisé.
  *
  * Flux :
@@ -84,17 +113,45 @@ export async function requestReAdd(
     hasChain,
   } = await resolveTerminalGroup(deps.mlsService, groupId);
 
-  // Successeur fantôme : on a suivi une chaîne de successeurs (hasChain) mais le terminal
-  // n'a aucune métadonnée serveur → le groupe successeur n'existe pas (ou plus). Envoyer un
-  // welcome_request armerait un reboot qui fabriquerait un candidat successeur pour un
-  // groupe inexistant. On abandonne sans rien marquer : terminalMeta=null est ambigu
-  // (groupe absent OU getGroupMeta en échec réseau), donc on n'écrit pas deletedRemotely ;
-  // une prochaine synchro réseau fonctionnelle re-résoudra la chaîne.
-  if (hasChain && terminalMeta === null) {
-    deps.log(
-      `[READD] terminal ${terminalId.slice(0, 8)}… sans métadonnée serveur - chaîne morte, recovery ignorée`
-    );
-    return;
+  // Groupe sans métadonnée serveur. `terminalMeta=null` est ambigu (getGroupMeta renvoie `null`
+  // aussi bien pour un groupe absent que pour un échec réseau), donc on lève l'ambiguïté :
+  // `getGroupServerStatus` distingue un ABSENT CONFIRMÉ (aucune ligne dm_groups) d'une vraie
+  // erreur réseau.
+  if (terminalMeta === null) {
+    const status = await deps.mlsService
+      .getGroupServerStatus(terminalId)
+      .catch(() => 'error' as const);
+
+    if (status === 'absent') {
+      // Le groupe n'existe plus DU TOUT côté serveur (ni actif, ni tombstone : un tombstone
+      // aurait un `deletedAt`, donc une métadonnée non-nulle). C'est un fantôme purement local
+      // sans aucune existence serveur. La source de vérité est le serveur -> on coupe la boucle
+      // readd/reboot et on purge le résidu local au lieu de ré-émettre des welcome_request à
+      // l'infini pour un groupe inexistant et invisible dans l'UI.
+      deps.log(
+        `[READD] ${terminalId.slice(0, 8)}… absent du serveur (confirmé) - fantôme purgé, recovery stoppée`
+      );
+      cancelReAdd(terminalId, timers);
+      cancelReAdd(groupId, timers);
+      clearGroupNotReady(deps.userId, terminalId);
+      clearGroupNotReady(deps.userId, groupId);
+      let purged = await purgePhantomConversation(terminalId, deps);
+      if (terminalId !== groupId)
+        purged = (await purgePhantomConversation(groupId, deps)) || purged;
+      if (purged)
+        await persistMlsStateAfterMutation(deps.mlsService, deps.userId, deps.pin, deps.log);
+      return;
+    }
+
+    // Statut 'error' (échec réseau) : ambiguïté non levée. Un terminal de chaîne de successeurs
+    // sans métadonnée serait re-fabriqué par un reboot pour un groupe inexistant -> on abandonne
+    // sans rien marquer (une prochaine synchro réseau fonctionnelle re-résoudra la chaîne).
+    if (hasChain) {
+      deps.log(
+        `[READD] terminal ${terminalId.slice(0, 8)}… sans métadonnée serveur (réseau) - chaîne morte, recovery ignorée`
+      );
+      return;
+    }
   }
 
   // Un seul timer armé par groupe terminal, mais on renvoie toujours la welcome_request

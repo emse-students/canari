@@ -730,12 +730,24 @@ export class MlsDeliveryApi {
     } catch {
       return 'error';
     }
+    // 404 = aucune ligne dm_groups -> absent confirme (jamais cree ou hard-purge).
+    if (res.status === 404) return 'absent';
+    // Autre non-2xx (401/5xx/...) = doute reel -> ne jamais purger sur erreur.
     if (!res.ok) return 'error';
+    // Le handler `GET mls/groups/:id` renvoie l'objet groupe, ou `null` quand il est introuvable.
+    // NestJS serialise ce `null` en un corps VIDE (200) -> `res.json()` jetterait. Un corps 2xx
+    // vide ou "null" depuis CET endpoint signifie donc sans ambiguite "groupe absent" (et non une
+    // erreur reseau). C'est la distinction qui permet a la discovery de purger un groupe supprime
+    // au lieu de le conserver indefiniment comme "statut incertain". [[lifecycle]]
+    const text = await res.text().catch(() => null);
+    if (text === null) return 'error';
+    const trimmed = text.trim();
+    if (trimmed === '' || trimmed === 'null') return 'absent';
     let g: unknown;
     try {
-      g = await res.json();
+      g = JSON.parse(trimmed);
     } catch {
-      return 'error';
+      return 'absent';
     }
     if (!g || typeof g !== 'object') return 'absent';
     const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;
