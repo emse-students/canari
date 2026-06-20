@@ -430,6 +430,17 @@ La recovery le reconnait comme bloquant
 (`frontend/src/lib/utils/chat/recovery.ts:90-92`) et s'abstient -> un blip reseau est
 indiscernable d'un groupe supprime et gele la recovery. Distinguer not-found de network-error.
 
+**FIXED** : les deux consommateurs DESTRUCTEURS de cette ambiguite sont passes a
+`getGroupServerStatus` + `classifyServerStatus` (qui distingue `active|tombstone|absent|unknown`) :
+- `requestReAdd` (deja fait, cf. R1) : `unknown` -> ne purge jamais sur un doute.
+- `performReboot` (`recovery.ts`) : un `getGroupMeta` renvoyant `null` sur blip reseau faisait
+  rater le `successorId` existant -> creation d'un successeur DUPLIQUE (pollution serveur + fork).
+  Desormais, sur `unknown` (reseau) le reboot est REPORTE (return, retente au prochain tick) ;
+  `absent` -> `meta=null` (comportement 404 d'avant preserve) ; `active`/`tombstone` -> meta lue.
+Restent volontairement sur `getGroupMeta`/`.catch(()=>null)` les consommateurs NON destructeurs
+(resolveTerminalGroup, dedup conversations, lookups predecesseur) ou un defaut `null` est sans
+danger. Tests : `recovery.test.ts` (19, defaut mock = meta active).
+
 ### S2 - Retours "vides" indistinguables de l'echec
 
 `fetchUserDevices`->`[]`, `getGroupMembers`->`[]`, `getGroupUserMembers`->`[]`,

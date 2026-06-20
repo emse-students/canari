@@ -28,9 +28,13 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     clearPendingWelcomeRequests: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
-    // Defaut 'error' = ambiguite reseau -> requestReAdd procede comme avant (pas de purge
-    // fantome). Seul un 'absent' explicite declenche la purge du groupe confirme disparu.
-    getGroupServerStatus: vi.fn().mockResolvedValue('error'),
+    // Defaut = groupe vivant cote serveur (ni absent ni tombstone) : requestReAdd procede sans
+    // purge fantome (active != absent), et performReboot procede a la creation du candidat
+    // (active != unknown). Un 'absent' explicite declenche la purge ; un 'error' explicite simule
+    // le doute reseau (report du reboot dans performReboot).
+    getGroupServerStatus: vi
+      .fn()
+      .mockResolvedValue({ groupId: 'mock-group', deletedAt: null, successorId: null }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     createRemoteGroup: vi.fn().mockResolvedValue('new-id'),
     createGroup: vi.fn().mockResolvedValue(undefined),

@@ -367,15 +367,24 @@ async function performReboot(
 
   log(`[REBOOT] Lancement pour groupe ${groupId.slice(0, 8)}…`);
 
-  // Étape 1 : successeur déjà revendiqué par un autre device ?
-  const meta = await mlsService.getGroupMeta(groupId);
+  // Étape 1 : statut serveur du groupe (successeur déjà revendiqué ? supprimé ?).
+  // On distingue l'absence CONFIRMEE de l'incertitude réseau : un `getGroupMeta` renvoyant
+  // `null` sur un simple blip réseau (indiscernable d'un 404) ferait rater le `successorId`
+  // existant et pousserait à créer un successeur DUPLIQUE (pollution serveur + fork). Sur un
+  // doute réseau (`unknown`), on reporte le reboot - le prochain tick retentera.
+  const status = classifyServerStatus(await mlsService.getGroupServerStatus(groupId));
+  if (status.kind === 'unknown') {
+    log(`[REBOOT] ${groupId.slice(0, 8)}… statut serveur incertain (réseau) - report`);
+    return;
+  }
+  const meta = status.kind === 'absent' ? null : status.meta;
   if (meta?.successorId) {
     return joinSuccessor(groupId, meta.successorId, deps, timers);
   }
 
   // Groupe supprimé sans successeur : le CAS claimSuccessor échouera systématiquement
   // (condition "deletedAt IS NULL" non satisfaite), créant un candidat orphelin à chaque
-  // tentative. Même abandon que requestReAdd - marquer la conversation deletedRemotely.
+  // tentative. Même abandon que requestReAdd - marquer la conversation removed.
   if (meta?.deletedAt && !meta.successorId) {
     log(`[REBOOT] ${groupId.slice(0, 8)}… supprimé sans successeur - abandon`);
     const convo = deps.conversations.get(groupId);
