@@ -135,8 +135,9 @@ export async function processPendingInvitations(params: {
       log(`[PENDING] Groupe ${origGroupId} → résolu via chaîne successeurs : ${resolved}`);
     }
 
-    // Acquire distributed lock to prevent concurrent Add commits
-    const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
+    // Acquire distributed lock to prevent concurrent Add commits (TTL par defaut = pire cas
+    // mobile : bulk add + Argon2 + commit + Welcomes, cf. MLS_ADD_LOCK_TTL_MS / H1).
+    const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
       log(`[PENDING] Groupe ${groupId}: verrou tenu par un autre appareil - skip`);
       continue;
@@ -797,8 +798,8 @@ export async function handleWelcomeRequest(params: {
   welcomeRequestInProgress.add(groupId);
 
   // Acquérir le verrou distribué pour éviter les races avec
-  // processPendingInvitations sur un autre device du même groupe
-  const lockAcquired = await mlsService.acquireAddLock(groupId, 15_000).catch(() => false);
+  // processPendingInvitations sur un autre device du même groupe (TTL par defaut, cf. H1)
+  const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
   if (!lockAcquired) {
     log(`[WELCOME_REQ] Verrou occupé pour ${groupId} - autre device en cours, skip`);
     welcomeRequestInProgress.delete(groupId);

@@ -748,10 +748,14 @@ export class MessagingService {
         throw new BadRequestException(`Group ${groupId} not found`);
       }
 
-      // When activeEpoch is 0 the server has no prior tracking for this group.
-      // Treat this as "uninitialized" and fast-forward to baseEpoch + 1 so
-      // that client and server epoch state converge on the first accepted commit.
-      if (baseEpoch !== group.activeEpoch && group.activeEpoch !== 0) {
+      // Strict epoch gate : le baseEpoch envoye doit egaler exactement l'activeEpoch serveur.
+      // Un groupe reellement non-initialise (cree a l'instant) OU fraichement re-bootstrappe
+      // (reset-epoch -> activeEpoch=0 puis force_create_group qui repart a l'epoch MLS 0) a
+      // toujours son premier commit a baseEpoch 0 : activeEpoch==0 n'accepte donc legitimement
+      // que baseEpoch==0. L'ancien bypass (accepter n'importe quel baseEpoch quand activeEpoch==0)
+      // laissait un device incoherent fast-forwarder le compteur (ex. baseEpoch=5 -> activeEpoch=6)
+      // et desaligner tout le monde (H4).
+      if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`,
         );
@@ -762,7 +766,7 @@ export class MessagingService {
         };
       }
 
-      // Advance the epoch (from wherever the server currently is)
+      // Advance the epoch (baseEpoch == activeEpoch garanti par le gate ci-dessus)
       group.activeEpoch = baseEpoch + 1;
       await this.groupRepo.save(group);
 

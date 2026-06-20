@@ -31,9 +31,11 @@ export class LocksController {
   ) {
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // Clamp max 60 s : couvre le pire cas mobile (bulk add + Argon2 + commit + Welcomes) sans
+    // permettre qu'un device crashe en bloque un autre indefiniment (H1).
     const ttlSec = Math.max(
       1,
-      Math.min(30, Math.round((body.ttlMs ?? 10_000) / 1000)),
+      Math.min(60, Math.round((body.ttlMs ?? 30_000) / 1000)),
     );
     // Redis SET NX EX : acquiert le verrou seulement si la clé n'existe pas encore
     const lockKey = `mls:addlock:${groupId}`;
@@ -81,9 +83,11 @@ export class LocksController {
   ) {
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // Clamp max 180 s : un reboot mobile (candidat + CAS + invitations + Argon2 + bundle) peut
+    // depasser 60 s ; on laisse de la marge sans bloquer indefiniment en cas de crash (H1).
     const ttlSec = Math.max(
       1,
-      Math.min(120, Math.round((body.ttlMs ?? 60_000) / 1000)),
+      Math.min(180, Math.round((body.ttlMs ?? 90_000) / 1000)),
     );
     const lockKey = `mls:rebootlock:${groupId}`;
     const result = await this.redis.set(lockKey, deviceId, 'EX', ttlSec, 'NX');

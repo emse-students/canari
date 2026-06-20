@@ -250,9 +250,7 @@ async function processBulkAddition(
       return;
     }
 
-    const lockAcquired = await mlsService
-      .acquireAddLock(conversation.id, 15_000)
-      .catch(() => false);
+    const lockAcquired = await mlsService.acquireAddLock(conversation.id).catch(() => false);
     if (!lockAcquired) {
       log(
         `[WARN] Verrou occupé pour ${conversation.id} - invitation annulée (un autre device est en cours).`

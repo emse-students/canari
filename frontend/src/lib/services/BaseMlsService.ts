@@ -6,7 +6,12 @@ import type {
   BulkIngestPhase,
   BulkIngestObserver,
 } from '$lib/mls-client';
-import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
+import {
+  MlsDeliveryApi,
+  resolveMlsPublicUrls,
+  MLS_ADD_LOCK_TTL_MS,
+  MLS_REBOOT_LOCK_TTL_MS,
+} from '$lib/mls-client';
 import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
@@ -737,7 +742,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.updateDeviceMetadata(userId, deviceId, metadata);
   }
 
-  async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
+  async acquireAddLock(groupId: string, ttlMs = MLS_ADD_LOCK_TTL_MS): Promise<boolean> {
     return this.delivery.acquireAddLock(groupId, ttlMs);
   }
 
@@ -745,7 +750,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.releaseAddLock(groupId);
   }
 
-  async acquireRebootLock(groupId: string, ttlMs = 60_000): Promise<boolean> {
+  async acquireRebootLock(groupId: string, ttlMs = MLS_REBOOT_LOCK_TTL_MS): Promise<boolean> {
     return this.delivery.acquireRebootLock(groupId, ttlMs);
   }
 

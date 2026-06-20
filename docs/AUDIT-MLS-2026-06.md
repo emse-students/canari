@@ -40,11 +40,11 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | FIXED (P-fork) | 60f57f08 |
 | C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | FIXED (Option B: heal-on-reject ecart 1) | (ce commit) |
 | H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | FIXED (P-fork) | 60f57f08 |
-| H1 | TTL locks reboot/add < duree reelle | OPEN (P4) | - |
-| H2 | forgetGroup predecesseur premature | OPEN (P4) | - |
-| H3 | Mutations conversations non atomiques | OPEN (P4) | - |
-| H4 | validateCommit bypass epoch 0 | OPEN (P4) | - |
-| H5 | Push differe + background redondants | OPEN (P4) | - |
+| H1 | TTL locks reboot/add < duree reelle | FIXED (P4: add 30s/clamp 60s, reboot 90s/clamp 180s) | (ce commit) |
+| H2 | forgetGroup predecesseur premature | OPEN (P4, machine recovery - verif device) | - |
+| H3 | Mutations conversations non atomiques | OPEN (P4, machine recovery - verif device) | - |
+| H4 | validateCommit bypass epoch 0 | FIXED (P4: gate stricte baseEpoch==activeEpoch) | (ce commit) |
+| H5 | Push differe + background redondants | OPEN (P4, perf) | - |
 | H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
 | S1..S4, M1 | Strictness / veracite | OPEN (P5) | - |
 | M2 | Replay: WrongEpoch marque vu definitivement | OPEN (P5) | - |
@@ -214,6 +214,13 @@ retente -> disparition silencieuse du groupe.
   (`frontend/src/lib/utils/chat/recovery.ts:578-627`) -> expiration probable -> fork d'epoch sur
   le successeur.
 
+**FIXED** : constantes partagees `MLS_ADD_LOCK_TTL_MS=30s` / `MLS_REBOOT_LOCK_TTL_MS=90s`
+(`frontend/src/lib/mls-client/mlsDeliveryApi.ts`), clamps serveur releves a 60s (add) / 180s
+(reboot) (`locks.controller.ts`). Les callers a 15s explicites retombent sur le defaut centralise.
+Compromis assume : un crash sous verrou bloque les pairs plus longtemps (jusqu'au TTL), mais
+l'expiration en cours d'operation - cause de fork - est la menace prioritaire (et C7 heal les forks
+residuels).
+
 ### H2 - `migrateConversation` fait `forgetGroup(fromGroupId)` avant garantie de join du successeur
 
 Lieu : `frontend/src/lib/utils/chat/recovery.ts:743`.
@@ -233,6 +240,11 @@ s'entrelacer sur le meme groupId -> double migration / messages memoire ecrases.
 Lieu : `apps/chat-delivery-service/src/services/messaging.service.ts:751-763`.
 Un device en etat incoherent (`baseEpoch=5`) sur un groupe encore a 0 cote serveur serait
 accepte et fixerait `activeEpoch=6`, desalignant les autres.
+
+**FIXED** : gate stricte `baseEpoch == activeEpoch` (bypass `activeEpoch == 0` supprime). Verifie
+sur le code de bootstrap : `reset-epoch` met `activeEpoch=0` PUIS `force_create_group` repart a
+l'epoch MLS 0, donc le premier commit (normal ou re-bootstrap) est toujours a `baseEpoch=0` ->
+la gate stricte accepte tous les flux legitimes et bloque le fast-forward incoherent.
 
 ### H5 - Push differe 10 s + envoi background -> reveils/dechiffrements redondants
 

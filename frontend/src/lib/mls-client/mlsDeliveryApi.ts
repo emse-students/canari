@@ -5,6 +5,22 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 
 export type MlsDeliveryFetch = typeof fetch;
 
+/**
+ * TTL du verrou add (serialisation cross-device des commits d'ajout). Dimensionne sur le pire
+ * cas mobile reel : bulk add + persist Argon2 (~5-8 s) + commit valide + boucle de Welcomes, qui
+ * depasse facilement les 10 s d'origine -> le verrou expirait en cours d'operation -> deux devices
+ * committaient en parallele -> fork d'epoch sur le successeur (H1). [[H1]]
+ */
+export const MLS_ADD_LOCK_TTL_MS = 30_000;
+
+/**
+ * TTL du verrou reboot (exclusion mutuelle de la fork-resolution). Plus long que l'add-lock : un
+ * reboot enchaine creation du candidat + CAS + invitation des membres + persist Argon2 + bundle
+ * historique, ce qui peut depasser les 60 s d'origine sur mobile -> reboot concurrent -> pollution
+ * serveur (le CAS converge mais apres degats). [[H1]]
+ */
+export const MLS_REBOOT_LOCK_TTL_MS = 90_000;
+
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
@@ -337,7 +353,7 @@ export class MlsDeliveryApi {
    * Acquires a distributed Redis lock to serialise concurrent `addMember` commits on `groupId`.
    * Returns `false` if another device already holds the lock (caller should abort or retry).
    */
-  async acquireAddLock(groupId: string, ttlMs = 10_000): Promise<boolean> {
+  async acquireAddLock(groupId: string, ttlMs = MLS_ADD_LOCK_TTL_MS): Promise<boolean> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'POST',
@@ -372,9 +388,9 @@ export class MlsDeliveryApi {
    * Acquires the cross-device reboot lock for `groupId` (fork-resolution mutual exclusion).
    * Returns `false` if another device already owns the reboot - the caller must then abstain
    * and rely on the successor being joined via retries (watchdog / checkGroupSuccessors).
-   * TTL default 60s : a reboot chains candidate creation + CAS + member invitations.
+   * TTL longer than add-lock: a reboot chains candidate creation + CAS + member invitations.
    */
-  async acquireRebootLock(groupId: string, ttlMs = 60_000): Promise<boolean> {
+  async acquireRebootLock(groupId: string, ttlMs = MLS_REBOOT_LOCK_TTL_MS): Promise<boolean> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/reboot-lock`, {
         method: 'POST',
