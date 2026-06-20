@@ -12,7 +12,7 @@ import {
   kickStaleLeaf,
   isGroupActiveOnServer,
   handleDuplicateLeafError,
-  isStaleForkError,
+  isSenderForkError,
   parseForkedEpoch,
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
@@ -223,15 +223,17 @@ export async function processPendingInvitations(params: {
         } catch (e) {
           const errStr = String(e);
 
-          // NOTRE état local est forké EN RETARD (commit rejeté, écart > 1) : tous nos
-          // commits sur ce groupe seront rejetés. Inutile d'insister - on oublie l'état
-          // périmé (en rejetant les Welcomes < epoch serveur) et on redemande un Welcome,
-          // puis on abandonne CE groupe pour ce cycle.
+          // NOTRE commit (addMember mergé localement) a été rejeté pour epoch_mismatch : on a
+          // perdu une course concurrente et on est sur une branche divergente. Tous nos commits
+          // suivants seront rejetés et le commit gagnant sera dropé comme same-epoch bénin -> on
+          // ne rattrape jamais seul. On oublie l'état périmé (en rejetant les Welcomes < epoch
+          // serveur) et on redemande un Welcome, puis on abandonne CE groupe pour ce cycle. On
+          // escalade dès un écart de 1 (`isSenderForkError`), pas seulement >= 2. [[C7]]
           const forked = parseForkedEpoch(e);
-          if (forked && forked.serverEpoch > forked.sentEpoch + 1) {
-            log(`[PENDING] ${groupId.slice(0, 8)}… forké en retard - recovery + abandon du groupe`);
+          if (isSenderForkError(e)) {
+            log(`[PENDING] ${groupId.slice(0, 8)}… forké (commit rejeté) - recovery + abandon`);
             if (recoverForkedGroup)
-              await recoverForkedGroup(groupId, forked.serverEpoch).catch(() => {});
+              await recoverForkedGroup(groupId, forked?.serverEpoch).catch(() => {});
             break;
           }
 
@@ -259,7 +261,7 @@ export async function processPendingInvitations(params: {
                 log,
               });
             } catch (kickErr) {
-              if (isStaleForkError(kickErr)) {
+              if (isSenderForkError(kickErr)) {
                 log(
                   `[PENDING] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery + abandon du groupe`
                 );
@@ -925,12 +927,15 @@ export async function handleWelcomeRequest(params: {
   } catch (e) {
     const errStr = String(e);
 
-    // NOTRE état local est forké EN RETARD : impossible d'ajouter qui que ce soit, le
-    // commit est rejeté. On oublie l'état périmé et on redemande un Welcome pour nous-mêmes.
+    // NOTRE commit (addMember mergé localement) a été rejeté pour epoch_mismatch : branche
+    // divergente après une course concurrente perdue, on ne rattrape jamais seul (le commit
+    // gagnant est dropé comme same-epoch bénin). On oublie l'état périmé et on redemande un
+    // Welcome pour nous-mêmes. On escalade dès un écart de 1 (`isSenderForkError`). [[C7]]
     const forked = parseForkedEpoch(e);
-    if (forked && forked.serverEpoch > forked.sentEpoch + 1) {
-      log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké en retard - recovery`);
-      if (recoverForkedGroup) await recoverForkedGroup(groupId, forked.serverEpoch).catch(() => {});
+    if (isSenderForkError(e)) {
+      log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké (commit rejeté) - recovery`);
+      if (recoverForkedGroup)
+        await recoverForkedGroup(groupId, forked?.serverEpoch).catch(() => {});
     } else if (errStr.includes('ALREADY_MEMBER')) {
       // Device déjà membre : la demande est satisfaite (il rejoindra via son Welcome en file).
       log(`[WELCOME_REQ] ${requesterDeviceId} déjà membre de ${groupId.slice(0, 8)}… - skip`);
@@ -947,10 +952,10 @@ export async function handleWelcomeRequest(params: {
         });
       } catch (kickErr) {
         const kickForked = parseForkedEpoch(kickErr);
-        if (kickForked && kickForked.serverEpoch > kickForked.sentEpoch + 1) {
+        if (isSenderForkError(kickErr)) {
           log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery`);
           if (recoverForkedGroup)
-            await recoverForkedGroup(groupId, kickForked.serverEpoch).catch(() => {});
+            await recoverForkedGroup(groupId, kickForked?.serverEpoch).catch(() => {});
         } else {
           log(
             `[WELCOME_REQ] Erreur kick pour ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`

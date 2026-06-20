@@ -161,7 +161,11 @@ describe('processPendingInvitations - état local forké en retard', () => {
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
   });
 
-  it('ne déclenche pas la recovery destructive pour un écart de 1 (course concurrente transitoire)', async () => {
+  it('déclenche la recovery dès un écart de 1 quand NOTRE commit est rejeté (fork concurrent émetteur, C7)', async () => {
+    // Cote emetteur, addMember a deja merge le commit localement (epoch N+1) avant le rejet
+    // serveur : un ecart de 1 est donc un fork concurrent reel (branche divergente), pas un
+    // simple retard de receveur. On doit recovery, sinon le commit gagnant est dropé comme
+    // same-epoch benin et le fork devient permanent.
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()
@@ -196,7 +200,8 @@ describe('processPendingInvitations - état local forké en retard', () => {
       recoverForkedGroup,
     });
 
-    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    expect(recoverForkedGroup).toHaveBeenCalledTimes(1);
+    expect(recoverForkedGroup).toHaveBeenCalledWith('g1', 8);
   });
 
   it('traite ALREADY_MEMBER comme une invitation remplie (skip, ni kick ni recovery)', async () => {

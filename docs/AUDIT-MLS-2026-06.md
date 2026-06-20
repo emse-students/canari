@@ -37,9 +37,9 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C3 | Double envoi outbox foreground/background | FIXED (P2, reconcile au resume) | ce9232bd |
 | C4 | process_welcome persiste avant les guards -> orphelin | FIXED (P3) | 10d8e160 |
 | C5 | add_members_bulk perte silencieuse de membres | OPEN (P4, cross-couche avec inviteMembers) | - |
-| C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | OPEN (P-fork, en cours) | - |
-| C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | OPEN (P-fork, apres C6) | - |
-| H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | OPEN (P-fork, en cours) | - |
+| C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | FIXED (P-fork) | 60f57f08 |
+| C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | FIXED (Option B: heal-on-reject ecart 1) | (ce commit) |
+| H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | FIXED (P-fork) | 60f57f08 |
 | H1 | TTL locks reboot/add < duree reelle | OPEN (P4) | - |
 | H2 | forgetGroup predecesseur premature | OPEN (P4) | - |
 | H3 | Mutations conversations non atomiques | OPEN (P4) | - |
@@ -304,15 +304,35 @@ et bump `activeEpoch`). Touche JNI (Rust) + Kotlin + backend.
 
 ### C7 - `merge_pending_commit` avant validation serveur -> fork local permanent
 
-Lieux : `frontend/mls-core/src/lib.rs` (`add_members_bulk:~651`, `remove_members:~492/542`),
+Lieux : `frontend/mls-core/src/lib.rs` (`add_members_bulk:~658`, `remove_members_for_*:~509/558`),
 le merge local precede l'aller-retour serveur de validation.
 
-Consequence : si le serveur rejette le commit (C6 ou course reelle), l'etat local a deja avance
-d'une epoch -> branche forkee definitive, aucun rollback ni recovery declenchee.
+Consequence : apres C6, le seul fork restant est la course de commits concurrents. Deux devices
+committent au meme baseEpoch N ; le lock Redis serialise `validateCommit`, accepte le premier
+(N->N+1) et rejette le second (`epoch_mismatch`, serverEpoch=N+1, sent=N). Le perdant a deja
+merge localement a N+1 sur une branche divergente. Comme `sendValidatedCommit` valide AVANT de
+diffuser, le commit rejete n'est jamais broadcaste -> seul le perdant est forke. Mais le commit
+gagnant (aussi N->N+1) lui arrive et est dropé comme same-epoch benin (fix Passe 1) -> jamais
+adopte -> fork permanent. L'ancienne garde `isStaleForkError` (ecart >= 2, pensee pour un
+receveur en retard) laissait passer ce cas a ecart 1.
 
-Fix (robustesse, apres C6) : valider-puis-merger. Generer le commit sans merge -> `validateCommit`
--> succes : `merge_pending_commit` ; rejet : `clear_pending_commit` + recovery. Elimine la classe
-entiere des forks-sur-rejet. Refactor du flux commit (mls-core + bindings + TS).
+**FIXED - Option B (heal-on-reject, livree)** : dans le chemin d'EMISSION, tout `epoch_mismatch`
+(des un ecart de 1) signifie que NOTRE commit deja merge a forke -> on declenche la recovery
+(`recoverForkedGroup` = forget + welcome_request) pour adopter la branche gagnante, et l'operation
+est retentee. Nouveau predicat `isSenderForkError` (groupActions.ts) distinct de `isStaleForkError`
+(supprime, devenu mort). Sites recables : `processPendingInvitations`, `handleWelcomeRequest`,
+leurs kicks imbriques, et `kickStaleLeaf` (re-throw au lieu d'avaler). Le commit gagnant n'etant
+jamais diffuse en cas de rejet, les autres membres restent sains : seul le perdant heal.
+
+Edge connu non couvert par B : rejet `concurrent_commit` (lock non acquis) ou serverEpoch ==
+sentEpoch -> `parseForkedEpoch` ne le detecte pas (retombe sur le retry du cycle suivant). Rare.
+
+**Option A (durcissement futur, non livree)** : valider-puis-merger dans `mls-core`. Generer le
+commit sans merge -> `validateCommit` -> succes : `merge_pending_commit` ; rejet :
+`clear_pending_commit` (aucun fork). Elimine la classe entiere a la source mais refactor profond
+(mls-core + wasm + tauri + JNI + ~6 callers TS) et exige de verifier que le pending-commit OpenMLS
+survit a la serialisation mls.bin entre generation et validation. A planifier avec son propre
+cycle de verif device.
 
 ### H7 - L'escalade de gap est remise a zero par tout dechiffrement
 
@@ -439,10 +459,12 @@ F1. C6 : le chemin background (`send-welcome-and-commit`) valide le commit (bump
     avant diffusion. JNI expose l'epoch de base, Kotlin le transmet, backend appelle `validateCommit`.
 F2. H7 : `handleKnownGroup` ne reinitialise `epochGapSince` que sur un commit, pas sur un message
     applicatif d'un pair stale.
-F3. C7 (apres verif device de F1/F2) : valider-puis-merger dans `mls-core` (pas de merge avant
-    acceptation serveur ; rollback `clear_pending_commit` + recovery sur rejet).
+F3. C7 Option B (livree) : heal-on-reject. Chemin d'emission -> tout `epoch_mismatch` (ecart >= 1)
+    declenche `recoverForkedGroup`. Predicat `isSenderForkError`.
 F4. Verif device : mobile envoie -> visible sur tous les PC ; ajout de device en background ->
-    pas de rejet `epoch_mismatch` au prochain commit foreground.
+    pas de rejet `epoch_mismatch` au prochain commit foreground. (C6/H7 confirmes via logs.)
+F5. C7 Option A (futur) : valider-puis-merger dans `mls-core` (no-merge avant acceptation ;
+    `clear_pending_commit` sur rejet). Refactor profond, cycle de verif device dedie.
 
 ### Passe 5 - Strictness - S1..S4, M1
 18. `getGroupMeta` et consorts : distinguer not-found / network-error (Result ou type d'erreur).

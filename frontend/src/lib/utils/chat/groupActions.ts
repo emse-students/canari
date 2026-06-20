@@ -32,14 +32,20 @@ export function parseForkedEpoch(err: unknown): { serverEpoch: number; sentEpoch
 }
 
 /**
- * Vrai si l'erreur signale un fork EN RETARD d'au moins 2 epochs (l'appareil a manqué
- * plusieurs commits). Un écart de 1 est une course concurrente transitoire normale :
- * le commit manquant arrive en général via la file et l'appareil rattrape seul - on ne
- * déclenche pas la recovery destructive (forget + re-Welcome) dans ce cas.
+ * Vrai si l'erreur de commit rejeté indique que CE device a forké en ayant DEJA mergé son
+ * propre commit (chemin d'EMISSION : add/remove/kick suivi de `sendCommit`). Un seul écart
+ * d'epoch suffit : on a perdu une course de commit concurrente, on a déjà avancé localement à
+ * N+1 sur une branche divergente, et le commit gagnant (N -> N+1 sur l'autre branche) sera dropé
+ * comme same-epoch bénin (cf. mls-core process_incoming) -> jamais adopté -> fork permanent. Le
+ * seul remède est forget + re-Welcome pour adopter la branche gagnante. [[C7]]
+ *
+ * A ne PAS confondre avec un receveur en retard de 1 epoch (qui, lui, rattrape seul quand le
+ * commit manquant arrive via la file) : ici l'epoch local a déjà été mergé par NOTRE commit.
+ * Comme `parseForkedEpoch` ne renvoie non-null que pour `serverEpoch > sentEpoch`, tout
+ * `epoch_mismatch` reçu APRES un merge local (chemin d'émission) est par définition un fork.
  */
-export function isStaleForkError(err: unknown): boolean {
-  const f = parseForkedEpoch(err);
-  return f !== null && f.serverEpoch > f.sentEpoch + 1;
+export function isSenderForkError(err: unknown): boolean {
+  return parseForkedEpoch(err) !== null;
 }
 
 /**
@@ -349,15 +355,17 @@ export async function kickStaleLeaf(
 ): Promise<void> {
   const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
   // Le remove génère un commit appliqué LOCALEMENT puis validé côté serveur. Si le serveur
-  // le rejette parce que NOTRE état est forké en retard (epoch_mismatch, écart > 1), il ne
-  // faut surtout pas avaler l'erreur : le commit a déjà avancé l'epoch local de 1, et
-  // réessayer ne ferait que creuser le fork (storm kick/re-add). On remonte l'erreur pour
-  // que l'appelant déclenche la recovery (forget + welcome_request). Les autres erreurs
-  // (leaf déjà absent côté serveur, etc.) restent best-effort.
+  // le rejette pour epoch_mismatch (NOTRE état est forké), il ne faut surtout pas avaler
+  // l'erreur : le commit a déjà avancé l'epoch local et réessayer ne ferait que creuser le
+  // fork (storm kick/re-add). On remonte l'erreur pour que l'appelant déclenche la recovery
+  // (forget + welcome_request). On escalade dès un écart de 1 (`isSenderForkError`) : ici
+  // l'epoch local a déjà été mergé, donc même un écart de 1 est un fork concurrent réel, pas
+  // un simple retard de receveur. Les autres erreurs (leaf déjà absent, etc.) restent
+  // best-effort. [[C7]]
   try {
     await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
   } catch (e) {
-    if (isStaleForkError(e)) throw e;
+    if (isSenderForkError(e)) throw e;
   }
   await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
   log(`[KICK] Leaf stale ${targetUserId}:${targetDeviceId} retiré de ${groupId}`);
