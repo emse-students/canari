@@ -493,12 +493,22 @@ l'autre.
 - `classifyServerStatus(raw)` -> etat serveur explicite `active | tombstone | absent | unknown`
   (leve l'ambiguite `null`/'error' partagee). Consomme par discovery ET requestReAdd.
 - `decideAbsentGroupFate(input)` -> reducteur PUR `(etat serveur + signaux locaux) -> {keep |
-  purge | markDeletedRemotely}`. C'est l'ancien bloc `!serverGroupIds.has(...)` de la discovery,
+  purge | markRemoved}`. C'est l'ancien bloc `!serverGroupIds.has(...)` de la discovery,
   extrait tel quel, teste exhaustivement (table de verite + invariant "seul un absent confirme
   purge"). `discoverMissingGroups` et `requestReAdd` consomment ce noyau unique.
-Tests : `groupLifecycle.test.ts` (16 cas). Restent volontairement hors scope (verif device /
-risque UI) : l'unification des passes de forget-WASM (`serverListReliable`) et le passage de
-`(isReady, deletedRemotely)` a un champ d'etat de cycle de vie explicite sur `Conversation`.
+Tests : `groupLifecycle.test.ts` (16 cas).
+
+**FIXED (migration complete, commit 947b8805)** : le couple `(isReady, deletedRemotely)` est
+remplace par un champ d'etat unique `Conversation.lifecycle: 'active' | 'pending' | 'removed'`
+(`frontend/src/lib/types/index.ts`), PERSISTE (`ConversationMeta.lifecycle`, SQLite migration v4 +
+IndexedDB, avec `normalizeConversationLifecycle` pour les anciennes lignes). Cela corrige un bug de
+coherence latent : `deletedRemotely` n'etait jamais persiste -> l'etat "supprime par un pair"
+disparaissait au reload et la conv pouvait etre purgee a tort si le tombstone serveur avait ete
+hard-purge (violation des regles 2/4). ~110 sites migres (writes `active`/`pending`/`removed`,
+reads `lifecycle === 'active'`), interface `Conversation` dupliquee dans `Sidebar.svelte` supprimee
+(masquait le changement de type). `decideAbsentGroupFate` prend desormais `lifecycle` en entree et
+emet l'action `markRemoved`. Reste hors scope (verif device / risque UI) : l'unification des passes
+de forget-WASM (`serverListReliable`).
 
 ### S5 - Classification d'erreurs MLS dupliquee sur 4 couches
 
