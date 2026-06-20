@@ -214,13 +214,37 @@ export async function processPendingInvitations(params: {
           await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
           // Send commit, excluding the inviter (self) and the newly-welcomed device
+          let commitError: unknown = null;
           if (result.commit) {
-            await mlsService.sendCommit(result.commit, groupId, [`${inv.userId}:${inv.deviceId}`]);
+            try {
+              await mlsService.sendCommit(result.commit, groupId, [
+                `${inv.userId}:${inv.deviceId}`,
+              ]);
+            } catch (e) {
+              commitError = e;
+            }
           }
 
-          sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+          // Le history bundle = MESSAGES APPLICATIFS (pas un commit, ne passe pas par
+          // validateCommit). Le nouveau membre a deja rejoint via le Welcome (meme epoch que
+          // nous), donc on lui envoie l'historique meme si le broadcast du commit a echoue -
+          // sinon un commit rejete (course concurrente ou compteur serveur en retard) le
+          // priverait silencieusement de tout l'historique. [[C8]]
+          const bundlePromise = sendFullHistoryBundle(groupId, {
+            storage,
+            pin,
+            mlsService,
+            log,
+          }).catch((e) =>
             log(`[HISTORY_BUNDLE] Erreur envoi historique à ${inv.userId}: ${String(e)}`)
           );
+
+          if (commitError) {
+            // La recovery (catch) va forgetGroup : on attend la fin de l'envoi de l'historique
+            // pour ne pas le couper, puis on remonte l'erreur de commit.
+            await bundlePromise;
+            throw commitError;
+          }
         } catch (e) {
           const errStr = String(e);
 
@@ -912,19 +936,34 @@ export async function handleWelcomeRequest(params: {
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
     // Broadcaster le commit en excluant l'inviteur (self) et l'invité
+    let commitError: unknown = null;
     if (result.commit) {
-      await mlsService.sendCommit(result.commit, groupId, [
-        `${requesterUserId}:${requesterDeviceId}`,
-      ]);
+      try {
+        await mlsService.sendCommit(result.commit, groupId, [
+          `${requesterUserId}:${requesterDeviceId}`,
+        ]);
+      } catch (e) {
+        commitError = e;
+      }
     }
 
-    // Envoyer l'intégralité de l'historique au nouveau membre (best-effort, fire-and-forget).
-    // sendFullHistoryBundle lit tous les messages en IndexedDB (y compris ceux migrés
-    // depuis le prédécesseur via migrateConversation) et les envoie en chunks.
-    // Le bundle arrive après le Welcome côté destinataire - ordre garanti par MLS.
-    sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
-      log(`[HISTORY_BUNDLE] Erreur envoi historique à ${requesterUserId}: ${String(e)}`)
+    // Envoyer l'intégralité de l'historique au nouveau membre. C'est des MESSAGES APPLICATIFS
+    // (pas un commit, ne passe pas par validateCommit) : le destinataire a deja rejoint via le
+    // Welcome (meme epoch que nous), donc on lui envoie l'historique MEME SI le broadcast du
+    // commit a echoue - sinon un commit rejete (course concurrente, compteur serveur en retard)
+    // le priverait silencieusement de tout l'historique. Le bundle arrive apres le Welcome cote
+    // destinataire (ordre garanti par MLS) et lit l'IndexedDB (y compris les messages migres
+    // depuis le predecesseur via migrateConversation). [[C8]]
+    const bundlePromise = sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch(
+      (e) => log(`[HISTORY_BUNDLE] Erreur envoi historique à ${requesterUserId}: ${String(e)}`)
     );
+
+    if (commitError) {
+      // La recovery (catch) va forgetGroup : on attend la fin de l'envoi de l'historique pour ne
+      // pas le couper, puis on remonte l'erreur de commit pour declencher la heal (C7).
+      await bundlePromise;
+      throw commitError;
+    }
   } catch (e) {
     const errStr = String(e);
 

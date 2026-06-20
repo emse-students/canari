@@ -40,6 +40,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | FIXED (P-fork) | 60f57f08 |
 | C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | FIXED (Option B: heal-on-reject ecart 1) | (ce commit) |
 | H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | FIXED (P-fork) | 60f57f08 |
+| C8 | history bundle saute quand le commit broadcast echoue -> nouvel arrivant prive d'historique | FIXED (decouple du commit) | (ce commit) |
 | H1 | TTL locks reboot/add < duree reelle | FIXED (P4: add 30s/clamp 60s, reboot 90s/clamp 180s) | (ce commit) |
 | H2 | forgetGroup predecesseur premature | OPEN (P4, machine recovery - verif device) | - |
 | H3 | Mutations conversations non atomiques | OPEN (P4, machine recovery - verif device) | - |
@@ -345,6 +346,33 @@ commit sans merge -> `validateCommit` -> succes : `merge_pending_commit` ; rejet
 (mls-core + wasm + tauri + JNI + ~6 callers TS) et exige de verifier que le pending-commit OpenMLS
 survit a la serialisation mls.bin entre generation et validation. A planifier avec son propre
 cycle de verif device.
+
+### C8 - Le history bundle est saute quand le commit broadcast echoue
+
+Lieux : `frontend/src/lib/utils/chat/actions.ts` - `processPendingInvitations` et
+`handleWelcomeRequest`. L'ordre etait : `addMember` -> `sendWelcome` -> `sendCommit` ->
+`sendFullHistoryBundle`. Comme `sendCommit` peut throw (epoch_mismatch : course concurrente OU
+compteur serveur en retard), le `catch` prenait la main et le bundle n'etait jamais envoye -> le
+nouvel arrivant recevait la membership (via le Welcome) mais AUCUN historique.
+
+Diagnostic terrain (logs 2026-06-20) : un nouveau device rejoint un DM dont le compteur
+`activeEpoch` serveur est bloque en retard (sequelle pre-deploiement de C6 : observe `server
+epoch: 1, sent: 3`). Le membre qui repond au `welcome_request` envoie le Welcome (join OK) puis
+son commit est rejete -> bundle saute -> pas d'historique cote nouvel arrivant.
+
+Point cle : `sendFullHistoryBundle` envoie des **messages applicatifs** (`mlsService.sendMessage`,
+silent), PAS un commit -> il ne passe pas par `validateCommit`. Le destinataire a deja rejoint via
+le Welcome (donc partage notre epoch courante), donc l'historique lui est dechiffrable
+independamment du sort du commit broadcast.
+
+**FIXED** : on decouple le bundle du commit. `sendCommit` est entoure d'un try/catch local ;
+quel que soit son resultat on lance `sendFullHistoryBundle`. Si le commit a echoue, on attend la
+fin de l'envoi du bundle (pour ne pas le couper) PUIS on remonte l'erreur au catch externe qui
+declenche la heal (C7). Succes : envoi best-effort en tache de fond (ne bloque pas la liberation
+du verrou). Limite assumee : si le commit echoue parce que NOTRE etat a forke, le nouvel arrivant
+rejoint cette branche ; l'historique est livre mais la branche peut etre transitoire (C7 heal).
+Le decouplage reste correct car il rend la livraison de l'historique aussi robuste que le join
+lui-meme, et le cas nominal (commit accepte) est inchange.
 
 ### H7 - L'escalade de gap est remise a zero par tout dechiffrement
 
