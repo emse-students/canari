@@ -17,6 +17,11 @@ import {
 } from '$lib/utils/chat/groupActions';
 import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
 import {
+  classifyServerStatus,
+  decideAbsentGroupFate,
+  type GroupServerStatus,
+} from '$lib/utils/chat/groupLifecycle';
+import {
   collectKnownSuccessorIds,
   resolveTerminalGroup,
 } from '$lib/utils/chat/groupSyncEligibility';
@@ -512,32 +517,35 @@ export async function discoverMissingGroups(params: {
       }
 
       if (!serverGroupIds.has(convo.id)) {
-        if (knownSuccessorIds.has(convo.id)) {
-          log(
-            `[DISCOVERY] Conversation successeur ${convo.id.slice(0, 8)}… conservée (tombstone serveur)`
-          );
-          continue;
+        // Décision de sort centralisée dans `decideAbsentGroupFate` (source unique partagée avec
+        // les autres réconciliateurs). On ne sollicite le serveur que pour les cas réellement
+        // indécis : un successeur tombstone connu ou une conv déjà `deletedRemotely` court-circuitent
+        // sans appel réseau (la migration / la suppression manuelle s'en chargent).
+        const isKnownSuccessor = knownSuccessorIds.has(convo.id);
+        let serverStatus: GroupServerStatus = { kind: 'unknown' };
+        let isStillUserMember: boolean | null = null;
+        if (!isKnownSuccessor && !convo.deletedRemotely) {
+          serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
+          // Anti-race : ne revalider notre membership réelle que sur un groupe VIVANT absent de
+          // notre snapshot getUserGroups (qui peut être périmé sur un groupe juste créé/rejoint).
+          if (serverStatus.kind === 'active') {
+            const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
+            isStillUserMember =
+              userMembers === null ? null : userMembers.some((m) => m.userId === userId);
+          }
         }
 
-        // Deja marquee supprimee/exclue : elle reste jusqu'a SUPPRESSION MANUELLE locale, quoi
-        // qu'il advienne cote serveur (meme si le tombstone est hard-purge plus tard). On ne la
-        // re-interroge meme pas - jamais d'auto-purge d'un groupe deja marque deletedRemotely.
-        if (convo.deletedRemotely) continue;
+        const fate = decideAbsentGroupFate({
+          isKnownSuccessor,
+          deletedRemotely: !!convo.deletedRemotely,
+          isReady: convo.isReady,
+          serverStatus,
+          isStillUserMember,
+        });
+        const label = convo.name || convo.id;
 
-        // Le groupe n'est pas dans NOTRE membership actif. On n'AUTO-SUPPRIME la conversation
-        // QUE si `dm_groups` confirme l'absence totale du groupe (ligne disparue : jamais cree ou
-        // hard-purge). Tout le reste reste visible jusqu'a SUPPRESSION MANUELLE locale :
-        //  - tombstone supprime (deletedAt) -> regle 2,
-        //  - exclusion (plus de membership user sur un groupe vivant) -> regle 4,
-        //  - statut incertain (reseau) -> on ne supprime jamais sur un doute.
-        // Un groupe qu'on doit encore REJOINDRE conserve sa membership user -> il reste dans
-        // serverGroupIds et ne tombe donc jamais ici : la logique de reboot/welcome est intacte.
-        const status = await mlsService.getGroupServerStatus(convo.id);
-
-        if (status === 'absent') {
-          log(
-            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent de dm_groups (confirme) - retrait`
-          );
+        if (fate.action === 'purge') {
+          log(`[DISCOVERY] Groupe UI "${label}" - ${fate.reason} - retrait`);
           await purgeLocalConversationRecord({
             conversations,
             contactKey: key,
@@ -547,48 +555,15 @@ export async function discoverMissingGroups(params: {
           });
           continue;
         }
-
-        if (status === 'error') {
-          log(
-            `[DISCOVERY] Statut serveur incertain pour "${convo.name || convo.id}" - conversation conservée`
-          );
-          continue;
-        }
-
-        // Le groupe existe encore cote serveur. Deux sous-cas :
-        //  - tombstone (deletedAt) : supprime par un pair -> marquer deletedRemotely (regle 2).
-        //  - vivant (deletedAt null) : on n'est pas dans notre snapshot de membership, MAIS ce
-        //    snapshot (getUserGroups) peut etre perime sur un groupe qu'on vient de creer/rejoindre.
-        //    Garde anti-race : on revalide notre membership reelle (dm_group_members) AVANT de
-        //    marquer. Si on est toujours membre -> snapshot perime, on garde la conv active. Sinon
-        //    -> exclusion reelle -> marquer deletedRemotely (regle 4).
-        const isTombstone = !!status.deletedAt;
-        if (!isTombstone) {
-          const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
-          if (userMembers === null) {
-            log(
-              `[DISCOVERY] Membres indisponibles pour "${convo.name || convo.id}" - conversation conservée (doute)`
-            );
-            continue;
-          }
-          if (userMembers.some((m) => m.userId === userId)) {
-            log(
-              `[DISCOVERY] "${convo.name || convo.id}" vivant et on est toujours membre (snapshot périmé) - conservé actif`
-            );
-            continue;
-          }
-        }
-
-        // Tombstone supprime OU exclusion confirmee -> marquer deletedRemotely (banniere
-        // " supprimee ", composer verrouille, action " Supprimer localement ") au lieu de retirer
-        // silencieusement. Un simple placeholder (non isReady) est conserve tel quel.
-        if (convo.isReady && !convo.deletedRemotely) {
+        if (fate.action === 'markDeletedRemotely') {
           conversations.set(key, { ...convo, deletedRemotely: true });
           await saveConversation?.(key).catch(() => {});
-          log(
-            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" ${isTombstone ? 'supprimé (tombstone)' : 'exclu'} côté serveur - marqué deletedRemotely`
-          );
+          log(`[DISCOVERY] Groupe UI "${label}" ${fate.reason} - marqué deletedRemotely`);
+          continue;
         }
+        // keep
+        log(`[DISCOVERY] Groupe UI "${label}" conservé - ${fate.reason}`);
+        continue;
       }
     }
   }

@@ -479,6 +479,27 @@ restent definitivement marques vus (vraiment non-recuperables). Compromis : un m
 epoch jamais atteinte (branche forkee non adoptee) est re-tente a chaque replay - meme semantique que
 `GAP_QUEUED`, borne par la frequence des chargements.
 
+### R1 - Decision de cycle de vie des groupes dupliquee sur 3-4 reconciliateurs
+
+La question "ce groupe local est-il encore reel, et que faire ?" etait re-implementee dans
+`discoverMissingGroups` (actions.ts), `syncConnectionAfterWsOpen` (initializeConnection.ts) et
+`requestReAdd` (recovery.ts) avec des gardes divergentes. Chaque divergence = un bug : fantome
+indeletable bloque en boucle readd/reboot (groupe hard-absent traite comme "a conserver"),
+"statut serveur incertain" sur un groupe pourtant supprime (corps vide 200 -> 'error' au lieu de
+'absent'), `serverListReliable` (liste vide suspecte) present dans un reconciliateur mais pas
+l'autre.
+
+**FIXED (unification)** : nouveau module pur `frontend/src/lib/utils/chat/groupLifecycle.ts` :
+- `classifyServerStatus(raw)` -> etat serveur explicite `active | tombstone | absent | unknown`
+  (leve l'ambiguite `null`/'error' partagee). Consomme par discovery ET requestReAdd.
+- `decideAbsentGroupFate(input)` -> reducteur PUR `(etat serveur + signaux locaux) -> {keep |
+  purge | markDeletedRemotely}`. C'est l'ancien bloc `!serverGroupIds.has(...)` de la discovery,
+  extrait tel quel, teste exhaustivement (table de verite + invariant "seul un absent confirme
+  purge"). `discoverMissingGroups` et `requestReAdd` consomment ce noyau unique.
+Tests : `groupLifecycle.test.ts` (16 cas). Restent volontairement hors scope (verif device /
+risque UI) : l'unification des passes de forget-WASM (`serverListReliable`) et le passage de
+`(isReady, deletedRemotely)` a un champ d'etat de cycle de vie explicite sur `Conversation`.
+
 ### S5 - Classification d'erreurs MLS dupliquee sur 4 couches
 
 Le meme string-matching d'erreurs OpenMLS est reparti dans :

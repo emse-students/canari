@@ -8,6 +8,7 @@ import {
   warnSkippedKeyPackages,
   purgeLocalConversationRecord,
 } from './groupActions';
+import { classifyServerStatus } from './groupLifecycle';
 import { resolveTerminalGroup } from './groupSyncEligibility';
 import { reassignOutboxConversation } from './outbox';
 import { markGroupNotReady, clearGroupNotReady, groupNotReadyForMs } from './rebootDeadline';
@@ -118,11 +119,11 @@ export async function requestReAdd(
   // `getGroupServerStatus` distingue un ABSENT CONFIRMÉ (aucune ligne dm_groups) d'une vraie
   // erreur réseau.
   if (terminalMeta === null) {
-    const status = await deps.mlsService
-      .getGroupServerStatus(terminalId)
-      .catch(() => 'error' as const);
+    const status = classifyServerStatus(
+      await deps.mlsService.getGroupServerStatus(terminalId).catch(() => 'error' as const)
+    );
 
-    if (status === 'absent') {
+    if (status.kind === 'absent') {
       // Le groupe n'existe plus DU TOUT côté serveur (ni actif, ni tombstone : un tombstone
       // aurait un `deletedAt`, donc une métadonnée non-nulle). C'est un fantôme purement local
       // sans aucune existence serveur. La source de vérité est le serveur -> on coupe la boucle
@@ -143,9 +144,10 @@ export async function requestReAdd(
       return;
     }
 
-    // Statut 'error' (échec réseau) : ambiguïté non levée. Un terminal de chaîne de successeurs
-    // sans métadonnée serait re-fabriqué par un reboot pour un groupe inexistant -> on abandonne
-    // sans rien marquer (une prochaine synchro réseau fonctionnelle re-résoudra la chaîne).
+    // Statut non confirmé absent ('unknown' réseau, ou le groupe existe encore) : ambiguïté non
+    // levée. Un terminal de chaîne de successeurs sans métadonnée serait re-fabriqué par un reboot
+    // pour un groupe injoignable -> on abandonne sans rien marquer (une prochaine synchro réseau
+    // fonctionnelle re-résoudra la chaîne).
     if (hasChain) {
       deps.log(
         `[READD] terminal ${terminalId.slice(0, 8)}… sans métadonnée serveur (réseau) - chaîne morte, recovery ignorée`
