@@ -739,7 +739,17 @@ async function upsertConversation(
 
   if (matchedExisting) {
     const existing = conversations.get(newConvoKey)!;
-    const updated = { ...existing, id: joinedGroupId, name: displayName, isReady: true };
+    // Re-join via Welcome : on est de nouveau réellement membre, donc on lève toute marque
+    // `deletedRemotely` posée par la discovery (groupe supprimé/exclu OU faux positif d'une race
+    // de snapshot). Sans ça la conversation resterait verrouillée avec sa bannière " supprimée "
+    // alors qu'on vient d'y être ré-ajouté (règle : re-add => même conversation, active).
+    const updated = {
+      ...existing,
+      id: joinedGroupId,
+      name: displayName,
+      isReady: true,
+      deletedRemotely: false,
+    };
     if (newConvoKey !== joinedGroupId) {
       // Prédécesseur → successeur : on change de groupId (ex. reboot MLS).
       conversations.delete(newConvoKey);
@@ -789,4 +799,8 @@ async function upsertConversation(
   }
 
   await saveConversation(newConvoKey).catch(() => {});
+
+  // Re-ajout effectif : on leve un eventuel dismiss per-user cote serveur pour que la conversation
+  // revienne aussi sur les AUTRES appareils de l'utilisateur (regle re-add). Best-effort.
+  void deps.mlsService.undismissGroup(joinedGroupId).catch(() => {});
 }

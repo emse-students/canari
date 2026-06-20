@@ -814,6 +814,22 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupMeta(groupId);
   }
 
+  async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
+    return this.delivery.getGroupServerStatus(groupId);
+  }
+
+  async getDismissedGroups(): Promise<string[]> {
+    return this.delivery.getDismissedGroups();
+  }
+
+  async dismissGroup(groupId: string): Promise<void> {
+    return this.delivery.dismissGroup(groupId);
+  }
+
+  async undismissGroup(groupId: string): Promise<void> {
+    return this.delivery.undismissGroup(groupId);
+  }
+
   async claimGroupSuccessor(
     deadGroupId: string,
     successorId: string,

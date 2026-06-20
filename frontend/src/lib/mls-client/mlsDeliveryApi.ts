@@ -702,6 +702,98 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
+  /**
+   * Statut serveur d'un groupe, en distinguant absence CONFIRMEE et incertitude reseau - ce que
+   * `getGroupMeta` (qui renvoie `null` pour les deux) ne permet pas. `GET /api/mls/groups/:id`
+   * interroge `dm_groups` SANS controle de membership et renvoie `null` (corps) si la ligne
+   * n'existe pas, donc :
+   *  - `'absent'` : le serveur a repondu et la ligne `dm_groups` n'existe pas -> groupe vraiment
+   *    disparu (jamais cree / hard-purge). Seul cas ou la discovery doit auto-supprimer la conv.
+   *  - `'error'`  : echec HTTP/reseau -> statut inconnu, ne RIEN supprimer.
+   *  - `GroupMeta`: la ligne existe (groupe vivant, tombstone `deletedAt`, ou exclusion) -> garder
+   *    la conv localement (banniere + suppression manuelle).
+   */
+  async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
+    let res: Response;
+    try {
+      res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
+        headers: await this.auth(),
+      });
+    } catch {
+      return 'error';
+    }
+    if (!res.ok) return 'error';
+    let g: unknown;
+    try {
+      g = await res.json();
+    } catch {
+      return 'error';
+    }
+    if (!g || typeof g !== 'object') return 'absent';
+    const id = (g as { id?: string; groupId?: string }).groupId ?? (g as { id?: string }).id;
+    if (typeof id !== 'string' || !id) return 'absent';
+    return {
+      groupId: id,
+      name:
+        typeof (g as { name?: string }).name === 'string'
+          ? (g as { name: string }).name
+          : undefined,
+      isGroup:
+        typeof (g as { isGroup?: boolean }).isGroup === 'boolean'
+          ? (g as { isGroup: boolean }).isGroup
+          : undefined,
+      successorId: (g as { successorId?: string | null }).successorId ?? null,
+      deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+    };
+  }
+
+  /**
+   * Liste les groupes que CET utilisateur a volontairement dismisses (suppression/quitter manuel).
+   * La discovery purge toute conversation locale presente dans cet ensemble - sur tous les
+   * appareils de l'utilisateur. Retourne `[]` en cas d'echec (on ne purge jamais sur un doute).
+   */
+  async getDismissedGroups(): Promise<string[]> {
+    try {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups`,
+        { headers: await this.auth() }
+      );
+      if (!res.ok) return [];
+      const arr = await res.json();
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Marque un groupe comme dismisse par cet utilisateur (suppression/quitter manuel propage a ses appareils). Best-effort. */
+  async dismissGroup(groupId: string): Promise<void> {
+    try {
+      await this.f(
+        `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups`,
+        {
+          method: 'POST',
+          headers: await this.auth({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ groupId }),
+        }
+      );
+    } catch {
+      /* non-bloquant : la purge locale a deja eu lieu, les autres appareils retenteront */
+    }
+  }
+
+  /** Leve le dismiss d'un groupe (re-ajout via Welcome : l'utilisateur veut de nouveau la conversation). Best-effort. */
+  async undismissGroup(groupId: string): Promise<void> {
+    try {
+      await this.f(
+        `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups/${encodeURIComponent(groupId)}`,
+        { method: 'DELETE', headers: await this.auth() }
+      );
+    } catch {
+      /* non-bloquant */
+    }
+  }
+
   /** Fetches group metadata - name, `successorId`, `deletedAt`. Returns `null` on 404 or error. */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {

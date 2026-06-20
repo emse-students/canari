@@ -305,6 +305,19 @@ export interface IMlsService {
   /** Fetches server metadata for one group (successor link, soft-delete). */
   getGroupMeta(groupId: string): Promise<GroupMeta | null>;
   /**
+   * Statut serveur d'un groupe en distinguant l'absence CONFIRMEE (`'absent'` : ligne `dm_groups`
+   * disparue) de l'incertitude reseau (`'error'`) et de l'existence (`GroupMeta` : groupe vivant,
+   * tombstone supprime, ou exclusion). Utilise par la discovery pour n'auto-supprimer une conv que
+   * sur absence confirmee.
+   */
+  getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta>;
+  /** Liste les groupes que cet utilisateur a dismisses (suppression/quitter manuel propage a tous ses appareils). */
+  getDismissedGroups(): Promise<string[]>;
+  /** Marque un groupe comme dismisse (suppression/quitter manuel) - propage la purge aux autres appareils. */
+  dismissGroup(groupId: string): Promise<void>;
+  /** Leve le dismiss d'un groupe (re-ajout via Welcome). */
+  undismissGroup(groupId: string): Promise<void>;
+  /**
    * Atomically claims `successorId` as the replacement for a dead group (CAS).
    * On conflict, returns `claimed: false` and the winning `successorId`.
    * `claimedByDeviceId` is recorded server-side (diagnostic only) to attribute the reboot.

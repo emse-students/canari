@@ -21,6 +21,7 @@ import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { GroupMember } from './entities/group-member.entity';
+import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { Group } from './entities/group.entity';
 import { PinVerifier } from './entities/pin-verifier.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -55,6 +56,7 @@ const RedisProvider: Provider = {
         KeyPackage,
         OneTimeKeyPackage,
         GroupMember,
+        UserDismissedGroup,
         Group,
         PinVerifier,
         DeviceGroupMembership,

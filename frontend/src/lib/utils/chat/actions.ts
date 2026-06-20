@@ -404,6 +404,10 @@ export async function discoverMissingGroups(params: {
   if (serverFetchSucceeded) {
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
     const knownSuccessorIds = collectKnownSuccessorIds(uniqueServerGroups);
+    // Groupes que CET utilisateur a dismisses (suppression/quitter manuel sur un appareil) : ils
+    // doivent etre purges sur TOUS ses appareils (regles 3 & 5), pas affiches avec la banniere.
+    // Best-effort (`[]` sur echec -> on ne purge jamais sur un doute).
+    const dismissedGroupIds = new Set(await mlsService.getDismissedGroups().catch(() => []));
     let mlsMutated = false;
 
     for (const groupId of mlsService.getLocalGroups()) {
@@ -426,6 +430,32 @@ export async function discoverMissingGroups(params: {
 
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
+
+      // Dismissé par l'utilisateur (suppression/quitter manuel sur un autre appareil). Deux cas :
+      //  - on n'est plus membre actif -> on PURGE (regles 3 & 5), sans bannière. Priorite max.
+      //  - on est de nouveau membre actif (RE-INVITE depuis) -> le dismiss est perime : on le leve
+      //    cote serveur et on garde la conversation (regle re-add). On ne purge surtout pas, sinon
+      //    on supprimerait un groupe qu'on vient de rejoindre.
+      if (dismissedGroupIds.has(convo.id)) {
+        if (!serverGroupIds.has(convo.id)) {
+          log(
+            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" dismissé par l'utilisateur - retrait`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            deleteConversation,
+            log,
+          });
+          continue;
+        }
+        log(
+          `[DISCOVERY] "${convo.name || convo.id}" dismissé mais on en est de nouveau membre - dismiss levé`
+        );
+        void mlsService.undismissGroup(convo.id).catch(() => {});
+        // On laisse le traitement normal continuer (groupe actif).
+      }
 
       const { terminalId, hasChain } = await resolveTerminalGroup(mlsService, convo.id).catch(
         () => ({ terminalId: convo.id, hasChain: false })
@@ -488,28 +518,77 @@ export async function discoverMissingGroups(params: {
           );
           continue;
         }
-        // Une conversation établie absente du serveur a été supprimée par un pair (ou par
-        // nous-mêmes sur un autre appareil). Le message système `groupDeleted` peut ne jamais
-        // arriver (le pair était hors-ligne et deleteGroup purge la file du groupe), donc on
-        // se rabat sur l'état serveur : on la marque deletedRemotely au lieu de la retirer
-        // silencieusement. ChatArea affiche alors la bannière " supprimée ", verrouille le
-        // composer (plus d'envoi vers un groupe mort) et propose " Supprimer localement ".
+
+        // Deja marquee supprimee/exclue : elle reste jusqu'a SUPPRESSION MANUELLE locale, quoi
+        // qu'il advienne cote serveur (meme si le tombstone est hard-purge plus tard). On ne la
+        // re-interroge meme pas - jamais d'auto-purge d'un groupe deja marque deletedRemotely.
+        if (convo.deletedRemotely) continue;
+
+        // Le groupe n'est pas dans NOTRE membership actif. On n'AUTO-SUPPRIME la conversation
+        // QUE si `dm_groups` confirme l'absence totale du groupe (ligne disparue : jamais cree ou
+        // hard-purge). Tout le reste reste visible jusqu'a SUPPRESSION MANUELLE locale :
+        //  - tombstone supprime (deletedAt) -> regle 2,
+        //  - exclusion (plus de membership user sur un groupe vivant) -> regle 4,
+        //  - statut incertain (reseau) -> on ne supprime jamais sur un doute.
+        // Un groupe qu'on doit encore REJOINDRE conserve sa membership user -> il reste dans
+        // serverGroupIds et ne tombe donc jamais ici : la logique de reboot/welcome est intacte.
+        const status = await mlsService.getGroupServerStatus(convo.id);
+
+        if (status === 'absent') {
+          log(
+            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent de dm_groups (confirme) - retrait`
+          );
+          await purgeLocalConversationRecord({
+            conversations,
+            contactKey: key,
+            groupId: convo.id,
+            deleteConversation,
+            log,
+          });
+          continue;
+        }
+
+        if (status === 'error') {
+          log(
+            `[DISCOVERY] Statut serveur incertain pour "${convo.name || convo.id}" - conversation conservée`
+          );
+          continue;
+        }
+
+        // Le groupe existe encore cote serveur. Deux sous-cas :
+        //  - tombstone (deletedAt) : supprime par un pair -> marquer deletedRemotely (regle 2).
+        //  - vivant (deletedAt null) : on n'est pas dans notre snapshot de membership, MAIS ce
+        //    snapshot (getUserGroups) peut etre perime sur un groupe qu'on vient de creer/rejoindre.
+        //    Garde anti-race : on revalide notre membership reelle (dm_group_members) AVANT de
+        //    marquer. Si on est toujours membre -> snapshot perime, on garde la conv active. Sinon
+        //    -> exclusion reelle -> marquer deletedRemotely (regle 4).
+        const isTombstone = !!status.deletedAt;
+        if (!isTombstone) {
+          const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
+          if (userMembers === null) {
+            log(
+              `[DISCOVERY] Membres indisponibles pour "${convo.name || convo.id}" - conversation conservée (doute)`
+            );
+            continue;
+          }
+          if (userMembers.some((m) => m.userId === userId)) {
+            log(
+              `[DISCOVERY] "${convo.name || convo.id}" vivant et on est toujours membre (snapshot périmé) - conservé actif`
+            );
+            continue;
+          }
+        }
+
+        // Tombstone supprime OU exclusion confirmee -> marquer deletedRemotely (banniere
+        // " supprimee ", composer verrouille, action " Supprimer localement ") au lieu de retirer
+        // silencieusement. Un simple placeholder (non isReady) est conserve tel quel.
         if (convo.isReady && !convo.deletedRemotely) {
           conversations.set(key, { ...convo, deletedRemotely: true });
           await saveConversation?.(key).catch(() => {});
           log(
-            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur - marqué supprimé`
+            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" ${isTombstone ? 'supprimé (tombstone)' : 'exclu'} côté serveur - marqué deletedRemotely`
           );
-          continue;
         }
-        log(`[DISCOVERY] Groupe UI "${convo.name || convo.id}" absent du serveur - retrait`);
-        await purgeLocalConversationRecord({
-          conversations,
-          contactKey: key,
-          groupId: convo.id,
-          deleteConversation,
-          log,
-        });
       }
     }
   }

@@ -15,6 +15,7 @@ import { Repository, MoreThanOrEqual, DataSource, In } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { GroupMember } from '../entities/group-member.entity';
+import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -30,6 +31,8 @@ export class MembersController {
   constructor(
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
+    @InjectRepository(UserDismissedGroup)
+    private dismissedRepo: Repository<UserDismissedGroup>,
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
@@ -134,6 +137,84 @@ export class MembersController {
       successorId: g.successorId ?? null,
       deletedAt: g.deletedAt ?? null,
     }));
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/users/:userId/dismissed-groups')
+  /**
+   * Lists the group IDs this user has voluntarily dismissed (manual delete/leave). The client's
+   * discovery purges any local conversation in this set on ALL the user's devices, instead of
+   * showing the "deleted" banner reserved for peer-deletions/exclusions.
+   */
+  async getDismissedGroups(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ): Promise<string[]> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      "Cannot read another user's dismissed groups",
+    );
+    const rows = await this.dismissedRepo.find({
+      where: { userId: safeUserId },
+    });
+    return rows.map((r) => r.groupId);
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/users/:userId/dismissed-groups')
+  /** Marks a group as dismissed by this user (idempotent). Propagates the local delete/leave to the user's other devices. */
+  async dismissGroup(
+    @Param('userId') userId: string,
+    @Body() body: { groupId: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ): Promise<{ status: string }> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot dismiss a group for another user',
+    );
+    const safeGroupId = sanitizeQueryValue(body?.groupId ?? '', 'groupId');
+    // Idempotent : ON CONFLICT DO NOTHING via la contrainte unique (userId, groupId).
+    await this.dismissedRepo
+      .createQueryBuilder()
+      .insert()
+      .values({ userId: safeUserId, groupId: safeGroupId })
+      .orIgnore()
+      .execute();
+    this.logger.log(`[DISMISS] user=${safeUserId} group=${safeGroupId}`);
+    return { status: 'dismissed' };
+  }
+
+  @UseGuards(HeaderAuthGuard)
+  @Delete('mls/users/:userId/dismissed-groups/:groupId')
+  /** Un-dismisses a group (called when the user is re-added via a fresh Welcome - they want it back). */
+  async undismissGroup(
+    @Param('userId') userId: string,
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+  ): Promise<{ status: string }> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot un-dismiss a group for another user',
+    );
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.dismissedRepo.delete({
+      userId: safeUserId,
+      groupId: safeGroupId,
+    });
+    this.logger.log(`[UNDISMISS] user=${safeUserId} group=${safeGroupId}`);
+    return { status: 'undismissed' };
   }
 
   @UseGuards(HeaderAuthGuard)
