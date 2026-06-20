@@ -17,7 +17,7 @@ fn process_incoming_messages_matches_sequential_decrypt() {
         .create_group(group_id.to_string())
         .expect("alice create_group");
     let kp = bob.generate_key_package().expect("bob key_package");
-    let (_commit, welcome, _, ratchet_tree) = alice
+    let (_commit, welcome, _, ratchet_tree, _skipped) = alice
         .add_members_bulk(group_id, &[&kp])
         .expect("add_members_bulk");
     bob.process_welcome(
@@ -57,7 +57,7 @@ fn process_incoming_messages_captures_per_message_errors() {
 
     alice.create_group(group_id.to_string()).expect("create");
     let kp = bob.generate_key_package().expect("kp");
-    let (_c, welcome, _, rt) = alice.add_members_bulk(group_id, &[&kp]).expect("add");
+    let (_c, welcome, _, rt, _skipped) = alice.add_members_bulk(group_id, &[&kp]).expect("add");
     bob.process_welcome(welcome.as_deref().expect("w"), rt.as_deref())
         .expect("welcome");
 

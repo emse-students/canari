@@ -380,7 +380,16 @@ fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     state: tauri::State<AppState>,
-) -> Result<(Vec<u8>, Option<Vec<u8>>, Vec<u32>, Option<Vec<u8>>), String> {
+) -> Result<
+    (
+        Vec<u8>,
+        Option<Vec<u8>>,
+        Vec<u32>,
+        Option<Vec<u8>>,
+        Vec<u32>,
+    ),
+    String,
+> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -918,9 +927,17 @@ async fn bootstrap_dead_conversation(
             .map_err(|_| "Failed to lock state")?;
         let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
         let refs: Vec<&[u8]> = all_key_packages.iter().map(|v| v.as_slice()).collect();
-        let (commit_b, welcome_b, _count, rt_b) = manager
+        let (commit_b, welcome_b, _count, rt_b, skipped) = manager
             .add_members_bulk(&conversation_id, &refs)
             .map_err(|e| e.to_string())?;
+        if !skipped.is_empty() {
+            log::warn!(
+                "[BOOTSTRAP] {} KeyPackage(s) invalide(s) ignore(s) pour group={} (indices {:?}) - device(s) non re-invite(s). [[C5]]",
+                skipped.len(),
+                conversation_id,
+                skipped
+            );
+        }
         (commit_b, welcome_b, rt_b)
     };
 

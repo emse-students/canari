@@ -28,7 +28,7 @@ fn rejected_stale_welcome_leaves_no_orphan_blocking_a_fresh_welcome() {
     let kp_bob2 = bob.generate_key_package().expect("kp bob 2");
 
     // Welcome v1 : ajout de bob -> epoch 1.
-    let (_, welcome_v1, _, rt_v1) = alice
+    let (_, welcome_v1, _, rt_v1, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob1])
         .expect("add bob v1");
     let welcome_v1 = welcome_v1.expect("welcome v1");
@@ -43,7 +43,7 @@ fn rejected_stale_welcome_leaves_no_orphan_blocking_a_fresh_welcome() {
     alice
         .merge_pending_commit_for(gid)
         .expect("confirm remove bob");
-    let (_, welcome_v2, _, rt_v2) = alice
+    let (_, welcome_v2, _, rt_v2, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob2])
         .expect("add bob v2");
     let welcome_v2 = welcome_v2.expect("welcome v2");

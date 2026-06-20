@@ -24,7 +24,7 @@ fn add_members_bulk_rejects_keypackage_of_an_existing_member() {
     let kp_bob = bob.generate_key_package().expect("kp bob");
 
     // Premier ajout : doit réussir et inclure bob à l'index 0.
-    let (_, welcome, added, rt) = alice
+    let (_, welcome, added, rt, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("first add should succeed");
     assert_eq!(added, vec![0]);
@@ -53,7 +53,7 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
 
     alice.create_group(gid.to_string()).expect("create_group");
     let kp_bob = bob.generate_key_package().expect("kp bob");
-    let (_, welcome, _, rt) = alice
+    let (_, welcome, _, rt, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("bob joins first");
     bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
@@ -62,7 +62,7 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
     // Lot mixte : bob (déjà membre - doit être ignoré) + carol (nouvelle - doit être ajoutée).
     let kp_bob_stale = bob.generate_key_package().expect("kp bob stale");
     let kp_carol = carol.generate_key_package().expect("kp carol");
-    let (_, welcome2, added, rt2) = alice
+    let (_, welcome2, added, rt2, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob_stale, &kp_carol])
         .expect("mixed batch should still add carol");
 
@@ -71,4 +71,36 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
     carol
         .process_welcome(welcome2.as_deref().unwrap(), rt2.as_deref())
         .expect("carol joins");
+}
+
+/// [[C5]] Un KeyPackage invalide/illisible ne doit pas disparaitre silencieusement : son index
+/// doit etre remonte dans `skipped_indices` (et NON dans `added_indices`), tandis que les
+/// KeyPackages valides du meme lot sont ajoutes normalement.
+#[test]
+fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
+    let mut alice = make_device("alice", "dev1");
+    let mut bob = make_device("bob", "dev1");
+    let gid = "g-skip-1";
+
+    alice.create_group(gid.to_string()).expect("create_group");
+
+    // Index 0 : bytes corrompus (echec de deserialisation) -> doit etre marque skipped.
+    let garbage: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02, 0x03];
+    // Index 1 : KeyPackage valide de bob -> doit etre ajoute.
+    let kp_bob = bob.generate_key_package().expect("kp bob");
+
+    let (_, welcome, added, rt, skipped) = alice
+        .add_members_bulk(gid, &[&garbage, &kp_bob])
+        .expect("batch with one invalid KP still adds the valid one");
+
+    assert_eq!(added, vec![1], "seul bob (index 1) doit etre ajoute");
+    assert_eq!(
+        skipped,
+        vec![0],
+        "le KeyPackage corrompu (index 0) doit etre remonte dans skipped_indices"
+    );
+
+    // Le membre valide rejoint bien malgre le KP invalide du lot.
+    bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
+        .expect("bob joins despite the skipped invalid KP");
 }

@@ -590,24 +590,30 @@ export class TauriMlsService extends BaseMlsService {
     welcome?: Uint8Array;
     addedDeviceIds: string[];
     ratchetTree?: Uint8Array;
+    skippedDeviceIds: string[];
   }> {
     // Single bulk Tauri invoke: all key packages are added in one OpenMLS commit
     // so all new members share the same epoch and a single Welcome covers them all.
     const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
-    // Returns (commit: Vec<u8>, welcome: Option<Vec<u8>>, addedIndices: Vec<u32>, ratchetTree: Option<Vec<u8>>)
+    // Returns (commit: Vec<u8>, welcome: Option<Vec<u8>>, addedIndices: Vec<u32>,
+    // ratchetTree: Option<Vec<u8>>, skippedIndices: Vec<u32>)
     // `addedIndices` are positions in `devices` actually included - entries skipped (invalid, or
     // already an existing member) are omitted rather than collapsing to a bare count.
-    const result = await invoke<[number[], number[] | null, number[], number[] | null]>(
+    // `skippedIndices` are positions dropped for an INVALID/undeserializable KeyPackage (not the
+    // already-member dedup), surfaced so the loss is not silent. [[C5]]
+    const result = await invoke<[number[], number[] | null, number[], number[] | null, number[]]>(
       'ajouter_membres_bulk',
       { groupId, keyPackagesBytes }
     );
     const addedIndices = result[2];
     const addedDeviceIds = addedIndices.map((i) => devices[i].deviceId);
+    const skippedDeviceIds = (result[4] ?? []).map((i) => devices[i].deviceId);
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
       addedDeviceIds,
       ratchetTree: result[3] ? Uint8Array.from(result[3]) : undefined,
+      skippedDeviceIds,
     };
   }
 

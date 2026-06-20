@@ -97,7 +97,7 @@ fn test_scenario1_happy_path() {
 
     // Étapes 2-4
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (commit1, welcome1, added1, rt1) = jolan1
+    let (commit1, welcome1, added1, rt1, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
     println!(
@@ -116,7 +116,7 @@ fn test_scenario1_happy_path() {
 
     // Étapes 5-8
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
-    let (commit2, welcome2, added2, rt2) = jolan1
+    let (commit2, welcome2, added2, rt2, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("add jolan3");
     println!(
@@ -217,7 +217,7 @@ fn test_scenario2_race_condition() {
     // Setup initial (époque 0→1)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_, welcome_test1, _, rt_test1) = jolan1
+    let (_, welcome_test1, _, rt_test1, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
     test1
@@ -232,7 +232,7 @@ fn test_scenario2_race_condition() {
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
     // jolan-dev1 ajoute jolan3 PREMIER (côté jolan, processPendingInvitations)
-    let (commit_a, welcome_a, _, rt_a) = jolan1
+    let (commit_a, welcome_a, _, rt_a, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");
     println!(
@@ -244,7 +244,7 @@ fn test_scenario2_race_condition() {
     // MÊME KeyPackage ! Les deux partaient de la même base epoch.
     let result_test1_add = test1.add_members_bulk(gid, &[&kp_jolan3]);
     match &result_test1_add {
-        Ok((c, _, _, _)) => println!(
+        Ok((c, _, _, _, _)) => println!(
             "  ⚠ [7] test-dev1 commit-B créé (epoch 1→2 DIVERGÉ), {} bytes - RACE ACTIVE",
             c.len()
         ),
@@ -357,7 +357,7 @@ fn test_scenario3_fix_single_adder_guard() {
     // Setup (epoch 0→1)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_, welcome_test1, _, rt_test1) = jolan1
+    let (_, welcome_test1, _, rt_test1, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
     test1
@@ -372,7 +372,7 @@ fn test_scenario3_fix_single_adder_guard() {
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
     // jolan-dev1 ajoute jolan-dev3 (via processPendingInvitations)
-    let (commit_a, welcome_a, added, rt_a) = jolan1
+    let (commit_a, welcome_a, added, rt_a, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");
     println!(
@@ -440,7 +440,7 @@ fn test_scenario4_bidirectional_messaging() {
     // Setup complet (même que scénario 3)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_commit1, welcome_test1, _, rt1) = jolan1
+    let (_commit1, welcome_test1, _, rt1, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
     test1
@@ -448,7 +448,7 @@ fn test_scenario4_bidirectional_messaging() {
         .expect("test1 join");
 
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
-    let (commit2, welcome_jolan3, _, rt2) = jolan1
+    let (commit2, welcome_jolan3, _, rt2, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("add jolan3");
     test1

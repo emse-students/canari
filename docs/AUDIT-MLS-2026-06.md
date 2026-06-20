@@ -36,7 +36,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C2 | Foreground ne recharge jamais mls.bin au resume | OPEN (P2, design + verif device) | - |
 | C3 | Double envoi outbox foreground/background | FIXED (P2, reconcile au resume) | ce9232bd |
 | C4 | process_welcome persiste avant les guards -> orphelin | FIXED (P3) | 10d8e160 |
-| C5 | add_members_bulk perte silencieuse de membres | OPEN (P4, cross-couche avec inviteMembers) | - |
+| C5 | add_members_bulk perte silencieuse de membres | FIXED (surface : skipped_indices remontes + logs ; auto-retry differe) | (ce commit) |
 | C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | FIXED (P-fork) | 60f57f08 |
 | C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | FIXED (B: heal-on-reject + A: valider-puis-merger sur REMOVE) | 3717c095 + (ce commit) |
 | H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | FIXED (P-fork) | 60f57f08 |
@@ -193,12 +193,27 @@ Au `return Err`, le groupe est deja persiste en storage mais pas dans `self.grou
 
 ### C5 - `add_members_bulk` : perte silencieuse de membres a KeyPackage invalide
 
-Lieu : `frontend/mls-core/src/lib.rs:596-625`.
+Lieu : `frontend/mls-core/src/lib.rs` (`add_members_bulk`).
 Toute KeyPackage qui echoue a `validate` (expiree, mauvais ciphersuite, cle privee perdue chez
-le pair) est `continue` sans remontee au caller. Seul `added_indices` revient. La recovery
-n'envoie de Welcome qu'aux `addedDeviceIds`
-(`frontend/src/lib/utils/chat/recovery.ts:601-610`) -> le device saute n'est jamais invite ni
+le pair) ou a deserialiser etait `continue` sans remontee au caller. Seul `added_indices` revenait.
+La recovery n'envoie de Welcome qu'aux `addedDeviceIds`
+(`frontend/src/lib/utils/chat/recovery.ts`) -> le device saute n'etait jamais invite ni
 retente -> disparition silencieuse du groupe.
+
+**FIXED (surface)** : `add_members_bulk` retourne desormais un 5e champ `skipped_indices` (positions
+des KeyPackages **invalides/illisibles** uniquement ; les deja-membres restent une dedup benigne hors
+de cette liste, signalee par `MlsError::AlreadyMember`). Le champ est threade jusqu'au TS
+(`AddMembersBulkResult` mls-core -> 5e element du tableau WASM / 5e du tuple Tauri ->
+`skippedDeviceIds` dans `IMlsService.addMembersBulk` et les deux services). Les 4 callers
+(`reboot`, et les 3 sites de `groupCreation`) logguent fort via le helper partage
+`warnSkippedKeyPackages` (`groupActions.ts`) : log applicatif + `console.warn`, plus aucune perte
+silencieuse. L'appel OpenMLS `add_members` est inchange byte-a-byte -> neutre sur le protocole.
+Test : `add_members_dedup.rs::add_members_bulk_reports_invalid_keypackage_in_skipped_indices`
+(un KP corrompu -> index dans `skipped`, le KP valide du lot est ajoute normalement).
+
+**Differe (auto-remediation, verif device)** : la re-recuperation d'un KeyPackage frais pour le
+device saute puis un nouvel ajout/reboot automatique. La remediation actuelle est la visibilite
+(log/warn) ; le device rejoindra au prochain ajout/reboot une fois un KeyPackage valide republie.
 
 ---
 

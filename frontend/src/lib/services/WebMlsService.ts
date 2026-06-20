@@ -667,6 +667,7 @@ export class WebMlsService extends BaseMlsService {
     welcome?: Uint8Array;
     addedDeviceIds: string[];
     ratchetTree?: Uint8Array;
+    skippedDeviceIds: string[];
   }> {
     // Build a JS Array of Uint8Array for the WASM call
     const jsArray = devices.reduce((arr, d) => {
@@ -674,17 +675,23 @@ export class WebMlsService extends BaseMlsService {
       return arr;
     }, [] as Uint8Array[]);
     const res = this.client.add_members_bulk(groupId, jsArray);
-    // res = [commit: Uint8Array, welcome: Uint8Array|undefined, added_indices: number[], ratchetTree]
+    // res = [commit: Uint8Array, welcome: Uint8Array|undefined, added_indices: number[],
+    //        ratchetTree, skipped_indices: number[]]
     // `added_indices` are the positions in `devices` actually included in the commit - WASM
     // silently skips invalid key packages and ones already belonging to an existing member, so
     // a bare count would misalign with `devices` whenever a skip isn't the very last entry.
+    // `skipped_indices` are positions dropped for an INVALID/undeserializable KeyPackage (not the
+    // already-member dedup), surfaced so the loss is not silent. [[C5]]
     const addedIndices = res[2] as number[];
     const addedDeviceIds = addedIndices.map((i) => devices[i].deviceId);
+    const skippedIndices = (res[4] as number[] | undefined) ?? [];
+    const skippedDeviceIds = skippedIndices.map((i) => devices[i].deviceId);
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
       addedDeviceIds,
       ratchetTree: res[3] as Uint8Array | undefined,
+      skippedDeviceIds,
     };
   }
 

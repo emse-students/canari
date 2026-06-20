@@ -23,7 +23,7 @@ fn pair_in_group(gid: &str) -> (MlsManager, MlsManager, String) {
     let mut bob = make_device("bob", "dev1");
     alice.create_group(gid.to_string()).expect("create_group");
     let kp_bob = bob.generate_key_package().expect("kp bob");
-    let (_, welcome, _, rt) = alice
+    let (_, welcome, _, rt, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("add bob to group");
     bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())

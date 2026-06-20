@@ -18,7 +18,8 @@ fn group_with_alice_bob() -> (MlsManager, &'static str) {
     let gid = "g-pending";
     alice.create_group(gid.to_string()).expect("create_group");
     let kp_bob = bob.generate_key_package().expect("kp bob");
-    let (_c, welcome, _added, rt) = alice.add_members_bulk(gid, &[&kp_bob]).expect("add bob");
+    let (_c, welcome, _added, rt, _skipped) =
+        alice.add_members_bulk(gid, &[&kp_bob]).expect("add bob");
     bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
         .expect("bob joins");
     (alice, gid)

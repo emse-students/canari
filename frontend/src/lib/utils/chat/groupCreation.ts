@@ -1,7 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
-import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
+import { persistMlsStateAfterMutation, warnSkippedKeyPackages } from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
@@ -130,6 +130,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         log(
           `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
         );
+        warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[GROUP]', log);
 
         if (bulk.welcome) {
           for (const did of bulk.addedDeviceIds) {
@@ -268,6 +269,7 @@ async function processBulkAddition(
     try {
       // Add all devices in bulk (single MLS commit)
       const bulk = await mlsService.addMembersBulk(conversation.id, allDevices);
+      warnSkippedKeyPackages(bulk.skippedDeviceIds, conversation.id, '[SYNC]', log);
 
       await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
@@ -374,6 +376,7 @@ async function performDirectAdd(
     log(
       `[ADD] ${bulk.addedDeviceIds.length} appareil(s), welcome=${!!bulk.welcome}, commit=${!!bulk.commit}`
     );
+    warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[ADD]', log);
 
     // registerMember est user-level (upsert GroupMember) : un seul appel par userId suffit.
     // Appeler une fois par device génère N-1 transactions inutiles pour un user multi-device.

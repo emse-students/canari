@@ -91,7 +91,7 @@ fn bench_send_message(c: &mut Criterion) {
     let group_id = "bench-send".to_string();
     alice.create_group(group_id.clone()).expect("create_group");
     let kp = bob.generate_key_package().expect("key_package");
-    let (_c, welcome, _, rt) = alice
+    let (_c, welcome, _, rt, _skipped) = alice
         .add_members_bulk(&group_id, &[&kp])
         .expect("add_members_bulk");
     bob.process_welcome(welcome.as_deref().expect("welcome"), rt.as_deref())

@@ -131,6 +131,9 @@ export interface IMlsService {
    * subset of the input. If *every* device in the batch is already a member, the call rejects
    * with an error whose message contains `ALREADY_MEMBER` - callers should detect this and
    * recover (e.g. remove then re-add the affected user) instead of surfacing a raw crypto error.
+   * Devices dropped because their KeyPackage was **invalid/undeserializable** (expired, wrong
+   * ciphersuite, lost private key, corrupted bytes) are reported in `skippedDeviceIds` so the
+   * caller can surface a non-silent member loss instead of letting them disappear. [[C5]]
    */
   addMembersBulk(
     groupId: string,
@@ -140,6 +143,7 @@ export interface IMlsService {
     welcome?: Uint8Array;
     addedDeviceIds: string[];
     ratchetTree?: Uint8Array;
+    skippedDeviceIds: string[];
   }>;
   /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;

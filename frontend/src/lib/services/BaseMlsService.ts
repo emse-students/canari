@@ -934,6 +934,7 @@ export abstract class BaseMlsService implements IMlsService {
     welcome?: Uint8Array;
     addedDeviceIds: string[];
     ratchetTree?: Uint8Array;
+    skippedDeviceIds: string[];
   }>;
   abstract processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
   abstract sendMessage(

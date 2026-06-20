@@ -3,7 +3,7 @@ import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import type { SvelteMap } from 'svelte/reactivity';
-import { sendFullHistoryBundle } from './groupActions';
+import { sendFullHistoryBundle, warnSkippedKeyPackages } from './groupActions';
 import { resolveTerminalGroup } from './groupSyncEligibility';
 import { reassignOutboxConversation } from './outbox';
 import { markGroupNotReady, clearGroupNotReady, groupNotReadyForMs } from './rebootDeadline';
@@ -588,6 +588,7 @@ async function inviteMembers(
   try {
     const bulk = await mlsService.addMembersBulk(successorId, allDevices);
     log(`[REBOOT] ${bulk.addedDeviceIds.length} device(s) ajouté(s)`);
+    warnSkippedKeyPackages(bulk.skippedDeviceIds, successorId, '[REBOOT]', log);
 
     // Persister AVANT d'envoyer (si crash, les membres peuvent rejoindre via welcome_request)
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);

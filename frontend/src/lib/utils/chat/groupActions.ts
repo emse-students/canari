@@ -5,6 +5,30 @@ import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 
+/**
+ * Remonte (log applicatif + `console.warn`) les devices ignorés par `addMembersBulk` parce que
+ * leur KeyPackage était invalide/illisible. Sans cette remontée, un device sauté disparaîtrait
+ * silencieusement : jamais invité, jamais retenté. Le remède (republication d'un KeyPackage frais
+ * puis nouvel ajout/reboot) est manuel/différé ; ici on garantit au moins la visibilité. [[C5]]
+ *
+ * @param tag Préfixe de log du caller (ex. `[ADD]`, `[SYNC]`, `[GROUP]`, `[REBOOT]`).
+ */
+export function warnSkippedKeyPackages(
+  skippedDeviceIds: string[],
+  groupId: string,
+  tag: string,
+  log: (msg: string) => void
+): void {
+  if (skippedDeviceIds.length === 0) return;
+  log(
+    `${tag} ${skippedDeviceIds.length} device(s) ignoré(s) (KeyPackage invalide): ${skippedDeviceIds.join(', ')} - non invité(s), republication d'un KeyPackage requise.`
+  );
+  console.warn(
+    `${tag}[C5] KeyPackage invalide pour ${skippedDeviceIds.length} device(s) sur ${groupId}:`,
+    skippedDeviceIds
+  );
+}
+
 /** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
   const members = await mlsService.getGroupMembers(groupId);

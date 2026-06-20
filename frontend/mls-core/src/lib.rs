@@ -40,12 +40,24 @@ pub enum MlsError {
     AlreadyMember(String),
 }
 
-/// (commit_bytes, welcome_bytes, original_indices_added, ratchet_tree_bytes).
-/// `original_indices_added` donne, dans l'ordre, les positions (dans le slice d'entrée
-/// `key_packages_bytes`) des KeyPackages effectivement inclus dans le commit - les positions
-/// invalides ou correspondant à des membres déjà présents sont omises plutôt que de fausser
-/// un simple décompte.
-type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Option<Vec<u8>>);
+/// Resultat de `add_members_bulk` :
+/// `(commit, welcome, added_indices, ratchet_tree, skipped_indices)`.
+/// - `added_indices` donne, dans l'ordre, les positions (dans le slice d'entree
+///   `key_packages_bytes`) des KeyPackages effectivement inclus dans le commit.
+/// - `skipped_indices` donne les positions des KeyPackages **invalides ou illisibles**
+///   (expiration, mauvaise ciphersuite, cle privee perdue chez le pair, bytes corrompus).
+///   Ce sont des pertes potentiellement recuperables (republication d'un KeyPackage frais)
+///   que l'appelant doit remonter au lieu de les laisser disparaitre silencieusement. [[C5]]
+///   Les positions correspondant a un membre **deja present** ne sont PAS comptees ici :
+///   c'est une deduplication intentionnelle (le device est deja - ou fantome - dans l'arbre),
+///   signalee globalement par `MlsError::AlreadyMember` quand rien d'autre n'a ete ajoute.
+type AddMembersBulkResult = (
+    Vec<u8>,
+    Option<Vec<u8>>,
+    Vec<u32>,
+    Option<Vec<u8>>,
+    Vec<u32>,
+);
 type AddMemberResult = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 /// Sender-ratchet tolerance for incoming application messages, shared by group
@@ -604,20 +616,22 @@ impl MlsManager {
         group_id: &str,
         key_package_bytes: &[u8],
     ) -> Result<AddMemberResult, MlsError> {
-        let (commit, welcome, _, ratchet_tree) =
+        let (commit, welcome, _, ratchet_tree, _) =
             self.add_members_bulk(group_id, &[key_package_bytes])?;
         Ok((commit, welcome, ratchet_tree))
     }
 
     /// Add multiple members in a single commit so all new members share the same epoch.
-    /// Returns (commit_bytes, welcome_bytes, original_indices_added, ratchet_tree_bytes).
-    /// Silently skips key packages that fail validation, and key packages whose identity
-    /// is already present in the group's tree (re-adding one would make OpenMLS reject the
-    /// *entire* commit with `ProposalValidationError(DuplicateSignatureKey)`). The latter
-    /// happens when a previous add attempt merged its commit locally but failed to deliver
-    /// the Welcome/commit over the network, leaving a "ghost" member that the caller should
-    /// detect via `MlsError::AlreadyMember` (when nothing else was added) and heal by removing
-    /// then re-adding that identity.
+    /// Returns `(commit, welcome, added_indices, ratchet_tree, skipped_indices)` (see
+    /// [`AddMembersBulkResult`]). Key packages that fail validation/deserialisation are skipped
+    /// and reported via `skipped_indices` so the caller can surface them ([[C5]]) instead of a
+    /// silent member loss. Key packages whose identity is already present in the group's tree are
+    /// also skipped but NOT reported in `skipped_indices` (re-adding one would make OpenMLS reject
+    /// the *entire* commit with `ProposalValidationError(DuplicateSignatureKey)`); this happens
+    /// when a previous add attempt merged its commit locally but failed to deliver the
+    /// Welcome/commit over the network, leaving a "ghost" member that the caller should detect via
+    /// `MlsError::AlreadyMember` (when nothing else was added) and heal by removing then re-adding
+    /// that identity.
     pub fn add_members_bulk(
         &mut self,
         group_id: &str,
@@ -641,18 +655,27 @@ impl MlsManager {
         // this same batch), tracking the original index of each one kept.
         let mut key_packages: Vec<KeyPackage> = Vec::new();
         let mut added_indices: Vec<u32> = Vec::new();
+        // Positions des KeyPackages invalides/illisibles, remontees a l'appelant (pas les
+        // deja-membres, qui relevent d'une dedup benigne). [[C5]]
+        let mut skipped_indices: Vec<u32> = Vec::new();
         let mut any_already_member = false;
         for (idx, kp_bytes) in key_packages_bytes.iter().enumerate() {
             let kp = match KeyPackageIn::tls_deserialize(&mut &kp_bytes[..]) {
                 Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
                     Ok(kp) => kp,
                     Err(e) => {
-                        log::warn!("Skipping invalid KeyPackage: {:?}", e);
+                        log::warn!("Skipping invalid KeyPackage at index {}: {:?}", idx, e);
+                        skipped_indices.push(idx as u32);
                         continue;
                     }
                 },
                 Err(e) => {
-                    log::warn!("Skipping undeserializable KeyPackage: {:?}", e);
+                    log::warn!(
+                        "Skipping undeserializable KeyPackage at index {}: {:?}",
+                        idx,
+                        e
+                    );
+                    skipped_indices.push(idx as u32);
                     continue;
                 }
             };
@@ -711,6 +734,7 @@ impl MlsManager {
             Some(welcome_bytes),
             added_indices,
             Some(ratchet_tree_bytes),
+            skipped_indices,
         ))
     }
 

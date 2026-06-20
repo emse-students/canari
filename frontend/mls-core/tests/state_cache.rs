@@ -39,7 +39,7 @@ fn save_state_rebuilds_after_mutation() {
         .create_group(group_id.to_string())
         .expect("alice create_group");
     let kp = bob.generate_key_package().expect("bob key_package");
-    let (_commit, welcome, _, ratchet_tree) = alice
+    let (_commit, welcome, _, ratchet_tree, _skipped) = alice
         .add_members_bulk(group_id, &[&kp])
         .expect("add_members_bulk");
     bob.process_welcome(

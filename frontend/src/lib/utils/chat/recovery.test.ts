@@ -39,9 +39,12 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
-    addMembersBulk: vi
-      .fn()
-      .mockResolvedValue({ commit: new Uint8Array([2]), addedDeviceIds: [], welcome: undefined }),
+    addMembersBulk: vi.fn().mockResolvedValue({
+      commit: new Uint8Array([2]),
+      addedDeviceIds: [],
+      skippedDeviceIds: [],
+      welcome: undefined,
+    }),
     sendCommit: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue(undefined),
@@ -187,6 +190,7 @@ describe('reboot', () => {
         commit: new Uint8Array([2]),
         welcome: new Uint8Array([3]),
         addedDeviceIds: ['dev2'],
+        skippedDeviceIds: [],
         ratchetTree: undefined,
       }),
     });
@@ -268,6 +272,7 @@ describe('reboot', () => {
         commit: new Uint8Array([2]),
         welcome: new Uint8Array([3]),
         addedDeviceIds: ['dev2'],
+        skippedDeviceIds: [],
         ratchetTree: undefined,
       }),
     });
@@ -328,6 +333,7 @@ describe('reboot', () => {
         commit: new Uint8Array([2]),
         welcome: new Uint8Array([3]),
         addedDeviceIds: ['dev-current'],
+        skippedDeviceIds: [],
         ratchetTree: undefined,
       }),
     });
