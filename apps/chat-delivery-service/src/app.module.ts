@@ -71,6 +71,7 @@ const RedisProvider: Provider = {
       KeyPackage,
       OneTimeKeyPackage,
       GroupMember,
+      UserDismissedGroup,
       Group,
       PinVerifier,
       DeviceGroupMembership,
