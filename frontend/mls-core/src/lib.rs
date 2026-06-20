@@ -510,10 +510,9 @@ impl MlsManager {
             .remove_members(&self.provider, &self.keypair, &leaf_indices)
             .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
 
-        group
-            .merge_pending_commit(&self.provider)
-            .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
-
+        // C7-A : on NE merge PAS ici. Le commit n'est que *stage*. L'appelant le valide cote
+        // serveur PUIS appelle merge_pending_commit_for (accepte) ou clear_pending_commit_for
+        // (rejete) - plus jamais de merge-avant-validation, donc plus de fork local sur rejet.
         self.mark_state_dirty();
         commit_msg_out
             .tls_serialize_detached()
@@ -559,14 +558,42 @@ impl MlsManager {
             .remove_members(&self.provider, &self.keypair, &leaf_indices)
             .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
 
-        group
-            .merge_pending_commit(&self.provider)
-            .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
-
+        // C7-A : stage uniquement (cf. remove_members_for_users) - merge/clear par l'appelant
+        // apres validation serveur.
         self.mark_state_dirty();
         commit_msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))
+    }
+
+    /// Merge le commit en attente (staged) du groupe : a appeler APRES que le serveur a accepte
+    /// le commit (`validateCommit`). Avance l'epoch local. Pendant de `clear_pending_commit_for`.
+    /// [[C7]] Option A : valider-puis-merger, jamais de fork local sur rejet.
+    pub fn merge_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        group
+            .merge_pending_commit(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
+        self.mark_state_dirty();
+        Ok(())
+    }
+
+    /// Annule le commit en attente (staged) du groupe : a appeler quand le serveur REJETTE le
+    /// commit. L'epoch local reste inchange (aucun fork) et un nouveau commit peut etre genere.
+    /// [[C7]] Option A.
+    pub fn clear_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        group
+            .clear_pending_commit(self.provider.storage())
+            .map_err(|e| MlsError::OpenMls(format!("Clear pending commit error: {:?}", e)))?;
+        self.mark_state_dirty();
+        Ok(())
     }
 
     // --- C. AJOUT DE MEMBRE(S) ---
@@ -659,6 +686,10 @@ impl MlsManager {
             .add_members(&self.provider, &self.keypair, &key_packages)
             .map_err(|e| MlsError::OpenMls(format!("AddMembers error: {:?}", e)))?;
 
+        // L'ajout reste merge-immediat : (1) le chemin add est serialise cross-device par
+        // l'add-lock Redis (pas de course concurrente -> pas de fork concurrent a healer), et
+        // (2) l'export du ratchet tree ci-dessous exige l'etat POST-commit (epoch N+1). Option A
+        // (valider-puis-merger) est applique au chemin REMOVE, non protege par l'add-lock. [[C7]]
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;

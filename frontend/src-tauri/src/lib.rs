@@ -511,6 +511,39 @@ fn retirer_membres_par_appareil(
         .map_err(|e| e.to_string())
 }
 
+/// Confirme (merge) un commit de retrait *stage* APRES acceptation serveur (`validateCommit`).
+/// Avance l'epoch local. Pendant de `annuler_commit`. [[C7]] Option A : valider-puis-merger,
+/// jamais de fork local sur rejet (chemin REMOVE, non protege par l'add-lock).
+///
+/// NE persiste PAS : l'appelant enchaine `persistMlsStateAfterMutation` (qui detient le pin,
+/// recupere via le keystore au niveau session) comme pour tout autre mutation - meme fenetre
+/// merge->persist qu'avant (le merge etait alors fait dans `retirer_membres`).
+#[tauri::command]
+fn confirmer_commit(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .merge_pending_commit_for(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Annule (clear) un commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
+/// inchange (aucun fork). Pas de persistance : `mls.bin` est deja a l'etat pre-stage. [[C7]]
+#[tauri::command]
+fn annuler_commit(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .clear_pending_commit_for(&group_id)
+        .map_err(|e| e.to_string())
+}
+
 /// Déchiffre un message MLS entrant.
 /// Si le déchiffrement échoue avec "Process error:" (gap du Sender Ratchet : la
 /// génération reçue est supérieure à celle attendue), le message est stocké dans
@@ -1854,6 +1887,8 @@ pub fn run() {
             ajouter_membres_bulk,
             retirer_membres,
             retirer_membres_par_appareil,
+            confirmer_commit,
+            annuler_commit,
             trailer_welcome,
             envoyer_message,
             envoyer_message_bytes,

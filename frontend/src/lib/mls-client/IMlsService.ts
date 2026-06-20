@@ -224,8 +224,15 @@ export interface IMlsService {
    * Broadcast a structural commit to all group members.
    * `excludeDeviceIds` - optional list of "userId:deviceId" pairs to skip
    * (typically the inviter and the newly-welcomed invitee).
+   * `staged` - C7 Option A : si vrai, le commit a ete genere SANS merge local (chemin REMOVE) ;
+   * on valide cote serveur PUIS on merge (accepte) ou annule (rejete), donc aucun fork sur rejet.
    */
-  sendCommit(commitBytes: Uint8Array, groupId: string, excludeDeviceIds?: string[]): Promise<void>;
+  sendCommit(
+    commitBytes: Uint8Array,
+    groupId: string,
+    excludeDeviceIds?: string[],
+    staged?: boolean
+  ): Promise<void>;
   /** Registers a user as a member of a group on the delivery service (server-side membership tracking). */
   registerMember(groupId: string, userId: string): Promise<void>;
   /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.

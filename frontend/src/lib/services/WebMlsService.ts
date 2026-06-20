@@ -819,15 +819,43 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** WASM client wrapper - validates the commit epoch client-side then broadcasts the MLS commit to all group members (parity TauriMlsService). */
+  /**
+   * WASM client wrapper - validates the commit epoch client-side then broadcasts the MLS commit
+   * to all group members (parity TauriMlsService).
+   *
+   * `staged` (C7 Option A, chemin REMOVE) : `remove_members*` a genere le commit SANS le merger.
+   * On valide d'abord ; sur acceptation on merge (`merge_pending_commit`) PUIS on diffuse, sur
+   * rejet on annule (`clear_pending_commit`) - l'epoch local n'a jamais bouge, donc AUCUN fork.
+   * Le chemin add (`staged=false`) reste merge-avant-validation (add-lock + heal C7-B).
+   */
   async sendCommit(
     commitBytes: Uint8Array,
     groupId: string,
-    excludeDeviceIds?: string[]
+    excludeDeviceIds?: string[],
+    staged = false
   ): Promise<void> {
     const proto = toBase64(commitBytes);
     // WASM getEpoch() reads from in-memory state - always up-to-date at send time.
     const currentEpoch = this.getEpoch(groupId);
+
+    if (staged) {
+      // baseEpoch = epoch courant : le commit stage transitionnera N -> N+1 (rien n'est merge).
+      const validation = await this.delivery.validateCommitEpoch(groupId, currentEpoch);
+      if (!validation.accepted) {
+        // Rejet : on annule le commit stage (epoch local inchange). Erreur SANS le motif
+        // `server epoch:.., sent:..` -> traitee comme un echec a retenter, pas un fork. [[C7]]
+        try {
+          this.client?.clear_pending_commit(groupId);
+        } catch {
+          /* best-effort */
+        }
+        throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
+      }
+      this.client?.merge_pending_commit(groupId);
+      await this.delivery.broadcastCommit(proto, groupId, excludeDeviceIds);
+      return;
+    }
+
     const baseEpoch = commitBaseEpochForValidation(currentEpoch);
     await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
   }
@@ -876,7 +904,8 @@ export class WebMlsService extends BaseMlsService {
       return arr;
     }, [] as string[]);
     const commitBytes: Uint8Array = this.client.remove_members(groupId, jsArray);
-    await this.sendCommit(commitBytes, groupId);
+    // staged=true : le retrait est valide-puis-merge (C7 Option A, pas de fork sur rejet).
+    await this.sendCommit(commitBytes, groupId, undefined, true);
   }
 
   /** WASM client wrapper - calls `this.client.remove_members_by_device` to remove specific devices by identity string and broadcasts the resulting commit. */
@@ -886,7 +915,8 @@ export class WebMlsService extends BaseMlsService {
       return arr;
     }, [] as string[]);
     const commitBytes: Uint8Array = this.client.remove_members_by_device(groupId, jsArray);
-    await this.sendCommit(commitBytes, groupId);
+    // staged=true : le retrait est valide-puis-merge (C7 Option A, pas de fork sur rejet).
+    await this.sendCommit(commitBytes, groupId, undefined, true);
   }
 
   /** WASM client wrapper - vérifie via `this.client.key_package_has_private` qu'on possède la clé privée du KeyPackage. */

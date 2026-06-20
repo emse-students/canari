@@ -479,6 +479,24 @@ impl WasmMlsClient {
             .remove_members_for_devices(&group_id, &id_slices)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
+
+    /// Merge le commit de retrait *stage* APRES acceptation serveur (`validateCommit`). Avance
+    /// l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
+    #[wasm_bindgen]
+    pub fn merge_pending_commit(&mut self, group_id: String) -> Result<(), JsValue> {
+        self.manager
+            .merge_pending_commit_for(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Annule le commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
+    /// inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
+    #[wasm_bindgen]
+    pub fn clear_pending_commit(&mut self, group_id: String) -> Result<(), JsValue> {
+        self.manager
+            .clear_pending_commit_for(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
 }
 
 // Security Utilities (Encryption at Rest)

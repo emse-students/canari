@@ -38,7 +38,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C4 | process_welcome persiste avant les guards -> orphelin | FIXED (P3) | 10d8e160 |
 | C5 | add_members_bulk perte silencieuse de membres | OPEN (P4, cross-couche avec inviteMembers) | - |
 | C6 | Commit background bypasse validateCommit -> activeEpoch serveur desync -> commits foreground rejetes (fork) | FIXED (P-fork) | 60f57f08 |
-| C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | FIXED (Option B: heal-on-reject ecart 1) | (ce commit) |
+| C7 | merge_pending_commit avant validation serveur -> commit rejete = fork local permanent | FIXED (B: heal-on-reject + A: valider-puis-merger sur REMOVE) | 3717c095 + (ce commit) |
 | H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | FIXED (P-fork) | 60f57f08 |
 | C8 | history bundle saute quand le commit broadcast echoue -> nouvel arrivant prive d'historique | FIXED (decouple du commit) | (ce commit) |
 | H1 | TTL locks reboot/add < duree reelle | FIXED (P4: add 30s/clamp 60s, reboot 90s/clamp 180s) | (ce commit) |
@@ -340,12 +340,26 @@ jamais diffuse en cas de rejet, les autres membres restent sains : seul le perda
 Edge connu non couvert par B : rejet `concurrent_commit` (lock non acquis) ou serverEpoch ==
 sentEpoch -> `parseForkedEpoch` ne le detecte pas (retombe sur le retry du cycle suivant). Rare.
 
-**Option A (durcissement futur, non livree)** : valider-puis-merger dans `mls-core`. Generer le
-commit sans merge -> `validateCommit` -> succes : `merge_pending_commit` ; rejet :
-`clear_pending_commit` (aucun fork). Elimine la classe entiere a la source mais refactor profond
-(mls-core + wasm + tauri + JNI + ~6 callers TS) et exige de verifier que le pending-commit OpenMLS
-survit a la serialisation mls.bin entre generation et validation. A planifier avec son propre
-cycle de verif device.
+**Option A (valider-puis-merger) - LIVREE sur le chemin REMOVE.** `remove_members_for_*` *stage*
+desormais le commit sans le merger ; l'appelant valide cote serveur PUIS confirme
+(`merge_pending_commit_for` / commande `confirmer_commit` / binding wasm `merge_pending_commit`)
+sur acceptation, ou annule (`clear_pending_commit_for` / `annuler_commit` / `clear_pending_commit`)
+sur rejet. L'epoch local ne bouge jamais avant l'acceptation -> AUCUN fork possible sur un retrait
+rejete. C'est le chemin vise par l'edge concurrent restant : les removes/kicks ne prennent PAS
+l'add-lock (contrairement aux adds), donc deux retraits concurrents - ou un retrait pendant un
+ajout - pouvaient se forker. Cote service, `sendCommit(..., staged=true)` orchestre
+validate->merge/clear ; le rejet leve une erreur SANS le motif `server epoch:.., sent:..` pour que
+`isSenderForkError` ne declenche PAS de recovery (il n'y a pas de fork a healer, juste un retry).
+La persistance reste a la charge de l'appelant (`persistMlsStateAfterMutation`, meme fenetre
+merge->persist qu'avant). Tests : `frontend/mls-core/tests/pending_commit.rs` (stage n'avance pas
+l'epoch ; confirm avance de 1 ; abort laisse inchange et autorise un nouveau commit).
+
+**Pourquoi l'ADD reste merge-immediat** : (1) le chemin add est serialise cross-device par
+l'add-lock Redis (pas de course concurrente -> pas de fork concurrent a healer ; un rejet eventuel
+est healé par Option B), et (2) l'export du ratchet tree (`export_ratchet_tree`) exige l'etat
+POST-commit (epoch N+1) - le differer casserait le Welcome du nouvel arrivant. Un add-path Option A
+demanderait de recuperer l'arbre N+1 sans merger (via le GroupInfo embarque) : refactor a part avec
+verif device.
 
 ### C8 - Le history bundle est saute quand le commit broadcast echoue
 

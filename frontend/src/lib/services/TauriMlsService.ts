@@ -697,18 +697,50 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
-  /** Tauri-native `invoke` wrapper - validates the commit epoch via the delivery service then broadcasts the MLS commit to all group members. */
+  /**
+   * Tauri-native `invoke` wrapper - validates the commit epoch via the delivery service then
+   * broadcasts the MLS commit to all group members.
+   *
+   * `staged` (C7 Option A, chemin REMOVE) : le commit a ete genere SANS etre merge localement
+   * (`retirer_membres*`). On valide d'abord ; sur acceptation on confirme (merge) PUIS on diffuse,
+   * sur rejet on annule le commit stage - l'epoch local n'a jamais bouge, donc AUCUN fork. Le
+   * chemin add (`staged=false`) reste merge-avant-validation (serialise par l'add-lock + heal C7-B).
+   */
   async sendCommit(
     commitBytes: Uint8Array,
     groupId: string,
-    excludeDeviceIds?: string[]
+    excludeDeviceIds?: string[],
+    staged = false
   ): Promise<void> {
     const proto = toBase64(commitBytes);
+
+    if (staged) {
+      // baseEpoch = epoch courant : le commit stage transitionnera N -> N+1 (rien n'est merge).
+      let currentEpoch = 0;
+      try {
+        currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
+        this._epochByGroupId.set(groupId, currentEpoch);
+      } catch {
+        /* 0 : le serveur validera */
+      }
+      const validation = await this.delivery.validateCommitEpoch(groupId, currentEpoch);
+      if (!validation.accepted) {
+        // Rejet : on annule le commit stage (epoch local inchange). Erreur SANS le motif
+        // `server epoch:.., sent:..` pour que parseForkedEpoch/isSenderForkError la traitent
+        // comme un simple echec a retenter, PAS comme un fork (il n'y en a pas). [[C7]]
+        await invoke('annuler_commit', { groupId }).catch(() => {});
+        throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
+      }
+      await invoke('confirmer_commit', { groupId });
+      await this.delivery.broadcastCommit(proto, groupId, excludeDeviceIds);
+      void this.refreshEpochCache(groupId);
+      return;
+    }
+
     let baseEpoch = 0;
     try {
-      // Rust applies the commit locally during add/remove, so obtenir_epoch returns
-      // the post-apply epoch. commitBaseEpochForValidation(n) = n-1 (pre-commit epoch
-      // the server uses to validate the transition).
+      // Add path : Rust a deja merge le commit, donc obtenir_epoch renvoie l'epoch post-merge.
+      // commitBaseEpochForValidation(n) = n-1 (epoch pre-commit que le serveur valide).
       const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
       this._epochByGroupId.set(groupId, currentEpoch);
       baseEpoch = commitBaseEpochForValidation(currentEpoch);
@@ -771,7 +803,8 @@ export class TauriMlsService extends BaseMlsService {
       groupId,
       userIds,
     });
-    await this.sendCommit(new Uint8Array(commitBytes), groupId);
+    // staged=true : le retrait est valide-puis-merge (C7 Option A, pas de fork sur rejet).
+    await this.sendCommit(new Uint8Array(commitBytes), groupId, undefined, true);
   }
 
   /** Tauri-native `invoke` wrapper - calls `retirer_membres_par_appareil` to remove specific devices by identity string and broadcasts the resulting commit. */
@@ -780,7 +813,8 @@ export class TauriMlsService extends BaseMlsService {
       groupId,
       deviceIdentities,
     });
-    await this.sendCommit(new Uint8Array(commitBytes), groupId);
+    // staged=true : le retrait est valide-puis-merge (C7 Option A, pas de fork sur rejet).
+    await this.sendCommit(new Uint8Array(commitBytes), groupId, undefined, true);
   }
 
   private async getRuntimeAppVersion(): Promise<string | undefined> {

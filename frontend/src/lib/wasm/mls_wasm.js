@@ -49,6 +49,19 @@ export class WasmMlsClient {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * Annule le commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
+     * inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
+     * @param {string} group_id
+     */
+    clear_pending_commit(group_id) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_clear_pending_commit(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * @param {string} group_id
      */
     create_group(group_id) {
@@ -169,6 +182,19 @@ export class WasmMlsClient {
             throw takeFromExternrefTable0(ret[1]);
         }
         return ret[0] !== 0;
+    }
+    /**
+     * Merge le commit de retrait *stage* APRES acceptation serveur (`validateCommit`). Avance
+     * l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
+     * @param {string} group_id
+     */
+    merge_pending_commit(group_id) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_merge_pending_commit(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
     }
     /**
      * @param {string} user_id

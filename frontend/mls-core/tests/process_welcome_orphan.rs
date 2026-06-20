@@ -35,9 +35,14 @@ fn rejected_stale_welcome_leaves_no_orphan_blocking_a_fresh_welcome() {
     let rt_v1 = rt_v1.expect("ratchet tree v1");
 
     // Retrait de bob (epoch 2) puis re-ajout via kp_bob2 (epoch 3) -> Welcome v2 a l'epoch 3.
+    // Le retrait STAGE le commit (C7 Option A) : on le confirme pour que bob quitte reellement
+    // l'arbre avant le re-ajout (sinon kp_bob2 serait rejete en AlreadyMember).
     alice
         .remove_members_for_devices(gid, &["bob:dev1"])
         .expect("remove bob");
+    alice
+        .merge_pending_commit_for(gid)
+        .expect("confirm remove bob");
     let (_, welcome_v2, _, rt_v2) = alice
         .add_members_bulk(gid, &[&kp_bob2])
         .expect("add bob v2");

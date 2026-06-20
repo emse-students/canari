@@ -310,13 +310,18 @@ export class MlsDeliveryApi {
     );
   }
 
-  /** Validates then broadcasts an MLS commit to all group members. `baseEpoch` is the epoch before the commit was applied, computed by the caller (WebMlsService/TauriMlsService). */
-  async sendValidatedCommit(
-    protoBase64: string,
+  /**
+   * Validates a commit's epoch against the server (`POST /api/mls/commit`) WITHOUT broadcasting.
+   * Returns the raw validation result (`accepted`, `reason`, `currentEpoch`, `newEpoch`) so the
+   * caller can decide what to do : le chemin add (commit deja merge) diffuse directement via
+   * `sendValidatedCommit` ; le chemin REMOVE en Option A (commit *stage*) merge localement APRES
+   * acceptation puis diffuse, ou annule le commit stage sur rejet - jamais de fork. [[C7]]
+   * Throws only on transport/HTTP failure (pas sur un rejet metier).
+   */
+  async validateCommitEpoch(
     groupId: string,
-    baseEpoch: number,
-    excludeDeviceIds?: string[]
-  ): Promise<void> {
+    baseEpoch: number
+  ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
     const validateRes = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),
@@ -325,13 +330,15 @@ export class MlsDeliveryApi {
     if (!validateRes.ok) {
       throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
     }
-    const validation = await validateRes.json();
-    if (!validation.accepted) {
-      throw new Error(
-        `Commit rejected: ${validation.reason || 'epoch_mismatch'} (server epoch: ${validation.currentEpoch}, sent: ${baseEpoch})`
-      );
-    }
+    return validateRes.json();
+  }
 
+  /** Broadcasts an already-validated commit to all group members (`POST /api/mls/send`, isCommit). */
+  async broadcastCommit(
+    protoBase64: string,
+    groupId: string,
+    excludeDeviceIds?: string[]
+  ): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),
@@ -347,6 +354,27 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw new Error(`Commit delivery HTTP error: ${res.status}`);
     }
+  }
+
+  /**
+   * Validates then broadcasts an MLS commit (chemin ADD : le commit est deja merge localement).
+   * `baseEpoch` is the epoch before the commit was applied, computed by the caller
+   * (WebMlsService/TauriMlsService). Sur rejet, throw avec le motif `server epoch:.., sent:..`
+   * que `parseForkedEpoch` reconnait pour declencher la heal C7-B (l'add a deja forke localement).
+   */
+  async sendValidatedCommit(
+    protoBase64: string,
+    groupId: string,
+    baseEpoch: number,
+    excludeDeviceIds?: string[]
+  ): Promise<void> {
+    const validation = await this.validateCommitEpoch(groupId, baseEpoch);
+    if (!validation.accepted) {
+      throw new Error(
+        `Commit rejected: ${validation.reason || 'epoch_mismatch'} (server epoch: ${validation.currentEpoch}, sent: ${baseEpoch})`
+      );
+    }
+    await this.broadcastCommit(protoBase64, groupId, excludeDeviceIds);
   }
 
   /**

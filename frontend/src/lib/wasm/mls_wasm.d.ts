@@ -15,6 +15,11 @@ export class WasmMlsClient {
      * map indices back to its own per-device bookkeeping.
      */
     add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
+    /**
+     * Annule le commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
+     * inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
+     */
+    clear_pending_commit(group_id: string): void;
     create_group(group_id: string): void;
     /**
      * Purge définitive d'un groupe (Poison Pill) : mémoire, stockage OpenMLS et
@@ -36,6 +41,11 @@ export class WasmMlsClient {
     get_epoch(group_id: string): number;
     get_groups(): Array<any>;
     key_package_has_private(key_package_bytes: Uint8Array): boolean;
+    /**
+     * Merge le commit de retrait *stage* APRES acceptation serveur (`validateCommit`). Avance
+     * l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
+     */
+    merge_pending_commit(group_id: string): void;
     constructor(user_id: string, device_id: string, state_bytes?: Uint8Array | null, pin?: string | null);
     process_incoming_message(group_id: string, message_bytes: Uint8Array): string | undefined;
     /**
@@ -96,6 +106,7 @@ export interface InitOutput {
     readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
     readonly wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
+    readonly wasmmlsclient_clear_pending_commit: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_drop_group: (a: number, b: number, c: number) => void;
     readonly wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
@@ -106,6 +117,7 @@ export interface InitOutput {
     readonly wasmmlsclient_get_epoch: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmmlsclient_get_groups: (a: number) => any;
     readonly wasmmlsclient_key_package_has_private: (a: number, b: number, c: number) => [number, number, number];
+    readonly wasmmlsclient_merge_pending_commit: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly wasmmlsclient_process_incoming_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_process_incoming_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
