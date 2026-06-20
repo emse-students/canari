@@ -54,7 +54,7 @@ export abstract class BaseMlsService implements IMlsService {
   protected readonly platform: 'web' | 'tauri';
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
-  onChannelEvent?: (event: { type: string; data: any }) => void;
+  onChannelEvent?: (event: { type: string; data: unknown }) => void;
 
   protected messageCallback:
     | ((

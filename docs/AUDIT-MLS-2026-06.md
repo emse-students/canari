@@ -47,8 +47,9 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H4 | validateCommit bypass epoch 0 | FIXED (P4: gate stricte baseEpoch==activeEpoch) | (ce commit) |
 | H5 | Push differe + background redondants | OPEN (P4, perf) | - |
 | H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
-| S1..S4, M1 | Strictness / veracite | OPEN (P5) | - |
-| M2 | Replay: WrongEpoch marque vu definitivement | OPEN (P5) | - |
+| S1, S2, S4, M1 | Strictness / veracite | OPEN (P5) | - |
+| S3 | `any` sur deliveryMeta/onChannelEvent/devices -> types | FIXED (P5) | (ce commit) |
+| M2 | Replay: WrongEpoch marque vu definitivement | FIXED (P5: WrongEpoch retryable comme GAP_QUEUED) | (ce commit) |
 | S5 | Classification d'erreurs MLS dupliquee 4 couches | OPEN (P5) | - |
 
 ### Note architecture Android (pour C1/C2)
@@ -444,6 +445,12 @@ indiscernable d'un groupe supprime et gele la recovery. Distinguer not-found de 
 - `devices.map((d: any) => ...)` : `frontend/src/lib/mls-client/mlsDeliveryApi.ts:150`.
 `IncomingDeliveryMeta` existe deja -> l'utiliser partout.
 
+**FIXED** : `KnownGroupArgs.deliveryMeta` type `IncomingDeliveryMeta | undefined` (import ajoute) ;
+`onChannelEvent` callback `data: unknown` (au lieu de `any`) dans `IMlsService` et `BaseMlsService`
+(le payload heterogene est narrowe par `event.type` dans `handleChannelEvent`) ; `fetchUserDevices`
+type le JSON serveur (cast explicite) au lieu de `(d: any)`. Les champs optionnels restent
+re-valides par `typeof`.
+
 ### S4 - Troncature u64 -> u32 sur les epochs
 
 `get_epoch` renvoie `epoch as u32` (`frontend/mls-wasm/src/lib.rs:148`,
@@ -464,6 +471,13 @@ Lieu : `frontend/src/lib/utils/chat/history.ts:316-327`. Dans le replay, `Cannot
 vu definitivement peut sauter un message recuperable. `GAP_QUEUED` est correctement exclu du skip.
 Note : Passe 1 a deja retire `TooDistantInThePast` de ce chemin (devenu `Ok(None)` -> plus de spam
 "History msg error" ni d'avancement de curseur errone).
+
+**FIXED** : `WrongEpoch` rejoint la branche retryable de `GAP_QUEUED` (`skipSeenHash = true`, pas
+d'avancement de curseur) au lieu de la branche "non-recuperable" : l'entree est retentee au prochain
+chargement d'historique apres resync d'epoch. `CannotDecryptOwnMessage` et `SecretReuseError`
+restent definitivement marques vus (vraiment non-recuperables). Compromis : un message bloque a une
+epoch jamais atteinte (branche forkee non adoptee) est re-tente a chaque replay - meme semantique que
+`GAP_QUEUED`, borne par la frequence des chargements.
 
 ### S5 - Classification d'erreurs MLS dupliquee sur 4 couches
 

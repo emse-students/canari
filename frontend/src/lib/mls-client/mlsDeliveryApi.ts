@@ -161,9 +161,17 @@ export class MlsDeliveryApi {
         headers: await this.auth(),
       });
       if (!res.ok) return [];
-      const devices = await res.json();
+      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+      // are re-validated with `typeof` below before being kept.
+      const devices = (await res.json()) as Array<{
+        keyPackage: string;
+        deviceId: string;
+        deviceName?: string;
+        deviceOs?: string;
+        deviceAppVersion?: string;
+      }>;
 
-      return devices.map((d: any) => ({
+      return devices.map((d) => ({
         keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
         deviceId: d.deviceId,
         deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,

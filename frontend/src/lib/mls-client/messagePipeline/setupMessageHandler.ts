@@ -11,6 +11,7 @@ import {
   resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
+import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { createMlsStatePersister } from '../mlsStatePersister';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
@@ -480,7 +481,7 @@ interface KnownGroupArgs {
   content: Uint8Array;
   groupId: string;
   isCommit: boolean | undefined;
-  deliveryMeta: any;
+  deliveryMeta: IncomingDeliveryMeta | undefined;
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
   onOutOfSync: (groupId: string) => Promise<void>;

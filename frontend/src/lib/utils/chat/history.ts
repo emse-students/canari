@@ -315,21 +315,21 @@ export async function replayConversationHistory(params: {
           }
         } catch (err) {
           const errStr = String(err);
-          if (
-            errStr.includes('CannotDecryptOwnMessage') ||
-            errStr.includes('WrongEpoch') ||
-            errStr.includes('SecretReuseError')
-          ) {
+          if (errStr.includes('CannotDecryptOwnMessage') || errStr.includes('SecretReuseError')) {
             // Non-recoverable - mark as seen to avoid infinite reprocessing.
+            // (Own message we can't decrypt, or a generation key already consumed/jetee.)
             seenCipherHashes.add(cipherFingerprint);
             seenUpdated = true;
             continue;
           }
-          if (errStr.includes('GAP_QUEUED')) {
-            // Recoverable epoch/ratchet gap: do NOT mark as seen so the entry is
-            // retried on the next history load after epoch resync.
+          if (errStr.includes('GAP_QUEUED') || errStr.includes('WrongEpoch')) {
+            // Recoverable: epoch/ratchet gap (GAP_QUEUED), ou frame d'une epoch que ce replay
+            // n'a pas encore atteinte (WrongEpoch - le commit peut s'appliquer a un load ulterieur).
+            // Ne PAS marquer "vu" pour que l'entree soit retentee au prochain chargement
+            // d'historique apres resynchronisation d'epoch. [[M2]]
             skipSeenHash = true;
-            console.warn(`[History] GAP_QUEUED retryable: ${errStr.slice(0, 200)}`);
+            const kind = errStr.includes('WrongEpoch') ? 'WrongEpoch' : 'GAP_QUEUED';
+            console.warn(`[History] retryable (${kind}): ${errStr.slice(0, 200)}`);
           } else {
             console.warn(`History msg error: ${err}`);
           }

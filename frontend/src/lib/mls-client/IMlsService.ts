@@ -408,7 +408,7 @@ export interface IMlsService {
 
   // Callbacks
   /** Optional hook called when the gateway delivers a channel-level event (member join/kick, rename, delete). */
-  onChannelEvent?: (event: { type: string; data: any }) => void;
+  onChannelEvent?: (event: { type: string; data: unknown }) => void;
   /** Registers a callback invoked for every incoming MLS message received over the WebSocket. */
   onMessage(
     callback: (
