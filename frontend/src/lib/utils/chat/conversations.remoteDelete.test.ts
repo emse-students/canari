@@ -11,7 +11,7 @@ function makeConvo(overrides: Partial<Conversation> = {}): Conversation {
     contactName: GROUP,
     name: 'Test group',
     messages: [],
-    isReady: true,
+    lifecycle: 'active',
     mlsStateHex: null,
     ...overrides,
   };
@@ -33,7 +33,7 @@ describe('findConversationKeyByGroupId', () => {
 });
 
 describe('markConversationDeletedRemotely', () => {
-  it('sets deletedRemotely on the resolved conversation key', () => {
+  it('sets lifecycle=removed on the resolved conversation key', () => {
     const legacyKey = 'alice::bob';
     const conversations = new SvelteMap<string, Conversation>([
       [legacyKey, makeConvo({ id: GROUP })],
@@ -43,7 +43,7 @@ describe('markConversationDeletedRemotely', () => {
     const changed = markConversationDeletedRemotely(conversations, GROUP, save);
 
     expect(changed).toBe(true);
-    expect(conversations.get(legacyKey)?.deletedRemotely).toBe(true);
+    expect(conversations.get(legacyKey)?.lifecycle).toBe('removed');
     expect(save).toHaveBeenCalledWith(legacyKey);
   });
 });

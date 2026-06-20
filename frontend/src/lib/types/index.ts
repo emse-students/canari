@@ -1,3 +1,14 @@
+/**
+ * Etat de cycle de vie d'une conversation - source UNIQUE qui remplace l'ancien couple
+ * `(isReady, deletedRemotely)`.
+ *  - `active`  : groupe MLS etabli, membre actif -> lecture + ENVOI.
+ *  - `pending` : placeholder en attente de Welcome (recovery/reboot applicables) -> lecture seule.
+ *  - `removed` : supprime par un pair / exclusion / suppression locale en attente -> lecture seule +
+ *                banniere, reste jusqu'a SUPPRESSION MANUELLE (regles 2 & 4).
+ * Predicats et logique de transition : `$lib/utils/chat/groupLifecycle`.
+ */
+export type ConversationLifecycle = 'active' | 'pending' | 'removed';
+
 /** A single emoji reaction and the user who placed it on a message. */
 export interface MessageReaction {
   emoji: string;
@@ -80,7 +91,12 @@ export interface Conversation {
   /** Human-readable auxiliary identifier (peer username for DMs, group display name for groups). */
   contactName: string;
   messages: ChatMessage[];
-  isReady: boolean;
+  /**
+   * Etat de cycle de vie (cf. {@link ConversationLifecycle}) - source UNIQUE qui remplace l'ancien
+   * couple `(isReady, deletedRemotely)`. `active` = envoyable ; `pending` = placeholder en attente
+   * de Welcome (recovery applicable) ; `removed` = supprime/exclu, lecture seule + banniere.
+   */
+  lifecycle: ConversationLifecycle;
   mlsStateHex: string | null;
   unreadCount?: number;
   conversationType?: 'direct' | 'group' | 'channel';
@@ -93,11 +109,4 @@ export interface Conversation {
    * can sort correctly even when `messages[]` is still empty (startup stubs).
    */
   lastMessageAt?: number;
-  /**
-   * Set to true when the group was deleted by another participant (or on another
-   * device) and the current user hasn't yet chosen to remove it locally.
-   * While true, the conversation is read-only: history is accessible but sending
-   * is disabled. The user sees a banner with a "Supprimer localement" button.
-   */
-  deletedRemotely?: boolean;
 }

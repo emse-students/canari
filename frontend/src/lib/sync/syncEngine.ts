@@ -199,7 +199,7 @@ export async function buildTransferChunksForMissing(
     return {
       id: decoded,
       name: decoded,
-      isReady: false,
+      lifecycle: 'pending',
       updatedAt: Date.now(),
     };
   };

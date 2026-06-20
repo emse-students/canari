@@ -1,6 +1,6 @@
 import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
-import type { Conversation } from '$lib/types';
+import type { Conversation, ConversationLifecycle } from '$lib/types';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import type { SvelteMap } from 'svelte/reactivity';
 import {
@@ -64,7 +64,7 @@ export interface RecoveryDeps {
  */
 async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Promise<boolean> {
   const entry = [...deps.conversations.entries()].find(([, c]) => c.id === groupId);
-  if (entry?.[1].deletedRemotely) return false; // tombstone : conservé jusqu'à suppression manuelle
+  if (entry?.[1].lifecycle === 'removed') return false; // conservé jusqu'à suppression manuelle
   const mutated = deps.mlsService.getLocalGroups().includes(groupId);
   if (mutated) deps.mlsService.forgetGroup(groupId);
   if (entry) {
@@ -106,7 +106,7 @@ export async function requestReAdd(
   // (évite de re-spammer welcome_request/getGroupMeta sur chaque message bufferisé d'un
   // groupe mort lors d'un même drain).
   const known = deps.conversations.get(groupId);
-  if (known?.deletedRemotely && !known.isReady) return;
+  if (known?.lifecycle === 'removed') return;
 
   const {
     terminalId,
@@ -192,13 +192,12 @@ export async function requestReAdd(
   if (terminalMeta?.deletedAt) {
     clearGroupNotReady(deps.userId, terminalId);
     const convo = deps.conversations.get(terminalId) ?? deps.conversations.get(groupId);
-    if (!convo || (convo.deletedRemotely && !convo.isReady)) return;
+    if (!convo || convo.lifecycle === 'removed') return;
     deps.log(`[READD] ${terminalId.slice(0, 8)}… supprimé sans successeur - abandon`);
     deps.conversations.set(terminalId, {
       ...convo,
       id: terminalId,
-      isReady: false,
-      deletedRemotely: true,
+      lifecycle: 'removed',
     });
     await deps.saveConversation(terminalId).catch(() => {});
     return;
@@ -380,8 +379,8 @@ async function performReboot(
   if (meta?.deletedAt && !meta.successorId) {
     log(`[REBOOT] ${groupId.slice(0, 8)}… supprimé sans successeur - abandon`);
     const convo = deps.conversations.get(groupId);
-    if (convo && (!convo.deletedRemotely || convo.isReady)) {
-      deps.conversations.set(groupId, { ...convo, isReady: false, deletedRemotely: true });
+    if (convo && convo.lifecycle !== 'removed') {
+      deps.conversations.set(groupId, { ...convo, lifecycle: 'removed' });
       await deps.saveConversation(groupId).catch(() => {});
     }
     return;
@@ -473,8 +472,8 @@ async function performReboot(
 
   // Marquer le successeur comme prêt (ce device est le créateur)
   const newConvo = deps.conversations.get(candidateId);
-  if (newConvo && !newConvo.isReady) {
-    deps.conversations.set(candidateId, { ...newConvo, isReady: true });
+  if (newConvo && newConvo.lifecycle !== 'active') {
+    deps.conversations.set(candidateId, { ...newConvo, lifecycle: 'active' });
     await deps.saveConversation(candidateId).catch(() => {});
   }
 
@@ -720,7 +719,9 @@ export async function migrateConversation(
 
   const existingTarget = conversations.get(toGroupId);
   const localGroups = deps.mlsService.getLocalGroups();
-  const targetAlreadyReady = existingTarget?.isReady === true || localGroups.includes(toGroupId);
+  const targetAlreadyReady =
+    existingTarget?.lifecycle === 'active' || localGroups.includes(toGroupId);
+  const targetLifecycle: ConversationLifecycle = targetAlreadyReady ? 'active' : 'pending';
 
   // Toujours copier les messages - saveMessages est un upsert (idempotent par id).
   // Un second appel retourne 0 résultats car l'ancienne conversationId n'existe plus.
@@ -757,7 +758,7 @@ export async function migrateConversation(
       .saveConversation({
         id: toGroupId,
         name: oldConvo.name,
-        isReady: targetAlreadyReady,
+        lifecycle: targetLifecycle,
         updatedAt: Date.now(),
       })
       .catch((e) => log(`[MIGRATE] Erreur sauvegarde : ${String(e)}`));
@@ -782,10 +783,10 @@ export async function migrateConversation(
     ? {
         ...existingTarget,
         name: oldConvo.name,
-        isReady: targetAlreadyReady,
+        lifecycle: targetLifecycle,
         messages: mergedMessages,
       }
-    : { ...oldConvo, id: toGroupId, isReady: targetAlreadyReady };
+    : { ...oldConvo, id: toGroupId, lifecycle: targetLifecycle };
   conversations.set(toGroupId, merged);
 
   if (getSelectedContact() === fromGroupId) setSelectedContact(toGroupId);
@@ -905,8 +906,8 @@ export async function checkGroupSuccessors(deps: RecoveryDeps): Promise<void> {
         log(`[HEALTH] Erreur ré-invitation : ${String(e)}`)
       );
       const convo = conversations.get(successorId);
-      if (convo && !convo.isReady) {
-        conversations.set(successorId, { ...convo, isReady: true });
+      if (convo && convo.lifecycle !== 'active') {
+        conversations.set(successorId, { ...convo, lifecycle: 'active' });
         await deps.saveConversation(successorId).catch(() => {});
       }
       // Envoyer le bundle après l'invitation (epoch est maintenant > 0 après addMembers)

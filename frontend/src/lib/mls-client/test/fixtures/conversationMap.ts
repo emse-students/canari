@@ -18,7 +18,7 @@ export function emptyConversation(id: string, overrides: Partial<Conversation> =
     name: 'Test',
     contactName: 'peer',
     messages: [],
-    isReady: false,
+    lifecycle: 'pending',
     mlsStateHex: null,
     ...overrides,
   };

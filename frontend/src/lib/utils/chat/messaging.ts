@@ -55,7 +55,7 @@ export async function sendChatMessage(
   const { userId, conversation, addMessageToChat } = deps;
 
   deps.log(
-    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" isReady=${conversation.isReady} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
+    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" lifecycle=${conversation.lifecycle} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
   );
 
   if (!text.trim()) {
@@ -102,7 +102,7 @@ export async function sendChatMessage(
   }
 
   // Whole lineage deleted without a successor: the only hard block (deletion banner is shown).
-  if (conversation.deletedRemotely) {
+  if (conversation.lifecycle === 'removed') {
     return { success: false, error: 'Cette conversation a été supprimée.' };
   }
 

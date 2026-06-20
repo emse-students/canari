@@ -3,6 +3,7 @@ import {
   classifyServerStatus,
   decideAbsentGroupFate,
   type AbsentGroupFateInput,
+  type ConversationLifecycle,
   type GroupServerStatus,
 } from './groupLifecycle';
 import type { GroupMeta } from '$lib/mls-client/IMlsService';
@@ -30,8 +31,7 @@ describe('classifyServerStatus', () => {
 describe('decideAbsentGroupFate', () => {
   const base: AbsentGroupFateInput = {
     isKnownSuccessor: false,
-    deletedRemotely: false,
-    isReady: true,
+    lifecycle: 'active',
     serverStatus: { kind: 'absent' },
     isStillUserMember: null,
   };
@@ -47,13 +47,13 @@ describe('decideAbsentGroupFate', () => {
     expect(decideAbsentGroupFate(make({ isKnownSuccessor: true })).action).toBe('keep');
   });
 
-  it('deja deletedRemotely -> keep (suppression manuelle, jamais re-purge)', () => {
-    expect(decideAbsentGroupFate(make({ deletedRemotely: true })).action).toBe('keep');
+  it('deja removed -> keep (suppression manuelle, jamais re-purge)', () => {
+    expect(decideAbsentGroupFate(make({ lifecycle: 'removed' })).action).toBe('keep');
   });
 
-  it('deletedRemotely a la priorite meme sur un serveur absent', () => {
+  it('removed a la priorite meme sur un serveur absent', () => {
     const fate = decideAbsentGroupFate(
-      make({ deletedRemotely: true, serverStatus: { kind: 'absent' } })
+      make({ lifecycle: 'removed', serverStatus: { kind: 'absent' } })
     );
     expect(fate.action).toBe('keep');
   });
@@ -69,16 +69,16 @@ describe('decideAbsentGroupFate', () => {
   });
 
   // ── tombstone ──
-  it('tombstone + isReady -> markDeletedRemotely (banniere)', () => {
-    expect(decideAbsentGroupFate(make({ serverStatus: tombstone(), isReady: true })).action).toBe(
-      'markDeletedRemotely'
-    );
+  it('tombstone + active -> markRemoved (banniere)', () => {
+    expect(
+      decideAbsentGroupFate(make({ serverStatus: tombstone(), lifecycle: 'active' })).action
+    ).toBe('markRemoved');
   });
 
-  it('tombstone + placeholder (non isReady) -> keep', () => {
-    expect(decideAbsentGroupFate(make({ serverStatus: tombstone(), isReady: false })).action).toBe(
-      'keep'
-    );
+  it('tombstone + placeholder (pending) -> keep', () => {
+    expect(
+      decideAbsentGroupFate(make({ serverStatus: tombstone(), lifecycle: 'pending' })).action
+    ).toBe('keep');
   });
 
   // ── active (anti-race membership) ──
@@ -94,18 +94,18 @@ describe('decideAbsentGroupFate', () => {
     ).toBe('keep');
   });
 
-  it('active + plus membre + isReady -> markDeletedRemotely (exclusion)', () => {
+  it('active + plus membre + lifecycle active -> markRemoved (exclusion)', () => {
     expect(
       decideAbsentGroupFate(
-        make({ serverStatus: active(), isStillUserMember: false, isReady: true })
+        make({ serverStatus: active(), isStillUserMember: false, lifecycle: 'active' })
       ).action
-    ).toBe('markDeletedRemotely');
+    ).toBe('markRemoved');
   });
 
-  it('active + plus membre + placeholder (non isReady) -> keep', () => {
+  it('active + plus membre + placeholder (pending) -> keep', () => {
     expect(
       decideAbsentGroupFate(
-        make({ serverStatus: active(), isStillUserMember: false, isReady: false })
+        make({ serverStatus: active(), isStillUserMember: false, lifecycle: 'pending' })
       ).action
     ).toBe('keep');
   });
@@ -113,10 +113,11 @@ describe('decideAbsentGroupFate', () => {
   // ── Invariant cle : jamais de purge sur autre chose qu'un absent confirme ──
   it('seul un absent confirme produit purge (jamais tombstone/active/unknown)', () => {
     const nonAbsent: GroupServerStatus[] = [active(), tombstone(), { kind: 'unknown' }];
+    const lifecycles: ConversationLifecycle[] = ['active', 'pending', 'removed'];
     for (const serverStatus of nonAbsent) {
-      for (const isReady of [true, false]) {
+      for (const lifecycle of lifecycles) {
         for (const isStillUserMember of [true, false, null]) {
-          const fate = decideAbsentGroupFate(make({ serverStatus, isReady, isStillUserMember }));
+          const fate = decideAbsentGroupFate(make({ serverStatus, lifecycle, isStillUserMember }));
           expect(fate.action).not.toBe('purge');
         }
       }

@@ -13,7 +13,7 @@ const IND_B = 'indb0000-0000-0000-0000-000000000000';
 const NAME = `${ME}::${PEER}`;
 
 function makeMeta(id: string, updatedAt = 1000): ConversationMeta {
-  return { id, name: NAME, isReady: true, updatedAt };
+  return { id, name: NAME, lifecycle: 'active', updatedAt };
 }
 
 function makeStorage(): IStorage {

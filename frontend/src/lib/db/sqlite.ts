@@ -1,5 +1,6 @@
 import { encryptData, decryptData } from '../encryption';
 import { readStoredTimestampMs } from '$lib/utils/dates';
+import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
 import { getOrCreateEncryptionSalt } from './salt';
 import type {
   ConversationMeta,
@@ -87,7 +88,7 @@ export class SqliteStorage implements IStorage {
     this.dbPath = `sqlite:canari_${userId}.db`;
   }
 
-  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to version 3. */
+  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to version 4. */
   async init(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
@@ -95,12 +96,13 @@ export class SqliteStorage implements IStorage {
     // WAL mode : lectures concurrentes non bloquantes, critique sur mobile
     await this.db.execute('PRAGMA journal_mode=WAL');
 
-    // Schéma v1 : création initiale
+    // Schéma : la conversation porte son état de cycle de vie (active|pending|removed).
+    // Les anciennes bases (colonne `is_ready`) sont migrées en v4 ci-dessous.
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS conversations (
                 id         TEXT    PRIMARY KEY,
                 name       TEXT    NOT NULL,
-                is_ready   INTEGER DEFAULT 0,
+                lifecycle  TEXT    DEFAULT 'pending',
                 updated_at INTEGER DEFAULT 0
             )
         `);
@@ -168,6 +170,24 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('DELETE FROM messages');
       await this.db.execute('PRAGMA user_version = 3');
     }
+
+    if (currentVersion < 4) {
+      // v3→v4 : remplacement du booléen `is_ready` par `lifecycle` (active|pending|removed).
+      // Idempotent : on n'ajoute la colonne que si elle manque (les bases fraîches l'ont déjà
+      // via le CREATE TABLE ci-dessus), puis on backfill depuis `is_ready` si encore présent.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      const hasLifecycle = cols.some((c) => c.name === 'lifecycle');
+      const hasIsReady = cols.some((c) => c.name === 'is_ready');
+      if (!hasLifecycle) {
+        await this.db.execute('ALTER TABLE conversations ADD COLUMN lifecycle TEXT');
+      }
+      if (hasIsReady) {
+        await this.db.execute(
+          "UPDATE conversations SET lifecycle = CASE WHEN is_ready = 1 THEN 'active' ELSE 'pending' END WHERE lifecycle IS NULL OR lifecycle = ''"
+        );
+      }
+      await this.db.execute('PRAGMA user_version = 4');
+    }
   }
 
   // -- Conversations -------------------------------------------------------
@@ -175,8 +195,8 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4)',
-      [conv.id, conv.name, conv.isReady ? 1 : 0, conv.updatedAt]
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at) VALUES ($1, $2, $3, $4)',
+      [conv.id, conv.name, conv.lifecycle, conv.updatedAt]
     );
   }
 
@@ -188,7 +208,7 @@ export class SqliteStorage implements IStorage {
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
-      isReady: r.is_ready === 1,
+      lifecycle: normalizeConversationLifecycle(r.lifecycle, r.is_ready === 1),
       updatedAt: r.updated_at,
     }));
   }
@@ -374,8 +394,8 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, is_ready, updated_at) VALUES ($1, $2, $3, $4)',
-      [conv.id, conv.name, conv.isReady ? 1 : 0, conv.updatedAt]
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at) VALUES ($1, $2, $3, $4)',
+      [conv.id, conv.name, conv.lifecycle, conv.updatedAt]
     );
   }
 

@@ -47,7 +47,7 @@
       contactId: pres.contactId,
       displayName: pres.displayName,
       conversationType: pres.conversationType,
-      isReady: meta.isReady,
+      isReady: meta.lifecycle === 'active',
       unreadCount: 0,
       imageMediaId: null,
     };
@@ -75,13 +75,13 @@
       meta: {
         id: key,
         name: conv.name,
-        isReady: conv.isReady,
+        lifecycle: conv.lifecycle,
         updatedAt: Math.max(baseline?.meta.updatedAt ?? 0, conv.lastMessageAt ?? 0),
       },
       contactId: pres.contactId,
       displayName: pres.displayName,
       conversationType: pres.conversationType,
-      isReady: conv.isReady,
+      isReady: conv.lifecycle === 'active',
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
       imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
       lastMessageContent:

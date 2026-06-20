@@ -97,7 +97,8 @@ export async function processPendingInvitations(params: {
     // a quitté le WASM : tenter addMember y lèverait "Groupe introuvable" en boucle. On
     // retombe alors dans la branche non-prêt (welcome_request de recovery déjà en vol).
     const readyForInvites =
-      conversations.get(groupId)?.isReady === true && mlsService.getLocalGroups().includes(groupId);
+      conversations.get(groupId)?.lifecycle === 'active' &&
+      mlsService.getLocalGroups().includes(groupId);
     if (!readyForInvites) {
       if (resolved !== origGroupId) {
         // Le successeur terminal existe mais n'est pas encore prêt (Welcome en transit).
@@ -524,7 +525,7 @@ export async function discoverMissingGroups(params: {
         const isKnownSuccessor = knownSuccessorIds.has(convo.id);
         let serverStatus: GroupServerStatus = { kind: 'unknown' };
         let isStillUserMember: boolean | null = null;
-        if (!isKnownSuccessor && !convo.deletedRemotely) {
+        if (!isKnownSuccessor && convo.lifecycle !== 'removed') {
           serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
           // Anti-race : ne revalider notre membership réelle que sur un groupe VIVANT absent de
           // notre snapshot getUserGroups (qui peut être périmé sur un groupe juste créé/rejoint).
@@ -537,8 +538,7 @@ export async function discoverMissingGroups(params: {
 
         const fate = decideAbsentGroupFate({
           isKnownSuccessor,
-          deletedRemotely: !!convo.deletedRemotely,
-          isReady: convo.isReady,
+          lifecycle: convo.lifecycle,
           serverStatus,
           isStillUserMember,
         });
@@ -555,10 +555,10 @@ export async function discoverMissingGroups(params: {
           });
           continue;
         }
-        if (fate.action === 'markDeletedRemotely') {
-          conversations.set(key, { ...convo, deletedRemotely: true });
+        if (fate.action === 'markRemoved') {
+          conversations.set(key, { ...convo, lifecycle: 'removed' });
           await saveConversation?.(key).catch(() => {});
-          log(`[DISCOVERY] Groupe UI "${label}" ${fate.reason} - marqué deletedRemotely`);
+          log(`[DISCOVERY] Groupe UI "${label}" ${fate.reason} - marqué removed`);
           continue;
         }
         // keep
@@ -607,7 +607,7 @@ export async function discoverMissingGroups(params: {
       contactName: displayName,
       name: displayName,
       messages: [],
-      isReady: false, // Not ready until Welcome is processed
+      lifecycle: 'pending', // placeholder until the Welcome is processed
       mlsStateHex: null,
       conversationType: g.isGroup ? 'group' : 'direct',
       ...(directPeer ? { directPeerId: directPeer } : {}),
@@ -861,7 +861,7 @@ export async function handleWelcomeRequest(params: {
   // Défense en profondeur : vérifier qu'on a une conversation prête pour ce groupe terminal.
   // Si ce device n'est pas encore dans le groupe terminal (Welcome en transit ou sync initial
   // pas terminé), signaler via onNotReady pour que l'appelant diffère et réessaie.
-  if (!conversations.get(groupId)?.isReady) {
+  if (conversations.get(groupId)?.lifecycle !== 'active') {
     log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… - report`);
     onNotReady?.(groupId);
     return;

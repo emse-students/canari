@@ -1,4 +1,4 @@
-import type { IMlsService, MlsBatchProcessResult } from './IMlsService';
+import type { MlsBatchProcessResult } from './IMlsService';
 
 /** Raw batch row from WASM or Tauri IPC before normalisation. */
 export type BatchDecryptRow = {

@@ -44,7 +44,7 @@ function readyConversation(id: string): Conversation {
     contactName: id,
     name: 'a::b',
     messages: [],
-    isReady: true,
+    lifecycle: 'active',
     mlsStateHex: null,
   } as Conversation;
 }

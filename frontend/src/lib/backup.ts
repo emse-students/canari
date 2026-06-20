@@ -15,10 +15,10 @@
  *   1. Strip magic header, decrypt outer envelope with PIN.
  *   2. Parse JSON - validate version field. Compare `exporterDeviceId` with
  *      the current device's ID:
- *        - Same device (wipe/restore): conversations stay `isReady: true`,
+ *        - Same device (wipe/restore): conversations keep their `lifecycle`,
  *          MLS state IS valid and can be restored.
  *        - Different device (second phone/PC): conversations are imported as
- *          `isReady: false` - the device is NOT yet a MLS member of those
+ *          `lifecycle: 'pending'` - the device is NOT yet a MLS member of those
  *          groups.  MLS state from the backup must NOT be restored (the private
  *          leaf key belongs to the exporter, not to this device).
  *   3. `mergeConversation` (INSERT OR IGNORE) - live metadata is preserved.
@@ -232,12 +232,12 @@ export async function importBackup(
 
   // Merge conversation metadata: INSERT OR IGNORE so a device that already
   // has the conversation keeps its live (newer) state.
-  // On a different device, force isReady = false: the device is not yet a
+  // On a different device, force lifecycle = 'pending': the device is not yet a
   // cryptographic member of these groups and must wait for Welcome messages.
   for (const conv of backup.conversations) {
     // Skip if another local conversation already covers this MLS group.
     if (existingGroupIds.has(conv.id)) continue;
-    await storage.mergeConversation(isSameDevice ? conv : { ...conv, isReady: false });
+    await storage.mergeConversation(isSameDevice ? conv : { ...conv, lifecycle: 'pending' });
   }
 
   // Merge message rows: INSERT OR IGNORE so messages received on this device

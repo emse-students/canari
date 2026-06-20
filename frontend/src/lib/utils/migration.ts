@@ -41,7 +41,7 @@ export async function migrateFromLocalStorage(
       await storage.saveConversation({
         id: contactName,
         name: data.name || contactName,
-        isReady: data.isReady || false,
+        lifecycle: data.isReady ? 'active' : 'pending',
         updatedAt: data.updatedAt || Date.now(),
       });
     } catch (e) {

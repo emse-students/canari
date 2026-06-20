@@ -231,8 +231,8 @@ async function handleWelcome({
     cancelReAdd(terminalId, recoveryTimers);
     noMatchKpFailures.delete(terminalId);
     const convo = deps.conversations.get(terminalId);
-    if (convo && !convo.isReady) {
-      deps.conversations.set(terminalId, { ...convo, isReady: true });
+    if (convo && convo.lifecycle !== 'active') {
+      deps.conversations.set(terminalId, { ...convo, lifecycle: 'active' });
       await saveConversation(terminalId).catch(() => {});
     }
     onGroupReady?.(terminalId);
@@ -748,8 +748,7 @@ async function upsertConversation(
       ...existing,
       id: joinedGroupId,
       name: displayName,
-      isReady: true,
-      deletedRemotely: false,
+      lifecycle: 'active' as const,
     };
     if (newConvoKey !== joinedGroupId) {
       // Prédécesseur → successeur : on change de groupId (ex. reboot MLS).
@@ -792,7 +791,7 @@ async function upsertConversation(
       contactName: displayName,
       name: displayName,
       messages: [],
-      isReady: true,
+      lifecycle: 'active',
       mlsStateHex: null,
       conversationType: isDirect ? 'direct' : 'group',
       ...(isDirect ? { directPeerId } : {}),

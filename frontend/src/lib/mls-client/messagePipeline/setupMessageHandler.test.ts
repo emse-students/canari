@@ -66,7 +66,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
   function baseDeps(overrides: Record<string, unknown> = {}) {
     const conversations = createTestConversations([
-      [groupId, emptyConversation(groupId, { isReady: false })],
+      [groupId, emptyConversation(groupId, { lifecycle: 'pending' })],
     ]);
     const mls = createMlsServiceStub({
       getUserGroups: vi.fn().mockResolvedValue([{ groupId, name: 'Test', isGroup: true }]),
@@ -146,13 +146,16 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     expect(mls.processWelcome).toHaveBeenCalled();
     expect(mls.registerMember).toHaveBeenCalledWith(groupId, 'user-a');
-    expect(deps.conversations.get(groupId)?.isReady).toBe(true);
+    expect(deps.conversations.get(groupId)?.lifecycle).toBe('active');
   });
 
   it('routes plaintext channel.message.created to addMessageToChat', async () => {
     const channelKey = 'channel_chan-99';
     const conversations = createTestConversations([
-      [channelKey, emptyConversation(channelKey, { isReady: true, conversationType: 'channel' })],
+      [
+        channelKey,
+        emptyConversation(channelKey, { lifecycle: 'active', conversationType: 'channel' }),
+      ],
     ]);
     const deps = baseDeps({ conversations });
     setupMessageHandler(deps as any);
@@ -229,7 +232,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // groupId unique : le compteur d'échecs NoMatchingKeyPackage est module-level.
     const gid = 'a1111111-1111-4111-8111-111111111111';
     const deps = baseDeps({
-      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: false })]]),
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'pending' })],
+      ]),
     });
     const mls = deps.mlsService as any;
     mls.processWelcome = vi
@@ -256,7 +261,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.mocked(recovery.requestReAdd).mockClear();
     const gid = 'a2222222-2222-4222-8222-222222222222';
     const deps = baseDeps({
-      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: false })]]),
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'pending' })],
+      ]),
     });
     const mls = deps.mlsService as any;
     mls.processWelcome = vi.fn().mockRejectedValue(new Error('NoMatchingKeyPackage'));
@@ -429,7 +436,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.useFakeTimers();
     const gid = 'c4444444-4444-4444-8444-444444444444';
     const deps = baseDeps({
-      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: true })]]),
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
     });
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
@@ -465,7 +474,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.useFakeTimers();
     const gid = 'b3333333-3333-4333-8333-333333333333';
     const deps = baseDeps({
-      conversations: createTestConversations([[gid, emptyConversation(gid, { isReady: true })]]),
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
     });
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([gid]);

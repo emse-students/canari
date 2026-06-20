@@ -89,8 +89,8 @@ export function markConversationDeletedRemotely(
   const key = findConversationKeyByGroupId(conversations, groupId);
   if (!key) return false;
   const convo = conversations.get(key);
-  if (!convo || convo.deletedRemotely) return false;
-  conversations.set(key, { ...convo, deletedRemotely: true });
+  if (!convo || convo.lifecycle === 'removed') return false;
+  conversations.set(key, { ...convo, lifecycle: 'removed' });
   saveConversation?.(key).catch(() => {});
   return true;
 }
@@ -554,7 +554,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           : identity.contactName,
       name: resolvedName,
       messages: [],
-      isReady: meta.isReady,
+      lifecycle: meta.lifecycle,
       mlsStateHex: null,
       unreadCount: 0,
       conversationType: prev?.conversationType ?? identity.conversationType,

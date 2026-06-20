@@ -27,7 +27,7 @@ describe('encryptMlsStateOffThread', () => {
       const listeners: Array<(event: MessageEvent) => void> = [];
       return {
         postMessage: vi.fn(
-          (msg: { type: string; payload: { plain: ArrayBuffer; pin: string } }) => {
+          (_msg: { type: string; payload: { plain: ArrayBuffer; pin: string } }) => {
             const encrypted = new Uint8Array([7, 8]).buffer;
             for (const listener of listeners) {
               listener({

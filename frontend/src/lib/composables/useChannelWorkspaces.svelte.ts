@@ -235,7 +235,7 @@ export function useChannelWorkspaces() {
             name: channel.name,
             id: channelConversationId,
             messages: existing?.messages ?? [],
-            isReady: true,
+            lifecycle: 'active',
             mlsStateHex: null,
             imageMediaId: channel.imageMediaId ?? null,
             ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
@@ -308,7 +308,7 @@ export function useChannelWorkspaces() {
             name: channel.name,
             id: channelConversationId,
             messages: [],
-            isReady: true,
+            lifecycle: 'active',
             mlsStateHex: null,
             imageMediaId: channel.imageMediaId ?? null,
             ...(existingEws?.unreadCount !== undefined
@@ -396,7 +396,7 @@ export function useChannelWorkspaces() {
         name: normalizedChannelName,
         id: channelId,
         messages: [],
-        isReady: true,
+        lifecycle: 'active',
         mlsStateHex: null,
       });
       await ctx.saveConversation(channelId);

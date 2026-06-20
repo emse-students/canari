@@ -187,7 +187,7 @@ describe('requestReAdd', () => {
         getLocalGroups: vi.fn().mockReturnValue([]),
       }),
       conversations: makeConversations([
-        ['ghost', { id: 'ghost', name: 'Fantôme', isReady: false }],
+        ['ghost', { id: 'ghost', name: 'Fantôme', lifecycle: 'pending' }],
       ]),
     });
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -202,14 +202,14 @@ describe('requestReAdd', () => {
     expect(deps.conversations.has('ghost')).toBe(false);
   });
 
-  it('groupe absent mais conversation deletedRemotely → conservée (suppression manuelle), pas de welcome_request', async () => {
+  it('groupe absent mais conversation removed → conservée (suppression manuelle), pas de welcome_request', async () => {
     const deps = makeDeps({
       mlsService: makeMls({
         getGroupMeta: vi.fn().mockResolvedValue(null),
         getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
       }),
       conversations: makeConversations([
-        ['tomb', { id: 'tomb', name: 'Supprimé', isReady: true, deletedRemotely: true }],
+        ['tomb', { id: 'tomb', name: 'Supprimé', lifecycle: 'removed' }],
       ]),
     });
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -416,7 +416,7 @@ describe('migrateConversation', () => {
           id: 'from-id',
           name: 'Chat',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           contactName: 'x',
           mlsStateHex: null,
         },
@@ -459,7 +459,7 @@ describe('migrateConversation', () => {
           id: 'from-id',
           name: 'Chat',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           contactName: 'x',
           mlsStateHex: null,
         },
@@ -470,7 +470,7 @@ describe('migrateConversation', () => {
           id: 'to-id',
           name: 'To',
           messages: [],
-          isReady: false,
+          lifecycle: 'pending',
           contactName: 'y',
           mlsStateHex: null,
         },
@@ -512,7 +512,7 @@ describe('migrateConversation', () => {
           id: 'from-id',
           name: 'Chat',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           contactName: 'x',
           mlsStateHex: null,
         },

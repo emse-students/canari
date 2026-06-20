@@ -2,14 +2,20 @@
 // Shared types and the IStorage interface for Canari's local message store.
 // ---------------------------------------------------------------------------
 
+import type { ConversationLifecycle } from '$lib/types';
+
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
   /** Primary key - equals the MLS groupId UUID (e.g. "g-abc123", "channel_xyz", "dm_uuid"). */
   id: string;
   /** Human-readable name shown in the conversation list. */
   name: string;
-  /** True once the MLS Welcome has been processed and the group is ready to send/receive. */
-  isReady: boolean;
+  /**
+   * Etat de cycle de vie persiste (cf. {@link ConversationLifecycle}). Remplace l'ancien booleen
+   * `isReady` et persiste desormais aussi l'etat `removed` -> une conversation supprimee/exclue
+   * survit au reload sans dependre d'une re-synchro serveur (regles 2 & 4).
+   */
+  lifecycle: ConversationLifecycle;
   /** Unix milliseconds - used for ordering conversations by recency. */
   updatedAt: number;
 }

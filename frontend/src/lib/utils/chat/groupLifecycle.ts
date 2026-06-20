@@ -1,4 +1,21 @@
 import type { GroupMeta } from '$lib/mls-client/IMlsService';
+import type { ConversationLifecycle } from '$lib/types';
+
+export type { ConversationLifecycle };
+
+/**
+ * Normalise une valeur de cycle de vie chargee depuis le stockage. Tolere les anciennes lignes
+ * (avant ce champ) qui ne portaient qu'un booleen `isReady` : `true -> active`, sinon `pending`
+ * (l'ancien modele ne persistait jamais l'etat `removed`). Toute valeur inconnue retombe sur
+ * `pending` (le plus sur : declenche une recovery, jamais une purge ni un envoi).
+ */
+export function normalizeConversationLifecycle(
+  raw: unknown,
+  legacyIsReady?: boolean
+): ConversationLifecycle {
+  if (raw === 'active' || raw === 'pending' || raw === 'removed') return raw;
+  return legacyIsReady ? 'active' : 'pending';
+}
 
 /**
  * Cycle de vie d'un groupe : SOURCE DE VERITE UNIQUE et logique de decision centralisee.
@@ -37,12 +54,12 @@ export function classifyServerStatus(raw: 'absent' | 'error' | GroupMeta): Group
 
 /**
  * Action a appliquer a une conversation locale apres reconciliation.
- *  - `keep`               : ne rien faire (groupe encore valide, ou doute -> on conserve).
- *  - `purge`              : retirer la conversation (et l'etat MLS) -> le groupe n'existe plus DU TOUT.
- *  - `markDeletedRemotely`: poser la banniere "supprime/exclu" (lecture seule, suppression manuelle).
+ *  - `keep`        : ne rien faire (groupe encore valide, ou doute -> on conserve).
+ *  - `purge`       : retirer la conversation (et l'etat MLS) -> le groupe n'existe plus DU TOUT.
+ *  - `markRemoved` : passer la conversation en `removed` (banniere "supprime/exclu", suppression manuelle).
  */
 export type ConversationFate = {
-  action: 'keep' | 'purge' | 'markDeletedRemotely';
+  action: 'keep' | 'purge' | 'markRemoved';
   /** Motif lisible (pour les logs de diagnostic). */
   reason: string;
 };
@@ -51,10 +68,8 @@ export type ConversationFate = {
 export interface AbsentGroupFateInput {
   /** Le groupe est un successeur tombstone connu (lignee de reboot) -> conserve, la migration gere. */
   isKnownSuccessor: boolean;
-  /** La conversation est deja marquee `deletedRemotely` -> reste jusqu'a suppression MANUELLE. */
-  deletedRemotely: boolean;
-  /** La conversation est "prete" (vraie conv, pas un simple placeholder en attente de Welcome). */
-  isReady: boolean;
+  /** Etat de cycle de vie actuel de la conversation locale. */
+  lifecycle: ConversationLifecycle;
   /** Etat serveur resolu (cf. `classifyServerStatus`). */
   serverStatus: GroupServerStatus;
   /**
@@ -82,10 +97,10 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
   if (input.isKnownSuccessor) {
     return { action: 'keep', reason: 'successeur tombstone (migration en charge)' };
   }
-  // Deja marque supprime/exclu : reste jusqu'a SUPPRESSION MANUELLE locale (regles 2 & 4), quoi
-  // qu'il advienne cote serveur (meme apres hard-purge du tombstone). Jamais re-interroge.
-  if (input.deletedRemotely) {
-    return { action: 'keep', reason: 'deja deletedRemotely (suppression manuelle)' };
+  // Deja `removed` : reste jusqu'a SUPPRESSION MANUELLE locale (regles 2 & 4), quoi qu'il advienne
+  // cote serveur (meme apres hard-purge du tombstone). Jamais re-interroge ni re-purge.
+  if (input.lifecycle === 'removed') {
+    return { action: 'keep', reason: 'deja removed (suppression manuelle)' };
   }
 
   switch (input.serverStatus.kind) {
@@ -98,10 +113,10 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
       return { action: 'keep', reason: 'statut serveur incertain (reseau)' };
 
     case 'tombstone':
-      // Supprime par un pair (regle 2). Un simple placeholder (non isReady) est conserve tel quel.
-      return input.isReady
-        ? { action: 'markDeletedRemotely', reason: 'supprime (tombstone) cote serveur' }
-        : { action: 'keep', reason: 'placeholder tombstone (non isReady)' };
+      // Supprime par un pair (regle 2). Un simple placeholder (pending) est conserve tel quel.
+      return input.lifecycle === 'active'
+        ? { action: 'markRemoved', reason: 'supprime (tombstone) cote serveur' }
+        : { action: 'keep', reason: 'placeholder tombstone (pending)' };
 
     case 'active':
       // Vivant cote serveur mais absent de notre snapshot getUserGroups, qui peut etre perime sur
@@ -113,8 +128,8 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
         return { action: 'keep', reason: 'vivant et toujours membre (snapshot perime)' };
       }
       // Plus membre d'un groupe vivant -> exclusion reelle (regle 4).
-      return input.isReady
-        ? { action: 'markDeletedRemotely', reason: 'exclu (plus membre) du groupe vivant' }
-        : { action: 'keep', reason: 'placeholder exclu (non isReady)' };
+      return input.lifecycle === 'active'
+        ? { action: 'markRemoved', reason: 'exclu (plus membre) du groupe vivant' }
+        : { action: 'keep', reason: 'placeholder exclu (pending)' };
   }
 }

@@ -173,7 +173,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       contactName: groupDisplayName,
       name: groupDisplayName, // conserve la casse originale pour l'affichage
       messages: [],
-      isReady: true,
+      lifecycle: 'active',
       mlsStateHex: null,
       conversationType: 'group',
     });
@@ -478,7 +478,7 @@ export async function startNewConversation(
 
   if (existingDirect) {
     const [existingKey, existingConvo] = existingDirect;
-    if (existingConvo.isReady) {
+    if (existingConvo.lifecycle === 'active') {
       selectConversation(existingKey);
       return;
     }
@@ -503,14 +503,14 @@ export async function startNewConversation(
 
       const ensureDirectConvo = async (convoKey: string, ready: boolean) => {
         const existing = conversations.get(convoKey);
-        const base = {
+        const base: Conversation = {
           id: convoKey,
           contactName: contact,
           name: contact,
           messages: existing?.messages ?? [],
-          isReady: ready,
-          mlsStateHex: null as string | null,
-          conversationType: 'direct' as const,
+          lifecycle: ready ? 'active' : 'pending',
+          mlsStateHex: null,
+          conversationType: 'direct',
           directPeerId: contact,
         };
         if (existing) {
@@ -521,7 +521,9 @@ export async function startNewConversation(
             name: fixName ? contact : existing.name,
             contactName: fixName ? contact : existing.contactName,
             directPeerId: contact,
-            isReady: ready || existing.isReady,
+            // Ouvrir explicitement une conversation directe la sort de l'etat `removed` si le
+            // groupe est actif cote serveur ; sinon on conserve l'etat existant (pending).
+            lifecycle: ready || existing.lifecycle === 'active' ? 'active' : 'pending',
           });
         } else {
           conversations.set(convoKey, base);
@@ -591,7 +593,7 @@ export async function startNewConversation(
       contactName: contact,
       name: contact,
       messages: [],
-      isReady: false,
+      lifecycle: 'pending',
       mlsStateHex: null,
       conversationType: 'direct',
       directPeerId: contact,
@@ -620,7 +622,7 @@ export async function startNewConversation(
     await performDirectAdd(groupId, allDevices, contactDeviceIds, contact, deps);
 
     const convo = conversations.get(conversationKey)!;
-    conversations.set(conversationKey, { ...convo, isReady: true });
+    conversations.set(conversationKey, { ...convo, lifecycle: 'active' });
     saveConversation(conversationKey);
     log(`[OK] Canal sécurisé avec ${contact}.`);
     console.log(`[DM] Conversation 1v1 avec ${contact} prête (groupId=${groupId})`);

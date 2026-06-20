@@ -1,4 +1,5 @@
 import { encryptData, decryptData } from '../encryption';
+import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
 import { getOrCreateEncryptionSalt } from './salt';
 import type {
   ConversationMeta,
@@ -170,7 +171,14 @@ export class IndexedDbStorage implements IStorage {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('conversations', 'readonly');
       const req = tx.objectStore('conversations').getAll();
-      req.onsuccess = () => resolve(req.result as ConversationMeta[]);
+      req.onsuccess = () => {
+        // Normalise les anciennes lignes (champ `isReady` avant l'introduction de `lifecycle`).
+        const rows = (req.result as Array<ConversationMeta & { isReady?: boolean }>).map((r) => ({
+          ...r,
+          lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
+        }));
+        resolve(rows);
+      };
       req.onerror = () => reject(req.error);
     });
   }

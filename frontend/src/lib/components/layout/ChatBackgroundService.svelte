@@ -389,7 +389,7 @@
             contactName: channelConversationId,
             name: (event.channelName || 'canal').toLowerCase(),
             messages: [],
-            isReady: true,
+            lifecycle: 'active',
             mlsStateHex: null,
           });
         }

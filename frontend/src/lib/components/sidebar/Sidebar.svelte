@@ -13,20 +13,7 @@
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
-
-  interface Conversation {
-    id: string;
-    contactName: string;
-    name: string;
-    messages: any[];
-    isReady: boolean;
-    mlsStateHex: string | null;
-    unreadCount?: number;
-    conversationType?: 'direct' | 'group' | 'channel';
-    directPeerId?: string;
-    imageMediaId?: string | null;
-    lastMessageAt?: number;
-  }
+  import type { Conversation } from '$lib/types';
 
   interface ChannelItem {
     id: string;
@@ -436,7 +423,7 @@
               lastMessage={convo.messages.length > 0
                 ? convo.messages[convo.messages.length - 1].content
                 : undefined}
-              isReady={convo.isReady}
+              isReady={convo.lifecycle === 'active'}
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
               imageMediaId={convo.imageMediaId}

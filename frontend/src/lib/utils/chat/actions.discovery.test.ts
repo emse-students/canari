@@ -46,7 +46,7 @@ describe('purgeLocalConversationRecord', () => {
           contactName: 'g1',
           name: 'Test',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           mlsStateHex: null,
         },
       ],
@@ -77,7 +77,7 @@ describe('purgeOrphanGroup', () => {
           contactName: 'g1',
           name: 'Test',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           mlsStateHex: null,
         },
       ],
@@ -116,7 +116,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'orphan-id',
           name: 'Orphelin',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           mlsStateHex: null,
         },
       ],
@@ -143,7 +143,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     });
 
     expect(conversations.has('orphan-id')).toBe(true);
-    expect(conversations.get('orphan-id')?.deletedRemotely).toBe(true);
+    expect(conversations.get('orphan-id')?.lifecycle).toBe('removed');
     expect(deleteConversation).not.toHaveBeenCalled();
     expect(saveConversation).toHaveBeenCalledWith('orphan-id');
   });
@@ -157,8 +157,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'dismissed-id',
           name: 'Dismissée',
           messages: [],
-          isReady: true,
-          deletedRemotely: true, // meme marquee, un dismiss explicite la purge sur tous les appareils
+          lifecycle: 'removed', // meme marquee, un dismiss explicite la purge sur tous les appareils
           mlsStateHex: null,
         },
       ],
@@ -194,7 +193,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'fresh-id',
           name: 'Fraiche',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           mlsStateHex: null,
         },
       ],
@@ -220,7 +219,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     });
 
     expect(conversations.has('fresh-id')).toBe(true);
-    expect(conversations.get('fresh-id')?.deletedRemotely).toBeFalsy();
+    expect(conversations.get('fresh-id')?.lifecycle).not.toBe('removed');
     expect(deleteConversation).not.toHaveBeenCalled();
   });
 
@@ -233,7 +232,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'excluded-id',
           name: 'Exclu',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           mlsStateHex: null,
         },
       ],
@@ -259,7 +258,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     });
 
     expect(conversations.has('excluded-id')).toBe(true);
-    expect(conversations.get('excluded-id')?.deletedRemotely).toBe(true);
+    expect(conversations.get('excluded-id')?.lifecycle).toBe('removed');
     expect(deleteConversation).not.toHaveBeenCalled();
   });
 
@@ -272,7 +271,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'orphan-id',
           name: 'Orphelin',
           messages: [],
-          isReady: false,
+          lifecycle: 'pending',
           mlsStateHex: null,
         },
       ],
@@ -324,7 +323,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'bob',
           name: 'bob',
           messages: [],
-          isReady: false,
+          lifecycle: 'pending',
           mlsStateHex: null,
         },
       ],
@@ -335,7 +334,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'bob',
           name: 'bob',
           messages: [],
-          isReady: false,
+          lifecycle: 'pending',
           mlsStateHex: null,
         },
       ],
@@ -376,7 +375,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'bob',
           name: 'bob',
           messages: [],
-          isReady: false,
+          lifecycle: 'pending',
           mlsStateHex: null,
         },
       ],
@@ -417,7 +416,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'orphan-id',
           name: 'Orphelin',
           messages: [],
-          isReady: true,
+          lifecycle: 'active',
           mlsStateHex: null,
         },
       ],

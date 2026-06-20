@@ -514,7 +514,9 @@ export function useMessaging() {
     }
 
     const isChannel = isChannelConversationId(ctx.selectedContact);
-    ctx.log(`[SEND] convo: groupId="${convo.id}" isReady=${convo.isReady} isChannel=${isChannel}`);
+    ctx.log(
+      `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
+    );
 
     // Media (inline upload+send) still requires a ready MLS group; queuing media is a later
     // increment. Text/reply are captured into the outbox and never blocked here - they flush
@@ -526,7 +528,7 @@ export function useMessaging() {
         return;
       }
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
-      if (!stillMember || !convo.isReady) {
+      if (!stillMember || convo.lifecycle !== 'active') {
         ctx.setSendError('Session sécurisée en cours de négociation. Réessaie dans un instant.');
         return;
       }
@@ -898,7 +900,8 @@ export function useMessaging() {
     try {
       if (env.kind === 'media') {
         // Media forward is an inline upload+send: it still needs a ready MLS group.
-        if (!convo.isReady) return { success: false, error: 'Conversation non prête.' };
+        if (convo.lifecycle !== 'active')
+          return { success: false, error: 'Conversation non prête.' };
         const m = env.media;
         const kindMap: Record<string, number> = {
           image: MediaKind.MEDIA_IMAGE,

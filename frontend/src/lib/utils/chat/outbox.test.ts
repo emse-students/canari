@@ -66,7 +66,7 @@ function convoWith(id: string, messageIds: string[]): Conversation {
     id,
     name: id,
     contactName: id,
-    isReady: false,
+    lifecycle: 'pending',
     mlsStateHex: null,
     messages: messageIds.map((mid) => ({
       id: mid,

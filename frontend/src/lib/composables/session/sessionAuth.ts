@@ -458,8 +458,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       const missingKeys: string[] = [];
       for (const [key, c] of cb.conversations.entries()) {
         if (isChannelConversationId(c.id)) continue;
-        if (c.isReady && !localMlsGroups.has(c.id)) {
-          cb.conversations.set(key, { ...c, isReady: false });
+        if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
+          cb.conversations.set(key, { ...c, lifecycle: 'pending' });
           missingKeys.push(key);
         }
       }
@@ -614,7 +614,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
               contactName: groupId,
               name: groupId,
               messages: [],
-              isReady: true,
+              lifecycle: 'active',
               mlsStateHex: null,
               unreadCount: 0,
               conversationType: 'group',
@@ -746,7 +746,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     for (const delay of [35_000, 70_000]) {
       setTimeout(() => {
-        if ([...cb.conversations.values()].some((c) => !c.isReady)) {
+        if ([...cb.conversations.values()].some((c) => c.lifecycle === 'pending')) {
           runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), 'retry');
         }
       }, delay);

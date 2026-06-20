@@ -341,7 +341,7 @@
     if (!convs.selectedContact || !session.isLoggedIn) return;
     if (!isWindowFocused || !isTabVisible) return;
     const convo = convs.conversations.get(convs.selectedContact);
-    if (!convo || !convo.isReady) return;
+    if (!convo || convo.lifecycle !== 'active') return;
 
     const meNorm = session.userId.toLowerCase();
     const unread = convo.messages.filter(
@@ -656,7 +656,7 @@
     if (!convo) return;
     const type = convo.conversationType ?? 'group';
     if (type === 'channel') return;
-    if (!convo.isReady) {
+    if (convo.lifecycle !== 'active') {
       showToast("La session sécurisée n'est pas encore prête. Réessayez dans un instant.", 'warning');
       return;
     }

@@ -155,8 +155,7 @@ export function useConversations() {
       if (k !== key) continue;
       void v.messages.length;
       void v.lastMessageAt;
-      void v.isReady;
-      void v.deletedRemotely;
+      void v.lifecycle;
       void v.unreadCount;
       return { ...v, messages: v.messages };
     }
@@ -180,7 +179,7 @@ export function useConversations() {
 
   // ── Storage helpers ───────────────────────────────────────────────────────
 
-  /** Persists a conversation's metadata (name, isReady, updatedAt) to IndexedDB. For direct conversations the name is stored as "userId::peerId". */
+  /** Persists a conversation's metadata (name, lifecycle, updatedAt) to IndexedDB. For direct conversations the name is stored as "userId::peerId". */
   async function saveConversation(id: string, ctx: ConversationContext) {
     if (!ctx.storage) return;
     const convo = conversations.get(id);
@@ -192,7 +191,7 @@ export function useConversations() {
     await ctx.storage.saveConversation({
       id: id,
       name: persistedName,
-      isReady: convo.isReady,
+      lifecycle: convo.lifecycle,
       // Use the last-message timestamp so the sidebar sort order survives DB reloads.
       updatedAt: convo.lastMessageAt ?? Date.now(),
     });

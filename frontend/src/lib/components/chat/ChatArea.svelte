@@ -295,8 +295,7 @@
     const c = conversation;
     if (!c?.id) return null;
     void c.messages.length;
-    void c.deletedRemotely;
-    void c.isReady;
+    void c.lifecycle;
     void c.lastMessageAt;
     const pres = resolveConversationListPresentation(
       {
@@ -313,7 +312,7 @@
       conversation: c,
       contactName: c.contactName ?? pres.contactId,
       displayName: pres.displayName,
-      isReady: c.isReady,
+      isReady: c.lifecycle === 'active',
       isGroup: convType === 'group',
       isDirect: convType === 'direct',
     };
@@ -862,7 +861,7 @@
       <div class="chat-sticky-date-indicator">{stickyDateLabel}</div>
     {/if}
 
-    {#if conversation?.deletedRemotely}
+    {#if conversation?.lifecycle === 'removed'}
       <div
         class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
       >
