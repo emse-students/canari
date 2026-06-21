@@ -5,13 +5,14 @@ services:
   # ─────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
+    restart: always
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    restart: on-failure
+    restart: always
     depends_on:
       - zookeeper
     expose:
@@ -32,6 +33,7 @@ services:
 
   redis:
     image: redis:alpine
+    restart: always
     expose:
       - "6379"
     healthcheck:
@@ -42,6 +44,7 @@ services:
 
   mongo:
     image: mongo:latest
+    restart: always
     expose:
       - "27017"
     environment:
@@ -51,6 +54,7 @@ services:
 
   postgres:
     image: postgres:15-alpine
+    restart: always
     expose:
       - "5432"
     environment:
@@ -174,6 +178,7 @@ services:
   # ─────────────────────────────────────────────────────
   minio:
     image: minio/minio:latest
+    restart: always
     command: server /data --console-address ":9001"
     ports:
       - "${MINIO_API_HOST_PORT:-19000}:9000"   # S3 API (host configurable)
