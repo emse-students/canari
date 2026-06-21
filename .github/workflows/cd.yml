@@ -904,6 +904,10 @@ jobs:
           echo "🧹 Cleaning up old Docker resources..."
           eval "$DOCKER_CLI image prune -af --filter 'until=24h'"
           eval "$DOCKER_CLI container prune -f"
+          # Le build cache n etait jamais purge et grossissait sans limite
+          # (~30 Go observes). On garde 7 jours de cache pour ne pas ralentir
+          # les builds recents.
+          eval "$DOCKER_CLI builder prune -af --filter 'until=168h'"
           echo "✅ Cleanup completed"
 
       - name: Display running services
