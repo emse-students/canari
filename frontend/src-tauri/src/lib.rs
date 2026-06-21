@@ -1684,7 +1684,10 @@ pub fn run() {
                         sqlx::sqlite::SqliteConnectOptions::new()
                             .filename(&db_path)
                             .create_if_missing(true)
-                            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+                            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                            // Attendre le verrou jusqu'a 5s au lieu d'echouer en SQLITE_BUSY :
+                            // foreground (drain), FCM et WorkManager touchent tous mls_pending.db.
+                            .busy_timeout(std::time::Duration::from_secs(5)),
                     )
                     .await
                     .map_err(|e| e.to_string())
@@ -1989,7 +1992,10 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
                 sqlx::sqlite::SqliteConnectOptions::new()
                     .filename(&db_path)
                     .create_if_missing(true)
-                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
+                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                    // Attendre le verrou jusqu'a 5s au lieu d'echouer en SQLITE_BUSY (le drain
+                    // foreground peut tenir mls_pending.db pendant que ce worker background tourne).
+                    .busy_timeout(std::time::Duration::from_secs(5)),
             )
             .await
             .map_err(|e| e.to_string())?;

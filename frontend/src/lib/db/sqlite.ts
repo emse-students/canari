@@ -96,6 +96,14 @@ export class SqliteStorage implements IStorage {
     // WAL mode : lectures concurrentes non bloquantes, critique sur mobile
     await this.db.execute('PRAGMA journal_mode=WAL');
 
+    // busy_timeout : si une AUTRE connexion tient le verrou d'ecriture (moteur natif
+    // background/FCM, WorkManager, ou checkpoint WAL), attendre jusqu'a 5s au lieu d'echouer
+    // IMMEDIATEMENT en "database is locked" (SQLITE_BUSY). Sans ca, un replay d'historique qui
+    // tombe sur un verrou perd les messages : le ratchet MLS a deja avance (session.finish), donc
+    // une nouvelle tentative ne peut plus les dechiffrer -> messages definitivement invisibles
+    // cote destinataire (symptome observe : "Echec replay historique ... database is locked").
+    await this.db.execute('PRAGMA busy_timeout=5000');
+
     // Schéma : la conversation porte son état de cycle de vie (active|pending|removed).
     // Les anciennes bases (colonne `is_ready`) sont migrées en v4 ci-dessous.
     await this.db.execute(`
