@@ -134,7 +134,13 @@ export class MembersController {
       groupId: g.id,
       name: g.name,
       isGroup: g.isGroup,
-      successorId: g.successorId ?? null,
+      // N'exposer un successorId que s'il pointe vers une ligne dm_groups REELLE. Un terminal
+      // actif portant un successorId DANGLANT (la ligne successeur n'existe plus : hard-purge,
+      // base videe) faisait viser ce successeur fantome au client (`targetId = successorId`),
+      // qui le purgeait localement a chaque reload mais le serveur le re-exposait -> boucle
+      // infinie de purge/recovery. byId ne contient que les lignes reellement chargees.
+      successorId:
+        g.successorId && byId.has(g.successorId) ? g.successorId : null,
       deletedAt: g.deletedAt ?? null,
     }));
   }
