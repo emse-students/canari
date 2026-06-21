@@ -236,6 +236,16 @@ async function handleWelcome({
       deps.conversations.set(terminalId, { ...convo, lifecycle: 'active' });
       await saveConversation(terminalId).catch(() => {});
     }
+    // Promotion serveur de la membership en 'active' - INDISPENSABLE meme sur ce chemin idempotent.
+    // Cas reel : un device qui rejoint le groupe en ARRIERE-PLAN (Welcome via FCM/JNI) ne passe
+    // pas par le chemin de join normal ci-dessous (qui appelle updateInvitationStatus). Quand il
+    // revient au premier plan, le Welcome est redelivre mais le groupe est deja local -> on tombe
+    // ici. Sans cet appel, sa ligne dm_device_group_memberships reste 'pending', donc la resolution
+    // des destinataires (status='active') l'EXCLUT : il ne recoit jamais les messages en temps reel
+    // ni en push (seulement via le rattrapage d'historique au reload). Fire-and-forget, idempotent.
+    void mlsService
+      .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
+      .catch(() => {});
     onGroupReady?.(terminalId);
     log(`[WELCOME] ${terminalId.slice(0, 8)}… déjà détenu - Welcome redélivré ignoré (idempotent)`);
     return true;
