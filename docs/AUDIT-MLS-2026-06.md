@@ -53,6 +53,11 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | S3 | `any` sur deliveryMeta/onChannelEvent/devices -> types | FIXED (P5) | (ce commit) |
 | M2 | Replay: WrongEpoch marque vu definitivement | FIXED (P5: WrongEpoch retryable comme GAP_QUEUED) | (ce commit) |
 | S5 | Classification d'erreurs MLS dupliquee 4 couches | FIXED (volet TS : classifyIncomingDecryptError unique ; volet Rust differe) | (ce commit) |
+| DB1 | SQLite sans busy_timeout -> "database is locked" sur le replay -> messages dechiffres mais jamais affiches (perte definitive) | FIXED (busy_timeout 5s foreground + natif) | 05eeeb26 |
+| FCM0 | Chemin Welcome idempotent (foreground) ne promeut pas la membership 'active' -> device joint en background reste 'pending', exclu du routage | FIXED (updateInvitationStatus('active') sur le chemin idempotent) | (ce commit) |
+| FCM1 | Join Welcome en BACKGROUND ne promeut jamais la membership 'active' (auth PushSecret, pas de JWT) -> pas de livraison temps-reel/push tant que l'app reste en background | OPEN (besoin d'un endpoint PushSecret d'activation) | - |
+| FCM2 | onNewToken ne pousse pas le token au backend -> token tourne app tuee = push vers token mort jusqu'a reouverture | OPEN | - |
+| FCM3 | Garde foreground `isInForeground` TOCTOU -> message a la transition ni traite background ni foreground | OPEN (= C1/C2) | - |
 
 ### Note architecture Android (pour C1/C2)
 
@@ -559,6 +564,70 @@ legitimement. Plus aucune sous-chaine dupliquee entre ces deux chemins -> une di
 `wasmLogShim`/`mlsWasmLoader` (filtrage de bruit de log), `actions.ts` (fork commit-send via
 `parseForkedEpoch`). Le volet NATIF Rust (`src-tauri`) reste a unifier via un enum `mls-core` -
 process distinct, pas de partage de code TS, rebuild WASM requis (differe).
+
+---
+
+## FCM / PUSH (Android background) - revue de bout en bout
+
+Parcours audite : enrolement du token -> reception FCM (`onMessageReceived`) -> branchements
+(welcome_request / Welcome / social / process_queue / message chiffre) -> traitement background JNI
+-> affichage de notification. Fichier : `frontend/src-tauri/gen/android/.../CanariFirebaseMessagingService.kt`.
+
+### Diagnostic terrain (logs 2026-06-21, B mobile)
+A envoie, B (mobile) ne voit RIEN et n'a AUCUNE notification. Logs SERVEUR :
+`[SEND] recipient=...:web-...-mqigddgf online=false` + `[PUSH_SEND] No push token` pour CHAQUE
+message de A, et `FALLBACK_MEMBERS_CACHE count=1`. -> les messages de A ne sont routes QUE vers le
+device WEB de B (hors-ligne, navigateur = pas de token FCM). Le device MOBILE de B n'est PAS dans la
+liste des destinataires car `dm_device_group_memberships` ne le liste pas en `status='active'`
+(la resolution des destinataires filtre sur active, `messaging.service.ts:458-465`).
+
+### DB1 - SQLite sans busy_timeout : messages dechiffres mais jamais affiches (FIXED)
+Sur le mobile, le rattrapage d'historique echoue : `[WARN] Echec replay historique ... database is
+locked`. Le replay (`history.ts`) dechiffre via `recevoir_messages_batch` (le ratchet AVANCE, mls.bin
+persiste) PUIS `saveMessages` ; si une autre connexion tient le verrou d'ecriture (moteur natif
+background/FCM/WorkManager, ou checkpoint WAL), l'ecriture echoue IMMEDIATEMENT (aucun `busy_timeout`)
+-> `session.finish()` (finally) commit le ratchet quand meme -> messages dechiffres mais jamais sauves,
+et IRRECUPERABLES. FIX : `PRAGMA busy_timeout=5000` (foreground `canari.db`) + `.busy_timeout(5s)`
+sur les pools natifs sqlx (`mls_pending.db`). Commit `05eeeb26`.
+
+### FCM0 - Chemin Welcome idempotent foreground ne promeut pas 'active' (FIXED)
+Le join Welcome NORMAL (`setupMessageHandler.ts:312`) appelle `updateInvitationStatus('active')`. Mais
+quand un device a rejoint en BACKGROUND (FCM) puis revient au premier plan, le Welcome redelivre tombe
+sur le chemin idempotent "deja detenu" (`setupMessageHandler.ts:231-242`) qui mettait le lifecycle local
+a `active` SANS appeler le serveur -> membership figee a `pending` -> exclue du routage. FIX : appel
+`updateInvitationStatus('active')` (fire-and-forget) ajoute sur ce chemin (commit de cette passe).
+
+### FCM1 - Le join Welcome en BACKGROUND ne promeut JAMAIS la membership 'active' (OPEN)
+`processReceivedWelcomeBackground` (`...Service.kt:814`) rejoint le groupe MLS (JNI
+`nativeProcessWelcomeBackground`) mais n'appelle NI `registerMember` NI `updateInvitationStatus('active')`.
+Il ne le PEUT pas : le background s'authentifie en `PushSecret`, or `invitations/status` est garde par
+JWT (`HeaderAuthGuard`). Consequence : un device qui rejoint un groupe en arriere-plan reste `pending`
+cote serveur ; il ne recoit AUCUN message suivant en temps-reel ni en push tant que l'app n'est pas
+rouverte (ou seul FCM0 le promeut). FCM0 corrige le cas "l'app revient au premier plan" mais la livraison
+background pure reste cassee. FIX a faire : endpoint PushSecret d'activation de membership, appele par
+`processReceivedWelcomeBackground` apres un join reussi (et idealement par le worker apres un drain).
+
+### FCM2 - `onNewToken` ne pousse pas le token au backend (OPEN)
+`onNewToken` (`...Service.kt:188`) persiste le token localement (SharedPrefs + `fcm_token.txt`) mais ne
+le transmet jamais au backend ; l'enregistrement serveur n'a lieu qu'au prochain demarrage foreground
+(`registerPushToken`). Si FCM fait tourner le token pendant que l'app est tuee, le serveur garde l'ancien
+token -> push vers un token mort (echec silencieux, ou `[PUSH_SEND] No push token`) jusqu'a reouverture.
+Fenetre de notifications manquees. FIX : enregistrer le nouveau token cote backend depuis `onNewToken`
+(auth PushSecret, idempotent), pas seulement le persister.
+
+### FCM3 - Garde foreground `isInForeground` TOCTOU (OPEN, = C1/C2)
+`onMessageReceived:216` : si `MainActivity.isInForeground`, le background s'abstient (le foreground WS
+gere). Mais `isInForeground` peut etre perime pendant une transition background<->foreground -> un message
+arrive pile a cet instant peut n'etre traite NI par le background (croit que le foreground gere) NI par le
+foreground (WS pas encore re-etabli). Meme racine que C1/C2 (verrou commun WebView<->JNI manquant).
+
+### Points FCM sains
+- `welcome_request_pending` background (`...Service.kt:439`) : add-lock Redis + retries, JNI sous
+  `MlsStateLock`, `sendWelcomeAndCommit` transmet `baseEpoch` pour `validateCommit` (C6). Solide.
+- `tryDecrypt` : `fetchProto` hors verrou, `MlsStateLock` tenu uniquement pour le JNI (mls.bin+Argon2).
+- `showNotification` : supprimee si l'app est au premier plan ; fallback generique si dechiffrement KO.
+- Le push data-only (`messaging.service.ts:294`) fait bien declencher `onMessageReceived` fg+bg ; le
+  non-affichage observe vient de FCM0/FCM1 (pas de push vers le device), PAS d'un throttling data-only.
 
 ---
 
