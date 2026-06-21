@@ -138,6 +138,7 @@ cargo test
 3. **Always rebuild WASM after changes** to `frontend/mls-core/` or `mls-wasm/`
 4. **Regenerate protobuf bindings** after changes to `libs/proto/canari.proto` (`npm run proto:gen`)
 5. **No localStorage for tokens** - use memory stores
+6. **Keep `infrastructure/MIGRATION.md` in sync** - update it whenever the new-server procedure changes: a GitHub secret is added/renamed, a service or stack is added to the CD, the backup/offsite setup changes, or a bootstrap step is added/removed. It is the source of truth for cloning the server.
 
 ## Accurate Reference
 
