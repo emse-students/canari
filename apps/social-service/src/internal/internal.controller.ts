@@ -74,7 +74,7 @@ export class InternalController {
     }
     const rows = await this.assocMemberRepo.find({
       where: { associationId },
-      select: ['userId'],
+      select: { userId: true },
     });
     return { userIds: rows.map((r) => r.userId) };
   }

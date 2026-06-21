@@ -587,7 +587,7 @@ export class InvitationsController {
     // Capture affected groups before delete so we can clean Redis routing sets.
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, deviceId: safeDeviceId },
-      select: ['groupId'],
+      select: { groupId: true },
     });
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
 

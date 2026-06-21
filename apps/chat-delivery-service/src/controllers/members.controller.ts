@@ -291,7 +291,7 @@ export class MembersController {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const rows = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
-      select: ['userId'],
+      select: { userId: true },
     });
     this.logger.log(
       `[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}`,
@@ -317,7 +317,7 @@ export class MembersController {
   async getGroupMembers(@Param('groupId') groupId: string) {
     const rows = await this.deviceGroupRepo.find({
       where: { groupId, status: 'active' as const },
-      select: ['userId', 'deviceId'],
+      select: { userId: true, deviceId: true },
     });
     this.logger.log(`[GET_MEMBERS] group=${groupId} count=${rows.length}`);
     return rows;

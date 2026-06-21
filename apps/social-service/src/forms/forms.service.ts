@@ -563,7 +563,7 @@ export class FormsService {
     // Grant cotisation tag if configured on the form + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: submission.formId },
-      select: ['id', 'title', 'grantedTagName', 'tagExpiresAt', 'associationId'],
+      select: { id: true, title: true, grantedTagName: true, tagExpiresAt: true, associationId: true },
     });
     if (form?.grantedTagName) {
       try {
@@ -656,7 +656,7 @@ export class FormsService {
     // Grant tag if form is configured + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: formId },
-      select: ['id', 'title', 'grantedTagName', 'tagExpiresAt', 'associationId'],
+      select: { id: true, title: true, grantedTagName: true, tagExpiresAt: true, associationId: true },
     });
     if (form?.grantedTagName) {
       try {

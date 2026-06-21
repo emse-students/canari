@@ -285,7 +285,7 @@ export class AssociationsService {
 
     const previous = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: ['id', 'logoMediaId'],
+      select: { id: true, logoMediaId: true },
     });
     const oldMediaId = previous?.logoMediaId ?? null;
 
@@ -314,7 +314,7 @@ export class AssociationsService {
     await this.findById(associationId);
     const row = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: ['id', 'logoMediaId'],
+      select: { id: true, logoMediaId: true },
     });
     const oldMediaId = row?.logoMediaId ?? null;
 
@@ -694,7 +694,7 @@ export class AssociationsService {
       where: { associationId },
       order: { updatedAt: 'DESC' },
       take: 50,
-      select: ['id', 'title', 'updatedAt'],
+      select: { id: true, title: true, updatedAt: true },
     });
     return {
       forms: forms.map((f) => ({
@@ -735,7 +735,7 @@ export class AssociationsService {
   async findCalendarEventByLinkedPost(postId: string) {
     const post = await this.postRepo.findOne({
       where: { id: postId },
-      select: ['id', 'linkedCalendarEventId'],
+      select: { id: true, linkedCalendarEventId: true },
     });
     if (!post?.linkedCalendarEventId) return null;
     const ev = await this.calendarRepo.findOne({
@@ -755,7 +755,7 @@ export class AssociationsService {
     if (!ev) return null;
     const asso = await this.assoRepo.findOne({
       where: { id: ev.associationId },
-      select: ['slug'],
+      select: { slug: true },
     });
     const base = this.serializeCalendarEvent(ev);
     return { ...base, associationSlug: asso?.slug ?? '' };
@@ -771,7 +771,7 @@ export class AssociationsService {
   private async assertFormBelongsToAssociation(formId: string, associationId: string) {
     const f = await this.formRepo.findOne({
       where: { id: formId },
-      select: ['id', 'associationId'],
+      select: { id: true, associationId: true },
     });
     if (!f) throw new BadRequestException('Linked form not found');
     if (f.associationId !== associationId) {
@@ -936,7 +936,7 @@ export class AssociationsService {
         // Regular asso admins (any flag) see only their own asso's pending events
         const myMemberships = await this.memberRepo.find({
           where: { userId },
-          select: ['associationId', 'permissions'],
+          select: { associationId: true, permissions: true },
         });
         const adminAssoIds = myMemberships
           .filter((m) => m.permissions > 0)
@@ -1131,7 +1131,7 @@ export class AssociationsService {
   ): Promise<void> {
     const members = await this.memberRepo.find({
       where: { associationId },
-      select: ['userId', 'permissions'],
+      select: { userId: true, permissions: true },
     });
     const proposers = members.filter(
       (m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0
@@ -1406,7 +1406,7 @@ export class AssociationsService {
   async getOrCreateVaultKey(associationId: string): Promise<string> {
     const asso = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: ['id', 'documentVaultKey'],
+      select: { id: true, documentVaultKey: true },
     });
     if (!asso) throw new NotFoundException('Association not found');
     if (asso.documentVaultKey) return asso.documentVaultKey;
@@ -1421,7 +1421,7 @@ export class AssociationsService {
   async getNotesCiphertext(associationId: string): Promise<string> {
     const asso = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: ['id', 'notesCiphertext'],
+      select: { id: true, notesCiphertext: true },
     });
     if (!asso) throw new NotFoundException('Association not found');
     return asso.notesCiphertext ?? '';
@@ -1442,17 +1442,17 @@ export class AssociationsService {
       this.docRepo.find({
         where: { associationId },
         order: { createdAt: 'DESC' },
-        select: [
-          'id',
-          'associationId',
-          'name',
-          'description',
-          'mimeType',
-          'size',
-          'uploadedBy',
-          'createdAt',
-          'updatedAt',
-        ],
+        select: {
+          id: true,
+          associationId: true,
+          name: true,
+          description: true,
+          mimeType: true,
+          size: true,
+          uploadedBy: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       }),
       this.docRepo
         .createQueryBuilder('d')
@@ -1463,7 +1463,7 @@ export class AssociationsService {
 
     const asso = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: ['documentQuotaBytes'],
+      select: { documentQuotaBytes: true },
     });
     const quotaBytes = Number(asso?.documentQuotaBytes ?? 524288000);
     const usedBytes = Number(usedRaw?.total ?? 0);
@@ -1483,7 +1483,7 @@ export class AssociationsService {
   async createDocument(associationId: string, dto: CreateAssociationDocumentDto, userId: string) {
     const asso = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: ['id', 'documentQuotaBytes'],
+      select: { id: true, documentQuotaBytes: true },
     });
     if (!asso) throw new NotFoundException('Association not found');
 
@@ -1571,15 +1571,15 @@ export class AssociationsService {
     return this.formRepo.find({
       where: { associationId },
       order: { createdAt: 'DESC' },
-      select: [
-        'id',
-        'title',
-        'description',
-        'basePrice',
-        'currency',
-        'allowCashPayment',
-        'createdAt',
-      ],
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        basePrice: true,
+        currency: true,
+        allowCashPayment: true,
+        createdAt: true,
+      },
     });
   }
 
@@ -1594,7 +1594,7 @@ export class AssociationsService {
 
     const products = await this.productRepo.find({
       where: { associationId },
-      select: ['grantedTagName'],
+      select: { grantedTagName: true },
     });
     for (const p of products) {
       if (p.grantedTagName?.trim()) names.add(p.grantedTagName.trim());
@@ -1602,7 +1602,7 @@ export class AssociationsService {
 
     const forms = await this.formRepo.find({
       where: { associationId },
-      select: ['pricingTagName', 'grantedTagName'],
+      select: { pricingTagName: true, grantedTagName: true },
     });
     for (const f of forms) {
       if (f.pricingTagName?.trim()) names.add(f.pricingTagName.trim());

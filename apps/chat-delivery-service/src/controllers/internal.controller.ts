@@ -10,7 +10,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import * as crypto from 'crypto';
@@ -160,7 +160,7 @@ export class InternalController {
     const groupIds = memberships.map((m) => m.groupId);
 
     if (groupIds.length > 0) {
-      const groups = await this.groupRepo.findByIds(groupIds);
+      const groups = await this.groupRepo.findBy({ id: In(groupIds) });
 
       const dmGroups = groups.filter((g) => !g.isGroup);
       const multiGroups = groups.filter((g) => g.isGroup);
@@ -184,7 +184,7 @@ export class InternalController {
 
       // ── Multi-member groups: remove user from Redis membership sets ───────
       const deviceIds = await this.keyPackageRepo
-        .find({ where: { userId }, select: ['deviceId'] })
+        .find({ where: { userId }, select: { deviceId: true } })
         .then((kps) => kps.map((kp) => kp.deviceId));
 
       await Promise.all(

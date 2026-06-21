@@ -148,7 +148,7 @@ export class GroupsController {
       toDelete.push(current);
       const g = await this.groupRepo.findOne({
         where: { id: current },
-        select: ['id', 'successorId'],
+        select: { id: true, successorId: true },
       });
       current = g?.successorId ?? null;
     }

@@ -158,7 +158,7 @@ export class SecurityController {
     this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
     const doc = await this.pinVerifierRepo.findOne({
       where: { userId: safeUserId },
-      select: ['id'],
+      select: { id: true },
     });
     return { registered: !!doc };
   }
@@ -248,7 +248,7 @@ export class SecurityController {
 
     const devices = await this.keyPackageRepo.find({
       where: { userId: safeUserId },
-      select: ['deviceId'],
+      select: { deviceId: true },
     });
     const deviceIds = [...new Set(devices.map((d) => d.deviceId))];
 

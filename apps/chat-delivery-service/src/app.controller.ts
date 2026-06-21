@@ -231,7 +231,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const deviceIds = [...new Set(candidates.map((m) => m.deviceId))];
     const liveKeyPackages = await this.keyPackageRepo.find({
       where: { deviceId: In(deviceIds), createdAt: MoreThanOrEqual(staleDate) },
-      select: ['userId', 'deviceId'],
+      select: { userId: true, deviceId: true },
     });
     const liveDeviceKeys = new Set(
       liveKeyPackages.map((kp) => `${kp.userId}:${kp.deviceId}`),
@@ -345,7 +345,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     const deadGroups = await this.groupRepo.find({
       where: { deletedAt: LessThan(cutoff) },
-      select: ['id'],
+      select: { id: true },
     });
 
     if (deadGroups.length === 0) return;
@@ -402,7 +402,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       const groupIds = keys.map((k) => k.replace('group:members:', ''));
       const existingGroups = await this.groupRepo.find({
         where: { id: In(groupIds) },
-        select: ['id'],
+        select: { id: true },
       });
       const existingIds = new Set(existingGroups.map((g) => g.id));
 

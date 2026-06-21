@@ -49,7 +49,7 @@ export class FollowsService {
   async getFollowedAssociationIdsForUser(followerUserId: string): Promise<string[]> {
     const rows = await this.followRepo.find({
       where: { followerUserId },
-      select: ['associationId'],
+      select: { associationId: true },
     });
     return rows.map((r) => r.associationId);
   }
@@ -108,7 +108,7 @@ export class FollowsService {
   async getFollowedUserIdsForUser(followerUserId: string): Promise<string[]> {
     const rows = await this.userFollowRepo.find({
       where: { followerUserId },
-      select: ['followedUserId'],
+      select: { followedUserId: true },
     });
     return rows.map((r) => r.followedUserId);
   }

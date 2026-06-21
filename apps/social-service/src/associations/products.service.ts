@@ -648,7 +648,7 @@ export class ProductsService {
   /** Lists all failed Cercle webhook deliveries for an association's products. */
   async listWebhookFailures(associationId: string): Promise<WebhookDelivery[]> {
     const productIds = await this.productRepo
-      .find({ where: { associationId }, select: ['id'] })
+      .find({ where: { associationId }, select: { id: true } })
       .then((ps) => ps.map((p) => p.id));
 
     if (productIds.length === 0) return [];

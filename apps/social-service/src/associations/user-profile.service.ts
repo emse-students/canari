@@ -178,13 +178,13 @@ export class UserProfileService {
   async listMemberUserIds(associationId: string): Promise<string[]> {
     const rows = await this.memberRepo.find({
       where: { associationId },
-      select: ['userId'],
+      select: { userId: true },
     });
     return rows.map((r) => r.userId);
   }
 
   private async assertAssociationExists(associationId: string): Promise<void> {
-    const exists = await this.assoRepo.exist({ where: { id: associationId } });
+    const exists = await this.assoRepo.exists({ where: { id: associationId } });
     if (!exists) throw new NotFoundException('Association not found');
   }
 

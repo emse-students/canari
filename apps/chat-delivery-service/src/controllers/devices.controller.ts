@@ -89,7 +89,10 @@ export class DevicesController {
         })
         .orderBy('otkp.createdAt', 'ASC')
         .limit(1)
-        .setLock('pessimistic_partial_write')
+        // typeorm 1.0 a retire le mode 'pessimistic_partial_write' : on exprime
+        // le FOR UPDATE SKIP LOCKED via setLock('pessimistic_write') + setOnLocked.
+        .setLock('pessimistic_write')
+        .setOnLocked('skip_locked')
         .getOne();
       if (found) {
         await manager.delete(OneTimeKeyPackage, found.id);
@@ -180,7 +183,7 @@ export class DevicesController {
       const groupIds = [...new Set(userGroups.map((gm) => gm.groupId))];
       const activeGroups = await this.groupRepo.find({
         where: { id: In(groupIds), deletedAt: IsNull() },
-        select: ['id'],
+        select: { id: true },
       });
       activeGroupIds = activeGroups.map((g) => g.id);
       if (activeGroupIds.length > 0) {
@@ -407,7 +410,7 @@ export class DevicesController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const rows = await this.oneTimeKeyPackageRepo.find({
       where: { userId: safeUserId, deviceId: safeDeviceId },
-      select: ['id', 'keyPackage'],
+      select: { id: true, keyPackage: true },
     });
     return rows.map((r) => ({ id: r.id, keyPackage: r.keyPackage }));
   }

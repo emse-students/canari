@@ -151,7 +151,7 @@ export class MessagingService {
   }> {
     const memberships = await this.deviceGroupRepo.find({
       where: { userId, deviceId },
-      select: ['groupId'],
+      select: { groupId: true },
     });
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
 
@@ -227,7 +227,7 @@ export class MessagingService {
     try {
       const group = await this.groupRepo.findOne({
         where: { id: groupId },
-        select: ['name', 'isGroup'],
+        select: { name: true, isGroup: true },
       });
       groupName = group?.isGroup ? (group?.name ?? '') : '';
     } catch {
@@ -1192,7 +1192,7 @@ export class MessagingService {
 
     const existing = await this.groupRepo.find({
       where: { id: In(groupIds) },
-      select: ['id'],
+      select: { id: true },
     });
     const existingIds = new Set(existing.map((g) => g.id));
     const orphaned = groupIds.filter((id) => !existingIds.has(id));
@@ -1303,7 +1303,7 @@ export class MessagingService {
 
     const memberships = await this.groupMemberRepo.find({
       where: { userId: authUserId, groupId: In(deliverable) },
-      select: ['groupId'],
+      select: { groupId: true },
     });
     const memberIds = new Set(memberships.map((m) => m.groupId));
 
