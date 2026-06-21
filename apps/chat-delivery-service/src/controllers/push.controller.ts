@@ -231,6 +231,57 @@ export class PushController {
   // ── Background-service (PushSecret) endpoints ─────────────────────────────
 
   /**
+   * Refreshes ONLY the FCM token for a device, authenticated by its existing PushSecret
+   * (no JWT - called from `onNewToken` when the app may be killed). The pushSecret is preserved
+   * (NEVER regenerated here, unlike `/register`) so the device keeps using the secret stored in
+   * its Keystore. Fixes FCM2: a token rotated while the app is killed otherwise stays stale on
+   * the server until the next foreground launch, sending pushes to a dead token in the meantime.
+   * Auth: PushSecret (no JWT).
+   */
+  @Post('mls/push/refresh-token')
+  async refreshPushTokenViaSecret(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { userId: string; deviceId: string; token: string },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    if (typeof body.token !== 'string' || !body.token.trim()) {
+      throw new BadRequestException('token is required');
+    }
+    const token = body.token.trim().slice(0, 500);
+    await this.pushTokenRepo.update({ userId, deviceId }, { token });
+    this.logger.log(`[PUSH_REFRESH] user=${userId} device=${deviceId}`);
+    return { status: 'refreshed' };
+  }
+
+  /**
+   * Promotes the calling device's group membership to `active` after it joined a group via a
+   * background FCM Welcome. The background JNI path cannot call the JWT-guarded
+   * `invitations/status` endpoint, so without this the device stays `pending` and the recipient
+   * resolution (`status='active'`) excludes it - it never receives realtime/push messages (FCM1).
+   * Auth: PushSecret (no JWT).
+   */
+  @Post('mls/push/membership-active')
+  async markMembershipActivePush(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { userId: string; deviceId: string; groupId: string },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    await this.messagingService.activateDeviceMembership(
+      userId,
+      deviceId,
+      groupId,
+    );
+    return { status: 'active' };
+  }
+
+  /**
    * Acquires the distributed add-lock for a group.
    * Called by the Android background service before creating a Welcome package
    * to prevent concurrent epoch forks when multiple devices race to add the same requester.

@@ -954,6 +954,34 @@ export class MessagingService {
   }
 
   /**
+   * Promeut la membership device en `active` et l'ajoute au set de routage Redis.
+   *
+   * Utilise par le chemin background PushSecret (FCM1) : un device qui rejoint un groupe via un
+   * Welcome FCM en arriere-plan ne passe pas par le chemin foreground `updateInvitationStatus`.
+   * Sans cette promotion, sa ligne `dm_device_group_memberships` reste `pending`, donc la
+   * resolution des destinataires (filtre `status='active'`) l'EXCLUT et il ne recoit jamais les
+   * messages suivants en temps reel ni en push (uniquement via le rattrapage d'historique).
+   * Idempotent : upsert sur la contrainte unique (deviceId, groupId).
+   */
+  async activateDeviceMembership(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+  ): Promise<void> {
+    await this.deviceGroupRepo.upsert(
+      { userId, deviceId, groupId, status: 'active' as const },
+      { conflictPaths: ['deviceId', 'groupId'] },
+    );
+    // Routage immediat : ajouter au set Redis sans attendre une reconstruction du cache.
+    await this.redis
+      .sadd(`group:members:${groupId}`, `${userId}:${deviceId}`)
+      .catch(() => {});
+    this.logger.log(
+      `[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`,
+    );
+  }
+
+  /**
    * Broadcasts a welcome_request signal to one online group member to trigger
    * a re-invite for the requesting device.  Falls back to the DB to repopulate
    * the Redis routing cache when the set is empty after a service restart.

@@ -196,6 +196,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: Exception) {
             Log.w(TAG, "onNewToken: impossible d'écrire fcm_token.txt: ${e.message}")
         }
+        // FCM2 : pousser le nouveau token au backend SANS attendre la prochaine ouverture foreground.
+        // Un token rotaté app tuée resterait périmé côté serveur (push vers token mort) jusqu'à
+        // réouverture. Best-effort via PushSecret ; si le contexte/secret manque (device pas encore
+        // enrôlé), le foreground enregistrera le token au prochain démarrage.
+        runWithWakeLock("fcm_token_refresh", 15_000L) {
+            val ctx = MlsContextLoader.loadPushContext(this)
+            val secret = retrievePushSecret()
+            if (ctx == null || secret == null) {
+                Log.d(TAG, "onNewToken: contexte/secret absent → refresh backend différé au foreground")
+                return@runWithWakeLock
+            }
+            refreshTokenOnBackend(ctx, secret, token)
+        }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -422,6 +435,70 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (wl.isHeld) wl.release()
             }
         }, "canari-$name").start()
+    }
+
+    /**
+     * Pousse le token FCM courant au backend via PushSecret (FCM2). Best-effort, jamais bloquant.
+     * Ne régénère PAS le pushSecret (contrairement à /register foreground) : seul le token change.
+     */
+    private fun refreshTokenOnBackend(ctx: PushContext, secret: String, token: String) {
+        try {
+            val url = URL("${ctx.baseUrl}/api/mls/push/refresh-token")
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("token", token)
+            }.toString()
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                Log.d(TAG, "refreshTokenOnBackend: HTTP ${conn.responseCode}")
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "refreshTokenOnBackend: exception: ${e.message}")
+        }
+    }
+
+    /**
+     * Promeut la membership de ce device en 'active' côté serveur via PushSecret (FCM1).
+     * Appelé après un join Welcome réussi en arrière-plan : sans ça, le device reste 'pending'
+     * et la résolution des destinataires (status='active') l'exclut du routage des messages.
+     * Best-effort, jamais bloquant.
+     */
+    private fun markMembershipActive(ctx: PushContext, secret: String, groupId: String) {
+        try {
+            val url = URL("${ctx.baseUrl}/api/mls/push/membership-active")
+            val body = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("groupId", groupId)
+            }.toString()
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                Log.d(TAG, "markMembershipActive: HTTP ${conn.responseCode} group=$groupId")
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "markMembershipActive: exception: ${e.message}")
+        }
     }
 
     // ── Traitement background Welcome request ────────────────────────────────
@@ -869,6 +946,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         if (joined) {
             Log.d(TAG, "processReceivedWelcomeBackground: ✓ groupe rejoint group=$groupId")
+            // FCM1 : promouvoir la membership en 'active' côté serveur. Le join JNI ne passe pas par
+            // le chemin foreground (updateInvitationStatus), donc sans cet appel le device reste
+            // 'pending' et n'est jamais routé comme destinataire des messages suivants (ni temps
+            // réel ni push). PushSecret car l'app peut être tuée (pas de JWT). Best-effort.
+            retrievePushSecret()?.let { markMembershipActive(ctx, it, groupId) }
             // Le groupe existe désormais : drainer la file pour traiter les messages en attente.
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
