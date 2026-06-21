@@ -20,6 +20,12 @@
     lastMessage?: string;
     /** Whether the MLS session for this conversation is fully established. */
     isReady: boolean;
+    /**
+     * Whether the conversation is removed (supprimee par un pair / exclusion / suppression locale
+     * en attente). Un groupe `removed` n'est PAS en cours de synchro : on ne montre pas le badge
+     * "Sync" (trompeur - le groupe est mort, pas en transit). Defaut `false`.
+     */
+    isRemoved?: boolean;
     /** Whether this tile is the currently active conversation. */
     isSelected: boolean;
     /** Number of unread messages to display as a badge. */
@@ -36,6 +42,7 @@
     conversationType = 'group',
     lastMessage,
     isReady,
+    isRemoved = false,
     isSelected,
     unreadCount = 0,
     imageMediaId = null,
@@ -138,7 +145,7 @@
 
       <!-- Espace Badges (Non lus, Sync) -->
       <div class="flex items-center gap-2 flex-shrink-0">
-        {#if !isReady}
+        {#if !isReady && !isRemoved}
           <span
             class="bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[0.6rem] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
           >

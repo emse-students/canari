@@ -424,6 +424,7 @@
                 ? convo.messages[convo.messages.length - 1].content
                 : undefined}
               isReady={convo.lifecycle === 'active'}
+              isRemoved={convo.lifecycle === 'removed'}
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
               imageMediaId={convo.imageMediaId}
