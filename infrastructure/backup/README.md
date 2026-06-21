@@ -28,14 +28,24 @@ pour l utilisateur dedie `canaribackup` (membre du groupe `_ssh`) sur `mitv`.
 
 ## Installation (serveur de production)
 
+Planification active : **crontab de l utilisateur `canari`** (ne necessite pas
+root), declenchee chaque jour a 03:30 :
+
+```cron
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
+```
+
+Verifier : `crontab -l` et `tail -f /home/canari/backups/backup.log`.
+
+Alternative si un acces root est disponible (timer systemd, fournis dans ce
+dossier) :
+
 ```bash
-# Depuis /home/canari/canari
 sudo cp infrastructure/backup/canari-backup.service /etc/systemd/system/
 sudo cp infrastructure/backup/canari-backup.timer   /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now canari-backup.timer
-
-# Verifier la planification
 systemctl list-timers canari-backup.timer
 ```
 
