@@ -72,7 +72,7 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: |
-          bun install
+          bun install --frozen-lockfile
           bunx svelte-kit sync
 
       - name: Generate protobuf bindings

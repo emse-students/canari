@@ -38,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend
-          bun install
+          bun install --frozen-lockfile
         continue-on-error: true
 
       - name: Autobuild
@@ -81,7 +81,7 @@ jobs:
       - name: Audit frontend dependencies
         run: |
           cd frontend
-          bun install
+          bun install --frozen-lockfile
           npm audit --audit-level=moderate
         continue-on-error: true
 
