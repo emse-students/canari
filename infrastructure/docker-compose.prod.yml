@@ -30,6 +30,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      # Un broker recree recharge tout l historique __consumer_offsets et peut
+      # mettre plusieurs minutes a repondre. Sans start_period, ces echecs de
+      # demarrage marquent kafka "unhealthy" et font echouer le deploiement
+      # (chat-gateway/chat-delivery dependent de kafka: condition service_healthy).
+      start_period: 180s
 
   redis:
     image: redis:alpine
