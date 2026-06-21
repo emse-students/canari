@@ -314,7 +314,7 @@ export class UsersService implements OnModuleInit {
       try {
         const { default: Stripe } = await import('stripe');
         const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-          apiVersion: '2026-03-25.dahlia',
+          apiVersion: '2026-05-27.dahlia',
         });
         await stripe.customers.del(user.stripeCustomerId);
         this.logger.log(

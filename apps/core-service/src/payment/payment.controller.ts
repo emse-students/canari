@@ -20,7 +20,7 @@ import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChargeResult } from './payment.service';
-import { Stripe } from 'stripe';
+import Stripe from 'stripe';
 import axios from 'axios';
 import { resolveStripeCallbackUrl } from './stripe-callback-url';
 import {

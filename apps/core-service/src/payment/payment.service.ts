@@ -30,7 +30,7 @@ export class PaymentService {
   constructor() {
     const key = process.env.STRIPE_SECRET_KEY;
     this.stripe = key
-      ? new Stripe(key, { apiVersion: '2026-03-25.dahlia' })
+      ? new Stripe(key, { apiVersion: '2026-05-27.dahlia' })
       : null;
     this.logger.log(`Stripe configured: ${key ? 'yes' : 'no'}`);
   }
@@ -80,7 +80,7 @@ export class PaymentService {
     saveForFuture?: boolean;
     /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
     idempotencyKey?: string;
-  }) {
+  }): Promise<Stripe.Checkout.Session> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
@@ -156,9 +156,11 @@ export class PaymentService {
   ): Promise<ConnectBalanceSummary> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
-    const balance = await this.stripe.balance.retrieve({
-      stripeAccount: stripeAccountId,
-    });
+    // v22: stripeAccount is a request option, no longer mixed into params.
+    const balance = await this.stripe.balance.retrieve(
+      {},
+      { stripeAccount: stripeAccountId },
+    );
     const currency =
       balance.available.find((b) => b.currency === 'eur')?.currency ??
       balance.available[0]?.currency ??

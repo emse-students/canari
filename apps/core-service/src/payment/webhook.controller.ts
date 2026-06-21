@@ -47,7 +47,7 @@ export class PaymentWebhookController {
   ) {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
     this.stripe = key
-      ? new Stripe(key, { apiVersion: '2026-03-25.dahlia' })
+      ? new Stripe(key, { apiVersion: '2026-05-27.dahlia' })
       : (null as unknown as Stripe);
   }
 
