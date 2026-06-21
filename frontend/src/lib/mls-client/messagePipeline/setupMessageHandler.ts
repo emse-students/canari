@@ -12,6 +12,7 @@ import {
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
+import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
@@ -627,13 +628,14 @@ async function handleKnownGroup({
     return true;
   } catch (e) {
     const err = String(e);
+    const kind = classifyIncomingDecryptError(e);
 
-    if (err.includes('CannotDecryptOwnMessage')) return true;
-    if (err.includes('out of memory') || err.includes('unreachable')) {
+    if (kind === 'own-message') return true;
+    if (kind === 'oom') {
       deps.onMlsFatalError?.('oom');
       return true;
     }
-    if (err.includes('GAP_QUEUED') || err.includes('epoch gap')) {
+    if (kind === 'epoch-gap') {
       // Tauri : message bufferisé en SQLite (`GAP_QUEUED`). Web WASM : erreur directe
       // `epoch gap [msg_epoch=…, group_epoch=…]`. Un gap se résorbe normalement quand
       // les commits manqués arrivent. Mais sur un groupe qu'on détient déjà,
@@ -663,12 +665,12 @@ async function handleKnownGroup({
     // déchiffré et son secret de ratchet consommé/supprimé. Le groupe est sain -
     // surtout ne PAS déclencher onOutOfSync (qui détruirait une membership valide
     // par une recovery parasite). On ACK simplement le doublon.
-    if (err.includes('SecretReuseError')) {
+    if (kind === 'secret-reuse') {
       log(`[MLS] SecretReuseError (doublon) pour ${convoKey.slice(0, 8)}… - ACK silencieux`);
       return true;
     }
 
-    // Tout autre échec → hors-sync → requestReAdd + ACK
+    // Tout autre échec (`wrong-epoch`, `unknown`) → hors-sync → requestReAdd + ACK
     log(`[MLS] Erreur déchiffrement ${convoKey.slice(0, 8)}…: ${err.slice(0, 100)} → re-add`);
     await onOutOfSync(groupId);
     return true;

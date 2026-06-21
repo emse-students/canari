@@ -13,6 +13,7 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
@@ -314,22 +315,21 @@ export async function replayConversationHistory(params: {
             continue;
           }
         } catch (err) {
-          const errStr = String(err);
-          if (errStr.includes('CannotDecryptOwnMessage') || errStr.includes('SecretReuseError')) {
+          const kind = classifyIncomingDecryptError(err);
+          if (kind === 'own-message' || kind === 'secret-reuse') {
             // Non-recoverable - mark as seen to avoid infinite reprocessing.
             // (Own message we can't decrypt, or a generation key already consumed/jetee.)
             seenCipherHashes.add(cipherFingerprint);
             seenUpdated = true;
             continue;
           }
-          if (errStr.includes('GAP_QUEUED') || errStr.includes('WrongEpoch')) {
-            // Recoverable: epoch/ratchet gap (GAP_QUEUED), ou frame d'une epoch que ce replay
-            // n'a pas encore atteinte (WrongEpoch - le commit peut s'appliquer a un load ulterieur).
+          if (kind === 'epoch-gap' || kind === 'wrong-epoch') {
+            // Recoverable: epoch/ratchet gap (epoch-gap), ou frame d'une epoch que ce replay
+            // n'a pas encore atteinte (wrong-epoch - le commit peut s'appliquer a un load ulterieur).
             // Ne PAS marquer "vu" pour que l'entree soit retentee au prochain chargement
             // d'historique apres resynchronisation d'epoch. [[M2]]
             skipSeenHash = true;
-            const kind = errStr.includes('WrongEpoch') ? 'WrongEpoch' : 'GAP_QUEUED';
-            console.warn(`[History] retryable (${kind}): ${errStr.slice(0, 200)}`);
+            console.warn(`[History] retryable (${kind}): ${String(err).slice(0, 200)}`);
           } else {
             console.warn(`History msg error: ${err}`);
           }

@@ -52,7 +52,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | S4, M1 | Strictness / veracite | OPEN (P5) | - |
 | S3 | `any` sur deliveryMeta/onChannelEvent/devices -> types | FIXED (P5) | (ce commit) |
 | M2 | Replay: WrongEpoch marque vu definitivement | FIXED (P5: WrongEpoch retryable comme GAP_QUEUED) | (ce commit) |
-| S5 | Classification d'erreurs MLS dupliquee 4 couches | OPEN (P5) | - |
+| S5 | Classification d'erreurs MLS dupliquee 4 couches | FIXED (volet TS : classifyIncomingDecryptError unique ; volet Rust differe) | (ce commit) |
 
 ### Note architecture Android (pour C1/C2)
 
@@ -546,6 +546,19 @@ Le meme string-matching d'erreurs OpenMLS est reparti dans :
 dans `mls-core` (source unique), mais `WrongEpoch`, `NoMatchingKeyPackage`, `GAP_QUEUED`,
 `CannotDecryptOwnMessage` restent matches par sous-chaine a plusieurs endroits -> divergence facile.
 Piste : un type d'erreur structure expose par `mls-core` (enum) consomme partout.
+
+**FIXED (volet TS)** : nouveau module pur `frontend/src/lib/mls-client/mlsDecryptError.ts` :
+`classifyIncomingDecryptError(error) -> MlsDecryptErrorKind` (`own-message | secret-reuse |
+epoch-gap | wrong-epoch | oom | unknown`). C'est la SOURCE UNIQUE du string-matching des erreurs de
+dechiffrement entrant ; `handleKnownGroup` (temps-reel) et `history.ts` (replay) le consomment et
+gardent chacun leur POLITIQUE distincte (ACK/escalade gap/fatal vs mark-seen/retry), qui differe
+legitimement. Plus aucune sous-chaine dupliquee entre ces deux chemins -> une divergence (ex. M2 :
+`WrongEpoch` retryable d'un cote, "vu definitif" de l'autre) devient impossible. Tests :
+`mlsDecryptError.test.ts` (7 cas). Restent HORS scope (domaines distincts, non dupliques) :
+`handleUnknownGroup` (erreurs de Welcome : `GroupAlreadyExists`/`NoMatchingKeyPackage`),
+`wasmLogShim`/`mlsWasmLoader` (filtrage de bruit de log), `actions.ts` (fork commit-send via
+`parseForkedEpoch`). Le volet NATIF Rust (`src-tauri`) reste a unifier via un enum `mls-core` -
+process distinct, pas de partage de code TS, rebuild WASM requis (differe).
 
 ---
 
