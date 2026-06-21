@@ -12,7 +12,7 @@
   "dependencies": {
     "@canari/shared-ts": "file:../../libs/shared-ts",
     "@nestjs/common": "^11.1.19",
-    "@nestjs/core": "^11.1.19",
+    "@nestjs/core": "^11.1.27",
     "@nestjs/microservices": "^11.1.19",
     "@nestjs/platform-express": "^11.1.19",
     "@nestjs/throttler": "^6.5.0",
