@@ -70,10 +70,9 @@ journalctl -u canari-backup.service -f
 
 ## Restauration / migration vers un nouveau serveur
 
-1. Cloner le depot, generer `infrastructure/.env` (ou laisser la CD le faire).
-2. Demarrer la stack : `docker compose -f infrastructure/docker-compose.prod.yml up -d`.
-3. Demarrer la stack Authentik (`miconnect`) si elle est incluse.
-4. Restaurer la derniere sauvegarde depuis mitv :
+1. Lancer la CD (`main`) : elle genere les `.env`, demarre la stack Canari
+   ET la stack Authentik (`miconnect`, cf [../authentik/](../authentik/)).
+2. Restaurer la derniere sauvegarde depuis mitv :
 
 ```bash
 ./infrastructure/backup/restore.sh --latest-from-mitv --yes

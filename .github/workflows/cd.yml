@@ -727,6 +727,37 @@ jobs:
 
           echo "✅ Services deployed"
 
+      - name: Deploy Authentik (miconnect) stack
+        working-directory: ${{ env.DEPLOY_PATH }}
+        env:
+          MICONNECT_DIR: /home/canari/miconnect
+          MICONNECT_PG_PASS: ${{ secrets.MICONNECT_PG_PASS }}
+          MICONNECT_AUTHENTIK_SECRET_KEY: ${{ secrets.MICONNECT_AUTHENTIK_SECRET_KEY }}
+        run: |
+          echo "🔐 Deploying Authentik (miconnect) stack..."
+          if [ -z "$MICONNECT_PG_PASS" ] || [ -z "$MICONNECT_AUTHENTIK_SECRET_KEY" ]; then
+            echo "::error::MICONNECT_PG_PASS / MICONNECT_AUTHENTIK_SECRET_KEY manquants dans les secrets GitHub"
+            exit 1
+          fi
+
+          # Montages locaux (bind) attendus par le compose Authentik.
+          mkdir -p "$MICONNECT_DIR/data" "$MICONNECT_DIR/certs" "$MICONNECT_DIR/custom-templates"
+
+          # Source de verite versionnee -> dossier de la stack (nom de projet "miconnect").
+          cp infrastructure/authentik/compose.yml "$MICONNECT_DIR/compose.yml"
+
+          # .env regenere depuis les secrets a chaque deploiement (comme la stack principale).
+          {
+            printf 'PG_PASS=%s\n' "$MICONNECT_PG_PASS"
+            printf 'AUTHENTIK_SECRET_KEY=%s\n' "$MICONNECT_AUTHENTIK_SECRET_KEY"
+          } > "$MICONNECT_DIR/.env"
+          chmod 600 "$MICONNECT_DIR/.env"
+
+          # Execute depuis le dossier pour conserver le nom de projet "miconnect"
+          # et les conteneurs miconnect-* (idempotent: pas de recreation sans changement).
+          ( cd "$MICONNECT_DIR" && eval "$DOCKER_COMPOSE up -d --remove-orphans" )
+          echo "✅ Authentik deployed"
+
       - name: Run database migrations
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
