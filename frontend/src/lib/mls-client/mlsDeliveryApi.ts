@@ -146,7 +146,15 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Fetches KeyPackages for all active devices of `userId`. Returns `[]` on any error. */
+  /**
+   * Fetches KeyPackages for all active devices of `userId`.
+   *
+   * THROWS sur un echec transport/HTTP (reseau coupe, non-2xx) : un `[]` ne doit JAMAIS etre
+   * indiscernable d'un echec (cf. audit S2). Ne renvoie `[]` que pour un vrai 200 sans device.
+   * Les appelants best-effort (creation, fallback KeyPackage) opt-in explicitement via
+   * `.catch(() => [])` ; le chemin reboot laisse l'erreur remonter pour ne pas inviter un
+   * sous-ensemble silencieux de membres.
+   */
   async fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -156,32 +164,27 @@ export class MlsDeliveryApi {
       deviceAppVersion?: string;
     }>
   > {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
-        headers: await this.auth(),
-      });
-      if (!res.ok) return [];
-      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
-      // are re-validated with `typeof` below before being kept.
-      const devices = (await res.json()) as Array<{
-        keyPackage: string;
-        deviceId: string;
-        deviceName?: string;
-        deviceOs?: string;
-        deviceAppVersion?: string;
-      }>;
+    const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
+      headers: await this.auth(),
+    });
+    if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
+    // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+    // are re-validated with `typeof` below before being kept.
+    const devices = (await res.json()) as Array<{
+      keyPackage: string;
+      deviceId: string;
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+    }>;
 
-      return devices.map((d) => ({
-        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
-        deviceId: d.deviceId,
-        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
-      }));
-    } catch (e) {
-      console.error('Fetch User Devices Error:', e);
-      return [];
-    }
+    return devices.map((d) => ({
+      keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+      deviceId: d.deviceId,
+      deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+      deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+      deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+    }));
   }
 
   /** Adds `userId` to the server-side member list of `groupId` (idempotent). */
@@ -673,30 +676,30 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
   }
 
-  /** Returns the current member list for `groupId`. Returns `[]` on error. */
+  /**
+   * Returns the current device-level member list (dm_device_group_memberships) for `groupId`.
+   * THROWS sur echec transport/HTTP : un `[]` ne doit pas masquer un echec reseau (audit S2).
+   * Ne renvoie `[]` que pour un vrai 200 sans membre. Les appelants tolerants opt-in via `.catch`.
+   */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
-        headers: await this.auth(),
-      });
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
+      headers: await this.auth(),
+    });
+    if (!res.ok) throw new Error(`getGroupMembers failed: ${res.status}`);
+    return await res.json();
   }
 
-  /** Returns user-level members from dm_group_members for `groupId`. Returns `[]` on error. */
+  /**
+   * Returns user-level members from dm_group_members for `groupId`.
+   * THROWS sur echec transport/HTTP : un `[]` ne doit pas masquer un echec reseau (audit S2).
+   * Ne renvoie `[]` que pour un vrai 200 sans membre. Les appelants tolerants opt-in via `.catch`.
+   */
   async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
-        headers: await this.auth(),
-      });
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
+      headers: await this.auth(),
+    });
+    if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
+    return await res.json();
   }
 
   /** Returns all groups `userId` belongs to, including tombstones with successor/deleted metadata. */

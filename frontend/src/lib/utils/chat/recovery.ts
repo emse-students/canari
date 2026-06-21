@@ -612,7 +612,10 @@ async function inviteMembers(
   if (allUserIds.length === 0) {
     // dm_device_group_memberships vide (ex: device créateur supprimé via fresh-start).
     // Fallback sur dm_group_members (user-level, stable) : source de vérité pour l'appartenance.
-    const userMembers = await mlsService.getGroupUserMembers(deadGroupId).catch(() => []);
+    // Strict (pas de `.catch`) : un echec reseau ici remonte au `.catch` log de l'appelant
+    // (reboot 466 / health 905) au lieu d'etre confondu avec un groupe sans membre (audit S2) -
+    // le filet epoch=0 du health-check re-invitera une fois le reseau revenu.
+    const userMembers = await mlsService.getGroupUserMembers(deadGroupId);
     allUserIds = [...new Set(userMembers.map((m) => m.userId))];
     if (allUserIds.length > 0) {
       log(

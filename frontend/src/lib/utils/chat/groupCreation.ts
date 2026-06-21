@@ -116,7 +116,10 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     // Add own other devices to the group - use a single bulk commit to avoid
     // epoch fragmentation (sequential addMember would create one commit per device,
     // causing WrongEpoch errors on already-joined devices).
-    const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
+    // Best-effort : un echec reseau sur la liste de NOS propres devices ne doit pas avorter la
+    // creation (les autres devices se recuperent via leur propre welcome_request). `[]` => on
+    // cree le groupe avec le seul device courant.
+    const ownDevices = (await mlsService.fetchUserDevices(userId).catch(() => [])).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
     log(
@@ -606,7 +609,10 @@ export async function startNewConversation(
     log(`[DM] Membership serveur enregistré pour ${userId}`);
 
     // Collect ALL devices (contact + own) for a single bulk add
-    const ownDevices = (await mlsService.fetchUserDevices(userId)).filter(
+    // Best-effort : un echec reseau sur la liste de NOS propres devices ne doit pas avorter la
+    // creation (les autres devices se recuperent via leur propre welcome_request). `[]` => on
+    // cree le groupe avec le seul device courant.
+    const ownDevices = (await mlsService.fetchUserDevices(userId).catch(() => [])).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
     const allDevices = [...contactDevices, ...ownDevices];

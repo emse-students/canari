@@ -189,7 +189,7 @@ export interface IMlsService {
   connect(token?: string): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
-  /** Fetches all registered devices (with KeyPackages) for the given user from the delivery service. */
+  /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
   fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -300,9 +300,9 @@ export interface IMlsService {
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
-  /** Returns the list of (userId, deviceId) pairs currently in a group according to the delivery service. */
+  /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
-  /** Returns user-level membership (dm_group_members) for `groupId`, independent of device status. */
+  /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
   /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<UserGroupRow[]>;

@@ -47,7 +47,9 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H4 | validateCommit bypass epoch 0 | FIXED (P4: gate stricte baseEpoch==activeEpoch) | (ce commit) |
 | H5 | Push differe + background redondants | OPEN (P4, perf) | - |
 | H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
-| S1, S2, S4, M1 | Strictness / veracite | OPEN (P5) | - |
+| S1 | `getGroupMeta` null = 404 ET reseau -> reboot duplique un successeur | FIXED (P5: performReboot via getGroupServerStatus) | (ce commit) |
+| S2 | Retours `[]` indistinguables de l'echec -> invitations sautees | FIXED (P5: getters de liste stricts + opt-in best-effort) | (ce commit) |
+| S4, M1 | Strictness / veracite | OPEN (P5) | - |
 | S3 | `any` sur deliveryMeta/onChannelEvent/devices -> types | FIXED (P5) | (ce commit) |
 | M2 | Replay: WrongEpoch marque vu definitivement | FIXED (P5: WrongEpoch retryable comme GAP_QUEUED) | (ce commit) |
 | S5 | Classification d'erreurs MLS dupliquee 4 couches | OPEN (P5) | - |
@@ -448,6 +450,20 @@ danger. Tests : `recovery.test.ts` (19, defaut mock = meta active).
 (`frontend/src/lib/mls-client/mlsDeliveryApi.ts:133-161,624-648,340-356`).
 `inviteMembers` interprete `[]` comme "aucun membre -> abort"
 (`frontend/src/lib/utils/chat/recovery.ts:540-559`) -> on saute des invitations legitimes.
+
+**FIXED** : les trois getters de liste (`fetchUserDevices`, `getGroupMembers`,
+`getGroupUserMembers`) LEVENT desormais une erreur sur echec transport/HTTP et ne renvoient `[]`
+que pour un vrai 200 vide -> un `[]` n'est plus jamais indiscernable d'un echec. Le chemin
+DESTRUCTEUR (`inviteMembers` : sources primaire `getGroupMembers` et fallback `getGroupUserMembers`)
+laisse l'erreur remonter au `.catch` log de l'appelant (reboot/health) au lieu de fabriquer un
+successeur sans membre ; le filet `epoch == 0` du health-check re-invite une fois le reseau revenu.
+Les appelants legitimement best-effort opt-in explicitement via `.catch(() => [])` :
+`createNewGroup`/DM (nos propres devices), `processPendingInvitations` et `handleWelcomeRequest`
+(pour preserver le fallback `fetchDeviceKeyPackage`), re-fetch post-kick. Les consommateurs de
+membership (`verifyCurrentUserMembership`, `loadGroupMembers`, `DeviceManagementPanel`) etaient
+deja sous try/catch a defaut benin (`-> true`/`[]`), donc le throw n'introduit aucun faux
+"vous avez ete retire". Volontairement laisses tels quels : `deleteDeviceMembership` (`{affected:0}`
+consomme uniquement sous `.catch(()=>{})`) et `acquireAddLock`->`false` (fail-safe documente).
 
 ### S3 - `any` qui efface la surete de type sur la livraison
 

@@ -159,7 +159,9 @@ export async function processPendingInvitations(params: {
           // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
           // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
           // older ones. null from the fallback means the device was deregistered.
-          const devices = await mlsService.fetchUserDevices(inv.userId);
+          // Best-effort (`.catch(() => [])`) : un echec reseau ici ne doit pas court-circuiter
+          // le fallback fetchDeviceKeyPackage ci-dessous (liste vide => on tente le fallback).
+          const devices = await mlsService.fetchUserDevices(inv.userId).catch(() => []);
           let targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
           if (!targetDevice) {
             const fallback = await mlsService
@@ -920,7 +922,8 @@ export async function handleWelcomeRequest(params: {
     // Si absent : le device n'a pas encore publié ses KP → on ne peut pas l'inviter.
     // La causalité est assurée en amont : syncConnectionAfterWsOpen n'envoie pas de
     // welcome_request tant que generateKeyPackage n'a pas réussi.
-    const devices = await mlsService.fetchUserDevices(requesterUserId);
+    // Best-effort : un echec reseau ne doit pas court-circuiter le fallback fetchDeviceKeyPackage.
+    const devices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
     let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
       // fetchUserDevices applique un cutoff de 30 jours : le device demandeur peut en être
@@ -956,7 +959,8 @@ export async function handleWelcomeRequest(params: {
         await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
         // Re-fetch le KeyPackage (peut avoir changé après le kick)
-        const freshDevices = await mlsService.fetchUserDevices(requesterUserId);
+        // Best-effort : liste vide sur echec reseau => freshDevice introuvable => skip propre.
+        const freshDevices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
         const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
         if (!freshDevice) {
           log(`[WELCOME_REQ] KeyPackage introuvable après kick pour ${requesterDeviceId} - skip`);
