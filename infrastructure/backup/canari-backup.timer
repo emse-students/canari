@@ -1,0 +1,12 @@
+[Unit]
+Description=Declenche la sauvegarde Canari quotidienne
+
+[Timer]
+# Tous les jours a 03:30, heure du serveur. Persistent rattrape un creneau
+# manque si le serveur etait eteint a l heure prevue.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

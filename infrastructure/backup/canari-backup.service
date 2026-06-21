@@ -1,0 +1,13 @@
+[Unit]
+Description=Sauvegarde complete Canari (postgres, mongo, minio, media, Authentik) + copie offsite mitv
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=canari
+# Chemin du depot sur le serveur de production.
+WorkingDirectory=/home/canari/canari
+ExecStart=/home/canari/canari/infrastructure/backup/backup.sh
+# Une sauvegarde peut etre longue (dumps + tar volumes + transfert offsite).
+TimeoutStartSec=3600
