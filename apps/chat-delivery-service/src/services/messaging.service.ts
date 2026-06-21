@@ -10,7 +10,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import * as admin from 'firebase-admin';
+import { getApps } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
@@ -207,7 +208,7 @@ export class MessagingService {
     senderId: string,
     silent = false,
   ): Promise<void> {
-    if (admin.apps.length === 0) return;
+    if (getApps().length === 0) return;
 
     const pushTokens = await this.pushTokenRepo.find({
       where: { userId: queued.recipientId, deviceId: queued.deviceId },
@@ -288,7 +289,7 @@ export class MessagingService {
 
     for (const pt of android) {
       try {
-        await admin.messaging().send({
+        await getMessaging().send({
           token: pt.token,
           // Data-only → onMessageReceived() fires for foreground AND background.
           data: dataFields,
@@ -1537,7 +1538,7 @@ export class MessagingService {
     requesterKey: string,
     traceId: string,
   ): Promise<void> {
-    if (admin.apps.length === 0) return;
+    if (getApps().length === 0) return;
 
     const [requesterUserId, requesterDeviceId] = requesterKey.split(':');
 
@@ -1559,7 +1560,7 @@ export class MessagingService {
     await Promise.all(
       allTokens.map(async (pt) => {
         try {
-          await admin.messaging().send({
+          await getMessaging().send({
             token: pt.token,
             data: {
               type: 'welcome_request_pending',
@@ -1604,7 +1605,7 @@ export class MessagingService {
     body: string,
     data: Record<string, string>,
   ): Promise<{ sent: number; failed: number }> {
-    if (admin.apps.length === 0) return { sent: 0, failed: 0 };
+    if (getApps().length === 0) return { sent: 0, failed: 0 };
 
     const traceId = this.makeTraceId('social-push');
     const pushTokens = await this.pushTokenRepo.find({ where: { userId } });
@@ -1620,7 +1621,7 @@ export class MessagingService {
       try {
         // Data-only → onMessageReceived() fires même en arrière-plan.
         // Le code Kotlin lit data["type"] pour choisir le canal et construire le deepLink.
-        await admin.messaging().send({
+        await getMessaging().send({
           token: pt.token,
           data: { ...data, title, body },
           android: { priority: 'high' },

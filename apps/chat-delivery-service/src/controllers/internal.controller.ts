@@ -11,7 +11,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as admin from 'firebase-admin';
+import { getApps } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
@@ -79,7 +80,7 @@ export class InternalController {
       throw new ForbiddenException();
     }
 
-    if (admin.apps.length === 0) {
+    if (getApps().length === 0) {
       this.logger.warn('[INTERNAL_PUSH] Firebase not initialized - skipping');
       return { sent: 0, failed: 0 };
     }
@@ -96,7 +97,7 @@ export class InternalController {
         // Data-only → onMessageReceived() fires même en arrière-plan.
         // Le code Kotlin lit data["type"] pour choisir le canal (canari_social / canari_forms)
         // et construire le deepLink (deepLink, postId ou formId selon le type).
-        await admin.messaging().send({
+        await getMessaging().send({
           token: pt.token,
           data: { ...data, title, body: notifBody },
           android: { priority: 'high' },

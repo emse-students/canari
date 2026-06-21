@@ -15,7 +15,12 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
-import * as admin from 'firebase-admin';
+import {
+  initializeApp,
+  getApps,
+  cert,
+  type ServiceAccount,
+} from 'firebase-admin/app';
 import { RETENTION_WINDOW_MS } from './retention.constants';
 import { MessagingService } from './services/messaging.service';
 
@@ -65,13 +70,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await this.ensureRevokedDevicesTable();
 
     // Initialize Firebase Admin SDK once if a service account is provided
-    if (!admin.apps.length) {
+    if (!getApps().length) {
       const sa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
       if (sa) {
         try {
-          const serviceAccount = JSON.parse(sa) as admin.ServiceAccount;
-          admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
+          const serviceAccount = JSON.parse(sa) as ServiceAccount;
+          initializeApp({
+            credential: cert(serviceAccount),
           });
           this.logger.log('[FIREBASE] Admin SDK initialized');
         } catch (e) {

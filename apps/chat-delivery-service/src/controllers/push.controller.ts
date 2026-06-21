@@ -17,7 +17,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
-import * as admin from 'firebase-admin';
+import { getApps } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -484,7 +485,7 @@ export class PushController {
     @Body() body: { title?: string; message?: string },
     @Headers('x-user-id') requesterRaw?: string,
   ) {
-    if (admin.apps.length === 0) {
+    if (getApps().length === 0) {
       throw new BadRequestException(
         'Firebase Admin SDK is not initialized (push disabled)',
       );
@@ -509,7 +510,7 @@ export class PushController {
     for (const pushToken of targets) {
       withToken++;
       try {
-        await admin.messaging().send({
+        await getMessaging().send({
           token: pushToken.token,
           notification: {
             title,
