@@ -497,14 +497,15 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f infrastructure/.env ]; then
-            if [ -f infrastructure/.env.example ]; then
-              cp infrastructure/.env.example infrastructure/.env
-            else
-              echo "::error::infrastructure/.env and infrastructure/.env.example are both missing"
-              exit 1
-            fi
+          # Regenerate .env from the template on every deploy so it stays ordered
+          # like .env.example, drops stale keys, and never accumulates leftovers.
+          # All real secrets are GitHub-backed and re-injected by the upserts below,
+          # so nothing is lost; non-secret defaults come straight from the template.
+          if [ ! -f infrastructure/.env.example ]; then
+            echo "::error::infrastructure/.env.example is missing - cannot generate infrastructure/.env"
+            exit 1
           fi
+          cp infrastructure/.env.example infrastructure/.env
 
           upsert_env_var() {
             key="$1"
