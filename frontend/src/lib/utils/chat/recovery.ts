@@ -9,6 +9,7 @@ import {
   purgeLocalConversationRecord,
 } from './groupActions';
 import { classifyServerStatus } from './groupLifecycle';
+import { runExclusiveForGroup } from './groupMutationQueue';
 import { resolveTerminalGroup } from './groupSyncEligibility';
 import { reassignOutboxConversation } from './outbox';
 import { markGroupNotReady, clearGroupNotReady, groupNotReadyForMs } from './rebootDeadline';
@@ -711,6 +712,20 @@ export async function migrateConversation(
   toGroupId: string,
   deps: RecoveryDeps
 ): Promise<void> {
+  // H3 : serialiser par groupe successeur. Sans ça, un Welcome (upsertConversation) et un tick
+  // (checkGroupSuccessors) ciblant le meme successeur s'entrelacent autour des `await` et
+  // s'ecrasent (double migration / messages memoire perdus).
+  return runExclusiveForGroup(toGroupId, () =>
+    migrateConversationLocked(fromGroupId, toGroupId, deps)
+  );
+}
+
+/** Corps de {@link migrateConversation}, toujours execute sous le verrou par-groupe (H3). */
+async function migrateConversationLocked(
+  fromGroupId: string,
+  toGroupId: string,
+  deps: RecoveryDeps
+): Promise<void> {
   const {
     storage,
     conversations,
@@ -812,10 +827,20 @@ export async function migrateConversation(
     log(`[MIGRATE] Source ${fromGroupId.slice(0, 8)}… conservée en DB (messages non migrés)`);
   }
 
-  try {
-    deps.mlsService.forgetGroup(fromGroupId);
-  } catch {
-    /* non-bloquant */
+  // H2 : ne PAS oublier le predecesseur tant que le successeur n'est pas REELLEMENT dans le WASM.
+  // Sinon les messages entrants du predecesseur retombent dans handleUnknownGroup -> boucle
+  // welcome_request jusqu'a l'arrivee du successeur. On le garde dechiffrable ; un prochain
+  // checkGroupSuccessors / joinSuccessor refera la migration une fois S rejoint.
+  if (deps.mlsService.getLocalGroups().includes(toGroupId)) {
+    try {
+      deps.mlsService.forgetGroup(fromGroupId);
+    } catch {
+      /* non-bloquant */
+    }
+  } else {
+    log(
+      `[MIGRATE] Successeur ${toGroupId.slice(0, 8)}… pas encore dans le WASM - predecesseur ${fromGroupId.slice(0, 8)}… conserve (H2)`
+    );
   }
 
   await saveConversation(toGroupId);

@@ -3,6 +3,7 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { requestReAdd, cancelReAdd } from '$lib/utils/chat/recovery';
+import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
@@ -323,7 +324,11 @@ async function handleWelcome({
         .catch(() => {});
 
       // groupMeta déjà récupéré par resolveTerminalGroup - pas de second appel HTTP.
-      await upsertConversation(joinedGroupId, groupMeta, sender, userId, deps);
+      // H3 : sous le verrou par-groupe pour ne pas s'entrelacer avec une migration concurrente
+      // (checkGroupSuccessors) sur le meme groupe (ecrasement des messages memoire).
+      await runExclusiveForGroup(joinedGroupId, () =>
+        upsertConversation(joinedGroupId, groupMeta, sender, userId, deps)
+      );
 
       // Replay des messages bufferisés (commits arrivés avant le Welcome)
       if (buf?.msgs.length) {

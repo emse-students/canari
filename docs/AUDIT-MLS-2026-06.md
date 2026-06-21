@@ -42,8 +42,8 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H7 | Escalade de gap remise a zero par tout dechiffrement -> device forke ne recovery jamais | FIXED (P-fork) | 60f57f08 |
 | C8 | history bundle saute quand le commit broadcast echoue -> nouvel arrivant prive d'historique | FIXED (decouple du commit) | (ce commit) |
 | H1 | TTL locks reboot/add < duree reelle | FIXED (P4: add 30s/clamp 60s, reboot 90s/clamp 180s) | (ce commit) |
-| H2 | forgetGroup predecesseur premature | OPEN (P4, machine recovery - verif device) | - |
-| H3 | Mutations conversations non atomiques | OPEN (P4, machine recovery - verif device) | - |
+| H2 | forgetGroup predecesseur premature | FIXED (forget gate sur successeur dans le WASM ; purge-predecesseur du Welcome forget G quand S rejoint) | (ce commit) |
+| H3 | Mutations conversations non atomiques | FIXED (runExclusiveForGroup : verrou par-groupe sur migrateConversation + upsertConversation) | (ce commit) |
 | H4 | validateCommit bypass epoch 0 | FIXED (P4: gate stricte baseEpoch==activeEpoch) | (ce commit) |
 | H5 | Push differe + background redondants | OPEN (P4, perf) | - |
 | H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
