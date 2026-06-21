@@ -13,7 +13,6 @@
     unpinPost as unpinPostApi,
     type PostEntity,
     type PostComment,
-    type PostImageRef,
   } from '$lib/posts/api';
   import { createReport } from '$lib/moderation/api';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
@@ -279,7 +278,7 @@
   /** Posts a new comment (or reply) and appends it to the local comments array. media is an optional encrypted GIF/image ref. */
   async function handleAddComment(
     parentId?: string,
-    media?: PostImageRef
+    media?: import('$lib/posts/api').PostImageRef
   ) {
     const text = commentText.trim();
     if (!text && !media) return;
