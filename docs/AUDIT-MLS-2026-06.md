@@ -45,11 +45,12 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H2 | forgetGroup predecesseur premature | FIXED (forget gate sur successeur dans le WASM ; purge-predecesseur du Welcome forget G quand S rejoint) | (ce commit) |
 | H3 | Mutations conversations non atomiques | FIXED (runExclusiveForGroup : verrou par-groupe sur migrateConversation + upsertConversation) | (ce commit) |
 | H4 | validateCommit bypass epoch 0 | FIXED (P4: gate stricte baseEpoch==activeEpoch) | (ce commit) |
-| H5 | Push differe + background redondants | OPEN (P4, perf) | - |
+| H5 | Push differe + background redondants | DEFERRED (perf, pas correctness ; redondance subsumee par C1/C2 - a re-mesurer une fois les moteurs unifies) | - |
 | H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
 | S1 | `getGroupMeta` null = 404 ET reseau -> reboot duplique un successeur | FIXED (P5: performReboot via getGroupServerStatus) | (ce commit) |
 | S2 | Retours `[]` indistinguables de l'echec -> invitations sautees | FIXED (P5: getters de liste stricts + opt-in best-effort) | (ce commit) |
-| S4, M1 | Strictness / veracite | OPEN (P5) | - |
+| S4 | Troncature u64->u32 sur les epochs | DEFERRED (veracite seule : les epochs ne depassent jamais u32 en pratique ; rebuild WASM requis pour un non-bug) | - |
+| M1 | Messages >2 epochs en retard -> drop silencieux | WONTFIX (by-design : `max_past_epochs(2)` = compromis forward-secrecy/anti-replay intentionnel d'OpenMLS) | - |
 | S3 | `any` sur deliveryMeta/onChannelEvent/devices -> types | FIXED (P5) | (ce commit) |
 | M2 | Replay: WrongEpoch marque vu definitivement | FIXED (P5: WrongEpoch retryable comme GAP_QUEUED) | (ce commit) |
 | S5 | Classification d'erreurs MLS dupliquee 4 couches | FIXED (volet TS : classifyIncomingDecryptError unique ; volet Rust differe) | (ce commit) |
