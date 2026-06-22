@@ -909,6 +909,13 @@ export abstract class BaseMlsService implements IMlsService {
     return createSequentialDecryptSession(this, groupId);
   }
 
+  /**
+   * Default no-op: only Tauri/Android has a background JNI engine that can advance `mls.bin`
+   * while the app is backgrounded, so only TauriMlsService overrides this to reload (C2). On
+   * web/desktop the in-memory engine is the sole writer; there is nothing to reload.
+   */
+  async reloadStateFromDisk(): Promise<void> {}
+
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   abstract saveState(pin: string): Promise<Uint8Array>;

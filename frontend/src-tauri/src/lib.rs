@@ -1,7 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::MlsManager;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::Manager;
 
@@ -16,6 +17,55 @@ use tauri::{
 // State wrapper
 struct AppState {
     mls_manager: Arc<Mutex<Option<MlsManager>>>,
+}
+
+// ─── Concurrence multi-moteur mls.bin (Passe 2 : C1 / C2 / FCM3) ──────────────
+//
+// Sur Android, trois moteurs MLS coexistent dans le MEME process (meme .so Rust) :
+// foreground (MlsManager natif en memoire via les commandes Tauri), FCM JNI et Worker JNI.
+// Seuls FCM<->Worker partageaient un verrou (Kotlin `MlsStateLock`) ; le foreground n'y
+// participait pas et ne rechargeait jamais `mls.bin`. Resultat : une avancee background
+// (Welcome/send/worker) etait ecrasee au retour premier plan (lost-update -> SecretReuse).
+
+/// Verrou process-global serialisant les ECRITURES de `mls.bin` entre les trois moteurs. Tenu
+/// brievement, juste autour de l'ecriture atomique. `nativeDecryptMessage` n'ecrit pas (manager
+/// ephemere) -> non concerne. (C1)
+fn mls_bin_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Echeance (ms depuis epoch) jusqu'a laquelle le foreground est repute actif. Tant que
+/// `now < echeance`, les ecritures background JNI ABANDONNENT pour ne pas ecraser l'etat que le
+/// foreground detient en memoire et n'a pas encore recharge. Rafraichie par heartbeat tant que la
+/// WebView est visible ; expire seule si le foreground meurt/gele -> AUCUN stuck-true qui tuerait
+/// la livraison background (regression FCM1/FCM2). (C1 / FCM3)
+fn foreground_active_until() -> &'static AtomicI64 {
+    static UNTIL: AtomicI64 = AtomicI64::new(0);
+    &UNTIL
+}
+
+/// Marge du heartbeat foreground : doit depasser confortablement sa cadence (10 s) pour ne pas
+/// expirer a tort pendant une app reellement au premier plan.
+const FOREGROUND_GRACE_MS: i64 = 30_000;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+/// Rafraichit la garde foreground (heartbeat, resume, ou ecriture foreground).
+fn mark_foreground_active() {
+    foreground_active_until().store(now_ms() + FOREGROUND_GRACE_MS, Ordering::SeqCst);
+}
+
+/// Vrai tant que la garde foreground n'a pas expire (le background doit alors s'abstenir d'ecrire).
+/// Android uniquement : les seuls ecrivains background (`background_write_mls_bin`) y vivent.
+#[cfg(target_os = "android")]
+fn foreground_is_active() -> bool {
+    now_ms() < foreground_active_until().load(Ordering::SeqCst)
 }
 
 /// Pool SQLite dédié aux messages MLS en attente (gap du Sender Ratchet).
@@ -86,27 +136,20 @@ fn decrypt_messages_batch(
         .collect()
 }
 
+/// Ecrit `mls.bin` cote background sous le verrou global, SAUF si le foreground est actif (auquel
+/// cas on abandonne : le foreground detient l'etat a jour en memoire et l'ecraserait - C1/FCM3).
+/// L'erreur "foreground actif" laisse le travail en attente, repris au prochain passage foreground.
 #[cfg(target_os = "android")]
-async fn persist_background_mls_checkpoint(
-    pool: &sqlx::SqlitePool,
-    files_dir: &std::path::Path,
-    enc: &[u8],
-) -> Result<(), String> {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query(
-        "INSERT OR REPLACE INTO mls_state_checkpoint (id, state, saved_at) VALUES (1, ?, ?)",
-    )
-    .bind(enc)
-    .bind(ts)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-    tx.commit().await.map_err(|e| e.to_string())?;
-    write_mls_bin_atomically(&files_dir.join("mls.bin"), enc)
+fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    if foreground_is_active() {
+        return Err(
+            "foreground actif - ecriture mls.bin background abandonnee (C1/FCM3)".to_string(),
+        );
+    }
+    write_mls_bin_atomically(path, data)
 }
 
 /// Écrit `data` dans `path` de façon atomique : écriture dans un fichier temporaire
@@ -121,6 +164,13 @@ fn write_mls_bin_atomically(path: &std::path::Path, data: &[u8]) -> Result<(), S
 fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    // Une ecriture foreground prouve que le foreground est vivant : rafraichir la garde pour que
+    // les moteurs background s'abstiennent d'ecrire en parallele (C1/FCM3). Verrou global tenu
+    // brievement autour de l'ecriture atomique.
+    mark_foreground_active();
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
 }
 
@@ -1479,6 +1529,72 @@ fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(), String> {
     write_mls_state_blob(&app, &data)
 }
 
+/// C2 : recharge `mls.bin` du disque dans le manager foreground en memoire, sous le verrou global,
+/// et marque le foreground actif. Appele au retour premier-plan AVANT toute operation : pendant
+/// l'arriere-plan, un moteur JNI (Welcome/send/worker) a pu faire avancer `mls.bin` ; sans ce
+/// rechargement le manager chaud est perime et sa prochaine persistance ECRASERAIT l'avancee
+/// background (lost-update -> SecretReuse + regression d'epoch). Renvoie `true` si rechargement
+/// effectif, `false` si `mls.bin` absent (rien a faire). Android uniquement cote appelant (aucun
+/// moteur background sur desktop).
+#[tauri::command]
+async fn recharger_mls_au_resume(
+    user_id: String,
+    device_id: String,
+    pin: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    // Marquer actif AVANT de lire : toute ecriture background en cours finit son ecriture (verrou)
+    // puis les suivantes abandonnent -> la lecture ci-dessous capte la derniere avancee background.
+    mark_foreground_active();
+    let manager_state = state.mls_manager.clone();
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = data_dir.join("mls.bin");
+        // Lecture du fichier SOUS le verrou (ne pas lire pendant qu'un JNI ecrit). On relache avant
+        // le load_encrypted (Argon2) : la garde foreground bloque desormais toute nouvelle ecriture.
+        let bytes = {
+            let _guard = mls_bin_write_lock()
+                .lock()
+                .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+            match std::fs::read(&path) {
+                Ok(b) => Some(b),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(format!("read mls.bin: {e}")),
+            }
+        };
+        let Some(bytes) = bytes else {
+            log::debug!("[RESUME] mls.bin absent - rien a recharger (C2)");
+            return Ok(false);
+        };
+        let manager = MlsManager::load_encrypted(&user_id, &device_id, Some(bytes), &pin)
+            .map_err(|e| format!("reload mls.bin: {e}"))?;
+        let mut lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        *lock = Some(manager);
+        log::debug!("[RESUME] manager foreground recharge depuis mls.bin (C2)");
+        Ok(true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Heartbeat foreground : rafraichit la garde tant que la WebView est visible. Tant qu'elle est
+/// fraiche, les moteurs JNI background abandonnent leurs ecritures `mls.bin` (C1/FCM3).
+#[tauri::command]
+fn mls_foreground_heartbeat() {
+    mark_foreground_active();
+}
+
+/// Libere la garde foreground (passage en arriere-plan) : autorise immediatement les moteurs JNI
+/// a ecrire `mls.bin`. La garde expirerait de toute facon apres FOREGROUND_GRACE_MS ; ceci accelere
+/// le cas propre (evenement `hidden` recu) pour ne pas retarder la livraison background.
+#[tauri::command]
+fn pause_mls_foreground() {
+    foreground_active_until().store(0, Ordering::SeqCst);
+}
+
 #[tauri::command]
 fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -1921,6 +2037,9 @@ pub fn run() {
             store_push_context,
             load_push_context,
             save_mls_state,
+            recharger_mls_au_resume,
+            mls_foreground_heartbeat,
+            pause_mls_foreground,
             delete_mls_state,
             load_mls_state,
             store_push_secret,
@@ -1949,32 +2068,17 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     files_dir: jni::objects::JString,
-    state_bytes: jni::objects::JByteArray,
-    pin: jni::objects::JString,
-    user_id: jni::objects::JString,
-    device_id: jni::objects::JString,
+    _state_bytes: jni::objects::JByteArray,
+    _pin: jni::objects::JString,
+    _user_id: jni::objects::JString,
+    _device_id: jni::objects::JString,
 ) -> jni::sys::jboolean {
+    // (B) Janitor : ce Worker ne DRAINE plus la file de gap (plus de chargement du manager ni
+    // d'avancee de ratchet). Le drain background etait redondant avec la recuperation foreground
+    // (resync serveur sur `GAP_QUEUED`) et NUISIBLE : il re-avancait le ratchet pour des messages
+    // deja livres -> `SecretReuse`, et son avancee entrait en conflit avec le rechargement au
+    // resume (C2). Il ne reste que le nettoyage anti-fuite de la table.
     let files_dir_str: String = match env.get_string(&files_dir) {
-        Ok(s) => s.into(),
-        Err(_) => return 0,
-    };
-
-    let state_vec = match env.convert_byte_array(state_bytes) {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-
-    let pin_str: String = match env.get_string(&pin) {
-        Ok(s) => s.into(),
-        Err(_) => return 0,
-    };
-
-    let user_id_str: String = match env.get_string(&user_id) {
-        Ok(s) => s.into(),
-        Err(_) => return 0,
-    };
-
-    let device_id_str: String = match env.get_string(&device_id) {
         Ok(s) => s.into(),
         Err(_) => return 0,
     };
@@ -2000,105 +2104,9 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .await
             .map_err(|e| e.to_string())?;
 
-        let mut manager = MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str).map_err(|e| e.to_string())?;
-
-        // 1. Fetch distinct group_ids that have pending tasks
-        let group_ids: Vec<String> = sqlx::query_scalar("SELECT DISTINCT group_id FROM pending_mls_messages WHERE is_ready = 0")
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        for group_id in group_ids {
-            // Exclure les messages ayant dépassé 3 tentatives : un message corrompu
-            // bloquait sinon toute la queue du groupe (les suivants n'étaient jamais traités).
-            let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
-                "SELECT id, ciphertext FROM pending_mls_messages \
-                 WHERE group_id = ? AND is_ready = 0 AND attempt_count < 3 \
-                 ORDER BY created_at ASC",
-            )
-            .bind(&group_id)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-            if rows.is_empty() {
-                continue;
-            }
-
-            let ciphertexts: Vec<Vec<u8>> = rows.iter().map(|(_, ct)| ct.clone()).collect();
-            let outcomes = decrypt_messages_batch(&mut manager, &group_id, &ciphertexts);
-            let mut state_mutated = false;
-            let mut ready_ids: Vec<String> = Vec::new();
-
-            for (i, outcome) in outcomes.iter().enumerate() {
-                let id = &rows[i].0;
-                if outcome.ok {
-                    state_mutated = true;
-                    ready_ids.push(id.clone());
-                } else {
-                    // Message irrécupérable : incrémenter le compteur sans interrompre la boucle
-                    // (un `break` ici bloquerait tous les messages suivants du groupe jusqu'à
-                    // l'expiration 7j). Au-delà de 3 tentatives, la requête ci-dessus l'exclut.
-                    let _ = sqlx::query(
-                        "UPDATE pending_mls_messages SET attempt_count = attempt_count + 1 WHERE id = ?",
-                    )
-                    .bind(id)
-                    .execute(&pool)
-                    .await;
-                    log::warn!(
-                        "Background Worker: group={} msg={} déchiffrement échoué: {:?}",
-                        &group_id,
-                        &id[..id.len().min(8)],
-                        outcome.error
-                    );
-                }
-            }
-
-            if state_mutated {
-                if let Ok(enc) = manager.save_encrypted(&pin_str) {
-                    if persist_background_mls_checkpoint(
-                        &pool,
-                        std::path::Path::new(&files_dir_str),
-                        &enc,
-                    )
-                    .await
-                    .is_ok()
-                    {
-                        for id in &ready_ids {
-                            let _ = sqlx::query(
-                                "UPDATE pending_mls_messages SET is_ready = 1 WHERE id = ?",
-                            )
-                            .bind(id)
-                            .execute(&pool)
-                            .await;
-                        }
-                        log::debug!(
-                            "Background Worker: checkpoint coalescé group={} ({} octets, {} msg)",
-                            group_id,
-                            enc.len(),
-                            ready_ids.len()
-                        );
-                    } else {
-                        log::error!(
-                            "Background Worker: checkpoint persist failed group={} — {} msg(s) restent en attente",
-                            group_id,
-                            ready_ids.len()
-                        );
-                    }
-                } else {
-                    log::error!(
-                        "Background Worker: save_encrypted failed group={} — {} msg(s) restent en attente",
-                        group_id,
-                        ready_ids.len()
-                    );
-                }
-            }
-
-            let _ = sqlx::query("DELETE FROM pending_mls_messages WHERE group_id = ? AND is_ready = 1")
-                .bind(&group_id)
-                .execute(&pool)
-                .await;
-        }
+        // (B) Plus de drain ici : seul le nettoyage anti-fuite ci-dessous subsiste. Les gaps sont
+        // recuperes par le foreground (resync serveur). On ne charge donc plus le manager (plus
+        // d'Argon2), on n'avance plus le ratchet et on n'ecrit plus mls.bin depuis ce Worker.
 
         // Nettoyer les messages exhausted (attempt_count >= 3) après 1 heure.
         // Ces messages ont définitivement échoué ; les garder 1h permet un diagnostic
@@ -2114,7 +2122,10 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
         .bind(cutoff_attempt_ns)
         .execute(&pool)
         .await;
-        log::debug!("Background Worker: nettoyage exhausted → {:?}", deleted_attempt.map(|r| r.rows_affected()));
+        log::debug!(
+            "Background Worker: nettoyage exhausted → {:?}",
+            deleted_attempt.map(|r| r.rows_affected())
+        );
 
         // Nettoyer les messages périmés (> 7 jours) pour éviter la croissance unbounded.
         // created_at est stocké en nanosecondes depuis l'epoch Unix.
@@ -2127,7 +2138,10 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
             .bind(cutoff_ns)
             .execute(&pool)
             .await;
-        log::debug!("Background Worker: nettoyage périmés → {:?}", deleted.map(|r| r.rows_affected()));
+        log::debug!(
+            "Background Worker: nettoyage périmés → {:?}",
+            deleted.map(|r| r.rows_affected())
+        );
 
         Ok::<(), String>(())
     });
@@ -2220,7 +2234,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             .save_encrypted(&pin_str)
             .map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
+        background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
             "[BG_WELCOME] mls.bin mis à jour ({} octets) pour group={}",
             enc.len(),
@@ -2321,7 +2335,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             .save_encrypted(&pin_str)
             .map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
+        background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
             "[BG_JOIN] groupe rejoint via Welcome: {} (mls.bin {} octets)",
             group_id,
@@ -2402,7 +2416,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             .save_encrypted(&pin_str)
             .map_err(|e| e.to_string())?;
         let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        write_mls_bin_atomically(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
+        background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
         log::info!(
             "[BG_SEND] message chiffré group={} (ciphertext {} octets, mls.bin {} octets)",
             group_id_str,

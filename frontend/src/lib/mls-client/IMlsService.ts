@@ -81,6 +81,14 @@ export interface IMlsService {
   /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
   saveState(pin: string): Promise<Uint8Array>;
   /**
+   * Reloads the persisted MLS state from disk into the in-memory engine (C2). Android-only:
+   * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance
+   * `mls.bin`; without reloading on resume the warm in-memory state is stale and its next save
+   * would clobber that advance (lost-update -> SecretReuse). No-op where there is no background
+   * engine (web/desktop).
+   */
+  reloadStateFromDisk(): Promise<void>;
+  /**
    * Re-encrypts the in-memory MLS state with a new PIN and persists it.
    * Must be called after the user successfully changes their PIN on the server,
    * so the stored state remains decryptable on the next login.

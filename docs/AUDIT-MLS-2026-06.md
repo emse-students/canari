@@ -32,8 +32,8 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | C0 | TooDistantInThePast/SecretReuse same-epoch mis en file -> boucle | FIXED (P1) | 9be4663a |
 | C0b | Web: TooDistantInThePast -> requestReAdd | FIXED (P1, via C0 centralise) | 9be4663a |
 | C0c | Config SenderRatchet tolerance 5 -> 2000 | FIXED (P1) | 9be4663a |
-| C1 | Deux moteurs MLS ecrivent mls.bin (garde booleenne) | OPEN (P2, design + verif device) | - |
-| C2 | Foreground ne recharge jamais mls.bin au resume | OPEN (P2, design + verif device) | - |
+| C1 | Deux moteurs MLS ecrivent mls.bin (garde booleenne) | FIXED (P2: verrou Rust process-global autour des ecritures + garde foreground a expiration ; Worker degrade en janitor - option B) | (ce commit) |
+| C2 | Foreground ne recharge jamais mls.bin au resume | FIXED (P2: `recharger_mls_au_resume` au `visible` AVANT la reprise WS) | (ce commit) |
 | C3 | Double envoi outbox foreground/background | FIXED (P2, reconcile au resume) | ce9232bd |
 | C4 | process_welcome persiste avant les guards -> orphelin | FIXED (P3) | 10d8e160 |
 | C5 | add_members_bulk perte silencieuse de membres | FIXED (surface : skipped_indices remontes + logs ; auto-retry differe) | (ce commit) |
@@ -58,7 +58,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | FCM0 | Chemin Welcome idempotent (foreground) ne promeut pas la membership 'active' -> device joint en background reste 'pending', exclu du routage | FIXED (updateInvitationStatus('active') sur le chemin idempotent) | (ce commit) |
 | FCM1 | Join Welcome en BACKGROUND ne promeut jamais la membership 'active' (auth PushSecret, pas de JWT) -> pas de livraison temps-reel/push tant que l'app reste en background | OPEN (besoin d'un endpoint PushSecret d'activation) | - |
 | FCM2 | onNewToken ne pousse pas le token au backend -> token tourne app tuee = push vers token mort jusqu'a reouverture | OPEN | - |
-| FCM3 | Garde foreground `isInForeground` TOCTOU -> message a la transition ni traite background ni foreground | OPEN (= C1/C2) | - |
+| FCM3 | Garde foreground `isInForeground` TOCTOU -> message a la transition ni traite background ni foreground | FIXED (P2, = C1 : garde foreground a expiration cote Rust, re-verifiee sous le verrou avant chaque ecriture background) | (ce commit) |
 
 ### Note architecture Android (pour C1/C2)
 
@@ -172,9 +172,50 @@ Lieu : `frontend/src/lib/mls-client/mlsStatePersisterLifecycle.ts` (persist-only
 Envoi background qui ecrit `mls.bin` : `frontend/src-tauri/src/lib.rs:2194` (`nativeSendMessageBackground`).
 
 Chaine : un envoi/join background avance `mls.bin` pendant l'arriere-plan -> au retour, l'etat
-WASM en memoire est perime -> la prochaine persistance foreground **ecrase** `mls.bin` ->
+en memoire est perime -> la prochaine persistance foreground **ecrase** `mls.bin` ->
 l'avancee background est perdue -> reutilisation de generation -> `SecretReuseError` chez les
 pairs + regression d'epoch -> cascade de recovery.
+
+### Passe 2 - Implementation (FIXED, option B) - C1 / C2 / FCM3
+
+Correction sur Android, ou le moteur foreground est le **MlsManager Rust natif** (`AppState`,
+en memoire via les commandes Tauri - pas WASM) et les moteurs background sont les JNI FCM/Worker,
+tous dans le **meme process**. Trois leviers :
+
+1. **C1 - verrou Rust process-global** (`mls_bin_write_lock`, `src-tauri/src/lib.rs`) tenu
+   brievement autour de chaque ecriture de `mls.bin` : foreground (`write_mls_state_blob`) ET
+   background (`background_write_mls_bin`, appele par les 3 ecrivains JNI Welcome/send). Unifie le
+   verrou des trois moteurs sans dependre de Kotlin. `nativeDecryptMessage` n'ecrit pas (manager
+   ephemere) -> non verrouille.
+
+2. **FCM3 - garde foreground a expiration** (`foreground_active_until`, AtomicI64). Un heartbeat
+   (`mls_foreground_heartbeat`, toutes les 10 s via `createPausableInterval`, donc en pause quand
+   l'app est cachee) maintient la garde fraiche (marge 30 s). `recharger_mls_au_resume` la rafraichit
+   aussi, `pause_mls_foreground` la libere immediatement sur `hidden`. Avant chaque ecriture
+   background, sous le verrou, `background_write_mls_bin` **abandonne** si la garde est active ->
+   ferme le TOCTOU `isInForeground` sans risque de stuck-true (la garde expire seule si le foreground
+   meurt/gele, donc la livraison background FCM1/FCM2 n'est jamais bloquee durablement).
+
+3. **C2 - reload au resume** : `recharger_mls_au_resume` (commande Tauri, Android only) relit
+   `mls.bin` du disque dans le manager chaud, SOUS le verrou, AVANT la reprise WS. Branche dans
+   `ChatBackgroundService.handleVisibilityChange` (`visible`) : reload -> `reconcileOutboxSent` ->
+   reconnexion. Cote service : `TauriMlsService.reloadStateFromDisk` (clear epoch cache + refresh
+   known-groups ; no-op hors Android via `BaseMlsService`).
+
+4. **Option B - Worker degrade en janitor** : le Worker (`nativeProcessBackgroundTasks`) ne **draine
+   plus** la file de gap (`pending_mls_messages`). Ce drain background etait **redondant** avec la
+   recuperation foreground (resync serveur sur `GAP_QUEUED` ; la table n'est jamais lue par le
+   foreground) et **nuisible** : il avancait le ratchet pour des messages deja livres -> `SecretReuse`,
+   et son avancee, jetant le plaintext, devenait irrecuperable une fois `mls.bin` recharge par C2.
+   Il ne reste que le nettoyage anti-fuite de la table (plus de charge Argon2, plus d'avancee de
+   ratchet background). `persist_background_mls_checkpoint` supprime (devenu mort).
+
+Invariant resultant : **un moteur background n'avance jamais le ratchet partage pour un message dont
+il jette le plaintext.** Les notifications (chemin `nativeDecryptMessage` + cache FCM injecte au
+boot, dedup par `messageId`) sont inchangees.
+
+Build : `cargo check` desktop OK. Le code android-gated (`background_write_mls_bin`, Worker janitor,
+3 sites JNI) n'est pas compilable hors NDK ici -> **a recompiler/verifier au build APK** (T9-T11).
 
 ### C3 - Double envoi outbox foreground vs background (reconciliation seulement au login)
 

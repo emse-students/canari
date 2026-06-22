@@ -43,6 +43,8 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+  import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import type { CallParticipant } from '$lib/services/CallService';
@@ -357,7 +359,9 @@
    * Callbacks complets pour globalSession.login() / session callbacks.
    * @param overrides Per-call hooks (e.g. handlePinSubmit step timer).
    */
-  function sessionCb(overrides: Partial<import('$lib/composables/session/sessionTypes').ChatSessionCallbacks> = {}) {
+  function sessionCb(
+    overrides: Partial<import('$lib/composables/session/sessionTypes').ChatSessionCallbacks> = {}
+  ) {
     const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
@@ -448,7 +452,11 @@
       onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
         globalChannels.handleWorkspaceUpdated(event);
       },
-      onReadReceiptReceived: (e: { conversationKey: string; senderId: string; messageIds: string[] }) => {
+      onReadReceiptReceived: (e: {
+        conversationKey: string;
+        senderId: string;
+        messageIds: string[];
+      }) => {
         // Son uniquement quand un autre utilisateur lit MON message, dans la conversation
         // ouverte et l'onglet visible (jamais pour mes propres lectures cross-device).
         if (e.senderId === globalSession.userId) return;
@@ -497,9 +505,7 @@
   }
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */
-  function applyTabMessageEvent(
-    event: import('$lib/mls-client/tabMessageSync').TabMessageEvent
-  ) {
+  function applyTabMessageEvent(event: import('$lib/mls-client/tabMessageSync').TabMessageEvent) {
     if (globalSession.isTabLeader) return;
     const convo = globalConvs.conversations.get(event.conversationId);
     if (!convo) return;
@@ -636,6 +642,18 @@
     globalSession.initServices(appendLog);
     void startLoginFlow();
 
+    /** Fire-and-forget native MLS foreground-guard command (Android only; no-op elsewhere). */
+    const invokeNative = (cmd: string): void => {
+      void import('@tauri-apps/api/core').then(({ invoke }) => invoke(cmd)).catch(() => {});
+    };
+
+    // Foreground heartbeat (Android): keeps the native guard fresh while the app is visible so the
+    // background JNI engines abstain from writing mls.bin. createPausableInterval auto-pauses on
+    // hidden, so the guard expires shortly after backgrounding even without a clean `hidden` event.
+    const stopForegroundHeartbeat = isAndroidTauriRuntime()
+      ? createPausableInterval(() => invokeNative('mls_foreground_heartbeat'), 10_000)
+      : null;
+
     // Pause/resume WebSocket based on app visibility.
     // On mobile/Tauri, pause immediately when backgrounded (OS will kill the process soon).
     // On desktop web, don't pause: browsers keep WebSocket connections alive in background
@@ -645,25 +663,33 @@
         if (isTauriRuntime()) {
           globalSession.pauseConnection();
         }
+        // Release the native foreground guard so the background JNI engines may write mls.bin
+        // again (they abstain while the foreground is active). It would expire on its own after
+        // ~30s; this makes the clean background transition immediate so background delivery is not
+        // delayed. (C1/FCM3)
+        invokeNative('pause_mls_foreground');
         return;
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
         const { pin, storage } = globalSession;
-        // Reconcile entries the native background service already delivered (outbox_sent.ndjson)
-        // BEFORE the outbox flusher re-reads the queue on this same `visible` transition. Without
-        // this the foreground would re-send a message already sent in the background, re-encoding
-        // it against a possibly-stale epoch (SecretReuse). Reconciliation was login-only before;
-        // a backgrounded-but-alive app never re-logs in, so it never cleared these until now.
-        if (storage) void reconcileOutboxSent(storage);
-        if (!globalSession.isWsConnected) {
-          appendLog('Page visible de nouveau - reconnexion...');
-          void globalSession.attemptReconnect(sessionCb());
-        }
-        checkSiblingCallWarning();
-        // Injecter les messages FCM mis en cache pendant l'arrière-plan
-        if (pin && storage) {
-          void flushFcmCache(pin, storage);
-        }
+        // Ordered resume sequence. C2 first: reload mls.bin into the warm engine BEFORE anything
+        // processes, because a background join/send may have advanced it while we were away; the
+        // stale warm state would otherwise clobber that advance on the next save (SecretReuse).
+        // No-op off Android. Then reconcile outbox_sent BEFORE the flusher re-reads the queue (so
+        // we don't re-send a message the background already delivered), then reconnect/flush.
+        void (async () => {
+          await globalSession.ensureMls().reloadStateFromDisk();
+          if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          if (!globalSession.isWsConnected) {
+            appendLog('Page visible de nouveau - reconnexion...');
+            void globalSession.attemptReconnect(sessionCb());
+          }
+          checkSiblingCallWarning();
+          // Injecter les messages FCM mis en cache pendant l'arrière-plan
+          if (pin && storage) {
+            void flushFcmCache(pin, storage);
+          }
+        })();
       }
     };
 
@@ -708,6 +734,7 @@
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
+      stopForegroundHeartbeat?.();
     };
   });
 
