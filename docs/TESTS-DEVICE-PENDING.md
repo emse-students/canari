@@ -81,6 +81,60 @@ rebuilds** (les changements touchent serveur, Kotlin, TS et Tauri/SQLite selon l
 
 ---
 
+## Passe 2 - Concurrence multi-moteur mls.bin (commit `f656441`)
+
+> **Pre-requis specifique** : le code Rust touche est **android-gated** et n'a PAS pu etre compile
+> hors NDK pendant le dev. **Rebuild APK obligatoire** + verifier qu'il **compile** (aucune erreur
+> sur `background_write_mls_bin`, le Worker janitor, les 3 sites JNI Welcome/send). Si la compilation
+> echoue, c'est le seul vrai risque de regression -> regarder en priorite ces zones de `lib.rs`.
+
+### T9 - Lost-update : envoi/join background puis resume (C2)
+**But** : une avancee `mls.bin` faite en arriere-plan n'est PAS ecrasee au retour premier plan.
+**Etapes** :
+1. A (PC) et B (mobile) dans un groupe. **App de B tuee.**
+2. A envoie un message (B le recoit en background -> draine son outbox / ou B avait un message en
+   attente envoye en background).
+3. Ouvrir l'app de B, echanger encore 2-3 messages des deux cotes.
+**Attendu** :
+- Logs mobile : `[RESUME] manager foreground recharge depuis mls.bin (C2)` au retour.
+- **Aucune** cascade `SecretReuseError` / `epoch_mismatch` cote A ni B apres l'ouverture.
+- Conversation complete et coherente des deux cotes, **0 message manquant**.
+**Commits si KO** : `f656441` (C2 `recharger_mls_au_resume` ; verifier qu'il est bien appele au
+`visible` AVANT la reconnexion WS dans `ChatBackgroundService`).
+
+### T10 - Garde foreground : background non bloque mais pas concurrent (C1/FCM3)
+**But** : la garde foreground n'empeche pas la livraison background app tuee, mais bloque bien
+l'ecriture background quand l'app est active.
+**Etapes** :
+1. **App de B tuee** depuis > 1 min : A envoie un message.
+   **Attendu** : B recoit notif + message (la garde a expire -> background autorise a ecrire). Logs :
+   pas de `foreground actif -> abandon ecriture` en boucle.
+2. **App de B au premier plan** : A ajoute un device / declenche un Welcome vers B pendant que B
+   chatte. **Attendu** : logs mobile `foreground actif - ecriture mls.bin background abandonnee`
+   (le background s'abstient), et le **foreground** traite le Welcome via WS sans clobber.
+**Commits si KO** :
+- Background qui ne livre plus app tuee (garde stuck-true) -> `f656441` (verifier l'expiration
+  `FOREGROUND_GRACE_MS` + le heartbeat `mls_foreground_heartbeat` en pause sur `hidden`).
+- Clobber a la transition -> `f656441` (re-check de la garde sous le verrou avant ecriture).
+
+### T11 - Recovery de gap par le foreground seul (option B)
+**But** : un message d'epoch en avance (rafale) apparait quand meme dans la conversation a
+l'ouverture, sans le drain background du Worker.
+**Etapes** :
+1. Provoquer un gap : rafale de messages de A pendant/autour d'un changement d'epoch (ajout/retrait
+   de membre), B mobile en arriere-plan puis ouvert.
+**Attendu** :
+- Le(s) message(s) gap **apparaissent dans la conversation** apres ouverture (recuperes par le resync
+  serveur foreground sur `GAP_QUEUED`).
+- Logs : **plus** de `Background Worker: checkpoint coalesce` (le Worker ne draine plus). La table
+  `pending_mls_messages` ne fait que se nettoyer.
+- **0 message manquant**, **0 doublon**.
+**Commits si KO** : `f656441` (option B : si un message gap manque, c'est que la recuperation
+foreground ne le rattrape pas -> rouvrir la question A/B, eventuellement re-activer un drain qui
+**cache le plaintext** au lieu de le jeter).
+
+---
+
 ## Garde-fou general (a chaque session)
 Apres plusieurs echanges croises sur 2 comptes : **0 message manquant**, **0 doublon**, notifications
 fiables, aucun gel. Si un message manque, capturer les logs **serveur + mobile** du meme creneau.
