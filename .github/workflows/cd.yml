@@ -37,7 +37,7 @@ jobs:
       any_changed: ${{ steps.detect.outputs.any_changed }}
       frontend_changed: ${{ steps.detect.outputs.frontend_changed }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0
@@ -202,7 +202,7 @@ jobs:
       needs.detect-changed-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
 
@@ -328,7 +328,7 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.detect-changed-services.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
 
@@ -391,7 +391,7 @@ jobs:
       name: production
       url: https://${{ env.DOMAIN }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
 
