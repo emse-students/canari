@@ -153,7 +153,9 @@ export class WasmMlsClient {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
+     * Returns the current MLS epoch for a group as an f64 (a plain JS `number`). wasm-bindgen has
+     * no u64 -> JS number mapping (it would yield a BigInt); f64 represents every epoch exactly up
+     * to 2^53, far beyond any realistic group lifetime, so there is no truncation. [[S4]]
      * @param {string} group_id
      * @returns {number}
      */
@@ -164,7 +166,7 @@ export class WasmMlsClient {
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
-        return ret[0] >>> 0;
+        return ret[0];
     }
     /**
      * @returns {Array<any>}

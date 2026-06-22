@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use mls_core::MlsManager;
+use mls_core::{DecryptErrorKind, MlsManager};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -105,8 +105,8 @@ fn map_decrypt_outcome(result: Result<Option<Vec<u8>>, mls_core::MlsError>) -> B
             error: None,
         },
         Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("SecretReuseError") {
+            // SecretReuse = doublon benin (cle deja consommee) : ACK + drop, parite temps-reel. [[S5]]
+            if e.decrypt_kind() == DecryptErrorKind::SecretReuse {
                 return BatchDecryptItem {
                     ok: true,
                     data: None,
@@ -116,7 +116,7 @@ fn map_decrypt_outcome(result: Result<Option<Vec<u8>>, mls_core::MlsError>) -> B
             BatchDecryptItem {
                 ok: false,
                 data: None,
-                error: Some(err_str),
+                error: Some(e.to_string()),
             }
         }
     }
@@ -362,7 +362,8 @@ async fn generer_key_packages_et_persister(
 #[tauri::command]
 fn oublier_groupe(
     group_id: String,
-    min_epoch: u32,
+    // u64 : meme largeur que l'epoch source (Tauri serialise en JSON number cote JS). [[S4]]
+    min_epoch: u64,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
     let mut lock = state
@@ -370,7 +371,7 @@ fn oublier_groupe(
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-    manager.forget_group(&group_id, min_epoch as u64);
+    manager.forget_group(&group_id, min_epoch);
     Ok(())
 }
 
@@ -398,14 +399,14 @@ fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String>, String> 
 }
 
 #[tauri::command]
-fn obtenir_epoch(group_id: String, state: tauri::State<AppState>) -> Result<u32, String> {
+fn obtenir_epoch(group_id: String, state: tauri::State<AppState>) -> Result<u64, String> {
     let lock = state
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    let epoch = manager.get_epoch(&group_id).map_err(|e| e.to_string())?;
-    Ok(epoch as u32)
+    // u64 : pas de troncature ; Tauri serialise en JSON number (exact <= 2^53, jamais atteint). [[S4]]
+    manager.get_epoch(&group_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -696,58 +697,56 @@ async fn recevoir_message_bytes(
                 err_str
             );
 
-            // Corruption détectée par mls-core → état irrécupérable, déclencher re-bootstrap.
-            if err_str.starts_with("UNRECOVERABLE:") {
-                return Err(format!("UNRECOVERABLE:{}", group_id));
-            }
+            // Classification centralisee cote mls-core (source unique du string-matching). [[S5]]
+            match e.decrypt_kind() {
+                // Corruption détectée par mls-core → état irrécupérable, déclencher re-bootstrap.
+                DecryptErrorKind::Unrecoverable => Err(format!("UNRECOVERABLE:{}", group_id)),
 
-            // SecretReuseError = la clé de ratchet de ce message a déjà été consommée
-            // (doublon : livraison realtime + queue, ou requeue après restart). À l'inverse
-            // d'un gap de génération FUTURE, elle ne déchiffrera JAMAIS : la mettre en file
-            // SQLite la ferait boucler indéfiniment. On la traite comme un doublon bénin -
-            // Ok(None) → le frontend ACK et la supprime (parité avec le chemin WASM web).
-            if err_str.contains("SecretReuseError") {
-                log::debug!(
-                    "[DUP] SecretReuseError group={} - doublon déjà consommé, ACK silencieux",
-                    group_id
-                );
-                return Ok(None);
-            }
+                // SecretReuseError = la clé de ratchet de ce message a déjà été consommée
+                // (doublon : livraison realtime + queue, ou requeue après restart). À l'inverse
+                // d'un gap de génération FUTURE, elle ne déchiffrera JAMAIS : la mettre en file
+                // SQLite la ferait boucler indéfiniment. On la traite comme un doublon bénin -
+                // Ok(None) → le frontend ACK et la supprime (parité avec le chemin WASM web).
+                DecryptErrorKind::SecretReuse => {
+                    log::debug!(
+                        "[DUP] SecretReuseError group={} - doublon déjà consommé, ACK silencieux",
+                        group_id
+                    );
+                    Ok(None)
+                }
 
-            // "Process error:" indique une erreur OpenMLS sur le même epoch →
-            // probable gap du Sender Ratchet (génération future reçue).
-            if err_str.contains("Process error:") {
-                log::warn!(
-                    "[GAP] Sender Ratchet gap pour group={} - message mis en file SQLite",
-                    group_id
-                );
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as i64;
-                let id = format!("{}-gen-{}", group_id, ts);
-                let insert_result = sqlx::query(
-                    "INSERT OR IGNORE INTO pending_mls_messages \
-                     (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
-                )
-                .bind(&id)
-                .bind(&group_id)
-                .bind(message_bytes.as_slice())
-                .bind(ts)
-                .execute(&*pending_db.0)
-                .await;
-                match insert_result {
-                    Ok(_) => (),
-                    Err(db_e) => {
+                // "Process error:" = erreur OpenMLS sur le même epoch → probable gap du Sender
+                // Ratchet (génération future reçue) → mise en file SQLite pour retry.
+                DecryptErrorKind::SenderRatchetGap => {
+                    log::warn!(
+                        "[GAP] Sender Ratchet gap pour group={} - message mis en file SQLite",
+                        group_id
+                    );
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as i64;
+                    let id = format!("{}-gen-{}", group_id, ts);
+                    let insert_result = sqlx::query(
+                        "INSERT OR IGNORE INTO pending_mls_messages \
+                         (id, group_id, ciphertext, created_at, is_ready) VALUES (?, ?, ?, ?, 0)",
+                    )
+                    .bind(&id)
+                    .bind(&group_id)
+                    .bind(message_bytes.as_slice())
+                    .bind(ts)
+                    .execute(&*pending_db.0)
+                    .await;
+                    if let Err(db_e) = insert_result {
                         log::error!("[GAP] DB store failed: {}", db_e);
                         return Err(format!("GAP_DB_INSERT_FAILED:{}:{}", group_id, db_e));
                     }
+                    // Embed the original OpenMLS error so the frontend can log it.
+                    Err(format!("GAP_QUEUED:{}:{}", group_id, err_str))
                 }
-                // Embed the original OpenMLS error so the frontend can log it.
-                return Err(format!("GAP_QUEUED:{}:{}", group_id, err_str));
-            }
 
-            Err(err_str)
+                DecryptErrorKind::Other => Err(err_str),
+            }
         }
     }
 }

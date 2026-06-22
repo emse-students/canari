@@ -125,7 +125,9 @@ impl WasmMlsClient {
     }
 
     #[wasm_bindgen]
-    pub fn forget_group(&mut self, group_id: String, min_epoch: u32) {
+    pub fn forget_group(&mut self, group_id: String, min_epoch: f64) {
+        // f64 cote frontiere JS (wasm-bindgen n'a pas de u64 -> number ; f64 est exact pour tout
+        // epoch realiste, <= 2^53). On reconvertit en u64 (la largeur source). [[S4]]
         log::info!("forget_group: {}, min_epoch={}", group_id, min_epoch);
         self.manager.forget_group(&group_id, min_epoch as u64);
     }
@@ -138,14 +140,16 @@ impl WasmMlsClient {
         self.manager.drop_group(&group_id);
     }
 
-    /// Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
+    /// Returns the current MLS epoch for a group as an f64 (a plain JS `number`). wasm-bindgen has
+    /// no u64 -> JS number mapping (it would yield a BigInt); f64 represents every epoch exactly up
+    /// to 2^53, far beyond any realistic group lifetime, so there is no truncation. [[S4]]
     #[wasm_bindgen]
-    pub fn get_epoch(&self, group_id: String) -> Result<u32, JsValue> {
+    pub fn get_epoch(&self, group_id: String) -> Result<f64, JsValue> {
         let epoch = self
             .manager
             .get_epoch(&group_id)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(epoch as u32)
+        Ok(epoch as f64)
     }
 
     // Sauvegarder l'état (renvoie un Uint8Array en JS)

@@ -39,7 +39,9 @@ export class WasmMlsClient {
     generate_key_package(): Uint8Array;
     generate_key_packages(count: number): Array<any>;
     /**
-     * Returns the current MLS epoch for a group (capped to u32 for WASM boundary).
+     * Returns the current MLS epoch for a group as an f64 (a plain JS `number`). wasm-bindgen has
+     * no u64 -> JS number mapping (it would yield a BigInt); f64 represents every epoch exactly up
+     * to 2^53, far beyond any realistic group lifetime, so there is no truncation. [[S4]]
      */
     get_epoch(group_id: string): number;
     get_groups(): Array<any>;

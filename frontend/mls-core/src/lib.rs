@@ -40,6 +40,36 @@ pub enum MlsError {
     AlreadyMember(String),
 }
 
+/// Classification d'une erreur de dechiffrement entrant. Source UNIQUE du string-matching natif
+/// des erreurs OpenMLS (miroir Rust de `classifyIncomingDecryptError` cote TS), pour eviter la
+/// divergence entre `recevoir_message_bytes` et `map_decrypt_outcome` cote `src-tauri`. [[S5]]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecryptErrorKind {
+    /// Cle de ratchet deja consommee (doublon benin) : ACK + drop, ne dechiffrera jamais.
+    SecretReuse,
+    /// Erreur OpenMLS sur le meme epoch : gap du Sender Ratchet (generation future) -> file/retry.
+    SenderRatchetGap,
+    /// Etat MLS irrecuperable (corruption/inconsistance) : le frontend doit re-bootstrapper.
+    Unrecoverable,
+    /// Non classe.
+    Other,
+}
+
+impl MlsError {
+    /// Classe une erreur de dechiffrement entrant a partir de sa variante / de son message OpenMLS.
+    /// Centralise ici le matching de sous-chaines auparavant duplique cote `src-tauri`. [[S5]]
+    pub fn decrypt_kind(&self) -> DecryptErrorKind {
+        match self {
+            MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,
+            MlsError::OpenMls(s) if s.contains("SecretReuseError") => DecryptErrorKind::SecretReuse,
+            MlsError::OpenMls(s) if s.contains("Process error:") => {
+                DecryptErrorKind::SenderRatchetGap
+            }
+            _ => DecryptErrorKind::Other,
+        }
+    }
+}
+
 /// Resultat de `add_members_bulk` :
 /// `(commit, welcome, added_indices, ratchet_tree, skipped_indices)`.
 /// - `added_indices` donne, dans l'ordre, les positions (dans le slice d'entree

@@ -49,11 +49,11 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
 | S1 | `getGroupMeta` null = 404 ET reseau -> reboot duplique un successeur | FIXED (P5: performReboot via getGroupServerStatus) | (ce commit) |
 | S2 | Retours `[]` indistinguables de l'echec -> invitations sautees | FIXED (P5: getters de liste stricts + opt-in best-effort) | (ce commit) |
-| S4 | Troncature u64->u32 sur les epochs | DEFERRED (veracite seule : les epochs ne depassent jamais u32 en pratique ; rebuild WASM requis pour un non-bug) | - |
+| S4 | Troncature u64->u32 sur les epochs | FIXED (u64 cote Tauri + f64 cote WASM = pas de troncature ; reste un `number` JS exact <= 2^53) | (ce commit) |
 | M1 | Messages >2 epochs en retard -> drop silencieux | WONTFIX (by-design : `max_past_epochs(2)` = compromis forward-secrecy/anti-replay intentionnel d'OpenMLS) | - |
 | S3 | `any` sur deliveryMeta/onChannelEvent/devices -> types | FIXED (P5) | (ce commit) |
 | M2 | Replay: WrongEpoch marque vu definitivement | FIXED (P5: WrongEpoch retryable comme GAP_QUEUED) | (ce commit) |
-| S5 | Classification d'erreurs MLS dupliquee 4 couches | FIXED (volet TS : classifyIncomingDecryptError unique ; volet Rust differe) | (ce commit) |
+| S5 | Classification d'erreurs MLS dupliquee 4 couches | FIXED (volet TS : classifyIncomingDecryptError ; volet Rust : `MlsError::decrypt_kind()` source unique dans mls-core, consomme par recevoir_message_bytes + map_decrypt_outcome) | (ce commit) |
 | DB1 | SQLite sans busy_timeout -> "database is locked" sur le replay -> messages dechiffres mais jamais affiches (perte definitive) | FIXED (busy_timeout 5s foreground + natif) | 05eeeb26 |
 | FCM0 | Chemin Welcome idempotent (foreground) ne promeut pas la membership 'active' -> device joint en background reste 'pending', exclu du routage | FIXED (updateInvitationStatus('active') sur le chemin idempotent) | (ce commit) |
 | FCM1 | Join Welcome en BACKGROUND ne promeut jamais la membership 'active' (auth PushSecret, pas de JWT) -> pas de livraison temps-reel/push tant que l'app reste en background | OPEN (besoin d'un endpoint PushSecret d'activation) | - |
@@ -540,11 +540,16 @@ consomme uniquement sous `.catch(()=>{})`) et `acquireAddLock`->`false` (fail-sa
 type le JSON serveur (cast explicite) au lieu de `(d: any)`. Les champs optionnels restent
 re-valides par `typeof`.
 
-### S4 - Troncature u64 -> u32 sur les epochs
+### S4 - Troncature u64 -> u32 sur les epochs (FIXED)
 
-`get_epoch` renvoie `epoch as u32` (`frontend/mls-wasm/src/lib.rs:148`,
-`frontend/src-tauri/src/lib.rs:355`), `forget_group` prend `min_epoch: u32`. Perte de veracite
-de type (la source est u64).
+`get_epoch` renvoyait `epoch as u32` (`mls-wasm`, `src-tauri`), `forget_group` prenait
+`min_epoch: u32` - perte de veracite (la source est u64).
+
+**FIX** : largeur preservee jusqu'a la frontiere JS. Cote **Tauri** (`obtenir_epoch` / `oublier_groupe`)
+-> `u64` (serialise en JSON number). Cote **WASM** (`get_epoch` / `forget_group`) -> `f64` :
+wasm-bindgen n'a pas de mapping u64 -> JS number (il produit un BigInt), et `f64` represente
+exactement tout epoch <= 2^53 (jamais atteint). Cote TS, l'epoch reste un `number` -> aucun
+changement consommateur. WASM regenere.
 
 ### M1 - Messages applicatifs en retard > 2 epochs -> drop silencieux
 
@@ -619,8 +624,14 @@ legitimement. Plus aucune sous-chaine dupliquee entre ces deux chemins -> une di
 `mlsDecryptError.test.ts` (7 cas). Restent HORS scope (domaines distincts, non dupliques) :
 `handleUnknownGroup` (erreurs de Welcome : `GroupAlreadyExists`/`NoMatchingKeyPackage`),
 `wasmLogShim`/`mlsWasmLoader` (filtrage de bruit de log), `actions.ts` (fork commit-send via
-`parseForkedEpoch`). Le volet NATIF Rust (`src-tauri`) reste a unifier via un enum `mls-core` -
-process distinct, pas de partage de code TS, rebuild WASM requis (differe).
+`parseForkedEpoch`).
+
+**FIXED (volet Rust natif)** : `mls-core` expose `MlsError::decrypt_kind() -> DecryptErrorKind`
+(`SecretReuse | SenderRatchetGap | Unrecoverable | Other`) - source UNIQUE du string-matching des
+erreurs OpenMLS. `recevoir_message_bytes` et `map_decrypt_outcome` (`src-tauri`) le consomment au
+lieu de matcher `"SecretReuseError"` / `"Process error:"` / `"UNRECOVERABLE:"` a la main. Les
+sous-chaines ne vivent plus qu'a un seul endroit (mls-core), partage par le chemin WASM web et le
+chemin natif Tauri.
 
 ---
 
