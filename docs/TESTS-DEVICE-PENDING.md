@@ -133,6 +133,27 @@ l'ouverture, sans le drain background du Worker.
 foreground ne le rattrape pas -> rouvrir la question A/B, eventuellement re-activer un drain qui
 **cache le plaintext** au lieu de le jeter).
 
+### T12 - Drain outbox elargi : envoi background sur message entrant + delete (suite Passe 2)
+**But** : un message/delete sortant en attente part en arriere-plan des qu'un message entrant
+reveille le device, et un delete ne notifie pas les pairs.
+**Etapes** :
+1. B (mobile, **app tuee**) a un message texte en attente (ex : compose hors-ligne puis kill).
+2. A envoie un message a B (reveille le service FCM de B).
+**Attendu** :
+- Logs B : `drainOutboxBackground: ... envoye` -> le message en attente de B part **sans** push
+  Welcome ni reouverture. A le recoit.
+3. B supprime un message (delete) puis l'app est tuee avant l'envoi ; A envoie un message a B.
+**Attendu** :
+- Le delete de B est livre en background. Cote A : le message **disparait**, **sans** notification
+  parasite (`silent=true` cote `[BG_SEND]`).
+**Commits si KO** :
+- Rien n'est envoye au reveil par un message entrant -> (commit suite Passe 2 : appel
+  `drainOutboxBackground` dans `onMessageReceived`).
+- Notif parasite pour un delete/reaction -> (commit suite Passe 2 : flag `silent` du mirror jusqu'a
+  `/mls/push/send` ; verifier `[BG_SEND] ... silent=true`).
+- Delete jamais livre en background -> (commit suite Passe 2 : `toMirrorEntry` inclut bien les
+  entrees `control`).
+
 ---
 
 ## Garde-fou general (a chaque session)

@@ -217,6 +217,21 @@ boot, dedup par `messageId`) sont inchangees.
 Build : `cargo check` desktop OK. Le code android-gated (`background_write_mls_bin`, Worker janitor,
 3 sites JNI) n'est pas compilable hors NDK ici -> **a recompiler/verifier au build APK** (T9-T11).
 
+### Suite Passe 2 - Elargissement du drain outbox background (debloque par C1/C2)
+
+Maintenant que les ecritures cross-moteur sont serialisees, l'envoi background de l'outbox est
+elargi (le verrou rendait ca risque avant) :
+- **Declencheur** : `drainOutboxBackground` est appele AUSSI a la reception d'un message FCM normal
+  (`CanariFirebaseMessagingService.onMessageReceived`, apres la notif), pas seulement sur les pushs
+  Welcome. N'importe quel reveil background tente donc de vider l'outbox (no-op si vide).
+- **Contenu** : les events de **controle** (reaction/edit/delete/read) sont desormais inclus dans le
+  mirror (`toMirrorEntry` ne les exclut plus) - cas motivant : **delete** (une retraction ne reste
+  plus visible chez les pairs jusqu'a reouverture alors que le corps a deja ete envoye en background).
+  Media toujours exclu (upload foreground only).
+- **Flag `silent`** : propage du mirror -> Kotlin -> `POST /mls/push/send` -> `messagingService`.
+  Indispensable : un control est un envoi silencieux, et le serveur ne peut PAS l'inferer du
+  ciphertext E2E. Sans lui, un delete/reaction background declencherait une notif parasite.
+
 ### C3 - Double envoi outbox foreground vs background (reconciliation seulement au login)
 
 `reconcileOutboxSent()` ne tourne qu'au login.

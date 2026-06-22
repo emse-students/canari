@@ -166,7 +166,7 @@ describe('outbox native mirror', () => {
     expect(buildOutboxProto(e)).toBeNull();
   });
 
-  it('excludes control entries from the mirror but still builds their proto for the foreground flusher', () => {
+  it('mirrors control entries as a silent send (delete/reaction/read background delivery)', () => {
     const e: OutboxEntry = {
       id: 'c1',
       conversationId: 'g1',
@@ -177,8 +177,18 @@ describe('outbox native mirror', () => {
       attempts: 0,
       createdAt: 1,
     };
-    expect(toMirrorEntry(e)).toBeNull();
+    const mirror = toMirrorEntry(e);
+    expect(mirror).not.toBeNull();
+    expect(mirror!.silent).toBe(true);
+    expect(mirror!.id).toBe('c1');
+    expect(mirror!.groupId).toBe('g1');
     expect(Array.from(buildOutboxProto(e)!)).toEqual([1, 2, 3]);
+  });
+
+  it('mirrors text entries as a non-silent send', () => {
+    const mirror = toMirrorEntry(textEntry('m1', 'g1', 100));
+    expect(mirror).not.toBeNull();
+    expect(mirror!.silent).toBe(false);
   });
 });
 

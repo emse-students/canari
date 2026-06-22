@@ -10,7 +10,10 @@
  * the background send happens.
  *
  * Media entries are excluded: their upload (CEK + encrypt + blob POST) only runs on the foreground
- * MediaService, so a queued media flushes on the next app open, never in the background.
+ * MediaService, so a queued media flushes on the next app open, never in the background. Control
+ * events (reaction/edit/delete/read) ARE mirrored - the motivating case is `delete`, whose
+ * retraction would otherwise stay visible on peers until the app reopens even though its target
+ * body was already sent in the background. (Safe since C1/C2 serialise cross-engine mls.bin writes.)
  *
  * Security note: the mirror is plaintext, consistent with the existing app-private posture
  * (`push_context.json` already stores the PIN in clear, `fcm_message_cache.ndjson` stores decrypted
@@ -34,14 +37,21 @@ export interface OutboxMirrorEntry {
   groupId: string;
   proto: string;
   sentAt: number;
+  /**
+   * Silent send (no recipient notification) - true for control events (reaction/edit/delete/read),
+   * mirroring the foreground flusher (`sendMessage(..., entry.kind === 'control')`). The server
+   * cannot infer this from the E2E ciphertext, so it must travel with the entry; without it a
+   * background-sent delete/reaction would trigger a spurious push on peers.
+   */
+  silent: boolean;
 }
 
-/** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, control, no proto). */
+/** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, no proto). */
 export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
-  // Control events (reaction/edit/delete/pin/read-receipt) flush only in the foreground: they
-  // are not urgent and keeping them off the native background path avoids adding more cross-engine
-  // mls.bin writes while the foreground/background concurrency (C1/C2) is unresolved.
-  if (entry.kind === 'control') return null;
+  // buildOutboxProto returns null for media (foreground upload only) and the verbatim proto for
+  // text/reply and control (reaction/edit/delete/read). Control is mirrored now that C1/C2 make
+  // background mls.bin writes safe - notably `delete`, so a retraction is not stuck behind an
+  // already-sent body until the app reopens.
   const proto = buildOutboxProto(entry);
   if (!proto) return null;
   return {
@@ -49,6 +59,7 @@ export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
     groupId: entry.conversationId,
     proto: toBase64(proto),
     sentAt: entry.sentAt,
+    silent: entry.kind === 'control',
   };
 }
 

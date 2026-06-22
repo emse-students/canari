@@ -373,6 +373,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
             Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
             showNotification(senderName, groupName, body, largeIcon, groupId)
+
+            // Reveille par ce message entrant : tenter d'envoyer nos propres messages sortants en
+            // attente (texte/reply/control), sans attendre un push Welcome ni la reouverture. La
+            // garde foreground (C1) etant inactive en background, l'ecriture mls.bin est autorisee.
+            // No-op si l'outbox est vide. Notifier s'il en reste (filet de securite).
+            MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
+                val remaining = drainOutboxBackground(drainCtx)
+                maybeNotifyPendingSync(remaining)
+            }
         }
     }
 
@@ -1013,6 +1022,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val groupId: String,
         val proto: String,
         val sentAt: Long,
+        /** Envoi silencieux (pas de notif destinataire) : vrai pour les events de controle. */
+        val silent: Boolean,
     )
 
     /**
@@ -1038,7 +1049,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 remaining.add(entry)
                 continue
             }
-            if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id)) {
+            if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent)) {
                 sentIds.add(entry.id)
                 Log.d(TAG, "drainOutboxBackground: ✓ envoyé id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
             } else {
@@ -1100,6 +1111,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         ciphertextB64: String,
         messageId: String,
+        silent: Boolean,
     ): Boolean {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/send")
@@ -1109,6 +1121,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("groupId", groupId)
                 put("proto", ciphertextB64)
                 put("messageId", messageId)
+                put("silent", silent)
             }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
@@ -1144,7 +1157,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val groupId = o.optString("groupId")
                     val proto = o.optString("proto")
                     if (id.isEmpty() || groupId.isEmpty() || proto.isEmpty()) null
-                    else OutboxMirrorEntry(id, groupId, proto, o.optLong("sentAt", 0L))
+                    else OutboxMirrorEntry(id, groupId, proto, o.optLong("sentAt", 0L), o.optBoolean("silent", false))
                 } catch (e: Exception) {
                     null
                 }

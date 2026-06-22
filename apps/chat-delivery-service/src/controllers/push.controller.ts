@@ -497,6 +497,7 @@ export class PushController {
       groupId: string;
       proto: string;
       messageId?: string;
+      silent?: boolean;
     },
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -510,14 +511,17 @@ export class PushController {
 
     const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;
     this.logger.log(
-      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'}`,
+      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'} silent=${body.silent ?? false}`,
     );
 
+    // silent flows through from the outbox mirror: control events (delete/reaction/read) must not
+    // trigger a recipient notification. The server cannot infer it from the E2E ciphertext.
     const result = await this.messagingService.sendMessage({
       proto: body.proto,
       groupId,
       senderId: userId,
       senderDeviceId: deviceId,
+      silent: body.silent ?? false,
     });
 
     this.logger.log(
