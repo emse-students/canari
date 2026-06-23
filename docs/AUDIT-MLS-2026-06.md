@@ -789,14 +789,26 @@ DF3. FIXED - `consumeFcmCache` : `mergeConversation` placeholder (INSERT OR IGNO
 DF10. FIXED (deja en place) - Banniere "en attente de connexion" supprimee pendant l'init
     messaging (`isMessagingInitializing`) pour eviter le faux positif au demarrage.
 
-### Reporte (raison)
-DF7. DEFERRED - "Purger les invitations deja-membre" n'est PAS un fix sur : une invitation en
-    attente = ligne `DeviceGroupMembership status='pending'` ; seul le device invite peut la
-    promouvoir `active` (`updateInvitationStatus` protege par `assertCallerOwnsUserId`). La seule
-    action ouverte a l'inviteur, `deleteDeviceMembership`, retire le device du set de routage
-    Redis -> couperait la livraison a un membre legitime non encore confirme. La boucle des 14 est
-    un SYMPTOME de devices qui rejoignent l'arbre sans jamais confirmer `active` (meme racine que
-    DF2/FCM1). A traiter avec le chantier activation & membership (DF2/DF6), pas par une purge.
+### DF7 - boucle des invitations en attente (resolu)
+Une invitation en attente = ligne `DeviceGroupMembership status='pending'`. Elle ne passe `active`
+que lorsque le device INVITE confirme avoir traite son Welcome (`updateInvitationStatus`, protege
+par `assertCallerOwnsUserId` : l'inviteur ne peut pas la promouvoir). Un device qui rejoint l'arbre
+MLS sans jamais confirmer (Welcome perdu, zombie qui se reconnecte sans traiter son Welcome) laisse
+sa ligne `pending` indefiniment -> re-listee a chaque sync -> boucle. Purger cote inviteur via
+`deleteDeviceMembership` couperait le routage d'un membre legitime : ECARTE.
+
+Deux chemins surs livres :
+DF7a. FIXED (chemin existant, confirme) - Supprimer un device via "Gestion des appareils"
+    (`deleteDevice` -> `purgeDeviceFootprint`) efface TOUTES ses lignes `DeviceGroupMembership`
+    (dont `pending`), KeyPackages, messages en file, entrees Redis, et revoque le device. Nettoie
+    immediatement les invitations portees par ses PROPRES devices stale.
+DF7b. FIXED (nouveau GC serveur) - Cron `cleanupStalePendingInvitations` (24h) : supprime les
+    lignes `pending` dont `updatedAt` depasse `RETENTION_WINDOW_MS` (90j). Au-dela, le Welcome en
+    file a expire -> l'invitation est morte. Couvre AUSSI les devices zombie d'autres utilisateurs
+    (que le panneau ne peut pas toucher). Auto-reparateur : un device encore `GroupMember` re-emet
+    un `welcome_request` a sa prochaine connexion et est re-ajoute a l'epoch courante. Ne touche
+    jamais les lignes `active` ni `dm_group_members`. Filtre sur `updatedAt` (et non `createdAt`)
+    pour redonner une fenetre de grace a un device jadis actif remis `pending` par `detectStaleDevices`.
 
 ### A instrumenter (prochaines vagues)
 DF1c. Course "envoi a froid au resume" : l'emetteur envoie AVANT d'avoir traite le commit qui

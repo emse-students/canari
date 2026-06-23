@@ -38,6 +38,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
+  private cleanupStalePendingInvitationsInterval: ReturnType<
+    typeof setInterval
+  >;
 
   /**
    * Message retention / stale device TTL. A device is "stale" once its queued
@@ -150,11 +153,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Purge les invitations (memberships `pending`) coincees au-dela de la fenetre de
+    // retention : un device jamais passe `active` dont le Welcome en file a expire ne
+    // pourra plus rejoindre via la queue. La ligne `pending` reste sinon listee a chaque
+    // sync (boucle d'invitations qui ne se remplit jamais). Auto-reparateur : un device
+    // encore vivant (toujours GroupMember) re-emet un welcome_request et est re-ajoute.
+    this.cleanupStalePendingInvitationsInterval = setInterval(() => {
+      void this.cleanupStalePendingInvitations().catch((e) =>
+        this.logger.error('[CRON] cleanupStalePendingInvitations failed', e),
+      );
+    }, 24 * ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
-        'orphaned member rows purge (24h) scheduled',
+        'orphaned member rows purge (24h), stale pending invitations purge (24h) scheduled',
     );
   }
 
@@ -195,6 +209,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.softDeletedGroupsCleanupInterval);
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupOrphanedMemberRowsInterval);
+    clearInterval(this.cleanupStalePendingInvitationsInterval);
   }
 
   /**
@@ -330,6 +345,56 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     this.logger.log(
       `[CRON] cleanupStaleDevices: purged ${staleDevices.size} stale device(s)`,
+    );
+  }
+
+  /**
+   * Purge les invitations device-groupe restees `pending` au-dela de la fenetre de
+   * retention.
+   *
+   * Une ligne `pending` est creee a l'invitation et ne passe `active` que lorsque le
+   * device invite confirme avoir traite son Welcome. Un device qui rejoint l'arbre MLS
+   * mais ne confirme jamais (Welcome perdu, device zombie qui se reconnecte sans jamais
+   * traiter son Welcome) laisse sa ligne `pending` indefiniment : `getPendingInvitations`
+   * la re-liste a chaque sync et les membres actifs la re-traitent en boucle (acquisition
+   * de verrou + relecture de l'arbre pour un skip). Le GC `cleanupStaleDevices` ne la
+   * rattrape pas tant que le device republie un KeyPackage frais a chaque connexion.
+   *
+   * Au-dela de {@link RETENTION_WINDOW_MS}, le Welcome en file a expire
+   * ({@link cleanupExpiredQueuedMessages}) : l'invitation ne peut plus etre honoree par
+   * la queue, la ligne est donc morte. On la supprime (+ entree de routage Redis). C'est
+   * auto-reparateur : un device encore vivant reste `GroupMember` au niveau utilisateur,
+   * donc a sa prochaine connexion il detecte le groupe absent de son WASM, emet un
+   * `welcome_request` et un membre actif le re-ajoute a l'epoch courante (ligne `pending`
+   * recreee fraiche). On ne touche jamais les lignes `active` ni `dm_group_members`.
+   *
+   * Filtre sur `updatedAt` (et non `createdAt`) : un device jadis `active` puis remis
+   * `pending` par {@link detectStaleDevices} obtient ainsi une nouvelle fenetre de grace
+   * depuis sa derniere transition d'etat, alignee sur la semantique de fraicheur existante.
+   */
+  private async cleanupStalePendingInvitations() {
+    const expiry = new Date(Date.now() - RETENTION_WINDOW_MS);
+
+    const stale = await this.deviceGroupRepo.find({
+      where: { status: 'pending', updatedAt: LessThan(expiry) },
+    });
+
+    if (stale.length === 0) return;
+
+    for (const m of stale) {
+      await this.deviceGroupRepo.delete({
+        userId: m.userId,
+        deviceId: m.deviceId,
+        groupId: m.groupId,
+      });
+      await this.redis.srem(
+        `group:members:${m.groupId}`,
+        `${m.userId}:${m.deviceId}`,
+      );
+    }
+
+    this.logger.log(
+      `[CRON] cleanupStalePendingInvitations: purged ${stale.length} stale pending invitation(s)`,
     );
   }
 
