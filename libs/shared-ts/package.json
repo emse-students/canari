@@ -1,6 +1,6 @@
 {
   "name": "@canari/shared-ts",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
