@@ -7,8 +7,30 @@
   const SHOW_DELAY_MS = 2500;
   let show = $state(false);
 
+  /**
+   * True on phone-sized viewports. On mobile a single Canari instance is active at a time,
+   * so the "another tab holds the lead" banner is meaningless and must never be shown.
+   * (Tauri native apps are always tab leader, so they never reach the banner anyway.)
+   */
+  let isMobile = $state(false);
   $effect(() => {
-    const shouldShow = session.isLoggedIn && !session.isTabLeader;
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const update = () => (isMobile = mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  });
+
+  $effect(() => {
+    // Pendant le chargement (isMessagingInitializing) l'election du leader n'est pas encore
+    // tranchee : ne rien afficher, sinon la banniere flashe sur l'onglet leader le temps que
+    // la connexion s'etablisse. On n'affiche que pour un follower confirme, hors mobile.
+    const shouldShow =
+      session.isLoggedIn &&
+      !session.isMessagingInitializing &&
+      !session.isTabLeader &&
+      !isMobile;
     if (!shouldShow) {
       show = false;
       return;

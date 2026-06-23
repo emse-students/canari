@@ -389,6 +389,19 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
     })();
 
+    // Proposition d'enroler la biometrie : ne depend que de l'etat local (Tauri + non configuree
+    // + non rejetee), pas des synchros. On l'evalue des que MLS est pret pour qu'elle apparaisse
+    // immediatement, et non a la toute fin du catch-up de demarrage.
+    if (isTauriRuntime()) {
+      void (async () => {
+        const [isConfig, isDismissed] = await Promise.all([
+          BiometricService.isConfigured().catch(() => false),
+          isBiometricPromptDismissed(),
+        ]);
+        if (!isConfig && !isDismissed) ctx.setShowBiometricEnrollPrompt(true);
+      })();
+    }
+
     // Check push health AFTER registration so pending_push_secret.txt is present
     // (written by store_push_secret during startPushService) before the health check runs.
     void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
@@ -755,14 +768,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     startHealthCheckImpl(ctx, cb);
     startSyncWatchdogImpl(ctx, cb);
     startConnectionWatchdogImpl(ctx, cb);
-
-    if (isTauriRuntime()) {
-      const [isConfig, isDismissed] = await Promise.all([
-        BiometricService.isConfigured().catch(() => false),
-        isBiometricPromptDismissed(),
-      ]);
-      if (!isConfig && !isDismissed) ctx.setShowBiometricEnrollPrompt(true);
-    }
   } catch (_e: unknown) {
     cancelStartupCatchupBench();
     const msg = _e instanceof Error ? _e.message : String(_e);

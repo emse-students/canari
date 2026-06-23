@@ -229,7 +229,7 @@
                     item.type = qt.value;
                     showTypePicker = false;
                   }}
-                  class="flex items-center gap-2 px-3 py-2 rounded-xl transition-all {item.type ===
+                  class="flex items-center gap-2 min-w-0 px-3 py-2 rounded-xl transition-all {item.type ===
                   qt.value
                     ? 'bg-cn-yellow/15 text-cn-dark font-semibold'
                     : 'hover:bg-cn-yellow/5 text-text-main'}"
@@ -238,7 +238,7 @@
                     size={14}
                     class="shrink-0 {item.type === qt.value ? 'text-cn-dark' : 'text-text-muted'}"
                   />
-                  <span class="text-xs font-medium leading-tight">{qt.label}</span>
+                  <span class="min-w-0 break-words text-xs font-medium leading-tight">{qt.label}</span>
                 </button>
               {/each}
             </div>

@@ -111,7 +111,13 @@
     aria-label={`Avatar de ${displayLabel}`}
   >
     {#if !imageLoaded}
-      <div class="absolute inset-0 bg-cn-border/40 animate-pulse"></div>
+      <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
+           synchrone) : evite l'attente d'un round-trip reseau avant de voir quelque chose. -->
+      <div
+        class="absolute inset-0 flex items-center justify-center bg-cn-dark font-bold text-cn-yellow select-none"
+      >
+        {initials}
+      </div>
     {/if}
     <img
       src={displaySrc ?? avatarSrc}

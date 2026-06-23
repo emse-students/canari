@@ -12,6 +12,7 @@
 import type { MediaRef } from '$lib/media';
 import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
+import { extractFirstUrl, isGifUrl } from '$lib/utils/chat/messageDisplay';
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -80,7 +81,7 @@ export function serializeEnvelope(env: MessageEnvelope): string {
 export function getPreviewText(env: MessageEnvelope): string {
   switch (env.kind) {
     case 'text':
-      return formatMentionsForPreview(env.text);
+      return previewForTextMessage(env.text);
     case 'media':
       return env.caption ? `[Media] ${formatMentionsForPreview(env.caption)}` : '[Media]';
     case 'system':
@@ -88,6 +89,26 @@ export function getPreviewText(env: MessageEnvelope): string {
     case 'poll':
       return `[Sondage] ${env.question}`;
   }
+}
+
+/**
+ * Builds the list/reply preview for a text message. A message whose entire body is a single
+ * link is shown with a friendly label instead of the raw URL: `[GIF]` for animated GIFs, and
+ * `[Lien] <domaine>` for any other recognised link, so the conversation list never shows the
+ * beginning of a long URL.
+ */
+function previewForTextMessage(text: string): string {
+  const trimmed = text.trim();
+  const url = extractFirstUrl(trimmed);
+  if (url && trimmed === url) {
+    if (isGifUrl(url)) return '[GIF]';
+    try {
+      return `[Lien] ${new URL(url).hostname.replace(/^www\./, '')}`;
+    } catch {
+      return '[Lien]';
+    }
+  }
+  return formatMentionsForPreview(text);
 }
 
 /** Parse a stored content string back into a MessageEnvelope. */

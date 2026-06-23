@@ -1,0 +1,7 @@
+name: "Canari CodeQL config"
+
+# paraglide/ est du code genere par paraglide-js a l'installation/build. Il est deja exclu
+# d'ESLint et de Prettier ; on l'exclut aussi du Code Scanning pour ne pas remonter d'alertes
+# sur des fichiers que l'on ne maintient pas.
+paths-ignore:
+  - frontend/src/lib/paraglide
