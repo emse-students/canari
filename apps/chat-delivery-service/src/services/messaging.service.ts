@@ -112,6 +112,13 @@ export interface AckMessagesBody {
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
 
+  /**
+   * Fenetre maximale, en arriere du moment d'activation, pour re-livrer a un device qui passe
+   * `active` les messages rates pendant qu'il etait `pending` (DF2). Borne la re-notification
+   * pour qu'un device longtemps reste `pending` ne declenche pas une avalanche de notifications.
+   */
+  private static readonly ACTIVATION_REDELIVER_WINDOW_MS = 5 * 60 * 1000;
+
   constructor(
     @InjectRepository(QueuedMessage)
     private queuedMessageRepo: Repository<QueuedMessage>,
@@ -968,6 +975,15 @@ export class MessagingService {
     deviceId: string,
     groupId: string,
   ): Promise<void> {
+    // Lire l'etat anterieur AVANT l'upsert : la re-livraison des messages rates (DF2) ne doit
+    // se faire QUE sur une vraie transition pending->active. activateDeviceMembership est aussi
+    // appelee de facon idempotente a chaque re-traitement de Welcome ; re-livrer alors qu'on
+    // etait deja `active` doublerait les notifications.
+    const existing = await this.deviceGroupRepo.findOne({
+      where: { deviceId, groupId },
+    });
+    const wasAlreadyActive = existing?.status === 'active';
+
     await this.deviceGroupRepo.upsert(
       { userId, deviceId, groupId, status: 'active' as const },
       { conflictPaths: ['deviceId', 'groupId'] },
@@ -979,6 +995,95 @@ export class MessagingService {
     this.logger.log(
       `[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`,
     );
+
+    if (!wasAlreadyActive) {
+      // Pendant que le device etait `pending`, la resolution des destinataires (filtre
+      // `status='active'`) l'excluait : aucune notification push n'a ete dispatchee pour les
+      // messages envoyes dans cette fenetre. Maintenant qu'il est actif (donc qu'il a traite
+      // son Welcome -> il peut dechiffrer), on lui re-livre ces messages pour declencher la
+      // notification manquante (DF2). Best-effort, jamais bloquant pour l'activation.
+      const pendingSinceMs = existing?.createdAt?.getTime();
+      void this.redeliverMissedDuringActivationWindow(
+        userId,
+        deviceId,
+        groupId,
+        pendingSinceMs,
+      ).catch((e) =>
+        this.logger.warn(
+          `[ACTIVATION_REDELIVER] group=${groupId} device=${userId}:${deviceId} echec: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Re-livre au device qui vient de passer `active` les messages applicatifs visibles envoyes
+   * pendant sa fenetre d'activation (ou il etait `pending`, donc exclu des destinataires et
+   * jamais notifie). Source : le stream `history:{groupId}`, qui ne contient QUE des messages
+   * applicatifs visibles (Welcome/Commit/silent en sont exclus a l'ecriture) - donc aucune
+   * frame de controle ne sera re-notifiee. Borne par {@link ACTIVATION_REDELIVER_WINDOW_MS} et
+   * un plafond de messages pour ne jamais spammer un device longtemps reste `pending`. Les
+   * messages propres du device sont ignores. Idempotence d'affichage : le client dedoublonne
+   * par messageId (un message deja recu via le rattrapage d'historique n'est pas re-affiche).
+   */
+  private async redeliverMissedDuringActivationWindow(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    pendingSinceMs?: number,
+  ): Promise<void> {
+    const traceId = this.makeTraceId('reactivate');
+    const MAX_COUNT = 50;
+    // Plafond de fenetre : un device reste `pending` longtemps (zombie qui finit par activer)
+    // ne doit pas declencher une avalanche de notifications pour de vieux messages. Au-dela,
+    // il les recupere via le rattrapage d'historique (sans notification, ce qui est correct).
+    const windowStartMs = Math.max(
+      pendingSinceMs ?? 0,
+      Date.now() - MessagingService.ACTIVATION_REDELIVER_WINDOW_MS,
+    );
+
+    const historyKey = `history:${groupId}`;
+    // Les IDs de stream sont horodates (`<ms>-<seq>`) : on borne le XRANGE des windowStartMs.
+    const entries = await this.redis.xrange(
+      historyKey,
+      `${windowStartMs}`,
+      '+',
+      'COUNT',
+      MAX_COUNT,
+    );
+    if (!entries || entries.length === 0) return;
+
+    let redelivered = 0;
+    for (const [, fields] of entries) {
+      // fields = ['sender_id', <id>, 'content', <protoB64>, 'timestamp', <iso>]
+      const map = new Map<string, string>();
+      for (let i = 0; i + 1 < fields.length; i += 2)
+        map.set(fields[i], fields[i + 1]);
+      const senderId = map.get('sender_id') ?? '';
+      const proto = map.get('content') ?? '';
+      if (!proto || senderId === userId) continue; // pas de payload, ou notre propre message
+
+      const queued = await this.queuedMessageRepo.save(
+        this.queuedMessageRepo.create({
+          recipientId: userId,
+          deviceId,
+          senderId,
+          groupId,
+          isWelcome: false,
+          isCommit: false,
+          proto,
+          createdAt: new Date(),
+        }),
+      );
+      await this.sendFcmForQueued(queued, traceId, groupId, senderId, false);
+      redelivered++;
+    }
+
+    if (redelivered > 0) {
+      this.logger.log(
+        `[ACTIVATION_REDELIVER][${traceId}] group=${groupId} device=${userId}:${deviceId} redelivered=${redelivered}`,
+      );
+    }
   }
 
   /**
