@@ -310,6 +310,10 @@ jobs:
         with:
           name: frontend-build
           path: frontend/build/
+          # Sans cette option, upload-artifact exclut les dotfiles : le dossier
+          # build/.well-known/ (assetlinks.json + apple-app-site-association)
+          # serait absent de l'image nginx -> 404 sur les App Links.
+          include-hidden-files: true
           retention-days: 7
 
   build-docker-images:
