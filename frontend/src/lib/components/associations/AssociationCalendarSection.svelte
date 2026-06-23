@@ -44,6 +44,8 @@
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     associationId: string;
@@ -73,9 +75,9 @@
   let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
   let detailModalOpen = $state(false);
 
-  /** Visible month / year */
+  /** Visible month / year, locale-aware. */
   const titleMonth = $derived(
-    new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(focusDate)
+    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', { month: 'long', year: 'numeric' }).format(focusDate)
   );
 
   let modalOpen = $state(false);
@@ -157,9 +159,9 @@
   function exportMonthIcs() {
     if (validatedEvents.length === 0) return;
     const y = focusDate.getFullYear();
-    const m = pad(focusDate.getMonth() + 1);
+    const mo = pad(focusDate.getMonth() + 1);
     downloadTextFile(
-      `agenda-${associationSlug ?? associationId}-${y}-${m}.ics`,
+      `agenda-${associationSlug ?? associationId}-${y}-${mo}.ics`,
       buildIcsCalendar(validatedEvents.map(toAgendaExport)),
       'text/calendar;charset=utf-8'
     );
@@ -197,11 +199,11 @@
       events = await listAssociationCalendarEvents(associationId, {
         from,
         to,
-        // Toujours demandé : le backend ne renvoie les événements en attente qu'aux
-        // proposeurs / BDE / admins (sinon ignoré), pour qu'ils les voient grisés sur
-        // l'agenda de TOUTES les assos, pas seulement celles qu'ils éditent.
+        // Always requested: the backend only returns pending events to proposers / BDE / admins
+        // (otherwise ignored), so they see them greyed-out on the calendar for ALL clubs,
+        // not only the ones they edit.
         includePending: true,
-        // Les refusés (section de gestion) seulement pour les éditeurs de cette asso.
+        // Rejected events (management section) only for editors of this club.
         includeRejected: canEdit,
       });
     } catch (e) {
@@ -240,8 +242,8 @@
     };
   }
 
-  // L'agenda affiche les validés + les en-attente (grisés via MonthCalendarGridRich),
-  // jamais les refusés (ceux-ci n'apparaissent que dans la section de gestion).
+  // The calendar shows validated + pending events (pending rendered greyed-out via MonthCalendarGridRich),
+  // never rejected ones (those only appear in the management section below).
   const feedEvents = $derived(
     events.filter((e) => (e.status ?? 'validated') !== 'rejected').map(toFeedEvent)
   );
@@ -269,7 +271,7 @@
   }
 
   async function handleDetailDelete(id: string) {
-    if (!await showConfirm('Supprimer cet événement ?', { danger: true, confirmLabel: 'Supprimer' })) {
+    if (!await showConfirm(m.asso_calendar_confirm_delete(), { danger: true, confirmLabel: m.common_delete_button() })) {
       return;
     }
     detailModalOpen = false;
@@ -325,7 +327,7 @@
       // Also refresh the list so the card shows the new image
       await loadMonth();
     } catch (err) {
-      formError = err instanceof Error ? err.message : "Erreur lors de l'envoi de l'image";
+      formError = err instanceof Error ? err.message : m.asso_calendar_image_upload_error();
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -365,7 +367,7 @@
 
   async function submitForm() {
     if (!formTitle.trim() || !formStart) {
-      formError = 'Titre et date de début requis.';
+      formError = m.asso_calendar_error_title_required();
       return;
     }
     const startIso = new Date(formStart).toISOString();
@@ -406,7 +408,7 @@
   }
 
   async function removeEvent(id: string) {
-    if (!await showConfirm('Supprimer cet événement ?', { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.asso_calendar_confirm_delete(), { danger: true, confirmLabel: m.common_delete_button() })) return;
     try {
       await deleteAssociationCalendarEvent(associationId, id);
       await loadMonth();
@@ -425,8 +427,9 @@
   }
 
   function formatEventRange(ev: AssociationCalendarEvent): string {
+    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
     const s = new Date(ev.startsAt);
-    const fmt = new Intl.DateTimeFormat('fr-FR', {
+    const fmt = new Intl.DateTimeFormat(locale, {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
@@ -435,18 +438,18 @@
     });
     if (!ev.endsAt) return fmt.format(s);
     const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(e)}`;
+    return `${fmt.format(s)} - ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(e)}`;
   }
 </script>
 
 <div class="space-y-5">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
+      <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_tab_calendar()}</h2>
       <p class="text-sm text-text-muted">
-        Calendrier mensuel - cliquez sur un jour pour voir le détail.
+        {m.asso_calendar_subtitle()}
         {#if canEdit}
-          Les nouveaux événements sont en attente de validation avant publication.
+          {m.asso_calendar_pending_note()}
         {/if}
       </p>
     </div>
@@ -457,7 +460,7 @@
         class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-semibold text-text-main hover:bg-cn-bg transition-colors"
       >
         <CalendarSync size={18} />
-        S'abonner au calendrier
+        {m.asso_calendar_subscribe_button()}
       </button>
       <button
         type="button"
@@ -466,7 +469,7 @@
         class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-semibold text-text-main hover:bg-cn-bg transition-colors disabled:opacity-40 disabled:pointer-events-none"
       >
         <Download size={18} />
-        .ics (ce mois)
+        {m.asso_calendar_export_ics_button()}
       </button>
       {#if canEdit}
         <button
@@ -475,7 +478,7 @@
           class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
         >
           <CalendarPlus size={18} />
-          Proposer un événement
+          {m.asso_calendar_propose_event_button()}
         </button>
       {/if}
     </div>
@@ -486,7 +489,7 @@
       type="button"
       onclick={prevMonth}
       class="inline-flex items-center justify-center rounded-xl border border-cn-border p-2 text-text-main hover:bg-cn-bg transition-colors"
-      aria-label="Mois précédent"
+      aria-label={m.asso_calendar_prev_month_label()}
     >
       <ChevronLeft size={20} />
     </button>
@@ -495,7 +498,7 @@
       type="button"
       onclick={nextMonth}
       class="inline-flex items-center justify-center rounded-xl border border-cn-border p-2 text-text-main hover:bg-cn-bg transition-colors"
-      aria-label="Mois suivant"
+      aria-label={m.asso_calendar_next_month_label()}
     >
       <ChevronRight size={20} />
     </button>
@@ -538,7 +541,7 @@
   {#if canEdit && !loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
       <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide">
-        En attente de validation ({sortedPendingEvents.length})
+        {m.asso_calendar_pending_section_title({ count: sortedPendingEvents.length })}
       </h3>
       {#each sortedPendingEvents as ev (ev.id)}
         <div
@@ -550,7 +553,7 @@
               <span
                 class="text-[10px] font-bold uppercase tracking-wide text-amber-800 bg-amber-200/80 px-2 py-0.5 rounded-full"
               >
-                En attente
+                {m.asso_calendar_pending_badge()}
               </span>
             </p>
             <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
@@ -560,16 +563,16 @@
               type="button"
               onclick={() => validateEvent(ev.id)}
               class="inline-flex items-center gap-1 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover"
-              title="Valider et publier"
+              title={m.asso_calendar_validate_title()}
             >
               <Check size={14} />
-              Valider
+              {m.common_validate_button()}
             </button>
             <button
               type="button"
               onclick={() => openEdit(ev)}
               class="rounded-xl border border-cn-border p-2 hover:bg-cn-bg text-text-main"
-              title="Modifier"
+              title={m.common_edit_label()}
             >
               <Pencil size={16} />
             </button>
@@ -577,7 +580,7 @@
               type="button"
               onclick={() => removeEvent(ev.id)}
               class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
-              title="Supprimer"
+              title={m.common_delete_button()}
             >
               <Trash2 size={16} />
             </button>
@@ -590,7 +593,7 @@
   {#if canEdit && !loading && sortedRejectedEvents.length > 0}
     <div class="space-y-3">
       <h3 class="text-sm font-bold text-red-700 uppercase tracking-wide">
-        Refusés par le BDE ({sortedRejectedEvents.length})
+        {m.asso_calendar_rejected_section_title({ count: sortedRejectedEvents.length })}
       </h3>
       {#each sortedRejectedEvents as ev (ev.id)}
         <div
@@ -602,12 +605,12 @@
               <span
                 class="text-[10px] font-bold uppercase tracking-wide text-red-700 bg-red-200/80 px-2 py-0.5 rounded-full"
               >
-                Refusé
+                {m.asso_calendar_rejected_badge()}
               </span>
             </p>
             <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
             {#if ev.rejectionReason?.trim()}
-              <p class="text-xs text-red-600 mt-1">Motif : {ev.rejectionReason}</p>
+              <p class="text-xs text-red-600 mt-1">{m.asso_calendar_rejection_reason_prefix()}{ev.rejectionReason}</p>
             {/if}
           </div>
           <div class="flex items-center gap-1 shrink-0">
@@ -615,7 +618,7 @@
               type="button"
               onclick={() => removeEvent(ev.id)}
               class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
-              title="Supprimer"
+              title={m.common_delete_button()}
             >
               <Trash2 size={16} />
             </button>
@@ -641,18 +644,18 @@
       aria-labelledby="cal-modal-title"
     >
       <h3 id="cal-modal-title" class="text-lg font-bold text-text-main">
-        {editingId ? 'Modifier l\'événement' : 'Proposer un événement'}
+        {editingId ? m.asso_calendar_modal_edit_title() : m.asso_calendar_modal_create_title()}
       </h3>
       {#if !editingId}
         <p class="text-xs text-text-muted">
-          L'événement sera visible par tous après validation par un administrateur.
+          {m.asso_calendar_modal_pending_note()}
         </p>
       {/if}
-      <Input label="Titre" bind:value={formTitle} />
+      <Input label={m.asso_calendar_event_title_label()} bind:value={formTitle} />
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-start"
-            >Début</label
+            >{m.asso_calendar_event_start_label()}</label
           >
           <input
             id="ev-start"
@@ -663,7 +666,7 @@
         </div>
         <div>
           <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-end"
-            >Fin (optionnel)</label
+            >{m.asso_calendar_event_end_label()}</label
           >
           <input
             id="ev-end"
@@ -674,7 +677,7 @@
         </div>
       </div>
       <div>
-        <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</p>
+        <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.asso_calendar_event_description_label()}</p>
         <MarkdownComposerField
           bind:value={formDescription}
           placeholder="Décrivez l'événement…"
@@ -684,16 +687,16 @@
       <!-- Poster image - only available when editing an existing event -->
       {#if editingId}
         <div class="space-y-2">
-          <p class="text-sm font-bold text-text-main ml-1">Affiche / image (optionnel)</p>
+          <p class="text-sm font-bold text-text-main ml-1">{m.asso_calendar_event_poster_label()}</p>
           {#if formImageUrl}
             <div class="relative rounded-xl overflow-hidden border border-cn-border">
-              <img src={formImageUrl} alt="Affiche" class="w-full max-h-48 object-cover" loading="lazy" />
+              <img src={formImageUrl} alt={m.asso_calendar_poster_alt()} class="w-full max-h-48 object-cover" loading="lazy" />
               <button
                 type="button"
                 onclick={handleImageRemove}
                 disabled={uploadingImage}
                 class="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
-                title="Supprimer l'affiche"
+                title={m.asso_calendar_poster_remove_title()}
               >
                 <X size={14} />
               </button>
@@ -705,7 +708,7 @@
                 : ''}"
             >
               <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
-              {uploadingImage ? 'Envoi…' : 'Ajouter une affiche (JPEG / PNG / WebP)'}
+              {uploadingImage ? m.asso_calendar_poster_uploading() : m.asso_calendar_poster_add_label()}
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -717,7 +720,7 @@
         </div>
       {:else}
         <p class="text-xs text-text-muted">
-          Vous pourrez ajouter une affiche après avoir créé l'événement.
+          {m.asso_calendar_poster_after_save_note()}
         </p>
       {/if}
       <!-- Co-owner associations picker -->
@@ -728,18 +731,18 @@
             class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
           >
             <Link2 size={14} />
-            Lier un formulaire (optionnel)
+            {m.asso_calendar_link_form_label()}
           </p>
           <div>
             <label class="block text-xs font-semibold text-text-main mb-1" for="cal-link-form"
-              >Formulaire</label
+              >{m.asso_calendar_form_label()}</label
             >
             <select
               id="cal-link-form"
               bind:value={formLinkedFormId}
               class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
             >
-              <option value="">- Aucun -</option>
+              <option value="">{m.asso_calendar_link_form_none_option()}</option>
               {#each linkCandidates.forms as f (f.id)}
                 <option value={f.id}>{f.title}</option>
               {/each}
@@ -756,7 +759,7 @@
           onclick={closeModal}
           class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
         >
-          Annuler
+          {m.common_cancel_button()}
         </button>
         <button
           type="button"
@@ -764,7 +767,7 @@
           disabled={saving}
           class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
         >
-          {saving ? 'Enregistrement…' : 'Enregistrer'}
+          {saving ? m.asso_calendar_saving_label() : m.asso_calendar_save_button()}
         </button>
       </div>
     </div>
@@ -774,17 +777,17 @@
 
 <Modal
   open={showSubscribeModal}
-  title="Ajouter au calendrier"
+  title={m.asso_calendar_subscribe_modal_title()}
   maxWidth="max-w-lg"
   onClose={() => (showSubscribeModal = false)}
 >
   <div class="space-y-6 text-sm text-text-main">
     <p class="text-text-muted">
-      Pour ajouter les événements de cette association à votre calendrier personnel :
+      {m.asso_calendar_subscribe_intro()}
     </p>
 
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-cn-dark">Google Agenda / Android</h3>
+      <h3 class="text-sm font-bold text-cn-dark">{m.asso_calendar_google_title()}</h3>
       {#if googleCalendarSubscribeUrl}
         <a
           href={googleCalendarSubscribeUrl}
@@ -792,32 +795,30 @@
           rel="noopener noreferrer"
           class="inline-flex w-full items-center justify-center rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
         >
-          Ajouter à Google Agenda
+          {m.asso_calendar_google_add_button()}
         </a>
       {/if}
 
       <details class="group">
         <summary class="cursor-pointer text-text-muted hover:text-text-main">
-          Ou ajouter manuellement
+          {m.asso_calendar_manual_add_summary()}
         </summary>
         <ol class="mt-3 ml-4 list-decimal space-y-1.5 text-text-muted leading-relaxed">
-          <li>Copiez le lien ci-dessous</li>
+          <li>{m.asso_calendar_manual_step1()}</li>
           <li>
-            Ouvrez
+            {m.asso_calendar_manual_step2_open()}
             <a
               href="https://calendar.google.com"
               target="_blank"
               rel="noopener noreferrer"
               class="font-semibold text-cn-dark underline"
             >
-              Google Agenda
+              {m.asso_calendar_manual_step2_link()}
             </a>
           </li>
-          <li>
-            Dans le menu de gauche, cliquez sur le <strong>+</strong> à côté de " Autres agendas "
-          </li>
-          <li>Sélectionnez <strong>À partir de l'URL</strong></li>
-          <li>Collez le lien et validez</li>
+          <li>{m.asso_calendar_manual_step3()}</li>
+          <li>{m.asso_calendar_manual_step4()}</li>
+          <li>{m.asso_calendar_manual_step5()}</li>
         </ol>
 
         {#if calendarIcsUrl}
@@ -834,7 +835,7 @@
               onclick={copyCalendarLink}
               class="shrink-0 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg transition-colors"
             >
-              {isCopied ? 'Copié !' : 'Copier'}
+              {isCopied ? m.asso_calendar_copied() : m.asso_calendar_copy_button()}
             </button>
           </div>
         {/if}
@@ -842,23 +843,22 @@
     </div>
 
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-cn-dark">iOS (Apple Calendar) / Autres</h3>
+      <h3 class="text-sm font-bold text-cn-dark">{m.asso_calendar_apple_title()}</h3>
       <p class="text-text-muted">
-        Cliquez sur le bouton ci-dessous pour vous abonner automatiquement :
+        {m.asso_calendar_apple_intro()}
       </p>
       {#if webcalUrl}
         <a
           href={webcalUrl}
           class="inline-flex w-full items-center justify-center rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
         >
-          S'abonner automatiquement
+          {m.asso_calendar_apple_subscribe_button()}
         </a>
       {/if}
     </div>
 
     <p class="text-[11px] text-text-muted">
-      L'abonnement couvre environ 3 mois passés et 12 mois à venir. Le fichier est régénéré côté
-      serveur à chaque synchronisation.
+      {m.asso_calendar_subscribe_note()}
     </p>
   </div>
 </Modal>

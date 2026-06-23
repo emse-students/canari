@@ -34,6 +34,7 @@
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** URL slug of the association or list to display. */
@@ -46,7 +47,7 @@
 
   /** Base path for the listing page this entity belongs to. */
   const basePath = $derived(kind === 'list' ? '/lists' : '/associations');
-  const backLabel = $derived(kind === 'list' ? '← Retour aux listes' : '← Retour aux associations');
+  const backLabel = $derived(kind === 'list' ? m.asso_back_to_lists() : m.asso_back_to_associations());
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -182,7 +183,7 @@
               ? 's'
               : ''}
             {#if kind === 'list' && asso.promo}
-              · Promo {asso.promo}
+              · {m.asso_promo_label({ promo: String(asso.promo) })}
             {/if}
           </p>
         </div>
@@ -196,10 +197,10 @@
             >
               {#if following}
                 <BellOff size={16} />
-                Ne plus suivre
+                {m.asso_unfollow_button()}
               {:else}
                 <Bell size={16} />
-                Suivre
+                {m.asso_follow_button()}
               {/if}
             </button>
           {/if}
@@ -209,7 +210,7 @@
               class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
             >
               <Settings size={16} />
-              {kind === 'list' ? 'Gérer la liste' : "Gestion de l'asso"}
+              {kind === 'list' ? m.asso_manage_list_button() : m.asso_manage_button()}
             </a>
           {/if}
         </div>
@@ -234,7 +235,7 @@
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <Building2 size={17} />
-          À propos
+          {m.asso_tab_about()}
         </button>
         <button
           type="button"
@@ -245,7 +246,7 @@
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <CalendarDays size={17} />
-          Agenda
+          {m.asso_tab_calendar()}
         </button>
         <button
           type="button"
@@ -256,7 +257,7 @@
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <Users size={17} />
-          Membres
+          {m.common_members_label()}
         </button>
         {#if products.length > 0}
           <button
@@ -268,7 +269,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <ShoppingBag size={17} />
-            Boutique
+            {m.asso_tab_shop()}
           </button>
         {/if}
       </div>
@@ -278,14 +279,14 @@
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
       >
-        <h2 class="text-lg font-bold text-text-main tracking-tight">À propos</h2>
+        <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_tab_about()}</h2>
         {#if asso.description?.trim()}
           <ProfileBioMarkdown source={asso.description} class="text-sm" />
         {/if}
         {#if asso.bioMarkdown?.trim()}
           <ProfileBioMarkdown source={asso.bioMarkdown} />
         {:else if !asso.description?.trim()}
-          <p class="text-sm text-text-muted">Aucune description pour le moment.</p>
+          <p class="text-sm text-text-muted">{m.asso_no_description()}</p>
         {/if}
         {#if asso.contactEmail?.trim()}
           <a
@@ -300,12 +301,12 @@
     {:else if activeSection === 'calendar'}
       <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <h2 class="text-lg font-bold text-text-main tracking-tight">Agenda</h2>
+          <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_tab_calendar()}</h2>
           <a
             href="/calendar?association={encodeURIComponent(asso.id)}"
             class="text-xs font-semibold text-cn-dark hover:underline"
           >
-            Voir dans l'agenda global →
+            {m.asso_view_global_calendar()}
           </a>
         </div>
         <AssociationCalendarSection
@@ -322,7 +323,7 @@
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
       >
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+          <h2 class="text-lg font-bold text-text-main tracking-tight">{m.common_members_label()}</h2>
           {#if members.length > 0}
             <button
               type="button"
@@ -331,13 +332,14 @@
               class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-[var(--cn-surface)] transition-colors disabled:opacity-50"
             >
               <Download size={14} />
-              {exportingPdf ? 'Génération…' : 'Trombinoscope'}
+              {exportingPdf ? m.common_generating_label() : m.asso_trombinoscope_button()}
             </button>
           {/if}
         </div>
         <p class="text-sm text-text-muted">
-          {members.length} personne{members.length !== 1 ? 's' : ''}
-          {kind === 'list' ? 'dans cette liste.' : 'dans cette association.'}
+          {kind === 'list'
+            ? m.asso_member_count_list({ count: members.length })
+            : m.asso_member_count_association({ count: members.length })}
         </p>
         <div class="space-y-3">
           {#each members as member (member.id)}
@@ -357,10 +359,10 @@
         <div class="flex items-center justify-between gap-2">
           <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
             <ShoppingBag size={20} />
-            Boutique
+            {m.asso_tab_shop()}
           </h2>
           <a href="/shop" class="text-xs font-semibold text-cn-dark hover:underline">
-            Voir toute la boutique →
+            {m.asso_view_all_shop()}
           </a>
         </div>
         <div class="space-y-3">
@@ -375,18 +377,18 @@
                   {#if product.amountCents}
                     {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
                   {:else if product.allowCustomAmount}
-                    Prix libre
+                    {m.asso_product_custom_price()}
                   {:else}
-                    Gratuit
+                    {m.asso_product_free_price()}
                   {/if}
                   <span
                     class="ml-2 px-1.5 py-0.5 rounded-full bg-cn-border/40 text-[10px] font-bold uppercase"
                   >
                     {product.type === 'membership'
-                      ? 'Cotisation'
+                      ? m.asso_product_membership_type()
                       : product.type === 'balance_topup'
-                        ? 'Recharge'
-                        : 'Autre'}
+                        ? m.asso_product_topup_type()
+                        : m.asso_product_other_type()}
                   </span>
                 </p>
                 {#if product.allowCustomAmount && product.amountCents === null}
@@ -400,7 +402,7 @@
                         ? product.customAmountMaxCents / 100
                         : undefined}
                       step="0.01"
-                      placeholder="Montant (€)"
+                      placeholder={m.asso_product_amount_placeholder()}
                       class="flex-1 rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-accent"
                       bind:value={shopCustomAmounts[product.id]}
                     />

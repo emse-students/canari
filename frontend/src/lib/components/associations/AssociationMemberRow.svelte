@@ -7,23 +7,21 @@
     hasPermissionFlag,
   } from '$lib/associations/api';
   import { Trash2, ChevronDown } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
-  /** Human-readable labels for each permission flag (French). */
-  const FLAG_LABELS: { flag: AssociationPermissionFlag; label: string }[] = [
-    { flag: AssociationPermissionFlag.POST_AS_ASSO, label: "Publier au nom de l'asso" },
-    { flag: AssociationPermissionFlag.PROPOSE_EVENT, label: 'Proposer des événements' },
-    { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: 'Gérer les membres' },
-    { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: 'Gérer les documents' },
-    { flag: AssociationPermissionFlag.MANAGE_FORMS, label: 'Gérer les formulaires' },
-    { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: 'Gérer les paiements (boutique)' },
-    {
-      flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT,
-      label: 'Gérer Stripe Connect',
-    },
-    { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: 'Valider les événements' },
-    { flag: AssociationPermissionFlag.MANAGE_ASSO, label: 'Gérer les associations' },
-    { flag: AssociationPermissionFlag.MODERATE, label: 'Modérer' },
-  ];
+  /** Human-readable labels for each permission flag, reactive across locale changes. */
+  const FLAG_LABELS = $derived<{ flag: AssociationPermissionFlag; label: string }[]>([
+    { flag: AssociationPermissionFlag.POST_AS_ASSO, label: m.asso_flag_post_as() },
+    { flag: AssociationPermissionFlag.PROPOSE_EVENT, label: m.asso_flag_propose_event() },
+    { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: m.asso_flag_manage_members() },
+    { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: m.asso_flag_manage_documents() },
+    { flag: AssociationPermissionFlag.MANAGE_FORMS, label: m.asso_flag_manage_forms() },
+    { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: m.asso_flag_manage_products() },
+    { flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT, label: m.asso_flag_manage_stripe() },
+    { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
+    { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
+    { flag: AssociationPermissionFlag.MODERATE, label: m.asso_flag_moderate() },
+  ]);
 
   interface Props {
     member: AssociationMember;
@@ -63,7 +61,7 @@
       <a
         href="/profile/{encodeURIComponent(member.userId)}"
         class="shrink-0 ring-2 ring-transparent hover:ring-cn-yellow/40 rounded-full transition-shadow"
-        title="Voir le profil"
+        title={m.asso_member_view_profile_title()}
       >
         <Avatar userId={member.userId} size="lg" shape="circle" fallbackLabel={displayName} />
       </a>
@@ -95,7 +93,7 @@
         <input
           type="text"
           value={member.role}
-          aria-label="Libellé du rôle"
+          aria-label={m.asso_member_role_label()}
           onchange={(e) =>
             onRoleChange(
               member.userId,
@@ -110,14 +108,14 @@
           class="inline-flex items-center gap-1.5 text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-text-main hover:border-cn-yellow/60 transition-colors {showPermissions ? 'border-cn-yellow/60 bg-cn-yellow/5' : ''}"
           aria-expanded={showPermissions}
         >
-          Permissions ({permissionsCount})
+          {m.asso_member_permissions_label({ count: permissionsCount })}
           <ChevronDown size={14} class="transition-transform {showPermissions ? 'rotate-180' : ''}" />
         </button>
         <button
           type="button"
           onclick={() => onRemove(member.userId)}
           class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
-          title="Retirer ce membre"
+          title={m.asso_member_remove_title()}
         >
           <Trash2 size={16} />
         </button>
