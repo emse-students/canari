@@ -81,7 +81,10 @@
    */
   let showWsBanner = $state(false);
   $effect(() => {
-    if (session.isWsConnected) {
+    // Suppress during the initial messaging bring-up: the WS is legitimately not connected yet
+    // while MLS/session initialise, so showing "en attente de connexion" then is a false positive.
+    // Only arm the delayed banner once init is done and we are genuinely disconnected.
+    if (session.isWsConnected || session.isMessagingInitializing) {
       showWsBanner = false;
       return;
     }
