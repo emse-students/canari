@@ -126,6 +126,25 @@ export class GroupsController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Patch('mls/groups/:groupId/image')
+  /** Sets or clears the group's avatar (media-service id). Pass mediaId=null to remove the photo. */
+  async setGroupImage(
+    @Param('groupId') groupId: string,
+    @Body() body: { mediaId: string | null },
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const mediaId = body?.mediaId ?? null;
+    if (mediaId !== null && !/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId format');
+    }
+    await this.groupRepo.update({ id: safeGroupId }, { imageMediaId: mediaId });
+    this.logger.log(
+      `[SET_GROUP_IMAGE] group=${safeGroupId} mediaId=${mediaId ?? 'null'}`,
+    );
+    return { status: 'updated', imageMediaId: mediaId };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId')
   /**
    * Soft-deletes a group and every successor in its lineage, then hard-deletes

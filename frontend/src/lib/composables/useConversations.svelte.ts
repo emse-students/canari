@@ -22,6 +22,7 @@ import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
   renameGroupAndBroadcast,
+  setGroupImageAndBroadcast,
   deleteGroupAndBroadcast,
   leaveGroupAndBroadcast,
   isGroupActiveOnServer,
@@ -826,6 +827,28 @@ export function useConversations() {
     }
   }
 
+  /** Sets the currently selected group's avatar on the server, broadcasts the change via MLS, and updates the UI. No-op for DMs and channels. */
+  async function handleSetGroupImage(mediaId: string, ctx: ConversationContext) {
+    if (!selectedContact) return;
+    const convo = conversations.get(selectedContact);
+    if (!convo) return;
+    if ((convo.conversationType ?? 'group') !== 'group') return; // only named groups carry an avatar
+    try {
+      await setGroupImageAndBroadcast({
+        mlsService: ctx.ensureMls(),
+        groupId: convo.id,
+        mediaId,
+        userId: ctx.userId,
+        pin: ctx.pin,
+      });
+      conversations.set(selectedContact, { ...convo, imageMediaId: mediaId });
+      await saveConversation(selectedContact, ctx);
+      ctx.log(`Photo de groupe mise a jour (media=${mediaId})`);
+    } catch (e) {
+      ctx.log(`Erreur changement photo: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   /** Broadcasts a "groupDeleted" message, deletes the group on the server, wipes local MLS state, removes the conversation from IndexedDB, and resets the UI. */
   async function handleDeleteGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
@@ -1032,6 +1055,8 @@ export function useConversations() {
     startNewConversation,
     /** Renames the currently selected group and broadcasts the change. */
     handleRenameGroup,
+    /** Sets the currently selected group's avatar and broadcasts the change. */
+    handleSetGroupImage,
     /** Deletes the currently selected group and clears the UI. */
     handleDeleteGroup,
     /** Removes only the local conversation entry (no server call). Used when the group was deleted remotely. */

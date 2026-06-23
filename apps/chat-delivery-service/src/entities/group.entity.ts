@@ -22,6 +22,11 @@ export class Group {
   @Column({ nullable: true })
   name?: string;
 
+  /** Media-service ID of the group avatar (raw/public blob, like channel images).
+   *  Null for direct messages and for groups without a custom photo. */
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  imageMediaId?: string | null;
+
   /** True for multi-member group chats; false for 1-to-1 direct messages. */
   @Column({ default: false })
   isGroup: boolean;

@@ -56,6 +56,8 @@ export type UserGroupRow = {
   groupId: string;
   name: string;
   isGroup: boolean;
+  /** Media-service id of the group avatar; null when the group has no custom photo. */
+  imageMediaId?: string | null;
   successorId?: string | null;
   deletedAt?: string | null;
 };
@@ -300,6 +302,8 @@ export interface IMlsService {
   forceLeaveGroup(groupId: string): Promise<void>;
   /** Updates the display name of a group on the delivery service. */
   renameGroup(groupId: string, name: string): Promise<void>;
+  /** Sets (or clears, with mediaId=null) the group's avatar on the delivery service. */
+  setGroupImage(groupId: string, mediaId: string | null): Promise<void>;
   /** Deletes a group and all its messages from the delivery service. */
   deleteGroupOnServer(groupId: string): Promise<boolean>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */

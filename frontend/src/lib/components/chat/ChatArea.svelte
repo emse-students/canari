@@ -68,6 +68,8 @@
     sendError?: string;
     /** Callback to rename the group conversation. */
     onGroupRename?: (name: string) => void;
+    /** Callback to set the group avatar (uploaded media-service id). */
+    onGroupSetImage?: (mediaId: string) => void;
     /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
     /** Callback to remove the conversation locally when it was deleted by another participant. */
@@ -148,6 +150,7 @@
     groupMembers = [],
     sendError = '',
     onGroupRename,
+    onGroupSetImage,
     onGroupDelete,
     onGroupDeleteLocally,
     onGroupLeave,
@@ -631,6 +634,7 @@
         {groupMembers}
         {currentUserId}
         {onGroupRename}
+        {onGroupSetImage}
         {onGroupDelete}
         {onGroupLeave}
         {onGroupRemoveMember}

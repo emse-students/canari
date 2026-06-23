@@ -790,6 +790,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.renameGroup(groupId, name);
   }
 
+  async setGroupImage(groupId: string, mediaId: string | null): Promise<void> {
+    return this.delivery.setGroupImage(groupId, mediaId);
+  }
+
   async deleteGroupOnServer(groupId: string): Promise<boolean> {
     return this.delivery.deleteGroupOnServer(groupId);
   }

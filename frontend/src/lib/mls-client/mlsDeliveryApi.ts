@@ -647,6 +647,16 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
   }
 
+  /** Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx. */
+  async setGroupImage(groupId: string, mediaId: string | null): Promise<void> {
+    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/image`, {
+      method: 'PATCH',
+      headers: await this.auth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ mediaId }),
+    });
+    if (!res.ok) throw new Error(`setGroupImage failed: ${res.status}`);
+  }
+
   /** Clears the pending `welcome_request` queue for `groupId` after a successful reboot. */
   async clearPendingWelcomeRequests(groupId: string): Promise<void> {
     const res = await this.f(

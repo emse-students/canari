@@ -737,6 +737,7 @@
           groupMembers={convs.groupMembers}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
+          onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}
           onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
           onGroupDeleteLocally={() => void convs.handleDeleteGroupLocally(convCtx())}
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}

@@ -44,6 +44,8 @@
     currentUserId?: string;
     /** Callback to rename the group. */
     onGroupRename?: (name: string) => void;
+    /** Callback to set the group avatar (uploaded media-service id). */
+    onGroupSetImage?: (mediaId: string) => void;
     /** Callback to delete the group conversation. */
     onGroupDelete?: () => void;
     /** Callback fired when the current user leaves the group. */
@@ -77,6 +79,7 @@
     groupMembers = [],
     currentUserId = '',
     onGroupRename,
+    onGroupSetImage,
     onGroupDelete,
     onGroupLeave,
     onGroupRemoveMember,
@@ -278,12 +281,14 @@
     {groupId}
     {isReady}
     {isGroupConversation}
+    {imageMediaId}
     currentUserId={currentUserId ?? ''}
     {groupMembers}
     onClose={() => {
       showPanel = false;
     }}
     onRename={onGroupRename}
+    onSetImage={onGroupSetImage}
     onRemoveMember={onGroupRemoveMember}
     {onGroupDelete}
     {onGroupLeave}

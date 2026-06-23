@@ -386,6 +386,7 @@ export async function discoverMissingGroups(params: {
     groupId: string;
     name: string;
     isGroup: boolean;
+    imageMediaId?: string | null;
     successorId?: string | null;
     deletedAt?: string | null;
   }[] = [];
@@ -612,6 +613,7 @@ export async function discoverMissingGroups(params: {
       lifecycle: 'pending', // placeholder until the Welcome is processed
       mlsStateHex: null,
       conversationType: g.isGroup ? 'group' : 'direct',
+      imageMediaId: g.imageMediaId ?? null,
       ...(directPeer ? { directPeerId: directPeer } : {}),
     });
     if (saveConversation) {
@@ -624,6 +626,19 @@ export async function discoverMissingGroups(params: {
       }
     }
     log(`[DISCOVERY] Placeholder "${displayName}" créé.`);
+  }
+
+  // ── Seed group avatars from the server (source of truth) ─────────────────
+  // imageMediaId is not persisted in the local ConversationMeta; it is re-seeded
+  // from getUserGroups on every discovery so a freshly-loaded or new device shows
+  // the current group photo. Live changes still arrive via the MLS system message.
+  for (const g of activeServerGroups) {
+    if (!g.isGroup) continue;
+    const convo = conversations.get(g.groupId);
+    const nextImage = g.imageMediaId ?? null;
+    if (convo && (convo.imageMediaId ?? null) !== nextImage) {
+      conversations.set(g.groupId, { ...convo, imageMediaId: nextImage });
+    }
   }
 }
 

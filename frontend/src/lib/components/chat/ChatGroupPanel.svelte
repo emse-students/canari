@@ -10,14 +10,18 @@
     X,
     PencilLine,
     Shield,
+    Camera,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
   import { portal } from '$lib/actions/portal';
   import { fade, fly } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
+  import { MediaService } from '$lib/media';
+  import { getToken } from '$lib/stores/auth';
 
   /**
    * Props for the ChatGroupPanel component.
@@ -37,6 +41,8 @@
     isReady: boolean;
     /** Whether this is a group conversation (vs. a direct message). */
     isGroupConversation: boolean;
+    /** Media-service id of the current group avatar; null when none is set. */
+    imageMediaId?: string | null;
     /** ID of the currently authenticated user (used to label "Vous" in the member list). */
     currentUserId: string;
     /** List of member user IDs in the group. */
@@ -45,6 +51,8 @@
     onClose: () => void;
     /** Callback to rename the group, receiving the new trimmed name. */
     onRename?: (name: string) => void;
+    /** Callback to set the group avatar, receiving the uploaded media-service id. */
+    onSetImage?: (mediaId: string) => void;
     /** Callback to remove a specific member from the group. */
     onRemoveMember?: (userId: string) => void;
     /** Callback to delete the group conversation. */
@@ -62,10 +70,12 @@
     groupId = '',
     isReady,
     isGroupConversation,
+    imageMediaId = null,
     currentUserId,
     groupMembers,
     onClose,
     onRename,
+    onSetImage,
     onRemoveMember,
     onGroupDelete,
     onGroupLeave,
@@ -77,6 +87,36 @@
   let showInviteModal = $state(false);
   let newMembers = $state<string[]>([]);
   let renameInput = $state('');
+
+  // ── Group avatar upload ─────────────────────────────────────────────────────
+  let imageUploading = $state(false);
+  let imageUploadError = $state('');
+  let imageInput = $state<HTMLInputElement | null>(null);
+  const mediaService = new MediaService();
+
+  /** Uploads the selected image as a raw/public media blob and reports its id to the parent. */
+  async function handleImageFileChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      imageUploadError = m.chat_group_image_invalid_type();
+      input.value = '';
+      return;
+    }
+    imageUploading = true;
+    imageUploadError = '';
+    try {
+      const token = await getToken();
+      const mediaId = await mediaService.uploadRaw(file, token);
+      onSetImage?.(mediaId);
+    } catch (e) {
+      imageUploadError = e instanceof Error ? e.message : m.chat_group_image_upload_error();
+    } finally {
+      imageUploading = false;
+      input.value = '';
+    }
+  }
 
   // ── Shareable invite link ──────────────────────────────────────────────────
   let shareLink = $state('');
@@ -202,11 +242,32 @@
           class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 px-4 py-4 flex items-center gap-4 shadow-sm"
         >
           {#if isGroupConversation}
-            <div
-              class="w-[3.25rem] h-[3.25rem] rounded-2xl flex-shrink-0 bg-gradient-to-b from-gray-100 to-gray-200 dark:from-zinc-800 dark:to-zinc-900 border border-black/5 dark:border-white/5 text-gray-600 dark:text-gray-300 flex items-center justify-center shadow-inner"
+            <button
+              type="button"
+              onclick={() => imageInput?.click()}
+              disabled={imageUploading}
+              aria-label={m.chat_group_change_photo_label()}
+              title={m.chat_group_change_photo_label()}
+              class="group/avatar relative w-[3.25rem] h-[3.25rem] rounded-2xl flex-shrink-0 overflow-hidden shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 transition-transform disabled:opacity-60"
             >
-              <Users size={24} strokeWidth={2} />
-            </div>
+              <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
+              <span
+                class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 group-hover/avatar:opacity-100 transition-opacity"
+              >
+                {#if imageUploading}
+                  <Clock size={18} class="animate-spin" strokeWidth={2.5} />
+                {:else}
+                  <Camera size={18} strokeWidth={2.5} />
+                {/if}
+              </span>
+            </button>
+            <input
+              bind:this={imageInput}
+              type="file"
+              accept="image/*"
+              class="hidden"
+              onchange={handleImageFileChange}
+            />
           {:else}
             <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
           {/if}
@@ -232,6 +293,12 @@
             {/if}
           </div>
         </div>
+
+        {#if imageUploadError}
+          <p class="text-xs font-medium text-red-600 dark:text-red-400 -mt-3 px-1">
+            {imageUploadError}
+          </p>
+        {/if}
 
         <!-- Section Renommer -->
         {#if isGroupConversation}

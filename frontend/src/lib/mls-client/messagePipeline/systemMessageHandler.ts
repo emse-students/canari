@@ -132,6 +132,24 @@ export async function handleSystemEvent(
     return true;
   }
 
+  if (event === 'groupImageChanged') {
+    const imageMediaId =
+      typeof data.imageMediaId === 'string' && data.imageMediaId ? data.imageMediaId : null;
+    conversations.set(convoKey, { ...convo, imageMediaId });
+    if (storage) await saveConversation(convoKey);
+    const getName = await resolveDisplayNames([senderNorm]);
+    await addMessageToChat(
+      'system',
+      imageMediaId
+        ? `${getName(senderNorm)} a changé la photo du groupe`
+        : `${getName(senderNorm)} a retiré la photo du groupe`,
+      convoKey,
+      { isSystem: true }
+    );
+    log(`🖼️ Photo de groupe modifiée par ${getName(senderNorm)} (media=${imageMediaId ?? 'null'})`);
+    return true;
+  }
+
   if (event === 'memberRemoved' && data.targetUser) {
     const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
     if (data.targetUser.toLowerCase() === userId.toLowerCase()) {

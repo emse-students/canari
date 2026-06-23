@@ -151,6 +151,31 @@ export async function renameGroupAndBroadcast(params: {
   await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 
+/** Sets the group avatar on the server, then broadcasts a "groupImageChanged" system message to all members so their UIs update. Pass mediaId=null to remove the photo. */
+export async function setGroupImageAndBroadcast(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  mediaId: string | null;
+  userId: string;
+  pin: string;
+}) {
+  const { mlsService, groupId, mediaId, userId, pin } = params;
+  await mlsService.setGroupImage(groupId, mediaId);
+
+  // Broadcast the photo change - best-effort: the change is already committed to
+  // the server; if the MLS message fails, peers will still see the new photo when
+  // they next fetch group metadata via getUserGroups.
+  try {
+    const controlMsg = encodeAppMessage(
+      mkSystem('groupImageChanged', JSON.stringify({ imageMediaId: mediaId }))
+    );
+    await mlsService.sendMessage(groupId, controlMsg);
+  } catch {
+    // Non-blocking: image already applied server-side
+  }
+  await persistMlsStateAfterMutation(mlsService, userId, pin);
+}
+
 /**
  * Envoie un message système MLS pour notifier un changement de membership.
  *
