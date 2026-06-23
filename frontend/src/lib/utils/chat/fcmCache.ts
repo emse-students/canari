@@ -68,6 +68,18 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
       isFcmPreview: true,
     };
     try {
+      // Le message a une FK vers conversations(id). Si le groupe vient d'etre rejoint en
+      // arriere-plan, sa ligne conversation n'existe pas encore -> saveMessage echoue
+      // (SQLITE_CONSTRAINT_FOREIGNKEY, code 787) et le preview est perdu. On insere d'abord
+      // un placeholder non-destructif (INSERT OR IGNORE) : la vraie sync (Welcome) ecrasera
+      // ensuite name/lifecycle via saveConversation (INSERT OR REPLACE). Le nom de l'expediteur
+      // sert d'etiquette transitoire ; lifecycle 'pending' car le groupe n'est pas encore synchro.
+      await storage.mergeConversation({
+        id: entry.groupId,
+        name: entry.senderName || entry.groupId,
+        lifecycle: 'pending',
+        updatedAt: entry.timestamp,
+      });
       // .saveMessage() utilise .put() - le pipeline MLS peut écraser avec les données complètes
       await storage.saveMessage(msg, pin);
       injected.push(msg);

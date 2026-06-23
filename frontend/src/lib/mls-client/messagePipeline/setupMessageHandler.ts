@@ -3,6 +3,11 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
 import { requestReAdd, cancelReAdd } from '$lib/utils/chat/recovery';
+import {
+  markEpochGap,
+  clearEpochGap,
+  resetEpochGapRegistry,
+} from '$lib/utils/chat/epochGapRegistry';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { handleSystemEvent } from './systemMessageHandler';
@@ -58,6 +63,10 @@ const noMatchKpFailures = new Map<string, number>();
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const { mlsService, pin, userId, log } = deps;
 
+  // Repartir d'un registre de gap d'epoch vierge : ce registre est module-global (partage
+  // avec l'outbox) et ne doit pas conserver d'entree perimee d'une session precedente.
+  resetEpochGapRegistry();
+
   installWasmDuplicateDeliveryLogInterceptor();
 
   const statePersister = createMlsStatePersister({ mlsService, pin, userId, log });
@@ -78,10 +87,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Timers de recovery par groupe - map partagée avec la couche connexion
   // (connectionRecoveryTimers) : un seul timer armé par groupe quelle que soit la source.
   const recoveryTimers = deps.recoveryTimers;
-
-  // Timestamp (ms) du 1er gap d'epoch non résolu par groupe. Effacé dès qu'un message
-  // se déchiffre (gap résorbé). Sert à escalader un groupe durablement forké-en-retard.
-  const epochGapSince = new Map<string, number>();
 
   // Callback partagé pour tout cas "hors-sync"
   const onOutOfSync = async (groupId: string) => {
@@ -147,7 +152,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         deps,
         statePersister,
         onOutOfSync,
-        epochGapSince,
       });
     }
   );
@@ -501,8 +505,6 @@ interface KnownGroupArgs {
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
   onOutOfSync: (groupId: string) => Promise<void>;
-  /** Timestamp (ms) du 1er gap d'epoch non résolu par groupe (escalade epoch-gap). */
-  epochGapSince: Map<string, number>;
 }
 
 /**
@@ -520,7 +522,6 @@ async function handleKnownGroup({
   deps,
   statePersister,
   onOutOfSync,
-  epochGapSince,
 }: KnownGroupArgs): Promise<boolean> {
   const {
     mlsService,
@@ -550,7 +551,7 @@ async function handleKnownGroup({
       // Un message applicatif qui se déchiffre (typiquement un pair resté sur la MEME branche
       // stale qu'un device forké) ne rattrape PAS la branche divergente : remettre le timer à
       // zéro ici empêcherait à jamais l'escalade forget+re-welcome qui répare le fork (H7).
-      epochGapSince.delete(groupId);
+      clearEpochGap(groupId);
       statePersister.persistNow();
     } else {
       statePersister.scheduleDeferred();
@@ -661,11 +662,9 @@ async function handleKnownGroup({
       // local, le re-Welcome est honoré (et non ignoré comme idempotent) → on rejoint
       // à l'epoch courante. L'historique de messages, lui, est rebackfillé par le bundle.
       const now = Date.now();
-      const since = epochGapSince.get(groupId);
-      if (since === undefined) {
-        epochGapSince.set(groupId, now);
-      } else if (now - since > EPOCH_GAP_ESCALATION_MS) {
-        epochGapSince.delete(groupId);
+      const since = markEpochGap(groupId);
+      if (now - since > EPOCH_GAP_ESCALATION_MS) {
+        clearEpochGap(groupId);
         log(
           `[GAP] ${groupId.slice(0, 8)}… figé en retard >${EPOCH_GAP_ESCALATION_MS / 1000}s - forget + welcome_request`
         );

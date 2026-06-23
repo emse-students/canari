@@ -18,6 +18,7 @@ import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd, recoverForkedGroup } from '$lib/utils/chat/recovery';
+import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   unregisterMlsStatePersister,
@@ -110,7 +111,12 @@ export function makeRecoverForkedGroup(ctx: SessionContext, cb: ChatSessionCallb
 
 /**
  * Builds the OutboxDeps for the per-session message flusher. Recovery is non-destructive
- * (welcome_request only); a group is "healthy" to send into when its MLS state is in the WASM.
+ * (welcome_request only); a group is "healthy" to send into when its MLS state is in the WASM
+ * AND it is not in a known unresolved epoch gap. Sending an application message into a group
+ * whose local epoch is behind produces a ciphertext that up-to-date recipients cannot decrypt
+ * (msg_epoch < their group_epoch) - the message is silently lost. Holding the outbox until the
+ * gap resolves (commit catches us up, or escalation re-Welcomes us at the current epoch) makes
+ * the eventual re-encode happen at the right epoch.
  */
 export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
   return {
@@ -122,7 +128,8 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     log: cb.log,
     requestReAdd: (groupId: string) =>
       requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
-    isGroupHealthy: (groupId: string) => ctx.ensureMls().getLocalGroups().includes(groupId),
+    isGroupHealthy: (groupId: string) =>
+      ctx.ensureMls().getLocalGroups().includes(groupId) && !isInEpochGap(groupId),
     markDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
     uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {

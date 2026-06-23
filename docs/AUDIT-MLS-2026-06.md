@@ -766,3 +766,42 @@ F5. C7 Option A (futur) : valider-puis-merger dans `mls-core` (no-merge avant ac
 21. Relire chaque diff de fix au regard de cet audit (ID par ID).
 22. Re-tester sur device reel le scenario "rafale" + "background/foreground".
 23. Mettre a jour ce document : statut par finding (OPEN / FIXED / VERIFIED).
+
+## Retours tests device 2026-06-23 - plan de correction (DF1..DF11)
+
+Numerotation DF* distincte des F1..F5 de la passe fork. Diagnostic du bug critique confirme par
+les logs serveur de la fenetre 10:28-10:30 : un message envoye depuis le mobile a une epoch
+perimee est bien PUBLISHED et ACK cote serveur (routage OK), mais les destinataires a jour ne
+peuvent pas le dechiffrer (`msg_epoch < group_epoch`) -> message silencieusement perdu. Le 10:30
+passe parce que le mobile avait entre-temps rattrape l'historique (`[HISTORY] entries=2`).
+
+### Vague 1 (livree)
+DF1a. FIXED - Gate `isGroupHealthy` (outbox) sur le registre de gap d'epoch. Avant : la sante du
+    groupe ne testait que l'appartenance WASM, jamais le gap, en violation du contrat de
+    `OutboxDeps.isGroupHealthy`. Desormais l'outbox tient ses envois tant qu'un gap connu n'est
+    pas resorbe. Nouveau module `epochGapRegistry` (Map module-globale partagee pipeline<->outbox,
+    remise a zero a chaque `setupMessageHandler`). Couvre le cas "l'emetteur SAIT qu'il est en
+    retard" (a recu une frame indechiffrable). Ne couvre PAS la course "envoi a froid au resume"
+    (cf. DF1c).
+DF3. FIXED - `consumeFcmCache` : `mergeConversation` placeholder (INSERT OR IGNORE) avant
+    `saveMessage`, pour ne plus violer la FK conversations(id) (code 787) quand un groupe vient
+    d'etre rejoint en arriere-plan. La vraie sync ecrase le placeholder.
+DF10. FIXED (deja en place) - Banniere "en attente de connexion" supprimee pendant l'init
+    messaging (`isMessagingInitializing`) pour eviter le faux positif au demarrage.
+
+### Reporte (raison)
+DF7. DEFERRED - "Purger les invitations deja-membre" n'est PAS un fix sur : une invitation en
+    attente = ligne `DeviceGroupMembership status='pending'` ; seul le device invite peut la
+    promouvoir `active` (`updateInvitationStatus` protege par `assertCallerOwnsUserId`). La seule
+    action ouverte a l'inviteur, `deleteDeviceMembership`, retire le device du set de routage
+    Redis -> couperait la livraison a un membre legitime non encore confirme. La boucle des 14 est
+    un SYMPTOME de devices qui rejoignent l'arbre sans jamais confirmer `active` (meme racine que
+    DF2/FCM1). A traiter avec le chantier activation & membership (DF2/DF6), pas par une purge.
+
+### A instrumenter (prochaines vagues)
+DF1c. Course "envoi a froid au resume" : l'emetteur envoie AVANT d'avoir traite le commit qui
+    avance l'epoch (recu via `fetchPendingMessages` ou le replay history). Fix robuste = catch-up
+    par-groupe avant flush outbox ; lourd/risque sur le chemin d'envoi, a concevoir a part.
+DF2. Fenetre d'activation : 1er message non notifie car envoye avant `markMembershipActive`.
+DF4. Bundle d'historique pre-join (C8) a investiguer. DF5/DF6 : badge Sync persistant + nettoyage
+    devices stale. DF8/DF9/DF11 : rendu progressif, frictions scroll, bruit de logs.
