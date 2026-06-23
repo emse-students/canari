@@ -43,6 +43,8 @@ RUN printf 'server {\n\
     proxy_set_header Cookie $http_cookie;\n\
     }\n\
     \n\
+    # App Links Android (assetlinks.json) + Universal Links iOS\n\
+    # (apple-app-site-association), prerendus dans build/.well-known/.\n\
     location /.well-known/ {\n\
     try_files $uri =404;\n\
     add_header Content-Type application/json;\n\
