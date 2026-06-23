@@ -21,7 +21,10 @@ import {
   cert,
   type ServiceAccount,
 } from 'firebase-admin/app';
-import { RETENTION_WINDOW_MS } from './retention.constants';
+import {
+  RETENTION_WINDOW_MS,
+  STALE_PENDING_INVITATION_MS,
+} from './retention.constants';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -153,11 +156,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
-    // Purge les invitations (memberships `pending`) coincees au-dela de la fenetre de
-    // retention : un device jamais passe `active` dont le Welcome en file a expire ne
-    // pourra plus rejoindre via la queue. La ligne `pending` reste sinon listee a chaque
-    // sync (boucle d'invitations qui ne se remplit jamais). Auto-reparateur : un device
-    // encore vivant (toujours GroupMember) re-emet un welcome_request et est re-ajoute.
+    // Purge les invitations (memberships `pending`) coincees au-dela de
+    // STALE_PENDING_INVITATION_MS : sinon elles sont re-listees a chaque sync (boucle
+    // d'invitations qui ne se remplit jamais). Supprimer la ligne ne bloque pas la reprise
+    // d'un device vivant (Welcome en file / welcome_request, cf. doc de la methode).
     this.cleanupStalePendingInvitationsInterval = setInterval(() => {
       void this.cleanupStalePendingInvitations().catch((e) =>
         this.logger.error('[CRON] cleanupStalePendingInvitations failed', e),
@@ -349,8 +351,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Purge les invitations device-groupe restees `pending` au-dela de la fenetre de
-   * retention.
+   * Purge les invitations device-groupe restees `pending` au-dela de
+   * {@link STALE_PENDING_INVITATION_MS}.
    *
    * Une ligne `pending` est creee a l'invitation et ne passe `active` que lorsque le
    * device invite confirme avoir traite son Welcome. Un device qui rejoint l'arbre MLS
@@ -360,20 +362,20 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * de verrou + relecture de l'arbre pour un skip). Le GC `cleanupStaleDevices` ne la
    * rattrape pas tant que le device republie un KeyPackage frais a chaque connexion.
    *
-   * Au-dela de {@link RETENTION_WINDOW_MS}, le Welcome en file a expire
-   * ({@link cleanupExpiredQueuedMessages}) : l'invitation ne peut plus etre honoree par
-   * la queue, la ligne est donc morte. On la supprime (+ entree de routage Redis). C'est
-   * auto-reparateur : un device encore vivant reste `GroupMember` au niveau utilisateur,
-   * donc a sa prochaine connexion il detecte le groupe absent de son WASM, emet un
-   * `welcome_request` et un membre actif le re-ajoute a l'epoch courante (ligne `pending`
-   * recreee fraiche). On ne touche jamais les lignes `active` ni `dm_group_members`.
+   * Supprimer la ligne `pending` (+ entree de routage Redis) n'empeche PAS la reprise d'un
+   * device encore vivant : il reste `GroupMember` au niveau utilisateur, donc a sa prochaine
+   * connexion il rejoint soit via son Welcome encore en file (table separee, retention 90j -
+   * sans nouveau commit), soit via `welcome_request` qui declenche un re-ajout a l'epoch
+   * courante. Le seuil est donc volontairement bien plus court que la retention du Welcome :
+   * il ne borne que la duree pendant laquelle on conserve le declencheur/fallback durable cote
+   * inviteur. On ne touche jamais les lignes `active` ni `dm_group_members`.
    *
    * Filtre sur `updatedAt` (et non `createdAt`) : un device jadis `active` puis remis
    * `pending` par {@link detectStaleDevices} obtient ainsi une nouvelle fenetre de grace
    * depuis sa derniere transition d'etat, alignee sur la semantique de fraicheur existante.
    */
   private async cleanupStalePendingInvitations() {
-    const expiry = new Date(Date.now() - RETENTION_WINDOW_MS);
+    const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);
 
     const stale = await this.deviceGroupRepo.find({
       where: { status: 'pending', updatedAt: LessThan(expiry) },

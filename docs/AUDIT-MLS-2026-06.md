@@ -803,12 +803,15 @@ DF7a. FIXED (chemin existant, confirme) - Supprimer un device via "Gestion des a
     (dont `pending`), KeyPackages, messages en file, entrees Redis, et revoque le device. Nettoie
     immediatement les invitations portees par ses PROPRES devices stale.
 DF7b. FIXED (nouveau GC serveur) - Cron `cleanupStalePendingInvitations` (24h) : supprime les
-    lignes `pending` dont `updatedAt` depasse `RETENTION_WINDOW_MS` (90j). Au-dela, le Welcome en
-    file a expire -> l'invitation est morte. Couvre AUSSI les devices zombie d'autres utilisateurs
-    (que le panneau ne peut pas toucher). Auto-reparateur : un device encore `GroupMember` re-emet
-    un `welcome_request` a sa prochaine connexion et est re-ajoute a l'epoch courante. Ne touche
-    jamais les lignes `active` ni `dm_group_members`. Filtre sur `updatedAt` (et non `createdAt`)
-    pour redonner une fenetre de grace a un device jadis actif remis `pending` par `detectStaleDevices`.
+    lignes `pending` dont `updatedAt` depasse `STALE_PENDING_INVITATION_MS` (14j, constante
+    dediee). Seuil volontairement bien plus court que la retention du Welcome (90j) : supprimer la
+    ligne `pending` ne bloque PAS la reprise d'un device vivant - elle n'est que le declencheur/
+    fallback durable cote inviteur ; le Welcome en file (table separee, 90j, sans nouveau commit)
+    ou un `welcome_request` (le device reste `GroupMember`) assurent la reprise. Le seuil ne borne
+    donc que la duree de conservation du declencheur. Couvre AUSSI les devices zombie d'autres
+    utilisateurs (que le panneau ne peut pas toucher). Ne touche jamais les lignes `active` ni
+    `dm_group_members`. Filtre sur `updatedAt` (et non `createdAt`) pour redonner une fenetre de
+    grace a un device jadis actif remis `pending` par `detectStaleDevices`.
 
 ### A instrumenter (prochaines vagues)
 DF1c. Course "envoi a froid au resume" : l'emetteur envoie AVANT d'avoir traite le commit qui
