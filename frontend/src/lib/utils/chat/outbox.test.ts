@@ -58,6 +58,7 @@ function makeMls(opts: { meta?: (id: string) => unknown; send?: () => Promise<vo
         : { groupId: id, name: '', isGroup: true, successorId: null, deletedAt: null }
     ),
     sendMessage: vi.fn(opts.send ?? (async () => {})),
+    waitForMessageQueueIdle: vi.fn(async () => {}),
   } as any;
 }
 

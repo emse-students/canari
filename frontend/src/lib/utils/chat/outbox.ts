@@ -327,6 +327,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     flushing = true;
     try {
+      // Avant tout envoi : laisser la file de messages ENTRANTS se drainer. fetchPendingMessages
+      // (au reconnect/resume) ne fait qu'enfiler les frames en attente - leur traitement (commits
+      // qui avancent l'epoch) est asynchrone. Sans cette barriere, un flush declenche par
+      // online/visibilitychange peut partir AVANT que les commits manques soient appliques :
+      // le message serait chiffre a une epoch perimee, donc indechiffrable par les pairs a jour
+      // (perte silencieuse - la course "envoi a froid au resume"). Attendre l'idle garantit que
+      // l'epoch locale est a jour. En regime permanent la file est deja idle -> resolution
+      // immediate, aucune latence ajoutee. [[DF1c]]
+      await mlsService.waitForMessageQueueIdle().catch(() => {});
       do {
         rerun = false;
         const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);

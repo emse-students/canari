@@ -813,10 +813,21 @@ DF7b. FIXED (nouveau GC serveur) - Cron `cleanupStalePendingInvitations` (24h) :
     `dm_group_members`. Filtre sur `updatedAt` (et non `createdAt`) pour redonner une fenetre de
     grace a un device jadis actif remis `pending` par `detectStaleDevices`.
 
+### Vague 2 (livree)
+DF1c. FIXED - Course "envoi a froid au resume" : l'emetteur envoyait AVANT d'avoir traite le
+    commit qui avance l'epoch. `fetchPendingMessages` (reconnect/resume) ne fait qu'ENFILER les
+    frames ; leur traitement (commits) est asynchrone. L'outbox attend desormais
+    `waitForMessageQueueIdle()` avant la boucle d'envoi (`runFlush`) -> l'epoch locale est a jour
+    avant tout chiffrement. En regime permanent la file est deja idle (resolution immediate,
+    aucune latence). Complete DF1a (qui ne couvrait que le cas "l'emetteur SAIT qu'il est en
+    retard"). Reste DF1b (validation epoch cote serveur) en option de durcissement.
+
 ### A instrumenter (prochaines vagues)
-DF1c. Course "envoi a froid au resume" : l'emetteur envoie AVANT d'avoir traite le commit qui
-    avance l'epoch (recu via `fetchPendingMessages` ou le replay history). Fix robuste = catch-up
-    par-groupe avant flush outbox ; lourd/risque sur le chemin d'envoi, a concevoir a part.
 DF2. Fenetre d'activation : 1er message non notifie car envoye avant `markMembershipActive`.
+    Analyse : le chemin background appelle bien `activateDeviceMembership` (FCM1), la fenetre se
+    reduit a la latence de traitement du Welcome (secondes). Le message arrive (rattrapage
+    historique) ; seule la NOTIFICATION push est ratee. Fix robuste = re-push serveur des messages
+    recents a la promotion `active` : benefice marginal (1 notif, fenetre de qq s) vs cout/risque
+    de duplication -> non implemente pour l'instant, limitation mineure assumee.
 DF4. Bundle d'historique pre-join (C8) a investiguer. DF5/DF6 : badge Sync persistant + nettoyage
     devices stale. DF8/DF9/DF11 : rendu progressif, frictions scroll, bruit de logs.
