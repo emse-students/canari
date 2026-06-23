@@ -180,9 +180,15 @@
   /** Whether the poll composer modal is open (channels only). */
   let showPollComposer = $state(false);
 
-  const INITIAL_RENDER_GROUPS = 180;
+  // Fenetre rendue a l'ouverture d'une conversation. Volontairement reduite a ~un ecran :
+  // rendre des centaines de bulles en une passe synchrone retarde le layout, et le
+  // scroll-to-bottom se declenche alors que la hauteur grandit encore -> on n'atterrit pas
+  // en bas et on voit un "moment de chargement". 60 groupes remplissent n'importe quel
+  // viewport tout en restant un rendu instantane ; loadOlderGroups (scroll vers le haut)
+  // pagine les plus anciens au fur et a mesure (DF8).
+  const INITIAL_RENDER_GROUPS = 60;
   const RENDER_GROUPS_STEP = 140;
-  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // 460 - cap on DOM nodes
+  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // cap on DOM nodes
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
@@ -226,6 +232,23 @@
    * view above the bottom. Re-pinning across a few frames and two short delays
    * guarantees we actually land on the last message.
    */
+  /**
+   * Entering a conversation : the initial render window is kept small (one screenful) so the
+   * first paint is instant. If that screenful happens to be shorter than the viewport while
+   * older groups are still hidden in memory, the user could not scroll up to paginate them
+   * (no scrollbar -> no scroll event -> loadOlderGroups never fires). Widen the in-memory
+   * window a few times until the viewport is filled (cheap : just widens the slice, no
+   * network), then pin to the latest message.
+   */
+  async function fillViewportThenPin() {
+    for (let i = 0; i < 4 && chatContainer && windowStart > 0; i++) {
+      if (chatContainer.scrollHeight > chatContainer.clientHeight + 40) break;
+      windowStart = Math.max(0, windowStart - RENDER_GROUPS_STEP);
+      await tick();
+    }
+    scrollToBottomSettled();
+  }
+
   function scrollToBottomSettled() {
     if (!chatContainer) return;
     scrollToBottom(false);
@@ -520,7 +543,7 @@
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = !isChannel;
-        tick().then(() => scrollToBottomSettled());
+        tick().then(() => fillViewportThenPin());
         isNearBottom = true;
       } else if (hasNewMessage && !catchupActive) {
         // Always scroll to bottom for own messages; for others only if already near bottom.

@@ -830,12 +830,18 @@ DF5. FIXED - Badge "Sync" persistant sur une conversation rejointe. La reconcili
     `lifecycle !== 'active'`). Ajout de la promotion miroir pending->active quand le groupe est dans
     le WASM. Se combine avec DF3 (placeholder pending au join background -> promu actif a l'ouverture).
 
-### A instrumenter (prochaines vagues)
-DF2. Fenetre d'activation : 1er message non notifie car envoye avant `markMembershipActive`.
-    Analyse : le chemin background appelle bien `activateDeviceMembership` (FCM1), la fenetre se
-    reduit a la latence de traitement du Welcome (secondes). Le message arrive (rattrapage
-    historique) ; seule la NOTIFICATION push est ratee. Fix robuste = re-push serveur des messages
-    recents a la promotion `active` : benefice marginal (1 notif, fenetre de qq s) vs cout/risque
-    de duplication -> non implemente pour l'instant, limitation mineure assumee.
+### Vague 3 (livree)
+DF2. FIXED - Fenetre d'activation : pendant que le device est `pending`, la resolution des
+    destinataires (`status='active'`) l'exclut -> aucune notification push pour les messages de la
+    fenetre (le message arrive via rattrapage, mais la notif est perdue). A la transition
+    pending->active (et UNIQUEMENT elle, via lecture de l'etat anterieur avant upsert), le serveur
+    re-livre via FCM les messages applicatifs de la fenetre (stream `history:{groupId}`, qui exclut
+    Welcome/Commit/silent). Le device vient de traiter son Welcome -> il peut dechiffrer. Borne a
+    5 min / 50 msg ; dedup client par messageId.
+DF8. FIXED - Pas d'atterrissage en bas a l'ouverture d'une conversation. Cause : la fenetre de
+    rendu initiale etait de 180 groupes -> rendu synchrone de centaines de bulles -> le layout se
+    pose apres le scroll-to-bottom. Reduite a 60 (un ecran, rendu instantane) ; `loadOlderGroups`
+    pagine les plus anciens au scroll vers le haut. Garde `fillViewportThenPin` : elargit la
+    fenetre si le 1er ecran est plus court que le viewport (sinon scroll-up injoignable), puis pin.
 DF4. Bundle d'historique pre-join (C8) a investiguer. DF5/DF6 : badge Sync persistant + nettoyage
     devices stale. DF8/DF9/DF11 : rendu progressif, frictions scroll, bruit de logs.
