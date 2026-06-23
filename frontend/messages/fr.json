@@ -1145,5 +1145,7 @@
   "asso_doc_vault_title": "Coffre documentaire",
   "asso_doc_vault_desc": "Documents chiffrés côté client (AES-256-GCM). Seuls les membres avec accès \"Documents\" peuvent les télécharger. Le serveur ne voit jamais le contenu en clair.",
 
-  "common_registering_label": "Enregistrement…"
+  "common_registering_label": "Enregistrement…",
+  "common_save_button": "Enregistrer",
+  "common_password_label": "Mot de passe"
 }

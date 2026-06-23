@@ -1,12 +1,14 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { m } from '$lib/paraglide/messages';
+
   /**
    * Square logo export for associations: center crop with zoom, or letterbox on white.
    */
   interface Props {
     /** Called with the exported 512×512 JPEG blob when the user confirms the crop. */
     onExport: (blob: Blob) => void;
-    /** Called when the user clicks "Annuler". Omit to hide the cancel button. */
+    /** Called when the user clicks Cancel. Omit to hide the cancel button. */
     onCancel?: () => void;
   }
 
@@ -115,7 +117,7 @@
   {#if imgEl}
     <div class="flex flex-wrap gap-4 items-start">
       <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Mode</p>
+        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">{m.asso_logo_mode_label()}</p>
         <div class="flex gap-2">
           <button
             type="button"
@@ -125,7 +127,7 @@
               ? 'border-cn-yellow bg-cn-yellow/15 text-text-main'
               : 'border-cn-border text-text-muted hover:text-text-main'}"
           >
-            Carré (recadrage)
+            {m.asso_logo_cover_button()}
           </button>
           <button
             type="button"
@@ -135,14 +137,14 @@
               ? 'border-cn-yellow bg-cn-yellow/15 text-text-main'
               : 'border-cn-border text-text-muted hover:text-text-main'}"
           >
-            Marges (cadre)
+            {m.asso_logo_pad_button()}
           </button>
         </div>
       </div>
       {#if mode === 'cover'}
         <div class="flex-1 min-w-[180px] space-y-1">
           <label for="assoc-logo-zoom" class="text-xs font-bold uppercase tracking-wide text-text-muted"
-            >Zoom</label
+            >{m.asso_logo_zoom_label()}</label
           >
           <input
             id="assoc-logo-zoom"
@@ -164,7 +166,7 @@
         width={240}
         height={240}
         class="rounded-2xl border border-cn-border bg-white shadow-inner max-w-full"
-        aria-label="Aperçu du logo"
+        aria-label={m.asso_logo_preview_aria()}
       ></canvas>
     </div>
 
@@ -178,7 +180,7 @@
           }}
           class="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main"
         >
-          Annuler
+          {m.common_cancel_button()}
         </button>
       {/if}
       <button
@@ -186,10 +188,10 @@
         onclick={exportBlob}
         class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover"
       >
-        Utiliser cette image
+        {m.asso_logo_use_image_button()}
       </button>
     </div>
   {:else}
-    <p class="text-sm text-text-muted">Choisissez une image JPG, PNG ou WebP.</p>
+    <p class="text-sm text-text-muted">{m.asso_logo_pick_hint()}</p>
   {/if}
 </div>

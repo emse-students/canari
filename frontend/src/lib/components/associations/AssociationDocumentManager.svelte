@@ -31,6 +31,7 @@
   import { portal } from '$lib/actions/portal';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     associationId: string;
@@ -80,8 +81,8 @@
       ]);
       noteText = await decryptVaultNote(vaultKeyHex, ciphertext);
     } catch (e) {
-      console.error('[Vault] Erreur chargement bloc-notes:', e);
-      noteError = 'Impossible de charger le bloc-notes.';
+      console.error('[Vault] Failed to load notepad:', e);
+      noteError = m.asso_doc_load_notepad_error();
     } finally {
       noteLoading = false;
     }
@@ -98,8 +99,8 @@
       noteSaved = true;
       setTimeout(() => (noteSaved = false), 2000);
     } catch (e) {
-      console.error('[Vault] Erreur sauvegarde bloc-notes:', e);
-      noteError = 'Échec de la sauvegarde.';
+      console.error('[Vault] Failed to save notepad:', e);
+      noteError = m.asso_doc_save_notepad_error();
     } finally {
       noteSaving = false;
     }
@@ -159,8 +160,8 @@
       );
       if (duplicate) {
         const replace = await showConfirm(
-          `Un document nommé " ${duplicate.name} " existe déjà. Voulez-vous le remplacer ?`,
-          { confirmLabel: 'Remplacer' }
+          m.asso_doc_confirm_replace({ name: duplicate.name }),
+          { confirmLabel: m.asso_doc_replace_button() }
         );
         if (replace) {
           await deleteDocument(associationId, duplicate.id);
@@ -296,15 +297,15 @@
       pwPromptDoc = null;
       pwPromptValue = '';
     } catch (e) {
-      console.error('[Vault] Erreur déchiffrement protégé:', e);
-      pwPromptError = 'Mot de passe incorrect ou fichier illisible.';
+      console.error('[Vault] Failed to decrypt protected document:', e);
+      pwPromptError = m.asso_doc_pw_incorrect();
     } finally {
       pwPromptBusy = false;
     }
   }
 
   async function handleDelete(doc: AssociationDocument) {
-    if (!await showConfirm(`Supprimer " ${doc.name} " ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.asso_doc_confirm_delete({ name: doc.name }), { danger: true, confirmLabel: m.common_delete_button() })) return;
     try {
       await deleteDocument(associationId, doc.id);
       console.log(`[Vault] Document supprimé: ${doc.id}`);
@@ -328,23 +329,23 @@
     <div class="flex items-center justify-between gap-2">
       <p class="text-sm font-bold text-text-main flex items-center gap-1.5">
         <NotebookPen size={16} class="text-cn-dark" />
-        Bloc-notes de l'association
+        {m.asso_doc_notepad_title()}
       </p>
-      <span class="text-[11px] text-text-muted">Chiffré · partagé entre admins</span>
+      <span class="text-[11px] text-text-muted">{m.asso_doc_notepad_badge()}</span>
     </div>
     {#if noteLoading}
-      <p class="text-xs text-text-muted py-3">Déchiffrement…</p>
+      <p class="text-xs text-text-muted py-3">{m.asso_doc_decrypting()}</p>
     {:else}
       <MarkdownComposerField
         bind:value={noteText}
-        placeholder="Notez tout et n'importe quoi…"
+        placeholder={m.asso_doc_notepad_placeholder()}
         minHeight="120px"
       />
       <div class="flex items-center justify-end gap-3 pt-1">
         {#if noteError}
           <span class="text-xs text-red-600 mr-auto">{noteError}</span>
         {:else if noteSaved}
-          <span class="text-xs text-green-600 mr-auto">Enregistré ✓</span>
+          <span class="text-xs text-green-600 mr-auto">{m.asso_doc_saved_label()}</span>
         {/if}
         <button
           type="button"
@@ -352,7 +353,7 @@
           disabled={noteSaving}
           class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
         >
-          {noteSaving ? 'Enregistrement…' : 'Enregistrer'}
+          {noteSaving ? m.common_saving_label() : m.common_save_button()}
         </button>
       </div>
     {/if}
@@ -370,7 +371,7 @@
     <!-- Quota bar -->
     <div class="space-y-1.5">
       <div class="flex items-center justify-between text-xs text-text-muted">
-        <span>Espace utilisé</span>
+        <span>{m.asso_doc_quota_label()}</span>
         <span>{formatBytes(stats.usedBytes)} / {formatBytes(stats.quotaBytes)}</span>
       </div>
       <div class="h-2 rounded-full bg-cn-border/50 overflow-hidden">
@@ -402,7 +403,7 @@
         class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
       >
         <FileUp size={16} />
-        {uploading ? 'Chiffrement et upload…' : 'Ajouter un document'}
+        {uploading ? m.asso_doc_upload_encrypting() : m.asso_doc_upload_button()}
       </button>
       {#if uploadError}
         <p class="text-sm text-red-600 mt-2">{uploadError}</p>
@@ -411,7 +412,7 @@
 
     <!-- Document list -->
     {#if stats.documents.length === 0}
-      <p class="text-sm text-text-muted text-center py-8">Aucun document dans le coffre.</p>
+      <p class="text-sm text-text-muted text-center py-8">{m.asso_doc_no_documents()}</p>
     {:else}
       <ul class="space-y-2">
         {#each stats.documents as doc (doc.id)}
@@ -427,7 +428,7 @@
                 <span class="truncate">{doc.name}</span>
               </p>
               <p class="text-xs text-text-muted">
-                {formatBytes(doc.size)} · {doc.mimeType}{#if isProtected(doc)} · protégé{/if}
+                {formatBytes(doc.size)} · {doc.mimeType}{#if isProtected(doc)} · {m.asso_doc_protected_suffix()}{/if}
               </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -435,7 +436,7 @@
                 type="button"
                 onclick={() => handleDownload(doc)}
                 disabled={downloadingId === doc.id}
-                title="Télécharger (déchiffré localement)"
+                title={m.asso_doc_download_title()}
                 class="inline-flex items-center justify-center rounded-xl border border-cn-border bg-[var(--cn-surface)] p-2 text-text-muted hover:text-text-main disabled:opacity-40 transition-colors"
               >
                 {#if downloadingId === doc.id}
@@ -449,7 +450,7 @@
               <button
                 type="button"
                 onclick={() => handleDelete(doc)}
-                title="Supprimer"
+                title={m.common_delete_button()}
                 class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
               >
                 <Trash2 size={15} />
@@ -475,19 +476,17 @@
         aria-modal="true"
         aria-labelledby="upload-modal-title"
       >
-        <h3 id="upload-modal-title" class="text-lg font-bold text-text-main">Ajouter un document</h3>
+        <h3 id="upload-modal-title" class="text-lg font-bold text-text-main">{m.asso_doc_upload_modal_title()}</h3>
         <p class="text-sm text-text-muted truncate">{pendingFile?.name}</p>
         <div class="space-y-1.5">
           <Input
-            label="Mot de passe (optionnel)"
+            label={m.asso_doc_password_label()}
             type="password"
             bind:value={uploadPassword}
-            placeholder="Laisser vide pour aucun mot de passe"
+            placeholder={m.asso_doc_password_placeholder()}
           />
           <p class="text-xs text-text-muted">
-            Un document protégé ne peut être ouvert qu'avec ce mot de passe - même un
-            administrateur BDE ne pourra pas y accéder. Un mot de passe perdu est définitivement
-            irrécupérable.
+            {m.asso_doc_password_warning()}
           </p>
         </div>
         <div class="flex flex-wrap gap-2 justify-end pt-1">
@@ -496,14 +495,14 @@
             onclick={() => (uploadModalOpen = false)}
             class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
           >
-            Annuler
+            {m.common_cancel_button()}
           </button>
           <button
             type="button"
             onclick={confirmUpload}
             class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover"
           >
-            Téléverser
+            {m.asso_doc_upload_confirm_button()}
           </button>
         </div>
       </div>
@@ -526,7 +525,7 @@
       >
         <h3 id="pw-prompt-title" class="text-lg font-bold text-text-main flex items-center gap-2">
           <Lock size={18} class="text-amber-600" />
-          Document protégé
+          {m.asso_doc_protected_title()}
         </h3>
         <p class="text-sm text-text-muted truncate">{pwPromptDoc.name}</p>
         <form
@@ -536,7 +535,7 @@
           }}
           class="space-y-3"
         >
-          <Input label="Mot de passe" type="password" bind:value={pwPromptValue} />
+          <Input label={m.common_password_label()} type="password" bind:value={pwPromptValue} />
           {#if pwPromptError}
             <p class="text-sm text-red-600">{pwPromptError}</p>
           {/if}
@@ -547,14 +546,14 @@
               disabled={pwPromptBusy}
               class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
             >
-              Annuler
+              {m.common_cancel_button()}
             </button>
             <button
               type="submit"
               disabled={pwPromptBusy || !pwPromptValue}
               class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
             >
-              {pwPromptBusy ? 'Déchiffrement…' : 'Ouvrir'}
+              {pwPromptBusy ? m.asso_doc_decrypting() : m.asso_doc_open_button()}
             </button>
           </div>
         </form>

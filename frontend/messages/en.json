@@ -1145,5 +1145,7 @@
   "asso_doc_vault_title": "Document vault",
   "asso_doc_vault_desc": "Client-side encrypted documents (AES-256-GCM). Only members with Documents access can download them. The server never sees plaintext content.",
 
-  "common_registering_label": "Registering…"
+  "common_registering_label": "Registering…",
+  "common_save_button": "Save",
+  "common_password_label": "Password"
 }
