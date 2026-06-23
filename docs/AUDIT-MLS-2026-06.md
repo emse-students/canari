@@ -845,3 +845,16 @@ DF8. FIXED - Pas d'atterrissage en bas a l'ouverture d'une conversation. Cause :
     fenetre si le 1er ecran est plus court que le viewport (sinon scroll-up injoignable), puis pin.
 DF4. Bundle d'historique pre-join (C8) a investiguer. DF5/DF6 : badge Sync persistant + nettoyage
     devices stale. DF8/DF9/DF11 : rendu progressif, frictions scroll, bruit de logs.
+
+### Vague 4 (livree) - stabilite connexion (logs PC 2026-06-23)
+DF12. FIXED - Deconnexions WS 1006 a repetition. Le heartbeat gateway pingait toutes les 1s et
+    fermait la connexion des qu'UN seul Pong manquait (fenetre ~1s). Une jitter reseau d'1s+
+    (wifi/mobile/VPN, stalls) suffisait a declarer le client mort -> fermeture 1006 -> reconnexion
+    en boucle (observe ~toutes les 30-90s dans les logs). Passe a ping=15s + tolerance
+    MAX_MISSED_PONGS=4 (detection ~60s, sous le proxy_read_timeout nginx de 120s). Compteur
+    AtomicU32 au lieu d'un booleen. Reduit aussi le trafic de heartbeat 15x.
+
+### A instrumenter (prochaines vagues)
+DF13. notify-reaction renvoie 401 "User is not authenticated" (logs PC) : le POST push de reaction
+    part sans token valide (ou expire) sur ce chemin. La reaction MLS passe, mais la notification de
+    reaction echoue. A investiguer (auth du POST notify-reaction).

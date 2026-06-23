@@ -11,7 +11,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use redis::AsyncCommands;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU32, Ordering},
 };
 use tokio::sync::mpsc;
 
@@ -261,10 +261,12 @@ async fn handle_socket(
         conn_id,
     };
 
-    // Shared flag: set to true when a Ping is sent and back to false when the
-    // corresponding Pong is received.  If still true at the next Ping tick the
-    // client has missed an entire interval and is considered dead.
-    let awaiting_pong = Arc::new(AtomicBool::new(false));
+    // Compteur de pings consecutifs restes sans Pong. Incremente a chaque tick de ping,
+    // remis a zero des qu'une frame (Pong ou Text) prouve que le client repond. Le client
+    // n'est declare mort qu'apres MAX_MISSED_PONGS pings consecutifs sans reponse - une
+    // tolerance, pas un couperet sur un seul pong en retard (la jitter reseau d'1s+ est
+    // courante en wifi/mobile et ne doit pas fermer la connexion).
+    let awaiting_pong = Arc::new(AtomicU32::new(0));
 
     // Establish ONE shared Redis connection for this socket's lifetime.
     // MultiplexedConnection is Clone - all clones share the same underlying
@@ -349,13 +351,19 @@ async fn handle_socket(
     };
 
     // ── Send task: relay outbound frames + heartbeat ping ────────────────
-    // Ping every 1s. Detection: if awaiting_pong is STILL true when the next
-    // tick fires, the client never answered → dead → break immediately.
-    // This gives a max dead-connection detection window of ~1 s.
+    // Ping toutes les PING_INTERVAL_SECS. Le client est declare mort apres
+    // MAX_MISSED_PONGS pings consecutifs sans Pong (fenetre de detection
+    // ~PING_INTERVAL_SECS * MAX_MISSED_PONGS), volontairement sous le
+    // proxy_read_timeout nginx (120s) pour que les pings gardent le tunnel ouvert.
+    // Tolerance indispensable : un seul pong en retard (jitter reseau) ne doit pas
+    // fermer la connexion (cause des deconnexions 1006 a repetition).
+    const PING_INTERVAL_SECS: u64 = 15;
+    const MAX_MISSED_PONGS: u32 = 4;
     let conn_key_ping = conn_key.clone();
     let pong_flag_send = awaiting_pong.clone();
     let mut send_task = tokio::spawn(async move {
-        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut ping_interval =
+            tokio::time::interval(std::time::Duration::from_secs(PING_INTERVAL_SECS));
         ping_interval.tick().await; // skip the immediate first tick
         loop {
             tokio::select! {
@@ -370,12 +378,14 @@ async fn handle_socket(
                     }
                 }
                 _ = ping_interval.tick() => {
-                    // swap(true): set flag to "awaiting pong".
-                    // If it was already true the previous ping went unanswered.
-                    if pong_flag_send.swap(true, Ordering::Relaxed) {
+                    // fetch_add renvoie la valeur AVANT incrementation : +1 = nb de pings
+                    // consecutifs non confirmes en comptant celui qu'on s'apprete a envoyer.
+                    let outstanding = pong_flag_send.fetch_add(1, Ordering::Relaxed) + 1;
+                    if outstanding > MAX_MISSED_PONGS {
                         tracing::warn!(
-                            "[heartbeat] No pong from {} - closing dead connection",
-                            conn_key_ping
+                            "[heartbeat] No pong from {} after {} pings - closing dead connection",
+                            conn_key_ping,
+                            MAX_MISSED_PONGS
                         );
                         break;
                     }
@@ -405,8 +415,8 @@ async fn handle_socket(
             while let Some(msg) = receiver.next().await {
                 match msg {
                     Ok(Message::Pong(_)) => {
-                        // Client is alive: clear the awaiting flag and refresh TTL.
-                        pong_flag_recv.store(false, Ordering::Relaxed);
+                        // Client is alive: reset the missed-ping counter and refresh TTL.
+                        pong_flag_recv.store(0, Ordering::Relaxed);
                         refresh_presence(
                             &mut con_opt,
                             &state,
@@ -420,7 +430,7 @@ async fn handle_socket(
                     Ok(Message::Text(text)) => {
                         // Any inbound data frame proves the client is reachable
                         // end-to-end (not just the nginx TCP layer).
-                        pong_flag_recv.store(false, Ordering::Relaxed);
+                        pong_flag_recv.store(0, Ordering::Relaxed);
                         refresh_presence(
                             &mut con_opt,
                             &state,

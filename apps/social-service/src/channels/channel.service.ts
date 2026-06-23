@@ -284,10 +284,32 @@ export class ChannelService {
   // ================= WORKSPACES =================
 
   /** Creates a workspace with default Administrateur/Modérateur/Membre roles, adds the creator as admin, and creates a public #general channel. */
+  /**
+   * Returns a workspace slug guaranteed free of collisions with existing communities.
+   * Communities may share a display name (Discord-style), but `channel_workspaces.slug`
+   * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, ...)
+   * is appended when the requested slug is already taken.
+   */
+  private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {
+    const base = requested.trim();
+    if (!base) throw new BadRequestException('Slug de communaute invalide.');
+
+    let candidate = base;
+    for (let suffix = 2; ; suffix++) {
+      const existing = await this.workspaceRepo.findOne({ where: { slug: candidate } });
+      if (!existing) return candidate;
+      candidate = `${base}-${suffix}`;
+    }
+  }
+
   async createWorkspace(input: CreateWorkspaceDto) {
+    const slug = await this.ensureUniqueWorkspaceSlug(input.slug);
+    this.logger.log(
+      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`
+    );
     const ws = this.workspaceRepo.create({
       name: input.name,
-      slug: input.slug,
+      slug,
       createdBy: input.createdBy,
     });
     const savedWs = await this.workspaceRepo.save(ws);
