@@ -47,13 +47,22 @@ export function parseAndroidSha256Fingerprints(raw: string | undefined): string[
   ];
 }
 
-/** Builds Digital Asset Links JSON for Android App Link verification. */
+/**
+ * Builds Digital Asset Links JSON for Android.
+ *
+ * Declares both `handle_all_urls` (App Link verification) and `get_login_creds`
+ * (credential sharing / Sign-in with saved passwords), which Google Play requires
+ * to enable credential sharing for the verified domains.
+ */
 export function buildAssetLinksJson(fingerprints: string[]): string {
   const targets =
     fingerprints.length > 0
       ? [
           {
-            relation: ['delegate_permission/common.handle_all_urls'],
+            relation: [
+              'delegate_permission/common.handle_all_urls',
+              'delegate_permission/common.get_login_creds',
+            ],
             target: {
               namespace: 'android_app',
               package_name: MOBILE_APP_PACKAGE,
