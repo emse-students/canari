@@ -854,7 +854,9 @@ DF12. FIXED - Deconnexions WS 1006 a repetition. Le heartbeat gateway pingait to
     MAX_MISSED_PONGS=4 (detection ~60s, sous le proxy_read_timeout nginx de 120s). Compteur
     AtomicU32 au lieu d'un booleen. Reduit aussi le trafic de heartbeat 15x.
 
-### A instrumenter (prochaines vagues)
-DF13. notify-reaction renvoie 401 "User is not authenticated" (logs PC) : le POST push de reaction
-    part sans token valide (ou expire) sur ce chemin. La reaction MLS passe, mais la notification de
-    reaction echoue. A investiguer (auth du POST notify-reaction).
+DF13. FIXED - notify-reaction renvoyait 401 "User is not authenticated". `notifyReaction` faisait
+    un `fetch` brut avec seulement Content-Type, SANS header Authorization. Le token d'acces etant
+    en memoire (jamais en cookie), nginx `auth_request` ne recevait aucun token -> 401. Bascule sur
+    `apiFetch` (injecte le Bearer + rejoue une fois sur 401 apres refresh). Sweep complet des autres
+    `fetch('/api/...')` relatifs : pin-change/pin-status/pin-reset/pin-check attachent deja le token,
+    ackRetry/deliveryKeepalive recoivent les headers du caller -> notifyReaction etait le seul oubli.

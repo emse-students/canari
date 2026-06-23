@@ -2,6 +2,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import type { OutboxEntry } from '$lib/db';
 import { enqueueOutboxMessage } from './outbox';
+import { apiFetch } from '$lib/utils/apiFetch';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
@@ -187,16 +188,22 @@ export async function notifyReaction(params: {
     targetSenderId: params.targetSenderId.slice(0, 8),
     emoji: params.emoji,
   });
-  const resp = await fetch('/api/mls/notify-reaction', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    console.warn(`[notifyReaction] Échec HTTP ${resp.status}:`, text.slice(0, 200));
-  } else {
-    console.log('[notifyReaction] Notification réaction envoyée avec succès');
+  // apiFetch attache le Bearer token (en memoire, jamais en cookie) et rejoue une fois sur 401
+  // apres refresh. Un fetch brut partait sans Authorization -> nginx auth_request echouait -> 401.
+  try {
+    const resp = await apiFetch('/api/mls/notify-reaction', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      console.warn(`[notifyReaction] Échec HTTP ${resp.status}:`, text.slice(0, 200));
+    } else {
+      console.log('[notifyReaction] Notification réaction envoyée avec succès');
+    }
+  } catch (e) {
+    // Fire-and-forget : une session expiree ne doit pas remonter une erreur a l'appelant.
+    console.warn(`[notifyReaction] Échec: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
