@@ -476,11 +476,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
       const missingKeys: string[] = [];
+      // Conversations bloquees en 'pending' alors que leur etat MLS est present localement :
+      // le badge "Sync" resterait affiche a jamais (DF5). La reconciliation demotait les
+      // groupes absents mais ne promouvait jamais l'inverse - on ajoute la promotion miroir.
+      const recoveredKeys: string[] = [];
       for (const [key, c] of cb.conversations.entries()) {
         if (isChannelConversationId(c.id)) continue;
         if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
           cb.conversations.set(key, { ...c, lifecycle: 'pending' });
           missingKeys.push(key);
+        } else if (c.lifecycle === 'pending' && localMlsGroups.has(c.id)) {
+          cb.conversations.set(key, { ...c, lifecycle: 'active' });
+          recoveredKeys.push(key);
         }
       }
       if (missingKeys.length > 0) {
@@ -491,6 +498,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
         );
         await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
+      }
+      if (recoveredKeys.length > 0) {
+        cb.log(
+          `[INIT] ${recoveredKeys.length} conversation(s) bloquees en attente mais deja synchronisees - badge "Sync" leve.`
+        );
+        await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
       }
     } catch (e) {
       console.warn('[INIT] Erreur détection groupes MLS manquants:', e);

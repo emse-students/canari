@@ -822,6 +822,14 @@ DF1c. FIXED - Course "envoi a froid au resume" : l'emetteur envoyait AVANT d'avo
     aucune latence). Complete DF1a (qui ne couvrait que le cas "l'emetteur SAIT qu'il est en
     retard"). Reste DF1b (validation epoch cote serveur) en option de durcissement.
 
+DF5. FIXED - Badge "Sync" persistant sur une conversation rejointe. La reconciliation au login
+    demotait active->pending pour les groupes absents du WASM, mais ne promouvait JAMAIS l'inverse :
+    une conversation persistee `pending` dont l'etat MLS est present localement (typiquement un join
+    background : etat MLS sur disque + membership active serveur, mais lifecycle DB jamais flippe)
+    restait `pending` -> badge "Sync" eternel ([[ConversationTile]] affiche le badge si
+    `lifecycle !== 'active'`). Ajout de la promotion miroir pending->active quand le groupe est dans
+    le WASM. Se combine avec DF3 (placeholder pending au join background -> promu actif a l'ouverture).
+
 ### A instrumenter (prochaines vagues)
 DF2. Fenetre d'activation : 1er message non notifie car envoye avant `markMembershipActive`.
     Analyse : le chemin background appelle bien `activateDeviceMembership` (FCM1), la fenetre se
