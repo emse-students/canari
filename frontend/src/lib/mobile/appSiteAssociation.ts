@@ -1,8 +1,13 @@
 /** Android applicationId / iOS bundle identifier (tauri.conf.json `identifier`). */
 export const MOBILE_APP_PACKAGE = 'fr.emse.canari';
 
-/** Hosts that declare verified App Links / Universal Links for Canari. */
-export const MOBILE_APP_LINK_HOSTS = ['canari-emse.fr', 'www.canari-emse.fr'] as const;
+/**
+ * Hosts that declare verified App Links / Universal Links for Canari.
+ *
+ * `www` is intentionally excluded: it only 301-redirects to the apex, and
+ * Google Play rejects App Link domains that are not reachable without redirect.
+ */
+export const MOBILE_APP_LINK_HOSTS = ['canari-emse.fr'] as const;
 
 /**
  * SPA path prefixes opened in the native app when the user taps an https link.

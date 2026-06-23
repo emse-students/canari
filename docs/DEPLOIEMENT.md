@@ -332,7 +332,7 @@ Les niveaux de log sont configurables via `RUST_LOG` (chat-gateway) et les varia
 
 ## 9. Liens mobiles (`canari-emse.fr` → app Android / iOS)
 
-L'app native déclare des **App Links** (Android) et **Universal Links** (iOS) pour `https://canari-emse.fr` et `https://www.canari-emse.fr`. Le site sert les fichiers de vérification au build frontend :
+L'app native déclare des **App Links** (Android) et **Universal Links** (iOS) pour `https://canari-emse.fr` uniquement. `www` est volontairement exclu : il ne fait que rediriger (301) vers l'apex, et Google Play refuse les domaines App Link non accessibles sans redirection. Le site sert les fichiers de vérification au build frontend :
 
 | URL                                       | Rôle                                                    |
 | ----------------------------------------- | ------------------------------------------------------- |
