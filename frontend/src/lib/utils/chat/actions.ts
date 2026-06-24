@@ -101,8 +101,8 @@ export async function processPendingInvitations(params: {
       mlsService.getLocalGroups().includes(groupId);
     if (!readyForInvites) {
       if (resolved !== origGroupId) {
-        // Le successeur terminal existe mais n'est pas encore prêt (Welcome en transit).
-        // onGroupReady() déclenchera un nouveau passage dans 500 ms.
+        // The terminal successor exists but is not ready yet (Welcome in transit).
+        // onGroupReady() will trigger another pass in 500 ms.
         log(
           `[PENDING] ${origGroupId.slice(0, 8)}... -> successor ${resolved.slice(0, 8)}... not ready yet - skip`
         );
@@ -115,7 +115,7 @@ export async function processPendingInvitations(params: {
           const active = await isGroupActiveOnServer(mlsService, userId, resolved);
           if (active === false) {
             log(
-              `[PENDING] Groupe ${origGroupId} supprimé ou absent du serveur → nettoyage invitations (${resolved})`
+              `[PENDING] Group ${origGroupId} deleted or absent from server - cleaning up invitations (${resolved})`
             );
             for (const inv of invitations) {
               mlsService
@@ -123,15 +123,15 @@ export async function processPendingInvitations(params: {
                 .catch(() => {});
             }
           } else {
-            // Groupe présent sur le serveur mais absent du WASM local → welcome_request.
-            // Le watchdog de useChatSession escalade vers reboot après 60s si pas de réponse.
+            // Group present on server but absent from local WASM -> welcome_request.
+            // The useChatSession watchdog escalates to reboot after 60s if no response.
             mlsService.sendWelcomeRequest(resolved).catch(() => {});
             log(
-              `[PENDING] Groupe ${origGroupId} absent localement → welcome_request envoyé pour ${resolved}`
+              `[PENDING] Group ${origGroupId} absent locally -> welcome_request sent for ${resolved}`
             );
           }
         } else {
-          log(`[PENDING] Groupe ${groupId}: conversation locale non prête - skip`);
+          log(`[PENDING] Group ${groupId}: local conversation not ready - skip`);
         }
       }
       continue;
@@ -145,7 +145,7 @@ export async function processPendingInvitations(params: {
     // mobile: bulk add + Argon2 + commit + Welcomes, cf. MLS_ADD_LOCK_TTL_MS / H1).
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
-      log(`[PENDING] Groupe ${groupId}: verrou tenu par un autre appareil - skip`);
+      log(`[PENDING] Group ${groupId}: lock held by another device - skip`);
       continue;
     }
 
@@ -530,8 +530,8 @@ export async function discoverMissingGroups(params: {
         let isStillUserMember: boolean | null = null;
         if (!isKnownSuccessor && convo.lifecycle !== 'removed') {
           serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
-          // Anti-race : ne revalider notre membership réelle que sur un groupe VIVANT absent de
-          // notre snapshot getUserGroups (qui peut être périmé sur un groupe juste créé/rejoint).
+          // Anti-race: only re-validate our actual membership on a LIVE group absent from our
+          // getUserGroups snapshot (which may be stale for a group just created/joined).
           if (serverStatus.kind === 'active') {
             const userMembers = await mlsService.getGroupUserMembers(convo.id).catch(() => null);
             isStillUserMember =
@@ -859,7 +859,7 @@ export async function handleWelcomeRequest(params: {
     hasChain,
   } = await resolveTerminalGroup(mlsService, requestedGroupId);
 
-  // Groupe introuvable sur le serveur.
+  // Group not found on server.
   if (!terminalMeta) {
     log(`[WELCOME_REQ] Group ${requestedGroupId.slice(0, 8)}... not found - refusing`);
     return;
@@ -967,19 +967,19 @@ export async function handleWelcomeRequest(params: {
     const devices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
     let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
-      // fetchUserDevices applique un cutoff de 30 jours : le device demandeur peut en être
-      // absent (ancien device qui se reconnecte). On retente via fetchDeviceKeyPackage, qui
-      // n'a pas de cutoff - même fallback que processPendingInvitations. Sans ça, un device
-      // valide mais hors fenêtre reste bloqué (abandon silencieux, aucun re-add possible).
+      // fetchUserDevices applies a 30-day cutoff: the requesting device may be absent
+      // (old device reconnecting). Retry via fetchDeviceKeyPackage, which has no cutoff -
+      // same fallback as processPendingInvitations. Without this, a valid but out-of-window
+      // device stays stuck (silent abandon, no re-add possible).
       const fallback = await mlsService
         .fetchDeviceKeyPackage(requesterUserId, requesterDeviceId)
         .catch(() => null);
       if (!fallback) {
-        log(`[WELCOME_REQ] KeyPackage introuvable pour ${requesterDeviceId} - abandon`);
+        log(`[WELCOME_REQ] KeyPackage not found for ${requesterDeviceId} - aborting`);
         return;
       }
       targetDevice = fallback;
-      log(`[WELCOME_REQ] KeyPackage récupéré via fallback pour ${requesterDeviceId} (> 30 jours)`);
+      log(`[WELCOME_REQ] KeyPackage retrieved via fallback for ${requesterDeviceId} (> 30 days)`);
     }
 
     // ── Check if the device's leaf is already in the MLS tree ────────────
@@ -1002,10 +1002,10 @@ export async function handleWelcomeRequest(params: {
         const freshDevices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
         const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
         if (!freshDevice) {
-          log(`[WELCOME_REQ] KeyPackage introuvable après kick pour ${requesterDeviceId} - skip`);
+          log(`[WELCOME_REQ] KeyPackage not found after kick for ${requesterDeviceId} - skip`);
           return;
         }
-        // Mettre à jour la référence pour l'ajout ci-dessous
+        // Update the reference for the add below
         targetDevice.keyPackage = freshDevice.keyPackage;
       }
     } catch {

@@ -771,7 +771,7 @@ async function migrateConversationLocked(
       log(`[MIGRATE] Message copy error: ${String(e)} - source kept in DB`);
     }
   } else {
-    messagesCopied = true; // pas de storage : rien à protéger
+    messagesCopied = true; // no storage: nothing to protect
   }
 
   // Outbox: re-key pending messages fromGroup -> toGroup so they go out in the successor
