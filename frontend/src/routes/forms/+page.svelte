@@ -25,6 +25,8 @@
     X,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let copiedId = $state<string | null>(null);
 
@@ -50,20 +52,20 @@
     try {
       forms = await getForms();
     } catch {
-      // unauthenticated or API unavailable - leave empty
+      // Unauthenticated or API unavailable - leave empty
     } finally {
       loading = false;
     }
   });
 
   async function handleDelete(id: string, title: string) {
-    if (!await showConfirm(`Supprimer le formulaire " ${title} " ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.form_list_delete_confirm({ title }), { danger: true, confirmLabel: m.common_delete_button() })) return;
     deletingId = id;
     try {
       await deleteForm(id);
       forms = forms.filter((f) => f.id !== id);
     } catch {
-      showToast('Erreur lors de la suppression');
+      showToast(m.form_list_error_delete());
     } finally {
       deletingId = null;
     }
@@ -80,7 +82,7 @@
       a.click();
       window.URL.revokeObjectURL(url);
     } catch {
-      showToast("Échec de l'export");
+      showToast(m.form_list_error_export());
     }
   }
 
@@ -100,7 +102,7 @@
 
   async function handleDeleteSubmission(formId: string, sub: Submission) {
     const name = [sub.firstName, sub.lastName].filter(Boolean).join(' ') || sub.userId.slice(0, 8);
-    if (!await showConfirm(`Supprimer la réponse de ${name} ? Cette action est irréversible.`, { danger: true, confirmLabel: 'Supprimer' })) return;
+    if (!await showConfirm(m.form_list_delete_submission_confirm({ name }), { danger: true, confirmLabel: m.common_delete_button() })) return;
     deletingSubmissionId = sub.id;
     try {
       await deleteSubmission(sub.id);
@@ -109,7 +111,7 @@
         submissionsData = { ...submissionsData, [formId]: current.filter((s) => s.id !== sub.id) };
       }
     } catch {
-      showToast('Erreur lors de la suppression');
+      showToast(m.form_list_error_delete());
     } finally {
       deletingSubmissionId = null;
     }
@@ -124,33 +126,28 @@
 
   /** Returns a human-readable label for a payment status. */
   function statusLabel(s: string): string {
-    return (
-      (
-        {
-          free: 'Gratuit',
-          pending: 'En attente',
-          pending_cash: 'Espèces en attente',
-          paid: 'Payé',
-          cancelled: 'Annulé',
-          expired: 'Expiré',
-        } as Record<string, string>
-      )[s] ?? s
-    );
+    if (s === 'free') return m.form_status_free();
+    if (s === 'pending') return m.form_status_pending();
+    if (s === 'pending_cash') return m.form_status_pending_cash();
+    if (s === 'paid') return m.form_status_paid();
+    if (s === 'cancelled') return m.form_status_cancelled();
+    if (s === 'expired') return m.form_status_expired();
+    return s;
   }
 
   /** Formats cents as a currency string, or "-" for zero. */
   function formatAmount(cents: number): string {
     if (!cents) return '-';
-    return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'eur' });
+    return (cents / 100).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', { style: 'currency', currency: 'eur' });
   }
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto">
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-8">
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Mes formulaires</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_list_title()}</h1>
       <p class="text-sm text-text-muted mt-0.5">
-        {forms.length} formulaire{forms.length !== 1 ? 's' : ''}
+        {forms.length === 1 ? m.form_list_count_one() : m.form_list_count({ count: forms.length })}
       </p>
     </div>
     <a
@@ -158,7 +155,7 @@
       class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors self-start sm:self-auto"
     >
       <Plus size={16} />
-      Nouveau formulaire
+      {m.form_list_new_button()}
     </a>
   </div>
 
@@ -177,16 +174,16 @@
       >
         <FileText size={28} />
       </div>
-      <p class="text-text-muted font-medium mb-1">Aucun formulaire pour l'instant</p>
+      <p class="text-text-muted font-medium mb-1">{m.form_list_empty_title()}</p>
       <p class="text-sm text-text-muted/60 mb-4">
-        Créez votre premier formulaire pour commencer à collecter des réponses.
+        {m.form_list_empty_desc()}
       </p>
       <a
         href="/forms/create"
         class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
       >
         <Plus size={16} />
-        Créer un formulaire
+        {m.form_list_create_button()}
       </a>
     </div>
   {:else}
@@ -214,7 +211,7 @@
                 class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3.5 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
               >
                 <Pencil size={14} />
-                Modifier
+                {m.form_list_edit_button()}
               </a>
               <button
                 onclick={() => copyFormLink(form.id)}
@@ -222,10 +219,10 @@
               >
                 {#if copiedId === form.id}
                   <Check size={14} class="text-green-600" />
-                  Lien copié
+                  {m.form_list_link_copied()}
                 {:else}
                   <Link size={14} />
-                  Partager
+                  {m.form_list_share_button()}
                 {/if}
               </button>
               <button
@@ -233,14 +230,14 @@
                 class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
               >
                 <Download size={14} />
-                Exporter
+                {m.form_list_export_button()}
               </button>
               <button
                 onclick={() => toggleResponses(form.id)}
                 class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
               >
                 <Users size={14} />
-                Réponses
+                {m.form_list_responses_button()}
                 {#if expandedForms[form.id]}
                   <ChevronUp size={12} />
                 {:else}
@@ -251,7 +248,7 @@
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
                 class="inline-flex items-center justify-center rounded-xl border-2 border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
-                title="Supprimer"
+                title={m.common_delete_button()}
               >
                 <Trash2 size={14} />
               </button>
@@ -269,11 +266,11 @@
                 </div>
               {:else if submissionsData[form.id] === 'error'}
                 <p class="text-sm text-red-600 text-center py-2">
-                  Impossible de charger les réponses.
+                  {m.form_list_responses_error()}
                 </p>
               {:else if Array.isArray(submissionsData[form.id]) && (submissionsData[form.id] as Submission[]).length === 0}
                 <p class="text-sm text-text-muted text-center py-2">
-                  Aucune réponse pour l'instant.
+                  {m.form_list_responses_empty()}
                 </p>
               {:else if Array.isArray(submissionsData[form.id])}
                 {@const subs = submissionsData[form.id] as Submission[]}
@@ -283,10 +280,10 @@
                       <tr
                         class="text-left text-xs font-bold text-text-muted uppercase tracking-wide border-b border-cn-border"
                       >
-                        <th class="pb-2 pr-4 whitespace-nowrap">Date & heure</th>
-                        <th class="pb-2 pr-4 whitespace-nowrap">Nom</th>
-                        <th class="pb-2 pr-4 whitespace-nowrap">Statut</th>
-                        <th class="pb-2 pr-4 whitespace-nowrap">Montant</th>
+                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_date()}</th>
+                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_name()}</th>
+                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_status()}</th>
+                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_amount()}</th>
                         <th class="pb-2 whitespace-nowrap"></th>
                       </tr>
                     </thead>
@@ -326,7 +323,7 @@
                               onclick={() => void handleDeleteSubmission(form.id, sub)}
                               disabled={deletingSubmissionId === sub.id}
                               class="inline-flex items-center justify-center rounded-lg p-1.5 text-text-muted hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                              title="Supprimer cette réponse"
+                              title={m.form_list_delete_response_title()}
                             >
                               <X size={13} />
                             </button>

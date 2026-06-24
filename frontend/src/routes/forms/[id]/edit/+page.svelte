@@ -38,6 +38,7 @@
     Trash2,
   } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
 
@@ -69,7 +70,7 @@
   let addingCoOwner = $state(false);
   let coOwnerError = $state('');
 
-  // Associations with Stripe Connect activé
+  // Associations with Stripe Connect active
   let associations = $state<Association[]>([]);
 
   let items = $state<any[]>([]);
@@ -95,7 +96,7 @@
   onMount(async () => {
     const id = formId;
     if (!id) {
-      loadError = 'Formulaire introuvable.';
+      loadError = m.form_edit_load_error();
       return;
     }
     try {
@@ -145,7 +146,7 @@
         rows: item.rows || [],
       }));
     } catch (e: any) {
-      loadError = e.message || 'Impossible de charger le formulaire.';
+      loadError = e.message || m.form_edit_load_error();
     }
   });
 
@@ -154,11 +155,11 @@
 
   async function handleSave() {
     if (titleMissing) {
-      error = 'Le titre est obligatoire.';
+      error = m.form_error_title_required_short();
       return;
     }
     if (requiresPayment && !associationId) {
-      error = 'Veuillez sélectionner une association bénéficiaire.';
+      error = m.form_error_association_required_short();
       return;
     }
     isSubmitting = true;
@@ -228,7 +229,7 @@
       const updated = await uploadFormImage(formId, file);
       imageUrl = updated.imageUrl ?? null;
     } catch (err: any) {
-      imageError = err.message || "Erreur lors de l'envoi de l'image";
+      imageError = err.message || 'Error';
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -241,7 +242,7 @@
       await deleteFormImage(formId);
       imageUrl = null;
     } catch (err: any) {
-      imageError = err.message || 'Erreur';
+      imageError = err.message || 'Error';
     } finally {
       uploadingImage = false;
     }
@@ -265,7 +266,7 @@
       coOwners = [...coOwners, { id: userId, displayName: name || userId.slice(0, 8) + '…' }];
       coOwnerInput = '';
     } catch (err: any) {
-      coOwnerError = err.message || 'Erreur';
+      coOwnerError = err.message || 'Error';
     } finally {
       addingCoOwner = false;
     }
@@ -276,7 +277,7 @@
       await removeFormCoOwner(formId, userId);
       coOwners = coOwners.filter((c) => c.id !== userId);
     } catch (err: any) {
-      coOwnerError = err.message || 'Erreur';
+      coOwnerError = err.message || 'Error';
     }
   }
 
@@ -342,12 +343,12 @@
     <button
       onclick={() => goto('/forms')}
       class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
-      title="Retour"
+      title={m.form_create_back_title()}
     >
       <ArrowLeft size={20} />
     </button>
     <div class="flex-1 min-w-0">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Modifier le formulaire</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_edit_heading()}</h1>
       {#if form}
         <p class="text-sm text-text-muted mt-0.5 truncate">{form.title}</p>
       {/if}
@@ -381,28 +382,28 @@
     >
       <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
         <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><FileText size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">Informations générales</h2>
+        <h2 class="text-lg font-bold text-text-main">{m.form_section_general()}</h2>
       </div>
       <div class="space-y-4">
         <Input
-          label="Titre du formulaire"
+          label={m.form_title_label()}
           bind:value={title}
-          placeholder="ex: Inscription événement"
+          placeholder={m.form_title_placeholder()}
           required
         />
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description</p>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.form_description_label()}</p>
           <MarkdownComposerField
             bind:value={description}
-            placeholder="Décrivez l'objet de ce formulaire…"
+            placeholder={m.form_description_placeholder()}
             minHeight="80px"
           />
         </div>
         <Input
-          label="Réponses max."
+          label={m.form_max_responses_label()}
           type="number"
           bind:value={maxSubmissions}
-          placeholder="Illimité"
+          placeholder={m.form_max_responses_placeholder()}
           min="1"
         />
 
@@ -413,14 +414,14 @@
             <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
           </div>
           <div>
-            <span class="text-sm font-semibold text-text-main">Autoriser plusieurs réponses par utilisateur</span>
-            <p class="text-xs text-text-muted">Utile pour les formulaires de commande</p>
+            <span class="text-sm font-semibold text-text-main">{m.form_allow_multiple_label()}</span>
+            <p class="text-xs text-text-muted">{m.form_allow_multiple_hint()}</p>
           </div>
         </label>
 
         <div>
           <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1"
-            >Date d'ouverture (shotgun)</label
+            >{m.form_opens_at_label()}</label
           >
           <input
             id="form-opens-at"
@@ -428,7 +429,7 @@
             bind:value={opensAt}
             class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
           />
-          <p class="text-xs text-text-muted mt-1.5 ml-1">Laissez vide pour ouvrir immédiatement.</p>
+          <p class="text-xs text-text-muted mt-1.5 ml-1">{m.form_opens_at_hint_short()}</p>
         </div>
       </div>
     </section>
@@ -439,7 +440,7 @@
     >
       <div class="flex items-center gap-2.5 mb-4">
         <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><ImagePlus size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">Image / affiche</h2>
+        <h2 class="text-lg font-bold text-text-main">{m.form_image_section()}</h2>
       </div>
       {#if imageError}
         <p class="text-sm text-red-600 mb-3">{imageError}</p>
@@ -452,7 +453,7 @@
             onclick={handleImageRemove}
             disabled={uploadingImage}
             class="absolute top-2 right-2 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80"
-            title="Supprimer l'image"
+            title={m.form_image_remove_title()}
           >
             <X size={14} />
           </button>
@@ -464,7 +465,7 @@
             : ''}"
         >
           <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
-          {uploadingImage ? 'Envoi en cours…' : 'Ajouter une image (JPEG / PNG / WebP, max 8 Mo)'}
+          {uploadingImage ? m.form_image_uploading() : m.form_image_add_label()}
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp"
@@ -481,7 +482,7 @@
     >
       <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
         <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><CreditCard size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">Paiement</h2>
+        <h2 class="text-lg font-bold text-text-main">{m.form_section_payment()}</h2>
       </div>
       <label class="flex items-center gap-3 cursor-pointer select-none">
         <div class="relative">
@@ -493,13 +494,13 @@
             class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
           ></div>
         </div>
-        <span class="text-sm font-semibold text-text-main">Ce formulaire nécessite un paiement</span
+        <span class="text-sm font-semibold text-text-main">{m.form_requires_payment_label()}</span
         >
       </label>
       {#if requiresPayment}
         <div class="mt-5 pt-5 border-t-2 border-cn-border">
           <Input
-            label="Prix de base public (€)"
+            label={m.form_base_price_label()}
             type="number"
             bind:value={basePrice}
             min="0"
@@ -509,7 +510,7 @@
         </div>
         <div class="mt-4">
           <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
-            >Association bénéficiaire</label
+            >{m.form_association_label()}</label
           >
           {#if associations.length > 0}
             <select
@@ -517,42 +518,42 @@
               bind:value={associationId}
               class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow"
             >
-              <option value="">Sélectionner…</option>
+              <option value="">{m.form_association_select_placeholder()}</option>
               {#each associations as a (a.id)}
                 <option value={a.id}>{a.name}</option>
               {/each}
             </select>
           {:else}
             <p class="text-sm text-text-muted bg-cn-border/20 rounded-2xl px-4 py-3">
-              Aucune association avec Stripe connecté.
+              {m.form_no_stripe_connected()}
             </p>
           {/if}
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
           <div class="space-y-1">
             <label for="pricing-tag-autocomplete-edit" class="block text-sm font-bold text-text-main ml-1"
-              >Tag cotisant (optionnel)</label
+              >{m.form_member_tag_label()}</label
             >
             <AssociationTagAutocomplete
               associationId={associationId}
               value={pricingTagName}
               onValueChange={(v) => (pricingTagName = v)}
               inputId="pricing-tag-autocomplete-edit"
-              placeholder="Rechercher un tag cotisant…"
+              placeholder={m.form_member_tag_search_placeholder()}
             />
           </div>
           <Input
-            label="Prix de base cotisant (€)"
+            label={m.form_member_price_label()}
             type="number"
             bind:value={basePriceMember}
             min="0"
             step="0.01"
-            placeholder="Même que public si vide"
+            placeholder={m.form_member_price_placeholder()}
             disabled={!showMemberPricing}
           />
         </div>
         <p class="text-xs text-text-muted mt-1 ml-1">
-          Les utilisateurs possédant ce tag paient le tarif cotisant (base et options).
+          {m.form_member_tag_desc()}
         </p>
         <div class="mt-4">
           <StripeNetPayoutHint
@@ -572,23 +573,23 @@
                 class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
               ></div>
             </div>
-            <span class="text-sm font-semibold text-text-main">Accepter le paiement en espèces</span
+            <span class="text-sm font-semibold text-text-main">{m.form_cash_label()}</span
             >
           </label>
           {#if allowCashPayment}
             <Input
-              label="Expiration paiement en attente (jours)"
+              label={m.form_cash_expiry_label_edit()}
               type="number"
               bind:value={cashPaymentExpiryDays}
               min="1"
-              placeholder="Jamais"
+              placeholder={m.form_cash_expiry_placeholder_short()}
             />
           {/if}
         </div>
       {/if}
     </section>
 
-    <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur - à implémenter ultérieurement -->
+    <!-- TODO: affichage de formulaires differents selon le tag 'cotisant:bde' de l'utilisateur - a implementer ulterieurement -->
 
     <!-- Section: Co-owners -->
     <section
@@ -596,10 +597,10 @@
     >
       <div class="flex items-center gap-2.5 mb-4">
         <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><Users size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">Co-responsables</h2>
+        <h2 class="text-lg font-bold text-text-main">{m.form_coowners_section()}</h2>
       </div>
       <p class="text-sm text-text-muted mb-4">
-        Les co-responsables peuvent modifier ce formulaire et consulter les réponses.
+        {m.form_coowners_desc()}
       </p>
       {#if coOwnerError}
         <p class="text-sm text-red-600 mb-3">{coOwnerError}</p>
@@ -615,7 +616,7 @@
                 type="button"
                 onclick={() => handleRemoveCoOwner(co.id)}
                 class="rounded-lg border border-red-200 p-1.5 text-red-500 hover:bg-red-50 transition-colors"
-                title="Retirer"
+                title={m.form_coowner_remove_title()}
               >
                 <Trash2 size={13} />
               </button>
@@ -628,7 +629,7 @@
           <UserAutocomplete
             value={coOwnerInput}
             onValueChange={(v) => (coOwnerInput = v)}
-            placeholder="Rechercher un utilisateur…"
+            placeholder={m.form_coowner_search_placeholder()}
             onSelect={(u) => handleAddCoOwner(u.id, u.displayName ?? undefined)}
           />
         </div>
@@ -638,7 +639,7 @@
           disabled={addingCoOwner || !coOwnerInput.trim()}
           class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-40"
         >
-          {addingCoOwner ? '…' : 'Ajouter'}
+          {addingCoOwner ? '…' : m.form_coowner_add_button()}
         </button>
       </div>
     </section>
@@ -647,11 +648,11 @@
     <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-3 sm:p-6">
       <div class="flex items-center gap-2.5 mb-4 sm:mb-5 px-1 sm:px-0">
         <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><ListChecks size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">Questions</h2>
+        <h2 class="text-lg font-bold text-text-main">{m.form_section_questions()}</h2>
         <span
           class="ml-auto text-xs font-semibold text-text-muted bg-cn-border/40 px-2.5 py-1 rounded-full"
         >
-          {items.length} question{items.length > 1 ? 's' : ''}
+          {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}
         </span>
       </div>
       <div class="space-y-3 sm:space-y-4">
@@ -696,7 +697,7 @@
           class="w-full py-3 rounded-2xl border-2 border-dashed border-cn-border text-sm font-bold text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 transition-all flex items-center justify-center gap-2"
         >
           <Plus size={18} />
-          Ajouter une question
+          {m.form_add_question_button()}
         </button>
 
         {#if showTypePicker}
@@ -709,7 +710,7 @@
             <p
               class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mb-2.5 ml-1"
             >
-              Type de question
+              {m.form_question_type_picker_label()}
             </p>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {#each QUESTION_TYPES as qtype (qtype.value)}
@@ -743,9 +744,9 @@
     >
       <p class="text-sm text-text-muted min-h-[1.25rem]">
         {#if titleMissing}
-          <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
+          <span class="text-amber-600 font-medium">{m.form_title_required_hint()}</span>
         {:else}
-          {items.length} question{items.length > 1 ? 's' : ''}
+          {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}
         {/if}
       </p>
       <button
@@ -754,7 +755,7 @@
         class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
       >
         <Save size={16} />
-        {isSubmitting ? 'Enregistrement…' : 'Enregistrer les modifications'}
+        {isSubmitting ? m.form_saving_label() : m.form_save_changes_button()}
       </button>
     </div>
   {/if}

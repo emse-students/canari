@@ -16,6 +16,8 @@
   import AssociationTagAutocomplete from '$lib/components/shared/AssociationTagAutocomplete.svelte';
   import { ArrowLeft, Save, Plus, FileText, CreditCard, ListChecks } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   // State
   let title = $state('');
@@ -37,7 +39,7 @@
   );
   const contentMaxWidth = $derived(fromPostComposer ? 'max-w-xl' : 'max-w-3xl');
 
-  // Associations with Stripe Connect activé (eligible as payment recipients)
+  // Associations with Stripe Connect active (eligible as payment recipients)
   let associations = $state<Association[]>([]);
 
   onMount(async () => {
@@ -79,11 +81,11 @@
 
   async function handleSave() {
     if (titleMissing) {
-      error = 'Le titre du formulaire est obligatoire.';
+      error = m.form_error_title_required();
       return;
     }
     if (requiresPayment && !associationId) {
-      error = 'Veuillez sélectionner une association bénéficiaire pour un formulaire payant.';
+      error = m.form_error_association_required();
       return;
     }
     isSubmitting = true;
@@ -210,13 +212,13 @@
     <button
       onclick={() => goto(fromPostComposer ? '/posts' : returnTo)}
       class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
-      title="Retour"
+      title={m.form_create_back_title()}
     >
       <ArrowLeft size={20} />
     </button>
     <div class="flex-1 min-w-0">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Nouveau formulaire</h1>
-      <p class="text-sm text-text-muted mt-0.5">Configurez votre formulaire et ses questions</p>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_create_heading()}</h1>
+      <p class="text-sm text-text-muted mt-0.5">{m.form_create_subtitle()}</p>
     </div>
   </div>
 
@@ -255,31 +257,31 @@
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <FileText size={20} />
       </div>
-      <h2 class="text-lg font-bold text-text-main">Informations générales</h2>
+      <h2 class="text-lg font-bold text-text-main">{m.form_section_general()}</h2>
     </div>
 
     <div class="space-y-4">
       <Input
-        label="Titre du formulaire"
+        label={m.form_title_label()}
         bind:value={title}
-        placeholder="ex: Inscription événement"
+        placeholder={m.form_title_placeholder()}
         required
       />
 
       <div>
-        <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description</p>
+        <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.form_description_label()}</p>
         <MarkdownComposerField
           bind:value={description}
-          placeholder="Décrivez l'objet de ce formulaire…"
+          placeholder={m.form_description_placeholder()}
           minHeight="80px"
         />
       </div>
 
       <Input
-        label="Réponses max."
+        label={m.form_max_responses_label()}
         type="number"
         bind:value={maxSubmissions}
-        placeholder="Illimité"
+        placeholder={m.form_max_responses_placeholder()}
         min="1"
       />
 
@@ -290,14 +292,14 @@
           <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
         </div>
         <div>
-          <span class="text-sm font-semibold text-text-main">Autoriser plusieurs réponses par utilisateur</span>
-          <p class="text-xs text-text-muted">Utile pour les formulaires de commande</p>
+          <span class="text-sm font-semibold text-text-main">{m.form_allow_multiple_label()}</span>
+          <p class="text-xs text-text-muted">{m.form_allow_multiple_hint()}</p>
         </div>
       </label>
 
       <div>
         <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1">
-          Date d'ouverture (shotgun)
+          {m.form_opens_at_label()}
         </label>
         <input
           id="form-opens-at"
@@ -306,7 +308,7 @@
           class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
         />
         <p class="text-xs text-text-muted mt-1.5 ml-1">
-          Laissez vide pour ouvrir immédiatement. Les réponses seront bloquées avant cette date.
+          {m.form_opens_at_hint()}
         </p>
       </div>
     </div>
@@ -320,7 +322,7 @@
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <CreditCard size={20} />
       </div>
-      <h2 class="text-lg font-bold text-text-main">Paiement</h2>
+      <h2 class="text-lg font-bold text-text-main">{m.form_section_payment()}</h2>
     </div>
 
     <label class="flex items-center gap-3 cursor-pointer select-none group">
@@ -333,13 +335,13 @@
           class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
         ></div>
       </div>
-      <span class="text-sm font-semibold text-text-main">Ce formulaire nécessite un paiement</span>
+      <span class="text-sm font-semibold text-text-main">{m.form_requires_payment_label()}</span>
     </label>
 
     {#if requiresPayment}
       <div class="mt-5 pt-5 border-t-2 border-cn-border">
         <Input
-          label="Prix de base public (€)"
+          label={m.form_base_price_label()}
           type="number"
           bind:value={basePrice}
           min="0"
@@ -351,7 +353,7 @@
       <!-- Recipient Association -->
       <div class="mt-4">
         <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
-          >Association bénéficiaire</label
+          >{m.form_association_label()}</label
         >
         {#if associations.length > 0}
           <select
@@ -359,25 +361,23 @@
             bind:value={associationId}
             class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
           >
-            <option value="">Sélectionner une association…</option>
+            <option value="">{m.form_association_placeholder()}</option>
             {#each associations as a (a.id)}
               <option value={a.id}>{a.name}</option>
             {/each}
           </select>
           <p class="text-xs text-text-muted mt-1 ml-1">
-            Les paiements seront transférés au compte Stripe de l'association sélectionnée.
+            {m.form_association_payments_hint()}
           </p>
         {:else}
           <div
             class="rounded-2xl border-2 border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 space-y-2"
           >
             <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">
-              Les formulaires payants nécessitent une association avec Stripe Connect activé.
+              {m.form_no_stripe_title()}
             </p>
             <p class="text-xs text-amber-800/80 dark:text-amber-200/70">
-              Vous n'êtes administrateur d'aucune association ayant finalisé l'activation Stripe Connect
-              (la validation Stripe peut prendre quelques jours après la configuration).
-              Vous pouvez créer un formulaire gratuit sans association.
+              {m.form_no_stripe_desc()}
             </p>
             <button
               type="button"
@@ -386,7 +386,7 @@
               }}
               class="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-100 px-3 py-1.5 text-xs font-bold transition-colors"
             >
-              Créer un formulaire gratuit à la place
+              {m.form_no_stripe_create_free_button()}
             </button>
           </div>
         {/if}
@@ -395,29 +395,28 @@
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
         <div class="space-y-1">
           <label for="pricing-tag-autocomplete" class="block text-sm font-bold text-text-main ml-1"
-            >Tag cotisant (optionnel)</label
+            >{m.form_member_tag_label()}</label
           >
           <AssociationTagAutocomplete
             associationId={associationId}
             value={pricingTagName}
             onValueChange={(v) => (pricingTagName = v)}
             inputId="pricing-tag-autocomplete"
-            placeholder="Rechercher un tag cotisant…"
+            placeholder={m.form_member_tag_search_placeholder()}
           />
         </div>
         <Input
-          label="Prix de base cotisant (€)"
+          label={m.form_member_price_label()}
           type="number"
           bind:value={basePriceMember}
           min="0"
           step="0.01"
-          placeholder="Même que public si vide"
+          placeholder={m.form_member_price_placeholder()}
           disabled={!showMemberPricing}
         />
       </div>
       <p class="text-xs text-text-muted mt-1 ml-1">
-        Si renseigné, les utilisateurs possédant ce tag (ex. cotisation achetée en boutique) paient
-        le tarif cotisant.
+        {m.form_member_tag_hint()}
       </p>
 
       <div class="mt-4">
@@ -430,7 +429,7 @@
 
       <!-- Payment methods -->
       <div class="mt-4 pt-4 border-t-2 border-cn-border">
-        <p class="text-sm font-bold text-text-main mb-3">Moyen de paiement</p>
+        <p class="text-sm font-bold text-text-main mb-3">{m.form_payment_methods_heading()}</p>
         <div
           class="flex items-center gap-4 rounded-2xl border-2 border-cn-yellow bg-cn-yellow/5 px-4 py-3.5"
         >
@@ -440,9 +439,9 @@
             <CreditCard size={20} />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-bold text-text-main">Carte, Apple Pay, Google Pay</p>
+            <p class="text-sm font-bold text-text-main">{m.form_card_payment_label()}</p>
             <p class="text-xs text-text-muted">
-              Visa, Mastercard, Amex - wallets détectés automatiquement
+              {m.form_card_payment_desc()}
             </p>
           </div>
           <div
@@ -459,7 +458,7 @@
               stroke-linecap="round"
               stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg
             >
-            Activé
+            {m.form_card_active_badge()}
           </div>
         </div>
       </div>
@@ -476,24 +475,23 @@
               class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
             ></div>
           </div>
-          <span class="text-sm font-semibold text-text-main">Accepter le paiement en espèces</span>
+          <span class="text-sm font-semibold text-text-main">{m.form_cash_label()}</span>
         </label>
         {#if allowCashPayment}
           <div>
             <label for="cash-expiry" class="block text-sm font-bold text-text-main mb-2 ml-1">
-              Expiration du paiement en attente (jours)
+              {m.form_cash_expiry_label()}
             </label>
             <input
               id="cash-expiry"
               type="number"
               bind:value={cashPaymentExpiryDays}
               min="1"
-              placeholder="Jamais (laisser vide)"
+              placeholder={m.form_cash_expiry_placeholder()}
               class="w-full sm:w-48 px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
             />
             <p class="text-xs text-text-muted mt-1.5 ml-1">
-              Les paiements en espèces non validés après ce délai passent automatiquement à
-              "expiré". Laissez vide pour ne jamais expirer.
+              {m.form_cash_expiry_hint()}
             </p>
           </div>
         {/if}
@@ -501,7 +499,7 @@
     {/if}
   </section>
 
-  <!-- TODO: affichage de formulaires différents selon le tag 'cotisant:bde' de l'utilisateur - à implémenter ultérieurement -->
+  <!-- TODO: affichage de formulaires differents selon le tag 'cotisant:bde' de l'utilisateur - a implementer ulterieurement -->
 
   <!-- Section 3: Questions -->
   <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-3 sm:p-6">
@@ -509,11 +507,11 @@
       <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
         <ListChecks size={20} />
       </div>
-      <h2 class="text-lg font-bold text-text-main">Questions</h2>
+      <h2 class="text-lg font-bold text-text-main">{m.form_section_questions()}</h2>
       <span
         class="ml-auto text-xs font-semibold text-text-muted bg-cn-border/40 px-2.5 py-1 rounded-full"
       >
-        {items.length} question{items.length > 1 ? 's' : ''}
+        {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}
       </span>
     </div>
 
@@ -555,7 +553,7 @@
         class="w-full py-3 rounded-2xl border-2 border-dashed border-cn-border text-sm font-bold text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 transition-all flex items-center justify-center gap-2"
       >
         <Plus size={18} />
-        Ajouter une question
+        {m.form_add_question_button()}
       </button>
 
       {#if showTypePicker}
@@ -566,7 +564,7 @@
           class="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-3"
         >
           <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mb-2.5 ml-1">
-            Type de question
+            {m.form_question_type_picker_label()}
           </p>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
             {#each QUESTION_TYPES as qtype (qtype.value)}
@@ -598,15 +596,15 @@
   >
     <p class="text-sm text-text-muted min-h-[1.25rem]">
       {#if titleMissing}
-        <span class="text-amber-600 font-medium">Renseignez un titre pour enregistrer</span>
+        <span class="text-amber-600 font-medium">{m.form_title_required_hint()}</span>
       {:else}
-        {items.length} question{items.length > 1 ? 's' : ''}{#if requiresPayment && basePrice > 0}
-          · {basePrice.toLocaleString('fr-FR', {
+        {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}{#if requiresPayment && basePrice > 0}
+          · {basePrice.toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
             minimumFractionDigits: 0,
             maximumFractionDigits: 2,
           })} €
         {:else if !requiresPayment}
-          · Gratuit
+          · {m.form_free_label()}
         {/if}
       {/if}
     </p>
@@ -616,7 +614,7 @@
       class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
     >
       <Save size={16} />
-      {isSubmitting ? 'Enregistrement…' : 'Enregistrer le formulaire'}
+      {isSubmitting ? m.form_saving_label() : m.form_save_button()}
     </button>
   </div>
 </div>

@@ -41,6 +41,8 @@
     Link,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   const formId = $derived(page.params.id);
   const redirectTo = $derived(page.url.searchParams.get('redirect') || '/posts');
@@ -109,7 +111,7 @@
     try {
       const id = formId;
       if (!id) {
-        error = 'Formulaire introuvable.';
+        error = 'Form not found.';
         loading = false;
         return;
       }
@@ -162,14 +164,12 @@
         try {
           const methods = await listPaymentMethods();
           paymentMethods = methods;
-          // Attempt to get the customer ID to pass to checkout for future-save
-          // It's stored server-side; we don't expose it directly, but the backend will use it
         } catch {
           // Stripe may not be configured
         }
       }
     } catch (e: any) {
-      error = e.message || 'Impossible de charger le formulaire.';
+      error = e.message || 'Unable to load the form.';
     } finally {
       loading = false;
     }
@@ -194,7 +194,7 @@
 
   function formatCurrency(amountCents: number | undefined, currency = 'eur') {
     if (amountCents === undefined) return '';
-    return new Intl.NumberFormat('fr-FR', {
+    return new Intl.NumberFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
       style: 'currency',
       currency: currency.toUpperCase(),
     }).format(amountCents / 100);
@@ -244,21 +244,21 @@
   async function handleSubmit() {
     if (!form || submitting) return;
     if (isNotOpenYet && form.opensAt) {
-      error = `Ce formulaire ouvre le ${formatFormOpensAt(form.opensAt)}.`;
+      error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
       return;
     }
     if (!userId.trim()) {
-      error = 'Veuillez vous connecter pour soumettre.';
+      error = m.form_view_error_login_required();
       return;
     }
 
-    // Validation - only validate visible (non-conditional-hidden) questions
+    // Validate only visible (non-conditional-hidden) questions
     for (const item of visibleItems) {
       const val = selections[item.id];
       if (item.required) {
         if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
           if (!val) {
-            error = `Veuillez compléter toutes les lignes pour " ${item.label} "`;
+            error = m.form_view_error_complete_matrix({ label: item.label });
             return;
           }
           for (const row of item.rows ?? []) {
@@ -269,17 +269,17 @@
               rowVal === '' ||
               (Array.isArray(rowVal) && rowVal.length === 0)
             ) {
-              error = `Veuillez compléter la ligne " ${row} " dans " ${item.label} "`;
+              error = m.form_view_error_complete_row({ row, label: item.label });
               return;
             }
           }
         } else if (Array.isArray(val)) {
           if (val.length === 0) {
-            error = `Veuillez sélectionner une option pour " ${item.label} "`;
+            error = m.form_view_error_select_option({ label: item.label });
             return;
           }
         } else if (!val) {
-          error = `Veuillez répondre à " ${item.label} "`;
+          error = m.form_view_error_answer({ label: item.label });
           return;
         }
       }
@@ -313,11 +313,11 @@
         }
       } else {
         submitted = true;
-        successMessage = res.message || 'Réponse envoyée !';
+        successMessage = res.message || m.form_view_submission_success();
         setTimeout(() => goto(redirectTo), 1500);
       }
     } catch (e: any) {
-      error = e.message || 'Échec de la soumission.';
+      error = e.message || m.form_view_error_payment_failed();
     } finally {
       submitting = false;
     }
@@ -327,7 +327,7 @@
     const result = await chargeWithSavedMethod(pendingSubmissionId, paymentMethodId);
     if (result.ok) {
       submitted = true;
-      successMessage = 'Paiement effectué avec succès !';
+      successMessage = m.form_view_payment_success();
       showPaymentModal = false;
       setTimeout(() => goto(redirectTo), 1500);
     }
@@ -337,7 +337,7 @@
 
   function handlePaySuccess() {
     submitted = true;
-    successMessage = 'Paiement effectué avec succès !';
+    successMessage = m.form_view_payment_success();
     showPaymentModal = false;
     setTimeout(() => goto(redirectTo), 1500);
   }
@@ -358,7 +358,7 @@
     pendingSubmissionId = '';
     pendingCheckoutUrl = '';
     showPaymentModal = false;
-    error = 'Le paiement a échoué. Vous pouvez soumettre à nouveau le formulaire.';
+    error = m.form_view_error_payment_failed();
   }
 
   // ── Progress bar ─────────────────────────────────────────────────
@@ -404,7 +404,7 @@
       onclick={() => goto(redirectTo)}
     >
       <ArrowLeft size={15} />
-      Retour
+      {m.form_view_back()}
     </button>
     {#if form}
       <button
@@ -415,9 +415,9 @@
           : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
       >
         {#if copiedLink}
-          <Check size={13} />Lien copié !
+          <Check size={13} />{m.form_view_link_copied()}
         {:else}
-          <Link size={13} />Partager
+          <Link size={13} />{m.form_view_share()}
         {/if}
       </button>
     {/if}
@@ -435,7 +435,7 @@
     >
       <p class="text-red-600 font-semibold">{error}</p>
       <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}
-        >Retour</button
+        >{m.form_view_back()}</button
       >
     </div>
   {:else if form}
@@ -456,8 +456,8 @@
                 <span
                   class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
                 >
-                  À partir de {formatCurrency(effectiveBasePrice(form), form.currency)}
-                  {#if memberPricing}(cotisant){/if}
+                  {m.form_view_from_price({ price: formatCurrency(effectiveBasePrice(form), form.currency) })}
+                  {#if memberPricing}{m.form_view_member_pricing()}{/if}
                 </span>
               {/if}
             </div>
@@ -481,8 +481,8 @@
               <span
                 class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
               >
-                À partir de {formatCurrency(effectiveBasePrice(form), form.currency)}
-                {#if memberPricing}(cotisant){/if}
+                {m.form_view_from_price({ price: formatCurrency(effectiveBasePrice(form), form.currency) })}
+                {#if memberPricing}{m.form_view_member_pricing()}{/if}
               </span>
             {/if}
           </div>
@@ -527,10 +527,10 @@
           <CalendarDays size={18} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-xs font-bold uppercase tracking-wide text-text-muted">Événement lié</p>
+          <p class="text-xs font-bold uppercase tracking-wide text-text-muted">{m.form_view_event_linked()}</p>
           <p class="text-sm font-semibold text-text-main truncate">{linkedAgendaEvent.title}</p>
         </div>
-        <span class="text-xs font-semibold text-cn-dark shrink-0">Voir →</span>
+        <span class="text-xs font-semibold text-cn-dark shrink-0">{m.form_view_event_see()}</span>
       </a>
     {/if}
 
@@ -540,7 +540,7 @@
         class="rounded-2xl border border-amber-300/60 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-4 mb-4 flex items-center justify-between gap-4"
       >
         <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
-          Ouverture le {formatFormOpensAt(form.opensAt)}
+          {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
         </p>
         {#if reminder.loaded}
           <button
@@ -552,9 +552,9 @@
               : 'bg-amber-200/60 text-amber-900 dark:text-amber-300 hover:bg-amber-200'}"
           >
             {#if reminder.subscribed}
-              <BellOff size={13} />Rappel activé
+              <BellOff size={13} />{m.form_view_reminder_active()}
             {:else}
-              <Bell size={13} />Me prévenir
+              <Bell size={13} />{m.form_view_remind_me()}
             {/if}
           </button>
         {/if}
@@ -572,7 +572,7 @@
         <div>
           <p class="font-bold text-green-700 dark:text-green-300">{successMessage}</p>
           <p class="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">
-            Redirection en cours…
+            {m.form_view_redirecting()}
           </p>
         </div>
       </div>
@@ -610,7 +610,7 @@
               type="text"
               class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
               bind:value={selections[item.id]}
-              placeholder="Votre réponse…"
+              placeholder={m.form_view_answer_placeholder()}
               disabled={submitted || isNotOpenYet}
             />
           {:else if item.type === 'long_text'}
@@ -618,7 +618,7 @@
               rows="4"
               class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
               bind:value={selections[item.id]}
-              placeholder="Votre réponse…"
+              placeholder={m.form_view_answer_placeholder()}
               disabled={submitted || isNotOpenYet}
             ></textarea>
           {:else if item.type === 'dropdown' || item.type === 'single'}
@@ -627,7 +627,7 @@
               bind:value={selections[item.id]}
               disabled={submitted || isNotOpenYet}
             >
-              <option value="" disabled>Choisir une option…</option>
+              <option value="" disabled>{m.form_view_select_placeholder()}</option>
               {#each item.options ?? [] as opt (opt.id)}
                 <option value={opt.id}>
                   {opt.label}{optionModifier(opt) > 0
@@ -780,7 +780,7 @@
             </div>
           {:else}
             <div class="p-3 bg-red-50 text-red-600 text-xs rounded-xl border border-red-200">
-              Type non supporté : <strong>{item.type}</strong>
+              Unsupported type: <strong>{item.type}</strong>
             </div>
           {/if}
         </div>
@@ -791,7 +791,7 @@
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <div class="mt-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5">
         <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-3">
-          Mode de paiement
+          {m.form_view_payment_mode_heading()}
         </p>
         <div class="grid grid-cols-2 gap-2">
           <label
@@ -807,8 +807,8 @@
               class="accent-cn-yellow"
             />
             <div>
-              <p class="text-sm font-semibold text-text-main">En ligne</p>
-              <p class="text-xs text-text-muted">Carte / wallet</p>
+              <p class="text-sm font-semibold text-text-main">{m.form_view_online_label()}</p>
+              <p class="text-xs text-text-muted">{m.form_view_online_desc()}</p>
             </div>
           </label>
           <label
@@ -824,8 +824,8 @@
               class="accent-cn-yellow"
             />
             <div>
-              <p class="text-sm font-semibold text-text-main">En espèces</p>
-              <p class="text-xs text-text-muted">Validé par un admin</p>
+              <p class="text-sm font-semibold text-text-main">{m.form_view_cash_label()}</p>
+              <p class="text-xs text-text-muted">{m.form_view_cash_desc()}</p>
             </div>
           </label>
         </div>
@@ -855,11 +855,11 @@
         <div class="flex-1 min-w-0">
           {#if submitted}
             <span class="text-sm font-bold text-green-600 flex items-center gap-1.5"
-              ><Check size={16} /> Réponse envoyée</span
+              ><Check size={16} /> {m.form_view_response_sent()}</span
             >
           {:else if calculateTotal() > 0}
             <div>
-              <p class="text-xs text-text-muted font-medium">Total à payer</p>
+              <p class="text-xs text-text-muted font-medium">{m.form_view_total_to_pay()}</p>
               <p class="text-lg font-extrabold text-cn-dark">
                 {formatCurrency(calculateTotal(), form.currency)}
               </p>
@@ -876,16 +876,13 @@
           onclick={handleSubmit}
         >
           {#if paymentPending}
-            <Check size={16} class="mr-1.5" />En attente
+            <Check size={16} class="mr-1.5" />{m.form_view_pending()}
           {:else if submitted}
-            <Check size={16} class="mr-1.5" />Envoyé
+            <Check size={16} class="mr-1.5" />{m.form_view_sent()}
           {:else if formFull}
-            Complet
+            {m.form_view_full()}
           {:else if calculateTotal() > 0}
-            <CreditCard size={16} class="mr-1.5" />Payer {formatCurrency(
-              calculateTotal(),
-              form.currency
-            )}
+            <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({ amount: formatCurrency(calculateTotal(), form.currency) })}
           {:else}
             <Check size={16} class="mr-1.5" />{form.submitLabel || 'Envoyer'}
           {/if}
@@ -894,11 +891,11 @@
 
       {#if paymentPending}
         <p class="pointer-events-auto text-sm text-amber-600 font-medium text-center mt-2">
-          Votre soumission est enregistrée - le paiement est en cours de confirmation.
+          {m.form_view_payment_pending_note()}
         </p>
       {:else if formFull && !submitted}
         <p class="pointer-events-auto text-sm text-text-muted font-medium text-center mt-2">
-          Ce formulaire n'accepte plus de nouvelles réponses.
+          {m.form_view_form_full_note()}
         </p>
       {/if}
 
@@ -911,7 +908,7 @@
             class="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-main underline underline-offset-2 disabled:opacity-50"
           >
             <CreditCard size={13} />
-            {savingCard ? 'Redirection…' : 'Enregistrer une carte pour payer plus vite'}
+            {savingCard ? m.form_view_saving_card() : m.form_view_save_card()}
           </button>
         </div>
       {/if}

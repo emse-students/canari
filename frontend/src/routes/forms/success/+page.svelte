@@ -2,6 +2,7 @@
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   const sessionId = $derived(page.url.searchParams.get('session_id'));
 
@@ -34,7 +35,7 @@
 </script>
 
 <svelte:head>
-  <title>Paiement réussi</title>
+  <title>{m.form_success_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen flex items-center justify-center px-4">
@@ -45,7 +46,7 @@
           <Loader size={48} class="text-text-muted animate-spin" />
         </div>
       </div>
-      <p class="text-text-muted">Vérification du paiement…</p>
+      <p class="text-text-muted">{m.form_success_verifying()}</p>
     {:else if status === 'confirmed'}
       <div class="flex justify-center">
         <div class="p-4 rounded-full bg-green-100">
@@ -53,16 +54,16 @@
         </div>
       </div>
       <div>
-        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Paiement confirmé !</h1>
+        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_success_confirmed_heading()}</h1>
         <p class="text-text-muted mt-2">
-          Votre inscription a bien été enregistrée. Vous recevrez une confirmation par email.
+          {m.form_success_confirmed_desc()}
         </p>
       </div>
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
       >
-        Retour au formulaire
+        {m.form_success_back_to_form()}
       </a>
     {:else}
       <div class="flex justify-center">
@@ -71,16 +72,16 @@
         </div>
       </div>
       <div>
-        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Paiement introuvable</h1>
+        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_success_not_found_heading()}</h1>
         <p class="text-text-muted mt-2">
-          Impossible de confirmer votre paiement. Si vous avez été débité, contactez le support.
+          {m.form_success_not_found_desc()}
         </p>
       </div>
       <a
         href="/forms"
         class="inline-flex items-center gap-2 rounded-xl bg-cn-border/40 px-6 py-3 text-sm font-bold text-text-main transition-all hover:bg-cn-border/60"
       >
-        Retour aux formulaires
+        {m.form_success_back_to_forms()}
       </a>
     {/if}
   </div>
