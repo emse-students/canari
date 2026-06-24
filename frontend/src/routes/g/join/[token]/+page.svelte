@@ -5,6 +5,7 @@
   import { getGroupInvitePreview, acceptGroupInvite } from '$lib/mls/groupInvites';
   import { currentUserId } from '$lib/stores/user';
   import { Users, Loader2, AlertCircle, Check } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   const token = $derived((page.params as Record<string, string>).token);
 
@@ -26,7 +27,7 @@
     try {
       preview = await getGroupInvitePreview(token);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Invitation introuvable';
+      error = e instanceof Error ? e.message : m.invite_not_found();
     } finally {
       loading = false;
     }
@@ -39,13 +40,13 @@
       await acceptGroupInvite(token);
       joined = true;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Impossible de rejoindre le groupe';
+      error = e instanceof Error ? e.message : m.group_join_error_fallback();
       joining = false;
     }
   }
 </script>
 
-<svelte:head><title>Rejoindre un groupe - Canari</title></svelte:head>
+<svelte:head><title>{m.group_join_page_title()}</title></svelte:head>
 
 <div class="px-4 py-10 max-w-md mx-auto">
   <div
@@ -60,25 +61,24 @@
         <div class="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
           <Check size={30} />
         </div>
-        <p class="text-sm font-semibold text-text-main">Demande envoyée !</p>
+        <p class="text-sm font-semibold text-text-main">{m.group_join_sent_title()}</p>
         <p class="text-xs text-text-muted leading-relaxed">
-          Vous rejoindrez " {preview?.groupName ?? 'le groupe'} " dès qu'un de ses membres sera en
-          ligne. La conversation apparaîtra automatiquement dans votre messagerie.
+          {m.group_join_sent_desc({ name: preview?.groupName ?? m.group_join_group_fallback() })}
         </p>
         <a
           href="/chat"
           class="mt-1 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
         >
-          Aller à la messagerie
+          {m.group_join_go_to_chat()}
         </a>
       </div>
     {:else if error || !preview?.valid}
       <div class="flex flex-col items-center gap-3 py-4">
         <AlertCircle size={36} class="text-red-500" />
-        <p class="text-sm font-semibold text-text-main">Invitation invalide ou expirée</p>
+        <p class="text-sm font-semibold text-text-main">{m.invite_invalid_or_expired()}</p>
         {#if error}<p class="text-xs text-text-muted">{error}</p>{/if}
         <a href="/chat" class="text-sm font-semibold text-cn-dark hover:underline">
-          Retour à la messagerie
+          {m.group_join_back_chat()}
         </a>
       </div>
     {:else}
@@ -86,9 +86,9 @@
         <Users size={30} />
       </div>
       <div>
-        <p class="text-sm text-text-muted">Vous avez été invité à rejoindre le groupe</p>
+        <p class="text-sm text-text-muted">{m.group_join_invited_text()}</p>
         <h1 class="text-xl font-extrabold text-text-main mt-1">
-          {preview.groupName ?? 'Groupe Canari'}
+          {preview.groupName ?? m.group_join_group_fallback()}
         </h1>
       </div>
       <button
@@ -97,9 +97,9 @@
         disabled={joining}
         class="w-full rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 transition-colors"
       >
-        {joining ? 'Envoi…' : 'Rejoindre le groupe'}
+        {joining ? m.common_sending_label() : m.group_join_btn()}
       </button>
-      <a href="/chat" class="block text-xs text-text-muted hover:text-text-main">Annuler</a>
+      <a href="/chat" class="block text-xs text-text-muted hover:text-text-main">{m.common_cancel_button()}</a>
     {/if}
   </div>
 </div>

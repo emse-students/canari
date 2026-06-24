@@ -11,6 +11,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { ChevronDown, ArrowLeft } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let lists = $state<Association[]>([]);
   let myAssociations = $state<Association[]>([]);
@@ -28,7 +29,7 @@
       lists = all;
       myAssociations = mine;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de charger les listes';
+      error = err instanceof Error ? err.message : m.list_load_error_fallback();
     } finally {
       loading = false;
     }
@@ -56,17 +57,17 @@
         class="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-main transition-colors"
       >
         <ArrowLeft size={15} />
-        Associations
+        {m.assoc_list_heading()}
       </a>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-1">Listes</h1>
-      <p class="text-sm text-text-muted mt-1">Les listes de promotion de la communauté</p>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-1">{m.list_heading()}</h1>
+      <p class="text-sm text-text-muted mt-1">{m.list_subtitle()}</p>
     </div>
     {#if canCreate}
       <a
         href="/lists/new"
         class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
       >
-        Créer une liste
+        {m.list_new_create_btn()}
       </a>
     {/if}
   </div>
@@ -86,8 +87,8 @@
           class="text-center py-16 bg-[var(--cn-surface)]/60 rounded-2xl border-2 border-dashed border-cn-border"
         >
           <div class="text-5xl mb-3">📋</div>
-          <h3 class="text-lg font-bold text-text-main mb-1">Aucune liste</h3>
-          <p class="text-sm text-text-muted">Les listes de promotion apparaîtront ici.</p>
+          <h3 class="text-lg font-bold text-text-main mb-1">{m.list_empty_title()}</h3>
+          <p class="text-sm text-text-muted">{m.list_empty_desc()}</p>
         </div>
       {:else}
         <div class="grid gap-4 sm:grid-cols-2">
@@ -113,9 +114,11 @@
                     </div>
                   {/if}
                   <p class="text-xs text-text-muted mt-1">
-                    {list.memberCount ?? 0} membre{(list.memberCount ?? 0) !== 1 ? 's' : ''}
+                    {(list.memberCount ?? 0) !== 1
+                      ? m.assoc_member_count_many({ count: list.memberCount ?? 0 })
+                      : m.assoc_member_count_one({ count: list.memberCount ?? 0 })}
                     {#if myIds.has(list.id)}
-                      <span class="ml-1 text-cn-dark font-semibold">· Membre</span>
+                      <span class="ml-1 text-cn-dark font-semibold">&#183; {m.assoc_list_member_badge()}</span>
                     {/if}
                   </p>
                 </div>
@@ -136,7 +139,7 @@
           aria-expanded={showArchived}
         >
           <ChevronDown size={18} class="transition-transform {showArchived ? 'rotate-180' : ''}" />
-          Anciennes listes ({archivedLists.length})
+          {m.list_archived_heading({ count: archivedLists.length })}
         </button>
         {#if showArchived}
           <div class="grid gap-4 sm:grid-cols-2 mt-3">
@@ -155,8 +158,10 @@
                       {/if}
                     </h3>
                     <p class="text-xs text-text-muted mt-1">
-                      {list.memberCount ?? 0} membre{(list.memberCount ?? 0) !== 1 ? 's' : ''}
-                      <span class="ml-1 font-semibold">· Archivée</span>
+                      {(list.memberCount ?? 0) !== 1
+                        ? m.assoc_member_count_many({ count: list.memberCount ?? 0 })
+                        : m.assoc_member_count_one({ count: list.memberCount ?? 0 })}
+                      <span class="ml-1 font-semibold">&#183; {m.assoc_list_archived_badge()}</span>
                     </p>
                   </div>
                 </div>

@@ -211,7 +211,7 @@ What NOT to write:
 
 Inline comments (`//`) inside function bodies: only for non-obvious logic, workarounds, or subtle invariants. Not for every line.
 
-**Language**: all comments (inline `//`, block `/* */`, JSDoc `/** */`, Rust `///`) must be written in **English** - no French, no mixed languages. Concise but complete enough for a language model to quickly grasp the intent.
+**Language**: all comments (inline `//`, block `/* */`, JSDoc `/** */`, Rust `///`) **and all developer-facing string literals** (console.log, console.error, log::debug!, eprintln!, error messages thrown internally) must be written in **English** - no French, no mixed languages. Concise but complete enough for a language model to quickly grasp the intent. User-visible strings go through Paraglide i18n (both FR and EN), not inline string literals.
 
 ### Caractères de texte (apostrophes, guillemets, tirets)
 

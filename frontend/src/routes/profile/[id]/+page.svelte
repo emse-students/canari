@@ -26,6 +26,8 @@
   } from '$lib/profile/api';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Building2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -39,7 +41,7 @@
   onMount(async () => {
     const userId = page.params.id;
     if (!userId) {
-      error = 'Identifiant utilisateur manquant';
+      error = m.profile_public_missing_id();
       loading = false;
       return;
     }
@@ -72,15 +74,15 @@
         extrasLoading = false;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de charger ce profil';
+      error = err instanceof Error ? err.message : m.profile_public_load_error();
     } finally {
       loading = false;
     }
   });
 
   function formatYear(year: number | null): string {
-    if (!year) return 'Non renseignée';
-    return `Promotion ${year}`;
+    if (!year) return m.profile_promo_unknown();
+    return m.profile_promo_value({ year });
   }
 
   const displayFallbackName = $derived.by(() => {
@@ -119,7 +121,7 @@
   {#if loading}
     <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
       <Loader2 size={32} class="animate-spin text-cn-yellow" strokeWidth={2.5} />
-      <span class="text-sm font-bold tracking-wider uppercase">Chargement du profil...</span>
+      <span class="text-sm font-bold tracking-wider uppercase">{m.profile_public_loading()}</span>
     </div>
   {:else if error}
     <div
@@ -128,12 +130,12 @@
     >
       <AlertCircle size={20} class="shrink-0 mt-0.5" />
       <div>
-        <h3 class="font-bold text-sm mb-1">Erreur</h3>
+        <h3 class="font-bold text-sm mb-1">{m.common_error_heading()}</h3>
         <p class="text-sm font-medium">{error}</p>
       </div>
     </div>
   {:else if profile}
-    <!-- En-tête du profil public -->
+    <!-- Public profile header -->
     <div
       class="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
     >
@@ -168,27 +170,27 @@
             : 'bg-cn-yellow/10 border border-cn-yellow/20 text-amber-700 dark:text-cn-yellow hover:bg-cn-yellow/20'}"
         >
           {#if following}
-            <UserCheck size={18} strokeWidth={2.5} /> Suivi
+            <UserCheck size={18} strokeWidth={2.5} /> {m.profile_public_following_btn()}
           {:else}
-            <UserPlus size={18} strokeWidth={2.5} /> Suivre
+            <UserPlus size={18} strokeWidth={2.5} /> {m.profile_public_follow_btn()}
           {/if}
         </button>
         <button
           onclick={handleSendMessage}
           class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all active:scale-95 shadow-md shadow-cn-yellow/20 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
         >
-          <MessageCircle size={18} strokeWidth={2.5} /> Message
+          <MessageCircle size={18} strokeWidth={2.5} /> {m.profile_public_message_btn()}
         </button>
       </div>
     </div>
 
-    <!-- Section Bio -->
+    <!-- Bio section -->
     {#if profile.bio}
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
         style="animation-fill-mode: backwards;"
       >
-        <h2 class="text-lg font-extrabold text-text-main mb-4">À propos</h2>
+        <h2 class="text-lg font-extrabold text-text-main mb-4">{m.profile_public_about_heading()}</h2>
         <ProfileBioMarkdown source={profile.bio} />
       </div>
     {/if}
@@ -199,7 +201,7 @@
       >
         <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
           <Building2 size={20} />
-          Associations
+          {m.assoc_list_heading()}
         </h2>
         <ProfileAssociationsSection memberships={memberships} loading={extrasLoading} />
       </div>
@@ -209,17 +211,17 @@
       <div
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
       >
-        <h2 class="text-lg font-extrabold text-text-main mb-5">Parcours associatif</h2>
+        <h2 class="text-lg font-extrabold text-text-main mb-5">{m.profile_public_career_heading()}</h2>
         <ProfileRoleHistorySection entries={roleHistory} />
       </div>
     {/if}
 
-    <!-- Section Informations -->
+    <!-- Information section -->
     <div
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
       style="animation-fill-mode: backwards;"
     >
-      <h2 class="text-lg font-extrabold text-text-main mb-6">Informations</h2>
+      <h2 class="text-lg font-extrabold text-text-main mb-6">{m.profile_public_info_heading()}</h2>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div
@@ -230,7 +232,7 @@
           </div>
           <div class="min-w-0">
             <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
-              Promotion
+              {m.profile_promo_label()}
             </p>
             <p class="text-sm font-bold text-text-main truncate">{formatYear(profile.promo)}</p>
           </div>
@@ -244,14 +246,13 @@
           </div>
           <div class="min-w-0">
             <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
-              Membre depuis le
+              {m.profile_member_since_label()}
             </p>
             <p class="text-sm font-bold text-text-main capitalize">
-              {new Date(profile.createdAt).toLocaleDateString('fr-FR', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
+              {new Date(profile.createdAt).toLocaleDateString(
+                getLocale() === 'en' ? 'en-US' : 'fr-FR',
+                { year: 'numeric', month: 'long', day: 'numeric' }
+              )}
             </p>
           </div>
         </div>

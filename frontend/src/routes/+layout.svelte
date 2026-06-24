@@ -45,6 +45,7 @@
   import { startPushService } from '$lib/services/PushNotificationService';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
 
@@ -133,25 +134,24 @@
     document.documentElement.classList.toggle('keyboard-open', isKeyboardOpen);
   });
 
-  // ── INIT PUSH NOTIFICATIONS (SÉCURISÉ) ─────────────────────────────────────
+  // ── Push notification init ───────────────────────────────────────────────────
   $effect(() => {
-    // On attend que la session soit totalement valide (connecté + infos présentes)
+    // Wait until the session is fully established (logged in + user info + token present).
     if (globalSession.isLoggedIn && globalSession.userId && globalSession.authToken) {
-      // On utilise un timeout pour laisser l'Activity Android se lier parfaitement à l'UI
-      // avant de faire popper la demande d'autorisation native.
+      // Small delay lets the Android Activity bind to the UI before the native permission prompt.
       const timer = setTimeout(() => {
         startPushService(
           globalSession.historyBaseUrl || 'https://canari-emse.fr',
           globalSession.authToken,
           globalSession.myDeviceId
-        ).catch((err) => console.error("[Push] Erreur d'initialisation:", err));
+        ).catch((err) => console.error('[Push] Init error:', err));
       }, 500);
 
       return () => clearTimeout(timer);
     }
   });
 
-  // ── Swipe navigation (mobile uniquement) ───────────────────────────────────
+  // ── Swipe navigation (mobile only) ────────────────────────────────────────
   let pageScrollWrap = $state<HTMLDivElement | null>(null);
   let swipeGesture = $state<SwipeNavGestureState | null>(null);
   let swipeEnterClass = $state('');
@@ -286,7 +286,7 @@
 
 <SeoHead />
 
-<a href="#main-content" class="skip-link">Aller au contenu principal</a>
+<a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <AppUpdateModal />
 <PlatformGateOverlay />
@@ -303,7 +303,7 @@
   ontouchcancel={handleTouchCancel}
   class="flex h-[var(--app-viewport-height,100dvh)] w-screen overflow-hidden pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
 >
-  <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash récupéré:', e)}>
+  <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
     <ChatBackgroundService />
   </svelte:boundary>
 
@@ -332,13 +332,13 @@
           {@render children?.()}
           {#snippet failed(_error, reset)}
             <div class="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
-              <p class="text-sm text-text-muted">Une erreur est survenue sur cette page.</p>
+              <p class="text-sm text-text-muted">{m.layout_error_boundary_message()}</p>
               <button
                 type="button"
                 onclick={reset}
                 class="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold"
               >
-                Réessayer
+                {m.common_retry_button()}
               </button>
             </div>
           {/snippet}

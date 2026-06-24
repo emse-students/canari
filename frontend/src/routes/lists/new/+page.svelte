@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let name = $state('');
   let slug = $state('');
@@ -35,7 +36,7 @@
 
   async function handleSubmit() {
     if (!name.trim() || !slug.trim()) {
-      error = 'Le nom et le slug sont requis.';
+      error = m.assoc_new_error_required();
       return;
     }
     submitting = true;
@@ -52,7 +53,7 @@
       });
       await goto(`/lists/${list.slug}`);
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de créer la liste';
+      error = err instanceof Error ? err.message : m.list_new_error_fallback();
     } finally {
       submitting = false;
     }
@@ -62,9 +63,9 @@
 <div class="px-4 py-6 sm:px-6 max-w-lg mx-auto space-y-6">
   <div>
     <a href="/lists" class="text-sm text-text-muted hover:text-text-main transition-colors">
-      ← Retour aux listes
+      &#x2190; {m.list_new_back()}
     </a>
-    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">Créer une liste</h1>
+    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">{m.list_new_create_btn()}</h1>
   </div>
 
   <form
@@ -75,20 +76,20 @@
     }}
   >
     <Input
-      label="Nom de la liste"
+      label={m.list_new_name_label()}
       bind:value={name}
       oninput={onNameInput}
-      placeholder="Liste Canari 2027"
+      placeholder={m.list_new_name_placeholder()}
       required
     />
 
     <Input label="Slug (URL)" bind:value={slug} placeholder="liste-canari-2027" required />
     <p class="text-xs text-text-muted -mt-3">
-      Uniquement des lettres minuscules, chiffres et tirets.
+      {m.assoc_new_slug_hint()}
     </p>
 
     <Input
-      label="Promotion (optionnel)"
+      label={m.list_new_promo_label()}
       type="number"
       bind:value={promo}
       placeholder="2027"
@@ -97,14 +98,14 @@
     <div>
       <label
         for="list-parent"
-        class="block text-sm font-bold text-text-main mb-2 ml-1">Association parente (optionnel)</label
+        class="block text-sm font-bold text-text-main mb-2 ml-1">{m.list_new_parent_label()}</label
       >
       <select
         id="list-parent"
         bind:value={parentAssociationId}
         class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none focus:border-cn-yellow"
       >
-        <option value="">Aucune</option>
+        <option value="">{m.list_new_parent_none()}</option>
         {#each associations as a (a.id)}
           <option value={a.id}>{a.name}</option>
         {/each}
@@ -112,14 +113,14 @@
     </div>
 
     <Textarea
-      label="Description"
+      label={m.assoc_new_desc_label()}
       bind:value={description}
-      placeholder="Présentez la liste en quelques mots…"
+      placeholder={m.list_new_desc_placeholder()}
       rows={3}
     />
 
     <Input
-      label="E-mail de contact (optionnel)"
+      label={m.assoc_new_email_label()}
       type="email"
       bind:value={contactEmail}
       placeholder="contact@liste.fr"
@@ -136,7 +137,7 @@
       disabled={submitting || !name.trim() || !slug.trim()}
       class="w-full rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover disabled:cursor-not-allowed disabled:opacity-50"
     >
-      {submitting ? 'Création…' : 'Créer la liste'}
+      {submitting ? m.common_creating_label() : m.list_new_create_btn()}
     </button>
   </form>
 </div>

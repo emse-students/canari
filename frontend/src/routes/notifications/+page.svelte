@@ -9,6 +9,7 @@
   import { MENTION_USER_ID_PATTERN, normalizeMentionUserId } from '$lib/utils/mentions';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { PostNotification } from '$lib/posts/api';
+  import { m } from '$lib/paraglide/messages';
 
   onMount(() => {
     void postNotifStore.load(50);
@@ -31,8 +32,8 @@
     const idMap: Record<string, true> = {};
     for (const n of postNotifStore.notifications) {
       if (!n.text) continue;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(n.text)) !== null) idMap[normalizeMentionUserId(m[1])] = true;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(n.text)) !== null) idMap[normalizeMentionUserId(match[1])] = true;
     }
     const ids = Object.keys(idMap);
     if (ids.length === 0) return;
@@ -53,11 +54,11 @@
 </script>
 
 <svelte:head>
-  <title>Notifications - Canari</title>
+  <title>{m.nav_notifications_label()} - Canari</title>
 </svelte:head>
 
 <main class="max-w-xl mx-auto px-4 py-6 pb-24 md:pb-8">
-  <h1 class="text-xl font-bold mb-5 text-text-main">Notifications</h1>
+  <h1 class="text-xl font-bold mb-5 text-text-main">{m.nav_notifications_label()}</h1>
 
   {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
     <div class="flex flex-col gap-3">
@@ -74,7 +75,7 @@
   {:else if postNotifStore.notifications.length === 0}
     <div class="flex flex-col items-center gap-3 py-16 text-text-muted">
       <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
-      <p class="text-sm">Aucune notification pour l'instant</p>
+      <p class="text-sm">{m.notif_empty_message()}</p>
     </div>
   {:else}
     <ul class="flex flex-col divide-y divide-cn-border">
@@ -85,7 +86,7 @@
             class="w-full text-left py-3.5 flex gap-3 items-start hover:bg-cn-surface/60 transition-colors rounded-xl px-2 -mx-2"
             onclick={() => openNotification(notif)}
           >
-            <!-- Icône du type de notification -->
+            <!-- Notification type icon -->
             <span
               class="shrink-0 mt-0.5 flex items-center justify-center w-10 h-10 rounded-full
                 {notif.type === 'reaction' ? 'bg-pink-500/10 text-pink-500' : ''}
@@ -109,28 +110,28 @@
               {/if}
             </span>
 
-            <!-- Contenu -->
+            <!-- Content -->
             <div class="min-w-0 flex-1">
               <p class="text-sm leading-snug">
-                <span class="font-semibold text-text-main">{notif.actorName || "Quelqu'un"}</span>
+                <span class="font-semibold text-text-main">{notif.actorName || m.notif_actor_unknown()}</span>
                 {#if notif.type === 'reaction'}
-                  <span class="text-text-muted"> a réagi à votre publication</span>
+                  <span class="text-text-muted"> {m.notif_reaction_text()}</span>
                 {:else if notif.type === 'mention'}
-                  <span class="text-text-muted"> vous a mentionné</span>
+                  <span class="text-text-muted"> {m.notif_mention_text()}</span>
                 {:else if notif.type === 'reply'}
-                  <span class="text-text-muted"> a répondu à votre commentaire</span>
+                  <span class="text-text-muted"> {m.notif_reply_text()}</span>
                 {:else if notif.type === 'form_reminder'}
                   <span class="text-text-muted"> {notif.text}</span>
                 {:else}
                   <span class="text-text-muted">
-                    a commenté : <span class="italic">{renderNotifText(notif.text)}</span></span
+                    {m.notif_comment_text()} <span class="italic">{renderNotifText(notif.text)}</span></span
                   >
                 {/if}
               </p>
               <p class="text-xs text-text-muted mt-1">{formatRelative(notif.createdAt)}</p>
             </div>
 
-            <!-- Point non-lu -->
+            <!-- Unread indicator -->
             {#if !notif.read}
               <span class="mt-2 w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0 shadow-sm"></span>
             {/if}
