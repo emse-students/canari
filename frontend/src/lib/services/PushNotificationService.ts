@@ -1,17 +1,17 @@
 /**
  * PushNotificationService.ts
  *
- * Gestion des notifications push FCM sur Android via Tauri.
+ * Android push notification management via FCM and Tauri.
  *
- * Flux :
- *  1. `startPushService` est appelé au démarrage (après login).
- *  2. `getFcmToken` interroge la commande Rust `get_fcm_token` (lit fcm_token.txt
- *     écrit par MainActivity.onCreate ou CanariFirebaseMessagingService.onNewToken)
- *     avec des tentatives toutes les 500 ms pendant 30 s max.
- *  3. Le token est envoyé au backend qui retourne un `pushSecret` stocké
- *     dans le Keystore Android via `store_push_secret`.
+ * Flow:
+ *  1. `startPushService` is called at startup (after login).
+ *  2. `getFcmToken` polls the `get_fcm_token` Rust command (reads fcm_token.txt
+ *     written by MainActivity.onCreate or CanariFirebaseMessagingService.onNewToken)
+ *     every 500 ms for up to 30 s.
+ *  3. The token is sent to the backend, which returns a `pushSecret` stored
+ *     in the Android Keystore via `store_push_secret`.
  *
- * Sur desktop/web, toutes les méthodes sont des no-op silencieux.
+ * On desktop/web, all methods are silent no-ops.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -24,13 +24,13 @@ const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
 
-// Évite le spam de tentatives si Google Play Services est indisponible.
+// Prevents repeated attempts when Google Play Services is unavailable.
 let pushAttempted = false;
 
 /**
- * Lit le token FCM via la commande Rust `get_fcm_token` (lit fcm_token.txt).
- * Interroge toutes les 500 ms pendant 30 s pour laisser le temps à
- * MainActivity.onCreate de terminer l'appel Firebase asynchrone.
+ * Reads the FCM token via the Rust `get_fcm_token` command (reads fcm_token.txt).
+ * Polls every 500 ms for up to 30 s to let MainActivity.onCreate complete
+ * the asynchronous Firebase call.
  */
 export async function getFcmToken(): Promise<string | null> {
   if (!isTauriRuntime()) return null;
@@ -40,7 +40,7 @@ export async function getFcmToken(): Promise<string | null> {
       const token = await invoke<string | null>('get_fcm_token');
       if (token) return token;
     } catch {
-      return null; // commande Rust indisponible
+      return null; // Rust command unavailable
     }
     await new Promise<void>((r) => setTimeout(r, 500));
   }
@@ -48,11 +48,11 @@ export async function getFcmToken(): Promise<string | null> {
 }
 
 /**
- * Récupère le token FCM et l'enregistre auprès du backend.
+ * Fetches the FCM token and registers it with the backend.
  *
- * @param registerFn  Callback qui envoie le token au backend.
- *                    Signature : (token: string) => Promise<void>
- *                    Exemple : (t) => apiClient.post('/push/register', { token: t })
+ * @param registerFn  Callback that sends the token to the backend.
+ *                    Signature: (token: string) => Promise<void>
+ *                    Example: (t) => apiClient.post('/push/register', { token: t })
  */
 export async function registerPushToken(
   registerFn: (token: string) => Promise<void>
@@ -66,7 +66,7 @@ export async function registerPushToken(
     return false;
   }
 
-  // Évite de ré-enregistrer le même token inutilement
+  // Skip backend registration when the token has not changed.
   const stored = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
   if (stored === token) {
     console.info('[Push] Token unchanged, skip backend registration');
@@ -76,21 +76,21 @@ export async function registerPushToken(
   try {
     await registerFn(token);
     sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, token);
-    console.info('[Push] Token FCM enregistré avec succès');
+    console.info('[Push] FCM token registered successfully');
     return true;
   } catch (err) {
-    console.error('[Push] Échec enregistrement du token FCM', err);
+    console.error('[Push] FCM token registration failed', err);
     return false;
   }
 }
 
 /**
- * Démarre le service push.
- * À appeler au démarrage de l'application (dans ChatBackgroundService ou hooks.client.ts).
+ * Starts the push notification service.
+ * Call at application startup (in ChatBackgroundService or hooks.client.ts).
  *
- * @param apiBaseUrl   URL de base de l'API backend (ex: "https://api.canari.app")
- * @param authToken    Token d'authentification pour l'API
- * @param deviceId     Identifiant unique de l'appareil
+ * @param apiBaseUrl   Backend API base URL (e.g. "https://api.canari.app")
+ * @param authToken    Authentication token for the API
+ * @param deviceId     Unique device identifier
  */
 export async function startPushService(
   apiBaseUrl: string,
@@ -141,13 +141,13 @@ export async function startPushService(
     });
   };
 
-  // Appels ultérieurs (ex. retour au premier plan) : NE PAS re-skip aveuglément.
-  // Le token FCM peut avoir tourné pendant que l'app vivait en arrière-plan ;
-  // onNewToken n'écrit le nouveau token qu'en local sans le pousser au serveur.
-  // On re-vérifie donc le token (chemin rapide, sans re-poll 30 s ni re-demander la
-  // permission) ; registerPushToken n'envoie au backend que s'il a réellement changé.
+  // Subsequent calls (e.g. returning to foreground): do NOT blindly skip.
+  // The FCM token may have rotated while the app was in the background;
+  // onNewToken only writes the new token locally without pushing it to the server.
+  // Re-check the token here (fast path, no 30 s re-poll, no re-permission prompt);
+  // registerPushToken only sends to the backend if the token has actually changed.
   if (pushAttempted) {
-    console.info('[Push] startPushService re-check (rotation token éventuelle)');
+    console.info('[Push] startPushService re-check (possible token rotation)');
     await registerOnce();
     return;
   }
@@ -157,14 +157,14 @@ export async function startPushService(
     `[Push] startPushService device=${deviceId} (platform will be confirmed by FCM token)`
   );
 
-  // --- GESTION PERMISSION ANDROID 13+ ---
+  // --- ANDROID 13+ NOTIFICATION PERMISSION ---
   try {
     let permissionGranted = await isPermissionGranted();
     if (!permissionGranted) {
-      // Contexte avant la boîte de dialogue système (évite une demande "à froid").
-      // Court délai pour laisser l'utilisateur lire avant que le dialogue ne s'ouvre.
+      // Show context before the system dialog (avoids a "cold" permission request).
+      // Short delay to let the user read the toast before the dialog opens.
       showToast(
-        'Activez les notifications pour être prévenu des nouveaux messages, même app fermée.',
+        'Enable notifications to be notified of new messages, even when the app is closed.',
         'info',
         6000
       );
@@ -175,12 +175,12 @@ export async function startPushService(
 
     if (!permissionGranted) {
       console.warn(
-        "[Push] Permission de notification refusée. L'affichage des pop-ups sera bloqué par Android."
+        '[Push] Notification permission denied. Pop-up display will be blocked by Android.'
       );
-      // On continue quand même : FCM peut recevoir des données silencieuses (background sync)
+      // Continue anyway: FCM can still receive silent data messages (background sync).
     }
   } catch (err) {
-    console.warn('[Push] Impossible de vérifier/demander la permission de notification', err);
+    console.warn('[Push] Cannot check/request notification permission', err);
   }
   // --------------------------------------
 
@@ -232,6 +232,6 @@ export async function stopPushService(
     }
     sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
   } catch (err) {
-    console.error('[Push] Échec désenregistrement du token FCM', err);
+    console.error('[Push] FCM token deregistration failed', err);
   }
 }

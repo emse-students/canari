@@ -107,7 +107,7 @@ export async function handleSystemEvent(
       );
       await addMessageToChat('system', inviteEnvelope, convoKey, { isSystem: true });
       log(
-        `[CHANNEL-KEY] ${keysToImport.length} cle(s) recue(s) via MLS pour #${displayName} (jusqu'a v${keyVersion}).`
+        `[CHANNEL-KEY] ${keysToImport.length} key(s) received via MLS for #${displayName} (up to v${keyVersion}).`
       );
     } catch (e) {
       log(
@@ -124,11 +124,11 @@ export async function handleSystemEvent(
     const getName = await resolveDisplayNames([senderNorm]);
     await addMessageToChat(
       'system',
-      `${getName(senderNorm)} a renommé le groupe en "${data.newName}"`,
+      `${getName(senderNorm)} renamed the group to "${data.newName}"`,
       convoKey,
       { isSystem: true }
     );
-    log(`📝 Groupe renommé en "${data.newName}" par ${getName(senderNorm)}`);
+    log(`📝 Group renamed to "${data.newName}" by ${getName(senderNorm)}`);
     return true;
   }
 
@@ -141,12 +141,12 @@ export async function handleSystemEvent(
     await addMessageToChat(
       'system',
       imageMediaId
-        ? `${getName(senderNorm)} a changé la photo du groupe`
-        : `${getName(senderNorm)} a retiré la photo du groupe`,
+        ? `${getName(senderNorm)} changed the group photo`
+        : `${getName(senderNorm)} removed the group photo`,
       convoKey,
       { isSystem: true }
     );
-    log(`🖼️ Photo de groupe modifiée par ${getName(senderNorm)} (media=${imageMediaId ?? 'null'})`);
+    log(`🖼️ Group photo changed by ${getName(senderNorm)} (media=${imageMediaId ?? 'null'})`);
     return true;
   }
 
@@ -163,11 +163,11 @@ export async function handleSystemEvent(
       if (deleteConversation) await deleteConversation(convoKey);
       conversations.delete(convoKey);
       if (getSelectedContact() === convoKey) setSelectedContact(null);
-      log(`[INFO] Expulsé du groupe "${convoKey}" par ${getName(senderNorm)}`);
+      log(`[INFO] Kicked from group "${convoKey}" by ${getName(senderNorm)}`);
     } else {
       await addMessageToChat(
         'system',
-        `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`,
+        `${getName(senderNorm)} removed ${getName(data.targetUser)} from the group`,
         convoKey,
         { isSystem: true }
       );
@@ -187,7 +187,7 @@ export async function handleSystemEvent(
     if (added) {
       await addMessageToChat(
         'system',
-        `${getName(senderNorm)} a ajouté ${added} au groupe`,
+        `${getName(senderNorm)} added ${added} to the group`,
         convoKey,
         { isSystem: true }
       );
@@ -206,22 +206,22 @@ export async function handleSystemEvent(
     persistMlsStateNow();
 
     if (senderNorm === userId) {
-      // Suppression effectuée par nous-mêmes sur un autre appareil : supprimer immédiatement
-      // sans interaction utilisateur (synchronisation de notre propre action).
+      // Deletion performed by us on another device: remove immediately
+      // without user interaction (syncing our own action).
       if (getSelectedContact() === convoKey) setSelectedContact(null);
       conversations.delete(convoKey);
       await deleteConversation?.(convoKey).catch(() => {});
-      log(`[INFO] Groupe supprimé sur un autre appareil - conversation retirée immédiatement`);
+      log(`[INFO] Group deleted on another device - conversation removed immediately`);
     } else {
-      // Suppression par un autre participant : ajouter un message visible et passer la
-      // conversation en `removed` pour que l'utilisateur puisse lire l'historique avant de fermer.
-      await addMessageToChat('system', `${senderName} a supprimé cette conversation.`, convoKey, {
+      // Deleted by another participant: add a visible message and set the
+      // conversation to `removed` so the user can read the history before closing.
+      await addMessageToChat('system', `${senderName} deleted this conversation.`, convoKey, {
         isSystem: true,
       });
       const updated = conversations.get(convoKey);
       if (updated) conversations.set(convoKey, { ...updated, lifecycle: 'removed' });
       await saveConversation(convoKey).catch(() => {});
-      log(`[INFO] Groupe supprimé par ${senderName} - conversation marquée removed`);
+      log(`[INFO] Group deleted by ${senderName} - conversation marked removed`);
     }
     return true;
   }
@@ -243,9 +243,9 @@ export async function handleSystemEvent(
           readAt: m.readAt ?? deliveryMeta?.queuedCreatedAt ?? Date.now(),
         };
       });
-      // Receipt émis par NOUS-MÊMES depuis un autre appareil : on a lu cette
-      // conversation ailleurs → remettre le compteur non-lus à zéro pour synchroniser
-      // l'état "lu" entre nos appareils (le readBy seul ne pilote pas le badge non-lu).
+      // Receipt emitted by OURSELVES from another device: we read this
+      // conversation elsewhere → reset the unread count to zero to synchronise
+      // the "read" state across our devices (readBy alone does not drive the unread badge).
       const selfRead = senderNorm === userId;
       if (updated || selfRead) {
         conversations.set(convoKey, {
@@ -256,7 +256,7 @@ export async function handleSystemEvent(
         if (selfRead) await saveConversation?.(convoKey).catch(() => {});
       }
       if (updated) {
-        log(`[READ] Receipt from ${senderNorm} → ${msgIds.length} message(s) marqués lus`);
+        log(`[READ] Receipt from ${senderNorm} → ${msgIds.length} message(s) marked read`);
         if (storage) {
           for (const msgId of msgIds) {
             const m = updatedMessages.find((x) => x.id === msgId);
@@ -301,7 +301,7 @@ export async function handleSystemEvent(
         const deletedMsg = {
           ...orig,
           isDeleted: true,
-          content: 'Ce message a été supprimé.',
+          content: 'This message has been deleted.',
         };
         conversations.set(convoKey, {
           ...c,
@@ -392,7 +392,7 @@ export async function handleSystemEvent(
             timestamp: new Date(m.timestamp),
           }));
         if (toAdd.length > 0) {
-          log(`[HISTORY_BUNDLE] ${toAdd.length} messages reçus depuis l'invitant`);
+          log(`[HISTORY_BUNDLE] ${toAdd.length} messages received from the inviting peer`);
           if (batchAddMessages) {
             await batchAddMessages(toAdd, convoKey);
           } else {
@@ -403,7 +403,7 @@ export async function handleSystemEvent(
         }
       }
     } catch {
-      /* bundle malformé - ignorer silencieusement */
+      /* malformed bundle - ignore silently */
     }
     return true;
   }

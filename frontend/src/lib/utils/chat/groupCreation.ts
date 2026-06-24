@@ -26,27 +26,27 @@ interface GroupCreationDeps {
 }
 
 /**
- * Maps raw error messages from the MLS/network layer to user-friendly French strings
+ * Maps raw error messages from the MLS/network layer to user-friendly strings
  * suitable for display in the UI. Falls back to the raw message for unrecognised errors.
  */
 function toUiDiscussionError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const lower = raw.toLowerCase();
 
-  if (lower.includes('aucun appareil actif trouvé') || lower.includes('no registered device')) {
-    return "Le destinataire ne possède pas encore d'appareil actif.";
+  if (lower.includes('no registered device') || lower.includes('no active device')) {
+    return 'The recipient does not yet have an active device.';
   }
   if (lower.includes('session expir') || lower.includes('401') || lower.includes('403')) {
-    return 'Session expirée ou droits insuffisants. Reconnectez-vous puis réessayez.';
+    return 'Session expired or insufficient permissions. Please sign in and try again.';
   }
   if (lower.includes('failed to fetch') || lower.includes('network')) {
-    return 'Service de messagerie indisponible. Vérifiez votre connexion réseau.';
+    return 'Messaging service unavailable. Check your network connection.';
   }
-  if (lower.includes("impossible d'envoyer l'invitation sécurisée")) {
+  if (lower.includes('cannot send the secure invitation')) {
     return raw;
   }
   if (lower.includes('already_member')) {
-    return 'Ce membre est déjà présent localement ; il rejoindra le groupe via la synchronisation automatique.';
+    return 'This member is already present locally; they will join the group via automatic sync.';
   }
 
   return raw;
@@ -70,12 +70,12 @@ async function fetchDevicesWithRetry(
       if (devices.length > 0) return devices;
     } catch (err) {
       log(
-        `[RETRY] Erreur réseau pour ${userId} (tentative ${attempt}/${attempts}): ${String(err).slice(0, 80)}`
+        `[RETRY] Network error for ${userId} (attempt ${attempt}/${attempts}): ${String(err).slice(0, 80)}`
       );
     }
     if (attempt < attempts) {
       log(
-        `[RETRY] Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s…`
+        `[RETRY] No devices found for ${userId} (attempt ${attempt}/${attempts}), retrying in ${delayMs / 1000}s...`
       );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -102,7 +102,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       (c.conversationType ?? 'group') === 'group' &&
       c.name.toLowerCase() === groupDisplayName.toLowerCase()
   );
-  if (duplicateGroup) return log(`Groupe "${groupDisplayName}" existe déjà.`);
+  if (duplicateGroup) return log(`Group "${groupDisplayName}" already exists.`);
 
   let groupId: string | undefined;
   let conversationKey: string | undefined;
@@ -116,14 +116,14 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     // Add own other devices to the group - use a single bulk commit to avoid
     // epoch fragmentation (sequential addMember would create one commit per device,
     // causing WrongEpoch errors on already-joined devices).
-    // Best-effort : un echec reseau sur la liste de NOS propres devices ne doit pas avorter la
-    // creation (les autres devices se recuperent via leur propre welcome_request). `[]` => on
-    // cree le groupe avec le seul device courant.
+    // Best-effort: a network error fetching OUR own device list must not abort group creation
+    // (other devices recover via their own welcome_request). `[]` => create the group with
+    // the current device only.
     const ownDevices = (await mlsService.fetchUserDevices(userId).catch(() => [])).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
     log(
-      `[GROUP] Mes autres appareils: ${ownDevices.length} (${ownDevices.map((d) => d.deviceId).join(', ')})`
+      `[GROUP] My other devices: ${ownDevices.length} (${ownDevices.map((d) => d.deviceId).join(', ')})`
     );
 
     if (ownDevices.length > 0) {
@@ -138,22 +138,22 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         if (bulk.welcome) {
           for (const did of bulk.addedDeviceIds) {
             try {
-              log(`[GROUP] Envoi Welcome a ${userId}:${did}…`);
+              log(`[GROUP] Sending Welcome to ${userId}:${did}...`);
               await mlsService.sendWelcome(bulk.welcome, userId, groupId, did, bulk.ratchetTree);
-              log(`[GROUP] Welcome envoye a ${did}`);
+              log(`[GROUP] Welcome sent to ${did}`);
             } catch (e) {
-              log(`[GROUP] Erreur Welcome ${did}: ${e}`);
+              log(`[GROUP] Welcome failed for ${did}: ${e}`);
               console.error(`[GROUP] Welcome failed for ${did}:`, e);
             }
           }
         } else {
-          log('[GROUP] PAS DE WELCOME dans le bulk!');
+          log('[GROUP] No welcome in bulk result!');
           console.warn('[GROUP] addMembersBulk returned no welcome for own devices');
         }
 
-        // Sauvegarder l'état MLS AVANT d'envoyer le commit au réseau.
-        // En cas de crash entre le saveState et le sendCommit, l'état local
-        // reste cohérent (post-addMember) et le commit peut être retenté.
+        // Save MLS state BEFORE sending the commit to the network.
+        // If a crash occurs between saveState and sendCommit, the local state
+        // remains consistent (post-addMember) and the commit can be retried.
         await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
         if (bulk.commit) {
@@ -161,20 +161,20 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
           await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
         }
       } catch (e) {
-        log(`Erreur synchro propres appareils: ${e}`);
+        log(`Error syncing own devices: ${e}`);
         console.error('[GROUP] Sync own devices failed:', e);
       } finally {
         if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
       }
     } else {
-      // Pas d'autres appareils : sauvegarder quand même après createGroup
+      // No other devices: still save state after createGroup.
       await persistMlsStateAfterMutation(mlsService, userId, pin, log);
     }
 
     conversations.set(conversationKey, {
       id: groupId,
       contactName: groupDisplayName,
-      name: groupDisplayName, // conserve la casse originale pour l'affichage
+      name: groupDisplayName, // preserve original casing for display
       messages: [],
       lifecycle: 'active',
       mlsStateHex: null,
@@ -182,7 +182,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     });
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
-    log(`[OK] Groupe "${groupDisplayName}" cree.`);
+    log(`[OK] Group "${groupDisplayName}" created.`);
     console.log(`[GROUP] Group "${groupDisplayName}" created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
     queueMicrotask(() => {
@@ -191,7 +191,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       }
     });
   } catch (e) {
-    log(`Erreur création groupe: ${toUiDiscussionError(e)}`);
+    log(`Group creation error: ${toUiDiscussionError(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);
     globalMessaging.resetMessageCatchupState();
     if (conversationKey) conversations.delete(conversationKey);
@@ -226,7 +226,7 @@ async function processBulkAddition(
   const targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
   if (targetUsers.length === 0) return;
 
-  log(`Invitation de ${targetUsers.length} membres: ${targetUsers.join(', ')}…`);
+  log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
 
   try {
     await mlsService.registerMember(conversation.id, userId);
@@ -238,7 +238,7 @@ async function processBulkAddition(
     for (const targetUser of targetUsers) {
       const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
       if (devices.length === 0) {
-        log(`[WARN] Ignore: Appareils introuvables pour ${targetUser}.`);
+        log(`[WARN] Skipped: no devices found for ${targetUser}.`);
         console.warn(`[SYNC] No devices found for ${targetUser}, skipping`);
         continue;
       }
@@ -249,7 +249,7 @@ async function processBulkAddition(
     }
 
     if (allDevices.length === 0) {
-      log('[ERREUR] Aucun appareil trouve pour les utilisateurs demandes.');
+      log('[ERROR] No devices found for any of the requested users.');
       console.error('[SYNC] No devices found for any requested user - aborting bulk add');
       return;
     }
@@ -257,7 +257,7 @@ async function processBulkAddition(
     const lockAcquired = await mlsService.acquireAddLock(conversation.id).catch(() => false);
     if (!lockAcquired) {
       log(
-        `[WARN] Verrou occupé pour ${conversation.id} - invitation annulée (un autre device est en cours).`
+        `[WARN] Add-lock busy for ${conversation.id} - invite cancelled (another device is in progress).`
       );
       console.warn(
         `[SYNC] Add-lock busy for ${conversation.id}, aborting to avoid concurrent commits`
@@ -287,7 +287,7 @@ async function processBulkAddition(
           const tUser = userMap.get(did);
           if (!tUser) continue;
           try {
-            log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.id}…`);
+            log(`[SYNC] Sending Welcome to ${tUser}:${did} for group ${conversation.id}...`);
             await mlsService.sendWelcome(
               bulk.welcome,
               tUser,
@@ -297,10 +297,10 @@ async function processBulkAddition(
             );
             await mlsService.registerMember(conversation.id, tUser);
             deliveredUsers.add(tUser);
-            log(`[SYNC] Welcome envoye avec succes a ${tUser}:${did}`);
+            log(`[SYNC] Welcome sent successfully to ${tUser}:${did}`);
           } catch (err) {
             log(
-              `[WARN] Welcome non livre pour ${tUser}:${did} - ${
+              `[WARN] Welcome not delivered to ${tUser}:${did} - ${
                 err instanceof Error ? err.message : String(err)
               }`
             );
@@ -323,7 +323,7 @@ async function processBulkAddition(
       }
 
       log(
-        `[OK] Ajoutes: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} appareils). (${deliveredUsers.size} utilisateur(s) livrés)`
+        `[OK] Added: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} device(s)). (${deliveredUsers.size} user(s) delivered)`
       );
       console.log(
         `[SYNC] Members added: ${targetUsers.join(', ')} (${deliveredUsers.size}/${targetUsers.length} delivered)`
@@ -346,12 +346,12 @@ async function processBulkAddition(
       }
     } else {
       log(
-        '[WARN] Aucun Welcome livré: aucun membre ajouté ne sera annoncé tant que la livraison échoue.'
+        '[WARN] No Welcome delivered: no member addition will be announced until delivery succeeds.'
       );
       console.warn('[SYNC] No Welcome delivered - member addition notification skipped');
     }
   } catch (e: any) {
-    log(`Erreur invitation groupée: ${toUiDiscussionError(e)}`);
+    log(`Bulk invite error: ${toUiDiscussionError(e)}`);
     console.error('[SYNC] processBulkAddition failed:', e);
   }
 }
@@ -377,12 +377,12 @@ async function performDirectAdd(
   try {
     const bulk = await mlsService.addMembersBulk(groupId, allDevices);
     log(
-      `[ADD] ${bulk.addedDeviceIds.length} appareil(s), welcome=${!!bulk.welcome}, commit=${!!bulk.commit}`
+      `[ADD] ${bulk.addedDeviceIds.length} device(s), welcome=${!!bulk.welcome}, commit=${!!bulk.commit}`
     );
     warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[ADD]', log);
 
-    // registerMember est user-level (upsert GroupMember) : un seul appel par userId suffit.
-    // Appeler une fois par device génère N-1 transactions inutiles pour un user multi-device.
+    // registerMember is user-level (upsert GroupMember): one call per userId is enough.
+    // Calling once per device generates N-1 redundant transactions for a multi-device user.
     const registeredOwners = new Set<string>();
     for (const did of bulk.addedDeviceIds) {
       const owner = contactDeviceIds.has(did) ? contact : userId;
@@ -400,7 +400,7 @@ async function performDirectAdd(
           log(`[ADD] Welcome → ${owner}:${did} ✓`);
         } catch (e) {
           log(
-            `[ADD] Welcome échoué → ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
+            `[ADD] Welcome failed → ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
           );
           console.warn(
             `[ADD] sendWelcome failed for ${owner}:${did}:`,
@@ -409,11 +409,11 @@ async function performDirectAdd(
         }
       }
     } else {
-      log('[ADD] addMembersBulk a retourné welcome=null');
+      log('[ADD] addMembersBulk returned welcome=null');
       console.warn('[ADD] addMembersBulk returned no welcome');
     }
 
-    // Sauvegarder AVANT sendCommit (crash-safety : l'état local doit survivre à un crash ici)
+    // Save BEFORE sendCommit (crash-safety: local state must survive a crash here)
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
     if (bulk.commit) {
@@ -422,7 +422,7 @@ async function performDirectAdd(
         return `${owner}:${did}`;
       });
       await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
-      log(`[ADD] Commit envoyé (exclu: ${excludeIds.join(', ')})`);
+      log(`[ADD] Commit sent (excluded: ${excludeIds.join(', ')})`);
     }
   } finally {
     if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
@@ -500,8 +500,8 @@ export async function startNewConversation(
       const deadKey = resolved.tombstoneGroupId;
       log(
         deadKey
-          ? `[1v1] Groupe actif ${key.slice(0, 8)}… (successeur de ${deadKey.slice(0, 8)}…) - chargement.`
-          : `[1v1] Groupe serveur existant trouvé (${key}) - chargement sans recréation.`
+          ? `[1v1] Active group ${key.slice(0, 8)}... (successor of ${deadKey.slice(0, 8)}...) - loading.`
+          : `[1v1] Existing server group found (${key}) - loading without re-creation.`
       );
 
       const ensureDirectConvo = async (convoKey: string, ready: boolean) => {
@@ -524,8 +524,8 @@ export async function startNewConversation(
             name: fixName ? contact : existing.name,
             contactName: fixName ? contact : existing.contactName,
             directPeerId: contact,
-            // Ouvrir explicitement une conversation directe la sort de l'etat `removed` si le
-            // groupe est actif cote serveur ; sinon on conserve l'etat existant (pending).
+            // Explicitly opening a direct conversation exits the `removed` state if the
+            // group is active server-side; otherwise preserve the existing state (pending).
             lifecycle: ready || existing.lifecycle === 'active' ? 'active' : 'pending',
           });
         } else {
@@ -542,7 +542,7 @@ export async function startNewConversation(
       }
 
       // MLS state missing locally - recover via successor / welcome flow.
-      log(`[1v1] État MLS absent pour ${key} - déclenchement de la récupération…`);
+      log(`[1v1] MLS state missing for ${key} - triggering recovery...`);
       if (deadKey && conversations.has(deadKey) && !conversations.has(key)) {
         await ensureDirectConvo(deadKey, false);
       } else {
@@ -568,17 +568,17 @@ export async function startNewConversation(
       return;
     }
   } catch (e) {
-    // Non-bloquant : on continue avec la création normale, mais on log l'erreur.
-    console.warn(`[1v1] getUserGroups a échoué, risque de groupe dupliqué :`, e);
+    // Non-blocking: continue with normal creation but log the error.
+    console.warn(`[1v1] getUserGroups failed, risk of duplicate group:`, e);
   }
 
   // IMPORTANT: Check if contact is available BEFORE creating the group
   // This prevents orphaned groups on other devices if the contact isn't online
-  log(`Vérification de la disponibilité de ${contact}…`);
+  log(`Checking availability of ${contact}...`);
   const contactDevices = await fetchDevicesWithRetry(mlsService, contact, log);
   if (contactDevices.length === 0) {
     log(
-      `[ERREUR] Appareils introuvables pour ${contact}. Le contact doit se connecter une première fois pour publier son KeyPackage.`
+      `[ERROR] No devices found for ${contact}. The contact must sign in at least once to publish their KeyPackage.`
     );
     return;
   }
@@ -588,7 +588,7 @@ export async function startNewConversation(
   try {
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
     console.log(`[DM] createRemoteGroup → groupId=${groupId}`);
-    log(`[DM] Groupe distant créé: ${groupId}`);
+    log(`[DM] Remote group created: ${groupId}`);
     const conversationKey = groupId;
 
     conversations.set(conversationKey, {
@@ -604,21 +604,21 @@ export async function startNewConversation(
     selectConversation(conversationKey);
 
     await mlsService.createGroup(groupId);
-    log(`[DM] Groupe MLS local créé: ${groupId}`);
+    log(`[DM] Local MLS group created: ${groupId}`);
     await mlsService.registerMember(groupId, userId);
-    log(`[DM] Membership serveur enregistré pour ${userId}`);
+    log(`[DM] Server membership registered for ${userId}`);
 
     // Collect ALL devices (contact + own) for a single bulk add
-    // Best-effort : un echec reseau sur la liste de NOS propres devices ne doit pas avorter la
-    // creation (les autres devices se recuperent via leur propre welcome_request). `[]` => on
-    // cree le groupe avec le seul device courant.
+    // Best-effort: a network error fetching our own device list must not abort conversation
+    // creation (other devices recover via their own welcome_request). `[]` => create with
+    // the current device only.
     const ownDevices = (await mlsService.fetchUserDevices(userId).catch(() => [])).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
     const allDevices = [...contactDevices, ...ownDevices];
     const contactDeviceIds = new Set(contactDevices.map((d) => d.deviceId));
     log(
-      `[DM] Appareils à ajouter: ${allDevices.length} (contact=${contactDevices.length}, propres=${ownDevices.length})`
+      `[DM] Devices to add: ${allDevices.length} (contact=${contactDevices.length}, own=${ownDevices.length})`
     );
     console.log(
       `[DM] allDevices:`,
@@ -630,11 +630,11 @@ export async function startNewConversation(
     const convo = conversations.get(conversationKey)!;
     conversations.set(conversationKey, { ...convo, lifecycle: 'active' });
     saveConversation(conversationKey);
-    log(`[OK] Canal sécurisé avec ${contact}.`);
-    console.log(`[DM] Conversation 1v1 avec ${contact} prête (groupId=${groupId})`);
+    log(`[OK] Secure channel established with ${contact}.`);
+    console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);
   } catch (_e: unknown) {
     const msg = _e instanceof Error ? _e.message : String(_e);
-    log(`Erreur création: ${toUiDiscussionError(msg)}`);
+    log(`Creation error: ${toUiDiscussionError(msg)}`);
     if (groupId) conversations.delete(groupId);
 
     // Clean up local MLS state (epoch may have advanced after addMembersBulk)

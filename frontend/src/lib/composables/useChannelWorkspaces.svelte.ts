@@ -10,7 +10,7 @@ import { hydrateChannelBootstrap, isChannelConversationId } from '$lib/utils/cha
 export interface ChannelSidebarItem {
   /** Conversation ID, prefixed with "channel_". */
   id: string;
-  /** Display name of the channel (e.g. "général"). */
+  /** Display name of the channel (e.g. "general"). */
   name: string;
   /** Number of messages not yet read by the current user. */
   unreadCount?: number;
@@ -66,22 +66,22 @@ export function useChannelWorkspaces() {
 
   const service = new ChannelService();
 
-  /** Maps a raw API error to a user-friendly French error message for the given action label. */
+  /** Maps a raw API error to a user-friendly error message for the given action label. */
   function toUiActionError(action: string, error: unknown): string {
     const raw = error instanceof Error ? error.message : String(error);
     const lower = raw.toLowerCase();
 
     if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized')) {
-      return `${action} impossible: session expirée ou droits insuffisants. Reconnectez-vous.`;
+      return `${action} failed: session expired or insufficient permissions. Please sign in again.`;
     }
     if (lower.includes('409') || lower.includes('already')) {
-      return `${action} impossible: élément déjà existant.`;
+      return `${action} failed: already exists.`;
     }
     if (lower.includes('network') || lower.includes('fetch') || lower.includes('failed to fetch')) {
-      return `${action} impossible: service indisponible. Vérifiez la connexion réseau.`;
+      return `${action} failed: service unavailable. Check your network connection.`;
     }
 
-    return `${action} impossible: ${raw}`;
+    return `${action} failed: ${raw}`;
   }
 
   // ---------- Workspace helpers ----------
@@ -158,7 +158,7 @@ export function useChannelWorkspaces() {
   }): ChannelSidebarWorkspace {
     const slugFromEvent = event.workspaceSlug?.trim().toLowerCase();
     const workspaceId = event.workspaceId;
-    const workspaceName = event.workspaceName?.trim() || 'Communauté';
+    const workspaceName = event.workspaceName?.trim() || 'Community';
 
     const existing = channelWorkspaces.find(
       (workspace) =>
@@ -265,7 +265,7 @@ export function useChannelWorkspaces() {
       channelWorkspaces = channelWorkspaces.filter((ws) => validWorkspaceSlugs.has(ws.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.log(`Chargement des communautés/canaux impossible: ${message}`);
+      ctx.log(`Failed to load communities/channels: ${message}`);
     } finally {
       isLoadingWorkspaces = false;
     }
@@ -277,7 +277,7 @@ export function useChannelWorkspaces() {
     ctx: ChannelWorkspaceContext
   ): Promise<ChannelSidebarWorkspace> {
     const slug = slugifyWorkspace(nameRaw.trim());
-    if (!slug) throw new Error('Nom de communauté invalide.');
+    if (!slug) throw new Error('Invalid community name.');
 
     const workspace = await service.createWorkspace({ slug, name: nameRaw.trim() });
     const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
@@ -336,9 +336,9 @@ export function useChannelWorkspaces() {
     if (!normalized) return;
     try {
       await ensureWorkspaceByName(normalized, ctx);
-      ctx.log(`Communauté créée : ${normalized}`);
+      ctx.log(`Community created: ${normalized}`);
     } catch (error) {
-      ctx.log(toUiActionError('Création de communauté', error));
+      ctx.log(toUiActionError('Community creation', error));
     }
   }
 
@@ -349,7 +349,7 @@ export function useChannelWorkspaces() {
     ctx: ChannelWorkspaceContext
   ) {
     if (!workspaceId) {
-      ctx.log("Création de canal impossible: sélectionnez d'abord une communauté.");
+      ctx.log('Cannot create channel: select a community first.');
       return;
     }
     const normalizedChannelName = nameRaw.trim().toLowerCase();
@@ -371,7 +371,7 @@ export function useChannelWorkspaces() {
         try {
           const hydrated = await hydrateChannelBootstrap(actualId, bootstrap);
           ctx.log(
-            `[CHANNEL-KEY] Cle initiale chargee pour #${normalizedChannelName} (v${hydrated.keyVersion}).`
+            `[CHANNEL-KEY] Initial key loaded for #${normalizedChannelName} (v${hydrated.keyVersion}).`
           );
         } catch (e) {
           ctx.log(
@@ -401,9 +401,9 @@ export function useChannelWorkspaces() {
       });
       await ctx.saveConversation(channelId);
       ctx.selectConversation(channelId);
-      ctx.log(`Canal créé : #${normalizedChannelName}`);
+      ctx.log(`Channel created: #${normalizedChannelName}`);
     } catch (error) {
-      ctx.log(toUiActionError('Création de canal', error));
+      ctx.log(toUiActionError('Channel creation', error));
     }
   }
 
@@ -425,7 +425,7 @@ export function useChannelWorkspaces() {
       (channel) => channel.id === channelConversationId
     );
     const channelDisplayName = currentChannel?.name || channelId;
-    const workspaceDisplayName = currentWorkspace?.name || 'la communauté';
+    const workspaceDisplayName = currentWorkspace?.name || 'the community';
 
     try {
       // Map frontend role names to backend role names (capitalized)
@@ -468,14 +468,14 @@ export function useChannelWorkspaces() {
               inviteResult.keyDistribution.distributionId
             );
           } else {
-            throw new Error('Discussion privée MLS introuvable après création');
+            throw new Error('Private MLS conversation not found after creation');
           }
         } finally {
           if (previousSelection) ctx.selectConversation(previousSelection);
         }
       }
 
-      ctx.log(`Membre invité dans le canal (${roleName}) : ${memberId}`);
+      ctx.log(`Member invited to channel (${roleName}): ${memberId}`);
     } catch (error) {
       const msg = toUiActionError(`Invitation dans le canal (${roleName})`, error);
       ctx.log(msg);
@@ -505,9 +505,9 @@ export function useChannelWorkspaces() {
         targetUserId: memberId,
         roleName: backendRoleName,
       });
-      ctx.log(`Rôle mis à jour (${roleName}) pour : ${memberId}`);
+      ctx.log(`Role updated (${roleName}) for: ${memberId}`);
     } catch (error) {
-      ctx.log(toUiActionError(`Mise à jour du rôle (${roleName})`, error));
+      ctx.log(toUiActionError(`Role update (${roleName})`, error));
     }
   }
 
@@ -523,9 +523,9 @@ export function useChannelWorkspaces() {
       if (selectedChannelConversationId === channelConversationId) {
         selectedChannelConversationId = '';
       }
-      ctx.log('Vous avez quitté le canal.');
+      ctx.log('You have left the channel.');
     } catch (error) {
-      ctx.log(toUiActionError('Départ du canal', error));
+      ctx.log(toUiActionError('Leave channel', error));
     }
   }
 
@@ -550,9 +550,9 @@ export function useChannelWorkspaces() {
       if (wsChannelIds.includes(selectedChannelConversationId)) {
         selectedChannelConversationId = '';
       }
-      ctx.log('Vous avez quitté la communauté.');
+      ctx.log('You have left the community.');
     } catch (error) {
-      ctx.log(toUiActionError('Départ de la communauté', error));
+      ctx.log(toUiActionError('Leave community', error));
     }
   }
 
@@ -578,7 +578,7 @@ export function useChannelWorkspaces() {
       if (convo) {
         ctx.conversations.set(channelConversationId, { ...convo, name: trimmed });
       }
-      ctx.log(`Canal renommé : #${trimmed}`);
+      ctx.log(`Channel renamed: #${trimmed}`);
     } catch (error) {
       ctx.log(toUiActionError('Renommage du canal', error));
     }
@@ -596,7 +596,7 @@ export function useChannelWorkspaces() {
       if (selectedChannelConversationId === channelConversationId) {
         selectedChannelConversationId = '';
       }
-      ctx.log('Canal supprimé.');
+      ctx.log('Channel deleted.');
     } catch (error) {
       ctx.log(toUiActionError('Suppression du canal', error));
     }
@@ -617,9 +617,9 @@ export function useChannelWorkspaces() {
       if (convo) {
         ctx.conversations.set(channelConversationId, { ...convo, imageMediaId: mediaId });
       }
-      ctx.log('Image du canal mise à jour.');
+      ctx.log('Channel image updated.');
     } catch (error) {
-      ctx.log(toUiActionError('Mise à jour image canal', error));
+      ctx.log(toUiActionError('Update channel image', error));
     }
   }
 
@@ -636,9 +636,9 @@ export function useChannelWorkspaces() {
       channelWorkspaces = channelWorkspaces.map((ws) =>
         ws.workspaceDbId === workspaceDbId ? { ...ws, imageMediaId: mediaId } : ws
       );
-      ctx.log('Image de la communauté mise à jour.');
+      ctx.log('Community image updated.');
     } catch (error) {
-      ctx.log(toUiActionError('Mise à jour image communauté', error));
+      ctx.log(toUiActionError('Update community image', error));
     }
   }
 
