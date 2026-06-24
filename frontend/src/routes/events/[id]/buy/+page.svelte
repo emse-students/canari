@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getToken } from '$lib/stores/auth';
+  import { m } from '$lib/paraglide/messages';
 
   let { data }: { data: any } = $props();
   let eventId = $derived(data?.eventId || 'unknown-event');
@@ -36,9 +37,7 @@
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          result.message || "Une erreur est survenue lors de l'initialisation du paiement"
-        );
+        throw new Error(result.message || m.event_buy_payment_error_fallback());
       }
 
       if (result.url) {
@@ -55,7 +54,7 @@
 
 <div class="px-4 py-8 sm:px-6 min-h-dvh flex items-start justify-center">
   <div class="w-full max-w-md rounded-2xl border border-cn-border bg-white/80 p-6 shadow-sm">
-    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mb-6">Acheter un billet</h1>
+    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mb-6">{m.event_buy_heading()}</h1>
 
     <div class="space-y-3 mb-6">
       <label
@@ -66,14 +65,14 @@
           bind:checked={options.isMemberBDE}
           class="w-4 h-4 accent-yellow-400"
         />
-        <span class="text-sm font-medium text-text-main">Je suis adhérent du BDE (-2€)</span>
+        <span class="text-sm font-medium text-text-main">{m.event_buy_option_bde()}</span>
       </label>
 
       <label
         class="flex items-center gap-3 cursor-pointer select-none p-3 rounded-xl border border-cn-border hover:bg-cn-surface/50 transition-colors"
       >
         <input type="checkbox" bind:checked={options.wantsMeal} class="w-4 h-4 accent-yellow-400" />
-        <span class="text-sm font-medium text-text-main">Ajouter le repas (+5€)</span>
+        <span class="text-sm font-medium text-text-main">{m.event_buy_option_meal()}</span>
       </label>
     </div>
 
@@ -88,7 +87,7 @@
       disabled={isProcessing}
       class="w-full rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
     >
-      {isProcessing ? 'Génération de la transaction…' : 'Aller au paiement sécurisé 🔒'}
+      {isProcessing ? m.event_buy_processing() : m.event_buy_pay_btn()}
     </button>
   </div>
 </div>

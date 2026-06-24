@@ -211,6 +211,8 @@ What NOT to write:
 
 Inline comments (`//`) inside function bodies: only for non-obvious logic, workarounds, or subtle invariants. Not for every line.
 
+**Language**: all comments (inline `//`, block `/* */`, JSDoc `/** */`, Rust `///`) must be written in **English** - no French, no mixed languages. Concise but complete enough for a language model to quickly grasp the intent.
+
 ### Caractères de texte (apostrophes, guillemets, tirets)
 
 Normaliser tout le texte sur les caractères ASCII du clavier français, partout (code, chaînes visibles, commentaires, documentation, fichiers de traduction) :

@@ -68,9 +68,8 @@
     loadError = '';
     try {
       const { from, to } = monthRangeISO(focusDate);
-      // includePending : le backend ne renvoie les evenements en attente qu'aux
-      // proposeurs / admins BDE / admins globaux (sinon ignore). On le demande donc
-      // systematiquement et c'est le serveur qui filtre.
+      // includePending: server only returns pending events to submitters / BDE admins /
+      // global admins; the flag is always sent and the server filters accordingly.
       events = await listAggregatedCalendarFeed({
         from,
         to,
@@ -127,8 +126,8 @@
       try {
         const mine = await listMyAssociations();
         canModerateAgenda = mine.some((a) => a.isAdmin);
-        // Un validateur BDE (VALIDATE_EVENTS dans une asso BDE) peut deposer pour
-        // n'importe quelle asso ; on retient son asso BDE comme :id d'autorisation.
+        // A BDE validator (VALIDATE_EVENTS in a BDE association) may deposit on behalf of
+        // any association; we keep their BDE association as the authorisation :id.
         const authority = mine.find(
           (a) =>
             a.isBDE &&
@@ -186,10 +185,10 @@
   let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
   let detailModalOpen = $state(false);
 
-  // ── Depot d'evenement (admins globaux + validateurs BDE) ───────────────────
-  // Ces utilisateurs ont le pouvoir d'accepter les evenements : leur depot est
-  // donc auto-valide. Un admin global poste directement sur l'asso choisie ; un
-  // validateur BDE poste via son asso BDE et redirige avec `targetAssocId`.
+  // ── Event deposit (global admins + BDE validators) ────────────────────────
+  // These users can auto-validate events. A global admin posts directly on the
+  // chosen association; a BDE validator posts via their BDE association and
+  // redirects with `targetAssocId`.
 
   /** Whether the current user may deposit an auto-validated event for any association. */
   let canDepositEvent = $state(false);

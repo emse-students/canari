@@ -7,6 +7,7 @@
   import { Search, Users, GraduationCap, Loader2 } from '@lucide/svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { currentUserId } from '$lib/stores/user';
+  import { m } from '$lib/paraglide/messages';
 
   let query = $state('');
   let promoFilter = $state<number | ''>('');
@@ -48,7 +49,7 @@
       results = res.users;
       total = res.total;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur de recherche';
+      error = err instanceof Error ? err.message : m.directory_search_error_fallback();
       results = [];
       total = 0;
     } finally {
@@ -57,7 +58,7 @@
   }
 
   function displayName(user: DirectoryUserRow): string {
-    return user.displayName?.trim() || getUserDisplayNameSync(user.id, user.id.slice(0, 8) + '…');
+    return user.displayName?.trim() || getUserDisplayNameSync(user.id, user.id.slice(0, 8) + '...');
   }
 </script>
 
@@ -65,9 +66,9 @@
   <div class="flex items-center gap-3">
     <Users class="h-7 w-7 text-cn-accent shrink-0" />
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Annuaire</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.directory_heading()}</h1>
       <p class="text-sm text-text-muted mt-0.5">
-        Recherchez des membres par nom, promotion, cursus ou association
+        {m.directory_subtitle()}
       </p>
     </div>
   </div>
@@ -77,14 +78,14 @@
     onsubmit={(e) => void handleSearch(e)}
   >
     <div>
-      <label for="dir-q" class="text-xs font-semibold text-text-muted block mb-1">Nom</label>
+      <label for="dir-q" class="text-xs font-semibold text-text-muted block mb-1">{m.directory_label_name()}</label>
       <div class="relative">
         <Search size={18} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
         <input
           id="dir-q"
           type="search"
           bind:value={query}
-          placeholder="Prénom, nom… (min. 2 caractères)"
+          placeholder={m.directory_name_placeholder()}
           class="w-full rounded-xl border border-cn-border bg-transparent pl-10 pr-3 py-2.5 text-sm"
         />
       </div>
@@ -93,7 +94,7 @@
     <div class="grid gap-3 sm:grid-cols-3">
       <div>
         <label for="dir-promo" class="text-xs font-semibold text-text-muted block mb-1"
-          >Promotion</label
+          >{m.directory_label_promo()}</label
         >
         <input
           id="dir-promo"
@@ -106,26 +107,26 @@
       </div>
       <div>
         <label for="dir-formation" class="text-xs font-semibold text-text-muted block mb-1"
-          >Cursus</label
+          >{m.directory_label_formation()}</label
         >
         <input
           id="dir-formation"
           type="text"
           bind:value={formationFilter}
-          placeholder="ICM, GC…"
+          placeholder="ICM, GC..."
           class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2.5 text-sm"
         />
       </div>
       <div>
         <label for="dir-asso" class="text-xs font-semibold text-text-muted block mb-1"
-          >Association</label
+          >{m.directory_label_association()}</label
         >
         <select
           id="dir-asso"
           bind:value={associationFilter}
           class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
         >
-          <option value="">Toutes</option>
+          <option value="">{m.directory_asso_all()}</option>
           {#each associations as a (a.id)}
             <option value={a.id}>{a.name}</option>
           {/each}
@@ -143,7 +144,7 @@
       {:else}
         <Search size={16} />
       {/if}
-      Rechercher
+      {m.directory_search_btn()}
     </button>
   </form>
 
@@ -151,9 +152,11 @@
     <p class="text-sm text-red-600">{error}</p>
   {:else if searched && !loading}
     <p class="text-sm text-text-muted">
-      {total} résultat{total !== 1 ? 's' : ''}
+      {total !== 1
+        ? m.directory_results_count_many({ count: total })
+        : m.directory_results_count_one({ count: total })}
       {#if total > results.length}
-        (affichage des {results.length} premiers)
+        {m.directory_results_truncated({ count: results.length })}
       {/if}
     </p>
 
@@ -161,7 +164,7 @@
       <div
         class="rounded-2xl border border-dashed border-cn-border px-4 py-10 text-center text-sm text-text-muted"
       >
-        Aucun membre trouvé avec ces critères.
+        {m.directory_empty_result()}
       </div>
     {:else}
       <ul class="space-y-2">
@@ -180,7 +183,7 @@
                   {#if user.promo != null}
                     <span class="inline-flex items-center gap-1">
                       <GraduationCap size={12} />
-                      Promo {user.promo}
+                      {m.directory_user_promo({ year: user.promo })}
                     </span>
                   {/if}
                   {#if user.formation}

@@ -9,6 +9,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { ChevronDown, ListChecks } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let associations = $state<Association[]>([]);
   let myAssociations = $state<Association[]>([]);
@@ -27,7 +28,7 @@
       associations = all;
       myAssociations = mine;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de charger les associations';
+      error = err instanceof Error ? err.message : m.assoc_list_load_error_fallback();
     } finally {
       loading = false;
     }
@@ -49,8 +50,8 @@
   <!-- Header -->
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Associations</h1>
-      <p class="text-sm text-text-muted mt-1">Découvrez les associations de la communauté</p>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.assoc_list_heading()}</h1>
+      <p class="text-sm text-text-muted mt-1">{m.assoc_list_subtitle()}</p>
     </div>
     <div class="flex items-center gap-2">
       <a
@@ -58,20 +59,20 @@
         class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
       >
         <ListChecks size={16} />
-        Listes
+        {m.assoc_list_lists_btn()}
       </a>
       <a
         href="/calendar"
         class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
       >
-        Agenda global
+        {m.assoc_list_global_calendar()}
       </a>
       {#if isAdmin}
         <a
           href="/associations/new"
           class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
         >
-          Créer une association
+          {m.assoc_new_create_btn()}
         </a>
       {/if}
     </div>
@@ -89,7 +90,7 @@
     <!-- My associations -->
     {#if myAssociations.length > 0}
       <section>
-        <h2 class="text-base font-bold text-text-main mb-3">Mes associations</h2>
+        <h2 class="text-base font-bold text-text-main mb-3">{m.assoc_list_mine_heading()}</h2>
         <div class="grid gap-4 sm:grid-cols-2">
           {#each myAssociations as asso (asso.id)}
             <a
@@ -124,14 +125,14 @@
 
     <!-- All associations -->
     <section>
-      <h2 class="text-base font-bold text-text-main mb-3">Toutes les associations</h2>
+      <h2 class="text-base font-bold text-text-main mb-3">{m.assoc_list_all_heading()}</h2>
       {#if activeAssociations.length === 0}
         <div
           class="text-center py-16 bg-[var(--cn-surface)]/60 rounded-2xl border-2 border-dashed border-cn-border"
         >
           <div class="text-5xl mb-3">🏠</div>
-          <h3 class="text-lg font-bold text-text-main mb-1">Aucune association</h3>
-          <p class="text-sm text-text-muted">Soyez le premier à créer une association !</p>
+          <h3 class="text-lg font-bold text-text-main mb-1">{m.assoc_list_empty_title()}</h3>
+          <p class="text-sm text-text-muted">{m.assoc_list_empty_desc()}</p>
         </div>
       {:else}
         <div class="grid gap-4 sm:grid-cols-2">
@@ -152,9 +153,11 @@
                     </div>
                   {/if}
                   <p class="text-xs text-text-muted mt-1">
-                    {asso.memberCount ?? 0} membre{(asso.memberCount ?? 0) !== 1 ? 's' : ''}
+                    {(asso.memberCount ?? 0) !== 1
+                      ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
+                      : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}
                     {#if myIds.has(asso.id)}
-                      <span class="ml-1 text-cn-dark font-semibold">· Membre</span>
+                      <span class="ml-1 text-cn-dark font-semibold">&#183; {m.assoc_list_member_badge()}</span>
                     {/if}
                   </p>
                 </div>
@@ -178,7 +181,7 @@
             size={18}
             class="transition-transform {showArchived ? 'rotate-180' : ''}"
           />
-          Anciennes associations ({archivedAssociations.length})
+          {m.assoc_list_archived_heading({ count: archivedAssociations.length })}
         </button>
         {#if showArchived}
           <div class="grid gap-4 sm:grid-cols-2 mt-3">
@@ -192,8 +195,10 @@
                   <div class="min-w-0 flex-1">
                     <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
                     <p class="text-xs text-text-muted mt-1">
-                      {asso.memberCount ?? 0} membre{(asso.memberCount ?? 0) !== 1 ? 's' : ''}
-                      <span class="ml-1 font-semibold">· Archivée</span>
+                      {(asso.memberCount ?? 0) !== 1
+                        ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
+                        : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}
+                      <span class="ml-1 font-semibold">&#183; {m.assoc_list_archived_badge()}</span>
                     </p>
                   </div>
                 </div>

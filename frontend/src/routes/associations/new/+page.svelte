@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let name = $state('');
   let slug = $state('');
@@ -11,19 +12,18 @@
   let submitting = $state(false);
   let error = $state('');
 
-  // Auto-generate slug from name
   function onNameInput() {
     slug = name
       .toLowerCase()
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
   }
 
   async function handleSubmit() {
     if (!name.trim() || !slug.trim()) {
-      error = 'Le nom et le slug sont requis.';
+      error = m.assoc_new_error_required();
       return;
     }
     submitting = true;
@@ -37,7 +37,7 @@
       });
       await goto(`/associations/${asso.slug}`);
     } catch (err) {
-      error = err instanceof Error ? err.message : "Impossible de créer l'association";
+      error = err instanceof Error ? err.message : m.assoc_new_error_fallback();
     } finally {
       submitting = false;
     }
@@ -47,10 +47,10 @@
 <div class="px-4 py-6 sm:px-6 max-w-lg mx-auto space-y-6">
   <div>
     <a href="/associations" class="text-sm text-text-muted hover:text-text-main transition-colors">
-      ← Retour aux associations
+      &#x2190; {m.assoc_new_back()}
     </a>
     <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">
-      Créer une association
+      {m.assoc_new_heading()}
     </h1>
   </div>
 
@@ -62,27 +62,27 @@
     }}
   >
     <Input
-      label="Nom de l'association"
+      label={m.assoc_new_name_label()}
       bind:value={name}
       oninput={onNameInput}
-      placeholder="Bureau des Élèves"
+      placeholder={m.assoc_new_name_placeholder()}
       required
     />
 
     <Input label="Slug (URL)" bind:value={slug} placeholder="bureau-des-eleves" required />
     <p class="text-xs text-text-muted -mt-3">
-      Uniquement des lettres minuscules, chiffres et tirets.
+      {m.assoc_new_slug_hint()}
     </p>
 
     <Textarea
-      label="Description"
+      label={m.assoc_new_desc_label()}
       bind:value={description}
-      placeholder="Décrivez l'association en quelques mots…"
+      placeholder={m.assoc_new_desc_placeholder()}
       rows={3}
     />
 
     <Input
-      label="E-mail de contact (optionnel)"
+      label={m.assoc_new_email_label()}
       type="email"
       bind:value={contactEmail}
       placeholder="contact@asso.fr"
@@ -99,7 +99,7 @@
       disabled={submitting || !name.trim() || !slug.trim()}
       class="w-full rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover disabled:cursor-not-allowed disabled:opacity-50"
     >
-      {submitting ? 'Création…' : "Créer l'association"}
+      {submitting ? m.common_creating_label() : m.assoc_new_create_btn()}
     </button>
   </form>
 </div>
