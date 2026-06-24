@@ -1,10 +1,10 @@
 /**
- * Types partagés pour le découpage du composable useChatSession :
- * - `ChatSessionCallbacks` : interface des callbacks injectés par le parent (useConversations + UI)
- * - `SessionContext` : boîte d'état réactif passée à chaque sous-module via getters/setters
+ * Shared types for the useChatSession composable split:
+ * - `ChatSessionCallbacks`: callbacks injected by the parent (useConversations + UI glue).
+ * - `SessionContext`: reactive state box passed to every sub-module via getters/setters.
  *
- * Toutes les fonctions des modules session/* reçoivent `ctx: SessionContext` comme premier
- * paramètre à la place de la closure de useChatSession.
+ * Every function in session/* takes `ctx: SessionContext` as its first parameter
+ * instead of closing over the useChatSession scope directly.
  */
 import type { SvelteMap } from 'svelte/reactivity';
 import type { IMlsService } from '$lib/mlsService';
@@ -48,13 +48,13 @@ export interface ChatSessionCallbacks {
     messageIds: string[];
   }) => void;
   onSendError: (msg: string) => void;
-  /** Appelé dès que le PIN est validé et MLS initialisé (isLoggedIn vient de passer à true),
-   * avant loadAndRestoreConversations(). Permet de fermer le modal PIN immédiatement
-   * sans attendre la fin complète du login (conversations, WebSocket, etc.). */
+  /** Called as soon as the PIN is validated and MLS is initialised (isLoggedIn just flipped true),
+   * before loadAndRestoreConversations(). Lets the PIN modal close immediately without
+   * waiting for the full login flow (conversations, WebSocket, etc.) to complete. */
   onMlsReady?: () => void;
-  /** Appelé quand le login échoue (PIN incorrect, serveur inaccessible, etc.).
-   * Si fourni, la redirection vers /login n'a PAS lieu - le caller gère l'erreur.
-   * Si absent, on redirige vers /login comme avant. */
+  /** Called when login fails (wrong PIN, server unreachable, etc.).
+   * When provided, the redirect to /login is suppressed - the caller handles the error.
+   * When absent, the default redirect to /login takes place. */
   onLoginFailed?: (error: string) => void;
   log: (msg: string) => void;
   messageReactions: SvelteMap<string, any[]>;
@@ -64,12 +64,12 @@ export interface ChatSessionCallbacks {
 }
 
 /**
- * Boîte d'état réactif passée à chaque sous-module session/*.
- * Expose via getters/setters les variables `$state` définies dans useChatSession,
- * ainsi que les timers mutables (partagés par référence dans un objet boxé).
+ * Reactive state box passed to every session/* sub-module.
+ * Exposes the `$state` variables from useChatSession via getters/setters,
+ * plus mutable timers shared by reference inside a boxed object.
  */
 export interface SessionContext {
-  // ── Identité ───────────────────────────────────────────────────────────────
+  // ── Identity ──────────────────────────────────────────────────────────────
   getUserId(): string;
   setUserId(v: string): void;
   getPin(): string;
@@ -80,9 +80,9 @@ export interface SessionContext {
   setMyDeviceId(v: string): void;
 
   // ── Services ───────────────────────────────────────────────────────────────
-  /** Retourne l'instance MLS courante, la crée lazily si nécessaire. */
+  /** Returns the current MLS service instance, creating it lazily if needed. */
   ensureMls(): IMlsService;
-  /** Détruit l'instance MLS (destroy + null) pour forcer une réinitialisation propre. */
+  /** Destroys the MLS instance (destroy + null) to force a clean reinitialisation. */
   resetMls(): void;
   getStorage(): IStorage | null;
   setStorage(v: IStorage | null): void;
@@ -105,14 +105,14 @@ export interface SessionContext {
   getIsMessagingInitializing(): boolean;
   setIsMessagingInitializing(v: boolean): void;
 
-  // ── Reconnexion ────────────────────────────────────────────────────────────
+  // ── Reconnection ──────────────────────────────────────────────────────────
   getReconnectAttempts(): number;
   setReconnectAttempts(v: number): void;
   isReconnectCircuitOpen(): boolean;
   setReconnectCircuitOpen(v: boolean): void;
 
-  // ── Services (accès au callService) ───────────────────────────────────────
-  /** Retourne le CallService courant (null avant initServices). */
+  // ── Services (CallService access) ─────────────────────────────────────────
+  /** Returns the current CallService instance (null before initServices). */
   getCallService(): any;
 
   // ── Dev tools ──────────────────────────────────────────────────────────────
@@ -122,15 +122,15 @@ export interface SessionContext {
   setLastCommit(v: string): void;
   setLastWelcome(v: string): void;
 
-  // ── Biométrie ──────────────────────────────────────────────────────────────
+  // ── Biometrics ────────────────────────────────────────────────────────────
   setShowBiometricEnrollPrompt(v: boolean): void;
 
   // ── Erreurs MLS ────────────────────────────────────────────────────────────
   setMlsFatalError(v: 'oom' | 'private_mode' | 'keystore_lost' | null): void;
 
   /**
-   * Timers mutables dans un objet boxé pour éviter de re-passer les références
-   * à chaque appel de fonction.
+   * Mutable timers in a boxed object so sub-modules can mutate them without
+   * having to receive updated references on every call.
    */
   timers: {
     reconnect: ReturnType<typeof setTimeout> | null;
@@ -144,7 +144,7 @@ export interface SessionContext {
     Array<{ requesterUserId: string; requesterDeviceId: string }>
   >;
 
-  /** Met à jour le flag réactif exposé par useChatSession pour l'UI (bannière follower). */
+  /** Updates the reactive flag exposed by useChatSession to the UI (follower banner). */
   setIsTabLeader(v: boolean): void;
   /** Callback pour la promotion tab leader → reconnexion WebSocket. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;

@@ -203,10 +203,10 @@
       });
       if (!uploadRes.ok) {
         const msg = await uploadRes.text().catch(() => '');
-        throw new Error(`Erreur upload média: ${uploadRes.status} ${msg}`);
+        throw new Error(`Media upload error: ${uploadRes.status} ${msg}`);
       }
       const { mediaId } = (await uploadRes.json()) as { mediaId: string };
-      console.log(`[Vault] Blob chiffré uploadé: ${mediaId}`);
+      console.log(`[Vault] Encrypted blob uploaded: ${mediaId}`);
 
       // Store the CEK salt (and password salt, if any) in the description so the
       // download flow can rebuild the key. Format: "[s:<salt>]" optionally "[pw:<salt>]".
@@ -217,14 +217,14 @@
         mimeType: file.type || 'application/octet-stream',
         size: file.size,
       });
-      console.log(`[Vault] Document enregistré: ${doc.id}`);
+      console.log(`[Vault] Document saved: ${doc.id}`);
       stats = await listDocuments(associationId);
     } catch (e: unknown) {
       console.error('[Vault] Erreur upload:', e);
       if (e && typeof e === 'object' && 'status' in e) {
-        uploadError = `Erreur ${(e as { status: number }).status} - vérifiez l'espace disponible`;
+        uploadError = `Error ${(e as { status: number }).status} - check available storage space`;
       } else {
-        uploadError = e instanceof Error ? e.message : "Erreur lors de l'upload";
+        uploadError = e instanceof Error ? e.message : 'Upload error';
       }
     } finally {
       uploading = false;
@@ -242,8 +242,8 @@
     downloadingId = doc.id;
     performDownload(doc)
       .catch((e) => {
-        console.error('[Vault] Erreur téléchargement:', e);
-        error = e instanceof Error ? e.message : 'Erreur lors du téléchargement';
+        console.error('[Vault] Download error:', e);
+        error = e instanceof Error ? e.message : 'Download error';
       })
       .finally(() => {
         downloadingId = null;
@@ -256,13 +256,13 @@
    * authentication failure thrown by `decryptDocument`.
    */
   async function performDownload(doc: AssociationDocument, password?: string) {
-    console.log(`[Vault] Téléchargement: ${doc.id}`);
+    console.log(`[Vault] Downloading: ${doc.id}`);
 
     const detail = await getDocumentDetail(associationId, doc.id);
-    if (!detail.mediaId) throw new Error('mediaId manquant dans les métadonnées');
+    if (!detail.mediaId) throw new Error('mediaId missing in document metadata');
 
     const { cekSalt, pwSalt } = parseVaultMarkers(detail.description);
-    if (!cekSalt) throw new Error('Salt de chiffrement introuvable - document corrompu');
+    if (!cekSalt) throw new Error('Encryption salt not found - document is corrupt');
 
     const vaultKeyHex = await getVaultKey(associationId);
     const cek =
@@ -272,7 +272,7 @@
 
     const mediaBase = socialUrl() || '';
     const dlRes = await apiFetch(`${mediaBase}/api/media/${encodeURIComponent(detail.mediaId)}`);
-    if (!dlRes.ok) throw new Error(`Téléchargement échoué: ${dlRes.status}`);
+    if (!dlRes.ok) throw new Error(`Download failed: ${dlRes.status}`);
     const packed = await dlRes.arrayBuffer();
 
     const { iv, ciphertext } = unpackEncryptedBlob(packed);
@@ -285,7 +285,7 @@
     a.download = detail.name;
     a.click();
     URL.revokeObjectURL(url);
-    console.log(`[Vault] Téléchargement terminé: ${detail.name}`);
+    console.log(`[Vault] Download complete: ${detail.name}`);
   }
 
   async function submitPwPrompt() {
@@ -308,7 +308,7 @@
     if (!await showConfirm(m.asso_doc_confirm_delete({ name: doc.name }), { danger: true, confirmLabel: m.common_delete_button() })) return;
     try {
       await deleteDocument(associationId, doc.id);
-      console.log(`[Vault] Document supprimé: ${doc.id}`);
+      console.log(`[Vault] Document deleted: ${doc.id}`);
       stats = await listDocuments(associationId);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Erreur lors de la suppression';

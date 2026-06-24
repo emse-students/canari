@@ -1,5 +1,5 @@
 /**
- * Fonctions biométriques extraites de useChatSession :
+ * Biometric functions extracted from useChatSession:
  * isBiometricPromptDismissed, dismissBiometricPromptImpl, enrollBiometricImpl.
  */
 import { BiometricService } from '$lib/services/biometric';
@@ -58,14 +58,14 @@ export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<v
  * so future logins require biometric authentication.
  */
 export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
-  appendLog('[BIOMETRIE] Inscription biométrique en cours…');
+  appendLog('[BIOMETRIC] Biometric enrollment in progress…');
   try {
     await BiometricService.enableBiometric(ctx.getPin());
     // PIN is now protected by the hardware keystore - wipe the session cache
     clearPinAndKey();
     ctx.setShowBiometricEnrollPrompt(false);
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
-    appendLog('[BIOMETRIE] Inscription OK - PIN effacé de la session (keystore matériel)');
+    appendLog('[BIOMETRIC] Enrollment OK - PIN cleared from session (hardware keystore)');
   } catch (e) {
     appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
     console.error('Biometric enrollment failed:', e);

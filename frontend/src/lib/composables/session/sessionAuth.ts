@@ -1,9 +1,9 @@
 /**
- * Fonctions d'authentification extraites de useChatSession :
+ * Authentication functions extracted from useChatSession:
  * login, logout, nativeStorageLogin, biometricLogin, resetDeviceAsFresh.
  *
- * Chaque fonction reçoit `ctx: SessionContext` à la place de la closure
- * et `cb: ChatSessionCallbacks` pour interagir avec les conversations / l'UI.
+ * Each function receives `ctx: SessionContext` instead of the closure,
+ * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
 import { goto } from '$app/navigation';
 import { SvelteSet } from 'svelte/reactivity';
@@ -77,11 +77,11 @@ import {
 import { startHealthCheckImpl, startSyncWatchdogImpl } from './sessionWatchdogs';
 import { isBiometricPromptDismissed } from './sessionBiometrics';
 
-// ── Helpers internes ───────────────────────────────────────────────────────────
+// ── Internal helpers ───────────────────────────────────────────────────────────
 
 /**
- * Construit les RecoveryDeps nécessaires à requestReAdd / reboot.
- * Centralisé ici pour éviter la duplication dans login et attemptReconnect.
+ * Builds the RecoveryDeps required by requestReAdd / reboot.
+ * Centralised here to avoid duplication across login and attemptReconnect.
  */
 export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
   const st = ctx.getStorage();
@@ -100,9 +100,9 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
 }
 
 /**
- * Callback de recovery d'un groupe forké en retard (commit rejeté epoch_mismatch),
- * injecté dans processPendingInvitations / handleWelcomeRequest. Oublie l'état local
- * périmé et redemande un Welcome pour rejoindre à l'epoch courante.
+ * Recovery callback for a stale-forked group (commit rejected with epoch_mismatch),
+ * injected into processPendingInvitations / handleWelcomeRequest. Discards the stale
+ * local state and re-requests a Welcome to rejoin at the current epoch.
  */
 export function makeRecoverForkedGroup(ctx: SessionContext, cb: ChatSessionCallbacks) {
   return (groupId: string, minEpoch?: number) =>
@@ -169,7 +169,7 @@ export async function processDeviceInvitationsLocally(
   }
 }
 
-// ── Fonctions exportées ────────────────────────────────────────────────────────
+// ── Exported functions ────────────────────────────────────────────────────────
 
 /**
  * Wipes all local MLS state, device ID, and stored DB for the given user.
@@ -211,7 +211,7 @@ export async function resetDeviceAsFreshImpl(
   ctx.setIsWsConnected(false);
   clearPinAndKey();
   clearUserLocally();
-  cb.log('[SECURITY] Appareil revoque detecte: etat local purgé, reconnexion requise.');
+  cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
 }
 
 /**
@@ -224,7 +224,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   const pin = ctx.getPin();
 
   if (!userId.trim() || !pin.trim()) {
-    ctx.setLoginError('Veuillez remplir tous les champs.');
+    ctx.setLoginError('Please fill in all fields.');
     return;
   }
 
@@ -247,7 +247,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
   try {
     const mlsService = ctx.ensureMls();
-    cb.log('Verification du PIN…');
+    cb.log('Verifying PIN...');
 
     // Start MLS state load immediately - pure I/O, doesn't need the token.
     const { loadMlsState } = await import('$lib/utils/hex');
@@ -263,7 +263,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           if (fallback && fallback.length > 0)
             return { bytes: new Uint8Array(fallback), source: 'native' };
         } catch {
-          // Non-bloquant
+          // Non-blocking.
         }
       }
       return undefined;
@@ -273,7 +273,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     try {
       accessToken = await getToken();
     } catch {
-      ctx.setLoginError('Session expiree. Merci de vous reconnecter.');
+      ctx.setLoginError('Session expired. Please sign in again.');
       ctx.setIsLoginInProgress(false);
       return;
     }
@@ -289,12 +289,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (mlsStateResult) {
       cb.log(
         mlsStateResult.source === 'native'
-          ? 'Etat MLS restaure depuis la sauvegarde native (mls.bin).'
-          : 'Etat MLS charge depuis IndexedDB.'
+          ? 'MLS state restored from native backup (mls.bin).'
+          : 'MLS state loaded from IndexedDB.'
       );
     }
 
-    cb.log('Initialisation MLS…');
+    cb.log('Initialising MLS...');
     // Resolve the device id and verify the PIN BEFORE init(). init() decrypts the
     // encrypted MLS state, and a WRONG PIN makes that decryption fail - which would
     // trigger a destructive fresh-start (generate a new id + deleteDevice → revocation).
@@ -310,7 +310,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       body: verifierPayload,
     });
     if (!pinCheckRes.ok) {
-      throw new Error('Impossible de verifier le PIN (serveur inaccessible).');
+      throw new Error('Cannot verify PIN (server unreachable).');
     }
     const pinCheckData = (await pinCheckRes.json()) as {
       status: string;
@@ -319,7 +319,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     if (pinCheckData.status === 'mismatch') {
       throw new Error(
-        'PIN incorrect : ce PIN ne correspond pas a celui enregistre pour cet utilisateur. Tous vos appareils doivent utiliser le meme PIN.'
+        'Incorrect PIN: this PIN does not match the one registered for this user. All devices must use the same PIN.'
       );
     }
     if (pinCheckData.resetRequired === true) {
@@ -327,10 +327,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
       ctx.setPin('');
       throw new Error(
-        'Cet appareil a ete revoque. L etat local a ete reinitialise: reconnectez-vous avec votre PIN pour l enregistrer comme nouvel appareil.'
+        'This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.'
       );
     }
-    if (pinCheckData.status === 'registered') cb.log('Premier appareil : PIN enregistre.');
+    if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
 
     // PIN verified server-side - now decrypt the local MLS state. When a saved state
     // exists, pass noFreshStart so an undecryptable state (the account PIN was rotated
@@ -348,7 +348,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         reason instanceof Error && reason.message === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
         throw new Error(
-          'Votre PIN a changé sur un autre appareil. Récupérez vos messages avec votre ancien PIN.'
+          'Your PIN was changed on another device. Recover your messages with your old PIN.'
         );
       }
       throw mlsInitSettled.reason;
@@ -357,22 +357,22 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     ctx.setStorage(storageSettled.value);
     ctx.setMyDeviceId(mlsService.getDeviceId());
-    cb.log(`Identite MLS initialisee (device: ${ctx.getMyDeviceId()})`);
+    cb.log(`MLS identity initialised (device: ${ctx.getMyDeviceId()})`);
     console.log(
       `[INIT] MLS initialized for userId=${ctx.getUserId()} device=${ctx.getMyDeviceId()}`
     );
-    cb.log('Base de donnees locale initialisee.');
+    cb.log('Local database initialised.');
 
-    // Avertir uniquement en navigation privée réelle (stockage bloqué / éphémère).
+    // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()
       .then((privateBrowsing) => {
         if (!privateBrowsing) return;
         ctx.setMlsFatalError('private_mode');
         cb.log(
-          "[AVERT] Navigation privée détectée - l'état MLS ne sera pas conservé après fermeture."
+          '[WARN] Private browsing detected - MLS state will not be persisted after window close.'
         );
         appendLog(
-          "ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture de l'onglet."
+          'ℹ️ Private browsing mode: your messages will not be saved after the tab is closed.'
         );
       })
       .catch(() => {});
@@ -384,21 +384,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     ctx.setIsMessagingInitializing(true);
     installCatchupBenchDevTools();
     beginStartupCatchupBench();
-    cb.log('[INIT] MLS prêt - synchronisation messagerie en arrière-plan.');
+    cb.log('[INIT] MLS ready - syncing messages in background.');
     cb.onMlsReady?.();
 
-    // Fire-and-forget : savePin est indépendant du chargement des conversations.
-    // Sur Tauri, BiometricService.isConfigured() est une lecture rapide (localStorage +
-    // éventuel invoke natif) et n'a pas besoin de bloquer la suite du login.
+    // Fire-and-forget: savePin is independent of conversation loading.
+    // On Tauri, BiometricService.isConfigured() is a fast read (localStorage +
+    // optional native invoke) and does not need to block the rest of login.
     void (async () => {
       if (!isTauriRuntime() || !(await BiometricService.isConfigured().catch(() => false))) {
         await savePin(ctx.getPin());
       }
     })();
 
-    // Proposition d'enroler la biometrie : ne depend que de l'etat local (Tauri + non configuree
-    // + non rejetee), pas des synchros. On l'evalue des que MLS est pret pour qu'elle apparaisse
-    // immediatement, et non a la toute fin du catch-up de demarrage.
+    // Biometric enrolment prompt: depends only on local state (Tauri + not configured
+    // + not dismissed), not on syncs. Evaluated as soon as MLS is ready so the prompt
+    // appears immediately, not at the very end of the startup catch-up.
     if (isTauriRuntime()) {
       void (async () => {
         const [isConfig, isDismissed] = await Promise.all([
@@ -413,7 +413,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // (written by store_push_secret during startPushService) before the health check runs.
     void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
       .then(async () => {
-        cb.log('[PUSH] Enregistrement token push termine.');
+        cb.log('[PUSH] Push token registration complete.');
         if (!isTauriRuntime()) return;
         try {
           const { invoke } = await import('@tauri-apps/api/core');
@@ -421,26 +421,24 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           if (!health.ok && health.reason === 'no_secret') {
             ctx.setMlsFatalError('keystore_lost');
             cb.log(
-              "[AVERT] Keystore push perdu - les notifications background sont dégradées. Redémarrez l'application pour les réactiver."
+              '[WARN] Push keystore lost - background notifications are degraded. Restart the app to re-enable them.'
             );
-            appendLog(
-              "⚠️ Notifications push dégradées - redémarrez l'application pour les réactiver."
-            );
+            appendLog('⚠️ Push notifications degraded - restart the app to re-enable them.');
           }
         } catch {
-          /* non-bloquant */
+          /* non-blocking */
         }
       })
       .catch((e) =>
-        cb.log(`[WARN] Echec enregistrement push: ${e instanceof Error ? e.message : String(e)}`)
+        cb.log(`[WARN] Push registration failed: ${e instanceof Error ? e.message : String(e)}`)
       );
 
-    // Outbox de messages : enregistrer le flusher avant de charger les conversations pour que
-    // applyOutboxPendingStatuses puisse remettre le statut "pending" sur les messages restaurés.
+    // Message outbox: register the flusher before loading conversations so that
+    // applyOutboxPendingStatuses can restore the "pending" status on restored messages.
     registerOutbox(makeOutboxDeps(ctx, cb));
 
-    // Charger les conversations d'abord : consumeFcmCache peut accéder
-    // à la Map conversations via addMessageToChat une fois qu'elle est peuplée.
+    // Load conversations first: consumeFcmCache can access
+    // the conversations Map via addMessageToChat once it is populated.
     beginStartupCatchupPhase('load_conversations');
     await cb.loadAndRestoreConversations();
     {
@@ -450,11 +448,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         messageCount: stats.localMessageCount,
       });
     }
-    // Reconcilier d'abord les envois faits en arriere-plan (app tuee) : supprimer de l'outbox les
-    // messages que le service natif a deja livres, AVANT de re-deriver les statuts "pending" (sinon
-    // un message deja envoye serait reaffiche en attente).
+    // Reconcile background sends (killed app) first: remove from the outbox any
+    // messages already delivered by the native service, BEFORE re-deriving "pending"
+    // statuses (otherwise an already-sent message would be shown as pending again).
     await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
-    // Re-marquer "pending" les messages encore en file (statut dérivé de l'outbox, non persisté).
+    // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
     await applyOutboxPendingStatuses();
 
     beginStartupCatchupPhase('fcm_cache');
@@ -467,7 +465,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         cb.conversations,
         ctx.getUserId()
       );
-      cb.log(`[FCM_CACHE] ${mergedCount} message(s) fusionné(s) en mémoire au login`);
+      cb.log(`[FCM_CACHE] ${mergedCount} message(s) merged in memory at login`);
     }
     endStartupCatchupPhase({
       messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
@@ -476,9 +474,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
       const missingKeys: string[] = [];
-      // Conversations bloquees en 'pending' alors que leur etat MLS est present localement :
-      // le badge "Sync" resterait affiche a jamais (DF5). La reconciliation demotait les
-      // groupes absents mais ne promouvait jamais l'inverse - on ajoute la promotion miroir.
+      // Conversations stuck in 'pending' while their local MLS state exists:
+      // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent
+      // groups but never promoted the inverse - this adds the mirror promotion.
       const recoveredKeys: string[] = [];
       for (const [key, c] of cb.conversations.entries()) {
         if (isChannelConversationId(c.id)) continue;
@@ -492,7 +490,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
       if (missingKeys.length > 0) {
         cb.log(
-          `[WARN] Groupes sans etat MLS local detectes - ${missingKeys.length} conversation(s) marquees non-pretes, reinvite declenchee au prochain connect.`
+          `[WARN] Groups without local MLS state detected - ${missingKeys.length} conversation(s) marked not-ready, re-invite triggered on next connect.`
         );
         console.warn(
           `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
@@ -501,16 +499,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
       if (recoveredKeys.length > 0) {
         cb.log(
-          `[INIT] ${recoveredKeys.length} conversation(s) bloquees en attente mais deja synchronisees - badge "Sync" leve.`
+          `[INIT] ${recoveredKeys.length} conversation(s) stuck pending but already synced - "Sync" badge cleared.`
         );
         await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
       }
     } catch (e) {
-      console.warn('[INIT] Erreur détection groupes MLS manquants:', e);
+      console.warn('[INIT] Error detecting missing MLS groups:', e);
     }
 
-    // processDeviceInvitationsLocally est appelé en fin de syncConnectionAfterWsOpen -
-    // l'appeler ici avant l'ouverture du WebSocket est redondant.
+    // processDeviceInvitationsLocally is called at the end of syncConnectionAfterWsOpen -
+    // calling it here before the WebSocket is opened is redundant.
 
     beginStartupCatchupPhase('setup_handler');
 
@@ -573,8 +571,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onGroupReady: (() => {
         let t: ReturnType<typeof setTimeout> | null = null;
         return (readyGroupId: string) => {
-          // Le groupe vient de devenir envoyable (Welcome traité / reboot terminé) : draine
-          // l'outbox pour livrer les messages en attente, et rafraîchir leur statut.
+          // The group just became sendable (Welcome processed / reboot complete): drain
+          // the outbox to deliver pending messages and refresh their status.
           flushOutbox();
           void applyOutboxPendingStatuses();
           const deferred = ctx.deferredWelcomeRequests.get(readyGroupId);
@@ -605,22 +603,20 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onMlsFatalError: (kind) => {
         ctx.setMlsFatalError(kind);
         if (kind === 'oom') {
-          cb.log("[FATAL] Mémoire WASM insuffisante - rechargez l'application.");
+          cb.log('[FATAL] Insufficient WASM memory - reload the application.');
           appendLog(
-            "⚠️ Mémoire insuffisante - rechargez l'application pour continuer à recevoir des messages."
+            '⚠️ Insufficient memory - reload the application to continue receiving messages.'
           );
         } else if (kind === 'private_mode') {
           cb.log(
-            "[AVERT] Navigation privée détectée - l'état MLS ne sera pas conservé après fermeture."
+            '[WARN] Private browsing detected - MLS state will not be persisted after window close.'
           );
           appendLog(
-            'ℹ️ Mode navigation privée : vos messages ne seront pas conservés après fermeture.'
+            'ℹ️ Private browsing mode: your messages will not be saved after the tab is closed.'
           );
         } else if (kind === 'keystore_lost') {
-          cb.log('[AVERT] Keystore Android perdu - notifications push dégradées.');
-          appendLog(
-            "⚠️ Notifications push dégradées - redémarrez l'application pour les réactiver."
-          );
+          cb.log('[WARN] Android keystore lost - push notifications degraded.');
+          appendLog('⚠️ Push notifications degraded - restart the app to re-enable them.');
         }
       },
       recoveryTimers: ctx.connectionRecoveryTimers,
@@ -640,7 +636,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if ('onWelcomeProcessed' in mlsService) {
       (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
         if (groupId) {
-          cb.log(`[SYNC] Welcome traité pour ${groupId}, rafraîchissement…`);
+          cb.log(`[SYNC] Welcome processed for ${groupId}, refreshing...`);
           if (!cb.conversations.has(groupId)) {
             cb.conversations.set(groupId, {
               id: groupId,
@@ -655,15 +651,15 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             await cb.saveConversation(groupId);
             await cb
               .loadAndRestoreConversations()
-              .catch((e) => cb.log(`[WARN] Erreur resync convs (Welcome): ${e}`));
+              .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
           }
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
-            cb.log(`[WARN] Erreur refresh conv ${groupId}: ${e}`)
+            cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
           );
         } else {
-          cb.log('[SYNC] Welcome traité, rafraîchissement des conversations…');
+          cb.log('[SYNC] Welcome processed, refreshing conversations...');
           cb.loadAndRestoreConversations().catch((e) =>
-            cb.log(`[WARN] Erreur refresh convs: ${e}`)
+            cb.log(`[WARN] Error refreshing convs: ${e}`)
           );
         }
       });
@@ -672,7 +668,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     mlsService.onWelcomeRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
         cb.log(
-          `[SYNC] welcome_request reçu de ${requesterUserId}:${requesterDeviceId} pour ${groupId}`
+          `[SYNC] welcome_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}`
         );
         try {
           await handleWelcomeRequest({
@@ -690,7 +686,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
               const list = ctx.deferredWelcomeRequests.get(terminalGroupId) ?? [];
               list.push({ requesterUserId, requesterDeviceId });
               ctx.deferredWelcomeRequests.set(terminalGroupId, list);
-              cb.log(`[WELCOME_REQ] ${terminalGroupId.slice(0, 8)}… pas encore prêt - report`);
+              cb.log(`[WELCOME_REQ] ${terminalGroupId.slice(0, 8)}... not ready yet - deferred`);
             },
           });
         } catch (e) {
@@ -704,7 +700,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     const tabLeaderNow = await initTabLeadershipAsync(cb.log);
     ctx.setIsTabLeader(tabLeaderNow);
     if (!tabLeaderNow) {
-      cb.log('[TAB] Onglet follower - WebSocket actif dans un autre onglet Canari.');
+      cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
     }
 
     beginStartupCatchupPhase('initialize_connection');
@@ -731,8 +727,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
     finishStartupCatchupBench(cb.log);
 
-    // Connexion établie et groupes réconciliés : draine l'outbox (couvre la reconnexion, qui
-    // ré-exécute initializeConnection).
+    // Connection established and groups reconciled: drain the outbox (covers reconnection,
+    // which re-runs initializeConnection).
     flushOutbox();
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -742,7 +738,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       const lastActive = parseInt(lastActiveRaw, 10);
       if (Number.isFinite(lastActive) && Date.now() - lastActive > STALE_SESSION_MS) {
         appendLog(
-          '⚠️ Vous ne vous êtes pas connecté depuis plus de 3 mois. Certains anciens messages peuvent ne plus être disponibles.'
+          '⚠️ You have not logged in for more than 3 months. Some older messages may no longer be available.'
         );
       }
     } else if (isTauriRuntime()) {
@@ -756,7 +752,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           Date.now() - nativeLastActive > STALE_SESSION_MS
         ) {
           appendLog(
-            '⚠️ Vous ne vous êtes pas connecté depuis plus de 3 mois. Certains anciens messages peuvent ne plus être disponibles.'
+            '⚠️ You have not logged in for more than 3 months. Some older messages may no longer be available.'
           );
         }
       } catch {
@@ -792,7 +788,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     cancelStartupCatchupBench();
     const msg = _e instanceof Error ? _e.message : String(_e);
     ctx.setLoginError(msg);
-    cb.log(`Erreur: ${msg}`);
+    cb.log(`Error: ${msg}`);
     console.error('[INIT] Login failed:', msg);
     ctx.resetMls();
     clearUserLocally();
@@ -822,7 +818,7 @@ export async function nativeStorageLoginImpl(
     const { invoke } = await import('@tauri-apps/api/core');
     const nativeCtx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
     if (!nativeCtx?.pin || !nativeCtx.userId || nativeCtx.userId !== ctx.getUserId()) return false;
-    appendLog('[PIN] PIN restauré depuis stockage natif - login auto…');
+    appendLog('[PIN] PIN restored from native storage - auto-login…');
     ctx.setPin(nativeCtx.pin);
     await loginImpl(ctx, cb);
     return ctx.isLoggedIn();
@@ -840,22 +836,22 @@ export async function biometricLoginImpl(
   cb: ChatSessionCallbacks
 ): Promise<void> {
   ctx.setLoginError('');
-  cb.log('[BIOMETRIE] Tentative de connexion biométrique…');
+  cb.log('[BIOMETRIC] Biometric login attempt...');
   try {
     const savedUser = currentUserId();
     if (!savedUser) {
-      ctx.setLoginError('Aucun utilisateur enregistre pour la biometrie.');
-      cb.log('[BIOMETRIE] Echec - aucun utilisateur local');
+      ctx.setLoginError('No user registered for biometric authentication.');
+      cb.log('[BIOMETRIC] Failed - no local user found.');
       return;
     }
-    cb.log(`[BIOMETRIE] Authentification pour userId=${savedUser.slice(0, 8)}…`);
+    cb.log(`[BIOMETRIC] Authenticating for userId=${savedUser.slice(0, 8)}...`);
     const retrieved = await BiometricService.authenticateAndGetSecret();
     if (!retrieved) {
-      ctx.setLoginError("L'authentification biometrique a echoue. Entrez votre PIN manuellement.");
-      cb.log('[BIOMETRIE] Echec - secret non récupéré, PIN manuel requis');
+      ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');
+      cb.log('[BIOMETRIC] Failed - secret not retrieved, manual PIN required.');
       return;
     }
-    cb.log('[BIOMETRIE] PIN récupéré via biométrie - appel login()');
+    cb.log('[BIOMETRIC] PIN retrieved via biometrics - calling login().');
     ctx.setUserId(savedUser);
     ctx.setPin(retrieved);
 
@@ -872,11 +868,11 @@ export async function biometricLoginImpl(
     });
     if (failMsg && /PIN incorrect/i.test(failMsg)) {
       await BiometricService.disable().catch(() => {});
-      cb.log('[BIOMETRIE] PIN obsolète détecté - empreinte désactivée, ré-enrôlement requis.');
+      cb.log('[BIOMETRIC] Stale PIN detected - biometric disabled, re-enrolment required.');
     }
   } catch (e) {
-    ctx.setLoginError('Echec de la biometrie. Entrez votre PIN manuellement.');
-    cb.log(`[BIOMETRIE] Exception: ${e instanceof Error ? e.message : String(e)}`);
+    ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');
+    cb.log(`[BIOMETRIC] Exception: ${e instanceof Error ? e.message : String(e)}`);
     console.error(e);
   }
 }
@@ -899,14 +895,14 @@ export async function recoverPinImpl(
   onProgress?: PinProgressCallback
 ): Promise<void> {
   const userId = ctx.getUserId();
-  if (!userId.trim()) throw new Error('Aucun utilisateur connecté.');
-  cb.log('[PIN_RECOVER] Démarrage de la récupération…');
+  if (!userId.trim()) throw new Error('No user is currently signed in.');
+  cb.log('[PIN_RECOVER] Starting recovery...');
   onProgress?.({ percent: 3, stage: 'verify' });
 
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
-    throw new Error('Aucun état local à récupérer sur cet appareil.');
+    throw new Error('No local state to recover on this device.');
   }
 
   // The new PIN must be the real (rotated) account PIN: verify its verifier server-side.
@@ -917,10 +913,10 @@ export async function recoverPinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, verifier: newVerifier }),
   });
-  if (!res.ok) throw new Error('Impossible de vérifier le nouveau PIN (serveur inaccessible).');
+  if (!res.ok) throw new Error('Cannot verify the new PIN (server unreachable).');
   const data = (await res.json()) as { status: string };
   if (data.status !== 'ok') {
-    throw new Error('Le nouveau PIN est incorrect.');
+    throw new Error('The new PIN is incorrect.');
   }
 
   onProgress?.({ percent: 15, stage: 'mls' });
@@ -928,16 +924,16 @@ export async function recoverPinImpl(
   const mls = ctx.ensureMls();
   const ok = await mls.recoverAndRekey(userId, oldPin, newPin, state);
   if (!ok) {
-    throw new Error("L'ancien PIN est incorrect (il ne déchiffre pas cet appareil).");
+    throw new Error("The old PIN is incorrect (it does not decrypt this device's state).");
   }
-  cb.log('[PIN_RECOVER] État MLS re-chiffré avec le nouveau PIN.');
+  cb.log('[PIN_RECOVER] MLS state re-encrypted with the new PIN.');
 
   const storage = await getStorage(userId);
   await reencryptLocalMessages(storage, oldPin, newPin, cb.log, onProgress, {
     start: 20,
     end: 82,
   });
-  cb.log('[PIN_RECOVER] Messages locaux re-chiffrés avec le nouveau PIN.');
+  cb.log('[PIN_RECOVER] Local messages re-encrypted with the new PIN.');
 
   onProgress?.({ percent: 88, stage: 'finalize' });
   await applyNewPinLocally(newPin, cb.log);
@@ -948,10 +944,10 @@ export async function recoverPinImpl(
   // client initialised), so the decrypted client is reused and all messages are kept.
   await loginImpl(ctx, cb);
   if (!ctx.isLoggedIn()) {
-    throw new Error('La connexion a échoué après la récupération.');
+    throw new Error('Login failed after recovery.');
   }
   onProgress?.({ percent: 100, stage: 'login' });
-  cb.log('[PIN_RECOVER] Terminé - messages conservés.');
+  cb.log('[PIN_RECOVER] Complete - messages preserved.');
 }
 
 /**
@@ -959,7 +955,7 @@ export async function recoverPinImpl(
  * deregisters the device push token, and redirects to /login.
  */
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
-  cb.log(`[LOGOUT] Déconnexion de userId=${ctx.getUserId()?.slice(0, 8) ?? 'inconnu'}…`);
+  cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   unregisterOutbox();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();
@@ -1006,6 +1002,6 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   clearUserLocally();
   clearPinAndKey();
   clearAuth();
-  cb.log('[LOGOUT] État local effacé - redirection vers /login');
+  cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
   void goto('/login', { replaceState: true });
 }

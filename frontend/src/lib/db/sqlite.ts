@@ -65,14 +65,14 @@ function base64ToUint8(val: unknown): Uint8Array {
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
-  /** Chaîne de sérialisation des sections transactionnelles (voir runExclusive). */
+  /** Serialisation chain for transactional sections (see runExclusive). */
   private txnChain: Promise<unknown> = Promise.resolve();
 
   /**
-   * Sérialise les sections `BEGIN…COMMIT`. Le plugin SQL n'a qu'une connexion et SQLite
-   * n'imbrique pas les transactions : deux transactions concurrentes se court-circuitent
-   * (" cannot commit - no transaction is active " quand l'une COMMIT pendant l'autre).
-   * Toute section transactionnelle doit passer par ici pour s'exécuter une à la fois.
+   * Serialises `BEGIN…COMMIT` sections. The SQL plugin has a single connection and SQLite
+   * does not nest transactions: two concurrent transactions short-circuit each other
+   * ("cannot commit - no transaction is active" when one COMMITs while the other is active).
+   * Every transactional section must go through here to execute one at a time.
    */
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.txnChain.then(fn, fn);
@@ -104,8 +104,8 @@ export class SqliteStorage implements IStorage {
     // cote destinataire (symptome observe : "Echec replay historique … database is locked").
     await this.db.execute('PRAGMA busy_timeout=5000');
 
-    // Schéma : la conversation porte son état de cycle de vie (active|pending|removed).
-    // Les anciennes bases (colonne `is_ready`) sont migrées en v4 ci-dessous.
+    // Schema: conversations carry their lifecycle state (active|pending|removed).
+    // Older databases (with an `is_ready` column) are migrated in v4 below.
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS conversations (
                 id         TEXT    PRIMARY KEY,
@@ -116,8 +116,8 @@ export class SqliteStorage implements IStorage {
         `);
 
     // Colonnes TEXT (base64) pour iv/salt/cipher_text.
-    // L'ancien schéma utilisait BLOB, ce qui amenait le plugin Tauri SQL à
-    // sérialiser les Uint8Array en JSON text "[1,2,3]" → données illisibles au redémarrage.
+    // The old schema used BLOB columns, which caused the Tauri SQL plugin to
+    // serialise Uint8Array values as JSON text "[1,2,3]" → unreadable after restart.
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS messages (
                 id              TEXT PRIMARY KEY,
@@ -155,9 +155,9 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conversation_id)');
 
     // Migration v1→v2 : colonnes BLOB → TEXT (base64).
-    // Détecte les lignes dont iv/salt/cipher_text ne sont pas des chaînes base64 valides
-    // (stockées avec l'ancien format JSON "[1,2,3]") et les supprime car elles ne peuvent
-    // pas être déchiffrées sans la clé privée du device source.
+    // Detect rows whose iv/salt/cipher_text are not valid base64 strings
+    // (stored with the old JSON "[1,2,3]" format) and delete them, as they cannot
+    // be decrypted without the source device's private key.
     const versionRows: any[] = await this.db.select('PRAGMA user_version');
     const currentVersion: number = versionRows[0]?.user_version ?? 0;
 
@@ -180,9 +180,9 @@ export class SqliteStorage implements IStorage {
     }
 
     if (currentVersion < 4) {
-      // v3→v4 : remplacement du booléen `is_ready` par `lifecycle` (active|pending|removed).
-      // Idempotent : on n'ajoute la colonne que si elle manque (les bases fraîches l'ont déjà
-      // via le CREATE TABLE ci-dessus), puis on backfill depuis `is_ready` si encore présent.
+      // v3→v4: replace the boolean `is_ready` column with `lifecycle` (active|pending|removed).
+      // Idempotent: the column is added only if missing (fresh databases already have it
+      // from the CREATE TABLE above); then backfill from `is_ready` if it still exists.
       const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
       const hasLifecycle = cols.some((c) => c.name === 'lifecycle');
       const hasIsReady = cols.some((c) => c.name === 'is_ready');
@@ -263,9 +263,9 @@ export class SqliteStorage implements IStorage {
       })
     );
 
-    // Enveloppe tous les inserts dans une transaction pour l'atomicité et la performance.
-    // Binary data stockée en base64 TEXT : passer number[] causerait le plugin à sérialiser
-    // en JSON "[1,2,3]" (non-BLOB), illisible après redémarrage.
+    // Wrap all inserts in a transaction for atomicity and performance.
+    // Binary data stored as base64 TEXT: passing number[] would cause the plugin to
+    // serialise as JSON "[1,2,3]" (not a BLOB), which is unreadable after restart.
     await this.runExclusive(async () => {
       await this.db.execute('BEGIN');
       try {

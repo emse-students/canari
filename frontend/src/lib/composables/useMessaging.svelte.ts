@@ -287,7 +287,7 @@ export function useMessaging() {
         console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}…`);
         return;
       }
-      console.log(`[ADD_MSG] Doublon ignoré id=${newMsg.id}…`);
+      console.log(`[ADD_MSG] Duplicate ignored id=${newMsg.id}…`);
       return;
     }
 
@@ -305,7 +305,7 @@ export function useMessaging() {
       messages: insertMessageOrdered(convo.messages, newMsg),
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
     });
-    console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}…`);
+    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}…`);
 
     publishTabMessageUpdate({
       type: 'message_added',
@@ -504,12 +504,12 @@ export function useMessaging() {
       return;
     }
     if (!ctx.selectedContact) {
-      ctx.log('[SEND] Abort: aucun contact sélectionné');
+      ctx.log('[SEND] Abort: no contact selected.');
       return;
     }
     const convo = ctx.conversations.get(ctx.selectedContact);
     if (!convo) {
-      ctx.log(`[SEND] Abort: pas de conversation trouvée pour "${ctx.selectedContact}"`);
+      ctx.log(`[SEND] Abort: no conversation found for "${ctx.selectedContact}".`);
       return;
     }
 
@@ -524,12 +524,12 @@ export function useMessaging() {
     if (filesToSend.length > 0 && !isChannel) {
       if (isMessageCatchupActive) {
         ctx.log('[SEND] Abort media: synchronisation MLS en cours');
-        ctx.setSendError('Synchronisation en cours - réessayez dans un instant');
+        ctx.setSendError('Sync in progress - please try again in a moment.');
         return;
       }
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       if (!stillMember || convo.lifecycle !== 'active') {
-        ctx.setSendError('Session sécurisée en cours de négociation. Réessaie dans un instant.');
+        ctx.setSendError('Secure session being established. Please try again in a moment.');
         return;
       }
     }
@@ -673,12 +673,12 @@ export function useMessaging() {
     if (!result.success) {
       if (result.error) {
         ctx.setSendError(result.error);
-        ctx.log(`[SEND] Échec: ${result.error}`);
+        ctx.log(`[SEND] Failed: ${result.error}`);
       }
       return;
     }
 
-    ctx.log('[SEND] handleSendChat terminé (message en file)');
+    ctx.log('[SEND] handleSendChat completed (message queued).');
     ctx.playSendTone?.();
   }
 
@@ -740,7 +740,7 @@ export function useMessaging() {
 
     if (!updated) {
       ctx.log(
-        `[REACTION] Maximum de ${MAX_DISTINCT_MESSAGE_REACTIONS} réactions différentes atteint sur ce message`
+        `[REACTION] Maximum of ${MAX_DISTINCT_MESSAGE_REACTIONS} distinct reactions reached on this message.`
       );
       return;
     }
@@ -749,7 +749,7 @@ export function useMessaging() {
 
     messageReactions.set(messageId, updated);
 
-    // Mise à jour immédiate en mémoire et en DB pour survivre au rechargement
+    // Immediate in-memory and DB update to survive page reload.
     const msgIdx = convo.messages.findIndex((m) => m.id === messageId);
     if (msgIdx !== -1) {
       const nextMsgs = [...convo.messages];
@@ -878,13 +878,13 @@ export function useMessaging() {
   }
 
   /**
-   * Transfère un message (texte OU média) vers une AUTRE discussion, sans toucher à
-   * l'état de composition courant (reply/fichiers en attente).
+   * Forwards a message (text OR media) to ANOTHER conversation, without touching
+   * the current composition state (reply / pending files).
    *
-   * Média : l'enveloppe porte déjà la référence du blob chiffré (mediaId) + la clé de
-   * déchiffrement (CEK/iv). On ré-envoie donc la MÊME enveloppe média (aucun re-upload),
-   * ce qui donne aux membres de la cible l'accès au même blob via la clé transmise.
-   * La cible est toujours une discussion (canaux exclus par le sélecteur de transfert).
+   * Media: the envelope already carries the encrypted blob reference (mediaId) + the
+   * decryption key (CEK/iv). The SAME media envelope is re-sent (no re-upload),
+   * giving members of the target conversation access to the same blob via the forwarded key.
+   * The target is always a direct conversation (channels are excluded by the forward selector).
    */
   async function forwardMessage(
     sourceContent: string,
@@ -901,7 +901,7 @@ export function useMessaging() {
       if (env.kind === 'media') {
         // Media forward is an inline upload+send: it still needs a ready MLS group.
         if (convo.lifecycle !== 'active')
-          return { success: false, error: 'Conversation non prête.' };
+          return { success: false, error: 'Conversation not ready.' };
         const m = env.media;
         const kindMap: Record<string, number> = {
           image: MediaKind.MEDIA_IMAGE,
@@ -935,7 +935,7 @@ export function useMessaging() {
       }
 
       const text = env.kind === 'text' ? env.text.trim() : '';
-      if (!text) return { success: false, error: 'Rien à transférer.' };
+      if (!text) return { success: false, error: 'Nothing to forward.' };
       return await sendChatMessage(text, targetName, null, {
         userId: ctx.userId,
         conversation: convo,
@@ -946,7 +946,7 @@ export function useMessaging() {
     } catch (e) {
       return {
         success: false,
-        error: `Échec du transfert : ${e instanceof Error ? e.message : String(e)}`,
+        error: `Forward failed: ${e instanceof Error ? e.message : String(e)}`,
       };
     }
   }

@@ -119,7 +119,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       type: 'epoch_rejected',
       data: { groupId, currentEpoch: 7 },
     });
-    // Le nouveau comportement : requestReAdd est appelé (qui envoie sendWelcomeRequest)
+    // New behaviour: requestReAdd is called (which sends sendWelcomeRequest).
     const { requestReAdd } = await import('$lib/utils/chat/recovery');
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
       groupId,
@@ -228,8 +228,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('Welcome (NoMatchingKeyPackage) → republie le matériel de clé + sendWelcomeRequest', async () => {
-    // groupId unique : le compteur d'échecs NoMatchingKeyPackage est module-level.
+  it('Welcome (NoMatchingKeyPackage) → republishes key material + sendWelcomeRequest', async () => {
+    // Unique groupId: the NoMatchingKeyPackage failure counter is module-level.
     const gid = 'a1111111-1111-4111-8111-111111111111';
     const deps = baseDeps({
       conversations: createTestConversations([
@@ -251,12 +251,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     ) => Promise<boolean>;
     const ok = await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
     expect(ok).toBe(true);
-    // 1ʳᵉ détection : on republie un matériel de clé frais puis on redemande un Welcome.
+    // First detection: republish fresh key material then request a new Welcome.
     expect(mls.republishKeyMaterial).toHaveBeenCalledWith('pin');
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(gid);
   });
 
-  it('Welcome (NoMatchingKeyPackage) répété → escalade requestReAdd après le seuil', async () => {
+  it('Welcome (NoMatchingKeyPackage) repeated → requestReAdd escalation past threshold', async () => {
     const recovery = await import('$lib/utils/chat/recovery');
     vi.mocked(recovery.requestReAdd).mockClear();
     const gid = 'a2222222-2222-4222-8222-222222222222';
@@ -276,7 +276,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       d?: boolean,
       e?: Uint8Array
     ) => Promise<boolean>;
-    // 3 tentatives = welcome_request ; la 4ᵉ (au-delà du seuil) escalade en requestReAdd.
+    // 3 attempts = welcome_request; the 4th (past the threshold) escalates to requestReAdd.
     for (let i = 0; i < 3; i++) await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
     expect(recovery.requestReAdd).not.toHaveBeenCalled();
     await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
@@ -298,14 +298,14 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     ) => Promise<boolean>;
     const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
     expect(ok).toBe(true);
-    // Pas de sendWelcomeRequest ni d'erreur levée
+    // No sendWelcomeRequest and no thrown error.
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
-  it('Welcome redélivré pour groupe déjà détenu → idempotent, pas de re-join ni welcome_request', async () => {
-    // Régression : un Welcome redélivré (requeue serveur après restart) pour un groupe
-    // qu'on tient déjà localement ne doit PAS lancer processWelcome (qui échouerait sur
-    // NoMatchingKeyPackage et déclencherait un kick+ré-ajout destructeur côté invitant).
+  it('Welcome redelivered for already-held group → idempotent, no re-join or welcome_request', async () => {
+    // Regression: a redelivered Welcome (server requeue after restart) for a group
+    // we already hold locally must NOT call processWelcome (which would fail with
+    // NoMatchingKeyPackage and trigger a destructive kick+re-add on the inviter side).
     const onGroupReady = vi.fn();
     const deps = baseDeps({ onGroupReady });
     const mls = deps.mlsService as any;
@@ -327,7 +327,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
-  it('commit groupe inconnu → bufferisé + welcome_request envoyé', async () => {
+  it('commit for unknown group → buffered + welcome_request sent', async () => {
     const unknownGroupId = 'aaaaaaaa-0000-4000-8000-000000000001';
     const deps = baseDeps();
     const mls = deps.mlsService as any;
@@ -343,12 +343,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       f?: boolean
     ) => Promise<boolean>;
     const result = await onMsg('peer', new Uint8Array([1]), unknownGroupId, false, undefined, true);
-    // false → message gardé en queue côté serveur (pending buffer)
+    // false → message kept in server queue (pending buffer)
     expect(result).toBe(false);
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(unknownGroupId);
   });
 
-  it('buffer timeout 10s → requestReAdd déclenché', async () => {
+  it('buffer timeout 10 s → requestReAdd triggered', async () => {
     vi.useFakeTimers();
     const unknownGroupId = 'bbbbbbbb-0000-4000-8000-000000000001';
     const deps = baseDeps();
@@ -378,7 +378,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.useRealTimers();
   });
 
-  it('groupe connu, déchiffrement échoue → requestReAdd + ACK', async () => {
+  it('known group, decryption fails → requestReAdd + ACK', async () => {
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
@@ -410,7 +410,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
-    // Le groupe doit être dans getLocalGroups() pour être traité (WASM = source de vérité)
+    // The group must be in getLocalGroups() to be processed (WASM = source of truth).
     mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (
@@ -432,7 +432,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('epoch gap web (WASM) persistant au-delà du seuil → forget + escalade requestReAdd', async () => {
+  it('epoch gap web (WASM) persisting past threshold → forget + requestReAdd escalation', async () => {
     vi.useFakeTimers();
     const gid = 'c4444444-4444-4444-8444-444444444444';
     const deps = baseDeps({
@@ -470,7 +470,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.useRealTimers();
   });
 
-  it('GAP_QUEUED persistant au-delà du seuil → forget + escalade requestReAdd', async () => {
+  it('GAP_QUEUED persisting past threshold → forget + requestReAdd escalation', async () => {
     vi.useFakeTimers();
     const gid = 'b3333333-3333-4333-8333-333333333333';
     const deps = baseDeps({
@@ -496,12 +496,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       f?: boolean
     ) => Promise<boolean>;
 
-    // 1ʳᵉ occurrence : arme l'escalade, ACK, pas encore de forget.
+    // First occurrence: arms the escalation, ACK, no forget yet.
     const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(ok1).toBe(true);
     expect(mls.forgetGroup).not.toHaveBeenCalled();
 
-    // Au-delà du seuil → forget + welcome_request (via onOutOfSync → requestReAdd).
+    // Past the threshold → forget + welcome_request (via onOutOfSync → requestReAdd).
     vi.advanceTimersByTime(31_000);
     await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid);

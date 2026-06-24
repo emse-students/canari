@@ -156,7 +156,7 @@
 <aside
   class="hidden xl:flex flex-col w-72 h-full border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-2xl overflow-hidden rounded-[1.5rem] shadow-sm transition-all duration-300"
 >
-  <!-- En-tête -->
+  <!-- Header. -->
   <div
     class="flex items-center justify-between px-5 py-4 border-b border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10"
   >

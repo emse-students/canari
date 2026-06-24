@@ -70,7 +70,7 @@
       : 'left-0'} top-full mt-1.5 px-3.5 py-2.5 bg-white/90 dark:bg-black/80 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main text-[0.7rem] rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 z-50 whitespace-nowrap flex flex-col gap-1.5"
     in:fly={{ y: -4, duration: 200, opacity: 0, easing: (t) => t * (2 - t) }}
   >
-    <!-- Heure d'envoi -->
+    <!-- Send timestamp. -->
     <div class="flex items-center gap-1.5 opacity-90">
       <Clock size={12} class="text-text-muted shrink-0" />
       <span>

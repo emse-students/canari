@@ -56,8 +56,8 @@
     showLightbox = false;
   }
 
-  // Utilitaires dynamiques pour s'adapter au fond du message
-  // isOwn = fond ambré (texte sombre), !isOwn = fond glassmorphism clair/sombre (texte adapté au thème)
+  // Dynamic classes adapt to the message bubble background.
+  // isOwn = amber background (dark text); !isOwn = glassmorphism light/dark (theme-adaptive text).
   const glassBoxClass = $derived(
     isOwn
       ? 'bg-black/10 border-black/10 text-[#151B2C]'
@@ -229,7 +229,7 @@
         </div>
       {/if}
 
-      <!-- ================= FICHIER (Générique) ================= -->
+      <!-- ================= GENERIC FILE ================= -->
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -237,14 +237,14 @@
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
-        <!-- Icône du fichier -->
+        <!-- File icon. -->
         <div
           class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 text-current opacity-80"
         >
           <FileText size={22} strokeWidth={2} />
         </div>
 
-        <!-- Méta-données -->
+        <!-- File metadata. -->
         <div class="flex-1 min-w-0 overflow-hidden">
           <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
             {mediaRef.fileName ?? m.msg_attached_file_label()}
@@ -291,7 +291,7 @@
     {/if}
   </div>
 
-  <!-- Texte d'accompagnement (Légende du média) -->
+  <!-- Caption text below the media. -->
   {#if textContent}
     <p class="mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}

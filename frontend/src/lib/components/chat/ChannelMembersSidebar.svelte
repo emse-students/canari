@@ -25,7 +25,7 @@
     try {
       fetchedMembers = await channelService.listMembers(channelId);
     } catch {
-      // Fallback au cas où l'appel échoue
+      // Fall back to showing only the current user if the API call fails.
       fetchedMembers = currentUserId
         ? [{ id: currentUserId, userId: currentUserId, role: 'admin', joinedAt: '' }]
         : [];
@@ -38,8 +38,7 @@
     }
   });
 
-  // CRUCIAL : On nomme explicitement la propriété "userId" et non "name".
-  // L'identifiant brut (ex: "usr_8fa9") ne doit jamais être affiché à l'écran.
+  // Explicitly map to "userId" (not "name"): raw IDs (e.g. "usr_8fa9") must never reach the UI.
   let channelMembers = $derived(
     fetchedMembers.map((m) => ({ id: m.id, userId: m.userId, role: m.role }))
   );
@@ -90,7 +89,7 @@
   {/if}
 
   <div class="p-4 md:p-5 space-y-8">
-    <!-- Section Administrateurs & Modérateurs -->
+    <!-- Admins & Moderators section. -->
     {#if admins.length > 0}
       <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">
         <h3
@@ -122,7 +121,7 @@
       </div>
     {/if}
 
-    <!-- Section Membres Réguliers -->
+    <!-- Regular members section. -->
     {#if regulars.length > 0}
       <div
         class="animate-in fade-in slide-in-from-bottom-2 duration-300 delay-75"
@@ -160,7 +159,7 @@
 </div>
 
 <style>
-  /* Intégration de la scrollbar premium */
+  /* Premium scrollbar integration. */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
   }

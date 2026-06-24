@@ -294,10 +294,7 @@ export class MlsDeliveryApi {
           : devices.map((d) => d.deviceId);
     }
     if (deviceIds.length === 0) {
-      throw new Error(
-        `Impossible d'envoyer l'invitation sécurisée à ${targetUserId} : ` +
-          `aucun appareil actif trouvé.`
-      );
+      throw new Error(`Cannot send secure invitation to ${targetUserId}: no active device found.`);
     }
     await Promise.all(
       deviceIds.map(async (deviceId) => {
@@ -403,9 +400,9 @@ export class MlsDeliveryApi {
       const data = await res.json();
       return data.acquired === true;
     } catch {
-      // Fail-safe : on ne peut pas prouver que le lock a été acquis → supposer que non.
-      // Retourner true ici autoriserait des commits concurrents si Redis est temporairement
-      // indisponible, ce qui fragmenterait les epochs et désynchroniserait les WASM locaux.
+      // Fail-safe: cannot prove the lock was acquired → assume not acquired.
+      // Returning true here would allow concurrent commits if Redis is temporarily
+      // unavailable, which would fragment epochs and desync local WASM states.
       return false;
     }
   }
@@ -419,7 +416,7 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ groupId, deviceId: this.deviceId }),
       });
     } catch {
-      /* non-bloquant */
+      /* non-blocking */
     }
   }
 
@@ -440,9 +437,9 @@ export class MlsDeliveryApi {
       const data = await res.json();
       return data.acquired === true;
     } catch {
-      // Fail-safe : Redis indisponible → on suppose le lock NON acquis. Le CAS reste le
-      // garde-fou de correction (un seul successeur), ce verrou n'est qu'une optimisation
-      // anti-pollution ; mieux vaut s'abstenir que de lancer un reboot non protégé.
+      // Fail-safe: Redis unavailable → assume the lock was NOT acquired. The CAS remains
+      // the correctness guard (only one successor); this lock is just an optimisation
+      // against redundant reboots - better to abstain than risk an unprotected reboot.
       return false;
     }
   }
@@ -456,7 +453,7 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ groupId, deviceId: this.deviceId }),
       });
     } catch {
-      /* non-bloquant */
+      /* non-blocking */
     }
   }
 
@@ -506,8 +503,8 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Liste les one-time prekeys publiés de ce device (id + payload décodé), pour que le
-   * client valide localement lesquels il possède encore en clé privée. Retourne `[]` sur erreur.
+   * Lists the one-time prekeys published by this device (id + decoded payload) so the
+   * client can locally validate which ones it still owns a private key for. Returns `[]` on error.
    */
   async listOwnPrekeys(): Promise<Array<{ id: string; keyPackage: Uint8Array }>> {
     try {
@@ -529,7 +526,7 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Supprime des one-time prekeys ciblés par id (orphelins de leur clé privée locale). */
+  /** Deletes targeted one-time prekeys by id (orphaned from their local private key). */
   async pruneOwnPrekeys(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     await this.f(
@@ -823,7 +820,7 @@ export class MlsDeliveryApi {
         { method: 'DELETE', headers: await this.auth() }
       );
     } catch {
-      /* non-bloquant */
+      /* non-blocking */
     }
   }
 

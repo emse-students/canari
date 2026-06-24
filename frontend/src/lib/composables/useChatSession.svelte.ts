@@ -3,8 +3,8 @@
  * MLS initialisation, WebSocket connection, reconnection, biometric enroll,
  * device sync, backup export/import, dev-tool helpers, and logout.
  *
- * Ce fichier est volontairement réduit au câblage pur : état réactif + construction
- * du SessionContext + délégation aux sous-modules session/*.
+ * This file is intentionally thin: reactive state, SessionContext construction,
+ * and delegation to the session/* sub-modules.
  */
 import { MlsService } from '$lib/mlsService';
 import type { IMlsService } from '$lib/mlsService';
@@ -74,20 +74,20 @@ export function useChatSession() {
   /** True once the circuit is open; cleared by an explicit manual retry. */
   let reconnectCircuitOpen = false;
   /**
-   * Timers de reboot armés par `onGroupMissing` au moment de la connexion.
-   * Indépendants du syncWatchdog : garantit le reboot même si discoverMissingGroups échoue.
-   * Vidés au logout.
+   * Reboot timers armed by `onGroupMissing` at connection time.
+   * Independent from syncWatchdog: ensures reboot even if discoverMissingGroups fails.
+   * Cleared on logout.
    */
   const connectionRecoveryTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
-  /** welcome_requests reçues alors que le groupe terminal n'était pas encore prêt.
-   *  Retraitées immédiatement quand onGroupReady() fire pour ce groupId. */
+  /** welcome_requests received while the target group was not yet ready.
+   *  Reprocessed immediately when onGroupReady() fires for that groupId. */
   const deferredWelcomeRequests = new SvelteMap<
     string,
     Array<{ requesterUserId: string; requesterDeviceId: string }>
   >();
   let isReconnecting = false;
   let isSyncing = false;
-  /** True quand cet onglet est le leader MLS (tient le WebSocket). Réactif pour l'UI. */
+  /** True when this tab is the MLS leader (holds the WebSocket). Reactive for the UI. */
   let isTabLeaderState = $state(false);
   /** Latest session callbacks for tab-leader promotion → WebSocket reconnect. */
   let tabLeaderSessionCb: import('./session/sessionTypes').ChatSessionCallbacks | null = null;
@@ -105,8 +105,8 @@ export function useChatSession() {
   let lastCommit = $state('');
   let lastWelcome = $state('');
 
-  // ── Erreurs MLS fatales ───────────────────────────────────────────────────
-  /** Erreur MLS non récupérable nécessitant une action utilisateur (OOM, mode privé, Keystore perdu). */
+  // ── Fatal MLS errors ──────────────────────────────────────────────────────
+  /** Unrecoverable MLS error requiring user action (OOM, private mode, keystore lost). */
   let mlsFatalError = $state<'oom' | 'private_mode' | 'keystore_lost' | null>(null);
 
   const historyBaseUrl = (() => {
@@ -135,7 +135,7 @@ export function useChatSession() {
   // ── Construction du SessionContext ────────────────────────────────────────
 
   const ctx: SessionContext = {
-    // Identité
+    // Identity
     getUserId: () => userId,
     setUserId: (v) => {
       userId = v;
@@ -223,7 +223,7 @@ export function useChatSession() {
       lastWelcome = v;
     },
 
-    // Biométrie
+    // Biometrics
     setShowBiometricEnrollPrompt: (v) => {
       showBiometricEnrollPrompt = v;
     },
@@ -257,16 +257,16 @@ export function useChatSession() {
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
-    cb.log('[TAB] Promotion leader - connexion WebSocket…');
+    cb.log('[TAB] Leader promoted - connecting WebSocket…');
     void attemptReconnectImpl(ctx, cb);
   });
 
-  // Cet onglet vient de céder le leadership à un autre onglet : on recharge pour
-  // fermer proprement le WebSocket et repartir en mode follower (le ratchet MLS
-  // ne doit jamais avancer dans deux onglets simultanément).
+  // This tab just yielded leadership to another tab: reload to cleanly close the
+  // WebSocket and restart in follower mode (MLS ratchet must never advance in two
+  // tabs simultaneously).
   setTabLeaderDemotedHandler(() => {
     isTabLeaderState = false;
-    tabLeaderSessionCb?.log('[TAB] Leadership cédé - rechargement en mode follower.');
+    tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (typeof window !== 'undefined') {
       setTimeout(() => window.location.reload(), 50);
     }
@@ -336,8 +336,8 @@ export function useChatSession() {
       return isTabLeaderState;
     },
     /**
-     * Demande à l'onglet leader de libérer son leadership afin que cet onglet prenne la main.
-     * No-op si cet onglet est déjà le leader.
+     * Asks the leader tab to release its leadership so this tab can take over.
+     * No-op if this tab is already the leader.
      */
     requestTabTakeover() {
       if (isTabLeaderState) return;
@@ -371,12 +371,12 @@ export function useChatSession() {
       callState = v;
     },
 
-    // erreurs MLS fatales
-    /** Erreur MLS non récupérable : 'oom' (rechargement requis), 'private_mode' (stockage éphémère), 'keystore_lost' (reconnexion requise). */
+    // fatal MLS errors
+    /** Unrecoverable MLS error: 'oom' (reload required), 'private_mode' (ephemeral storage), 'keystore_lost' (reconnect required). */
     get mlsFatalError() {
       return mlsFatalError;
     },
-    /** Réinitialise l'état d'erreur MLS fatale (ex: après que l'utilisateur a rechargé). */
+    /** Resets the fatal MLS error state (e.g. after the user has reloaded). */
     clearMlsFatalError() {
       mlsFatalError = null;
     },
@@ -417,7 +417,7 @@ export function useChatSession() {
     initServices(log: (msg: string) => void) {
       if (mls) return;
       mls = new MlsService();
-      log(isTauriRuntime() ? 'Initialisé en mode TAURI' : 'Initialisé en mode WEB (WASM)');
+      log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
       callService = new CallService(mls);
       callService.callState.subscribe((s: any) => (callState = s));
     },

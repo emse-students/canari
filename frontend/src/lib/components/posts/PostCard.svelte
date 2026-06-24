@@ -70,7 +70,7 @@
   let errorMessage = $state('');
   let editingPost = $state(false);
   let selectedOptions = $state<string[]>([]);
-  // Synchronise selectedOptions depuis les données serveur (postProp est réactif, localPost ne l'est pas).
+  // Sync selectedOptions from server data (postProp is reactive; localPost is not).
   $effect(() => {
     const serverVotes = (postProp.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
     if (serverVotes.length > 0) {
@@ -113,7 +113,7 @@
   const pendingAttachedFormIds = $derived(
     expectedAttachedFormIds.filter((id) => !formInfos.some((fi) => fi.id === id))
   );
-  // Auto-clear des messages d'erreur après 4 secondes
+  // Auto-clear error messages after 4 seconds.
   $effect(() => {
     if (errorMessage) {
       const timer = setTimeout(() => {
@@ -123,7 +123,7 @@
     }
   });
 
-  // Auto-clear des messages de succès après 4 secondes
+  // Auto-clear success messages after 4 seconds.
   $effect(() => {
     if (actionMessage) {
       const timer = setTimeout(() => {
@@ -523,7 +523,7 @@
       totalCommentCount={(localPost.comments ?? []).length}
     />
 
-    <!-- Notifications intégrées à la carte -->
+    <!-- Inline card notifications. -->
     <PostFeedback {errorMessage} {actionMessage} />
   </Card>
 </div>

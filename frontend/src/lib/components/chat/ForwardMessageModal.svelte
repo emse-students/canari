@@ -60,9 +60,9 @@
     community: string | null;
   }
 
-  // Toutes les discussions (DM, groupes, salons), hors conversation source. Les noms sont
-  // résolus via resolveConversationListPresentation pour ne jamais afficher d'ID brut, et les
-  // salons sont étiquetés avec leur communauté (plusieurs salons peuvent partager le même nom).
+  // All threads (DMs, groups, channels) except the source conversation. Names are resolved via
+  // resolveConversationListPresentation so raw IDs are never shown; channels are labelled with
+  // their community name because multiple channels can share the same display name.
   const candidates = $derived.by<Candidate[]>(() => {
     const q = query.trim().toLowerCase();
     return conversations
