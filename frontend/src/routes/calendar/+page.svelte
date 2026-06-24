@@ -31,6 +31,8 @@
     ShieldAlert,
     FileDown,
   } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let focusDate = $state(new Date());
   let associations = $state<Association[]>([]);
@@ -40,7 +42,10 @@
   let loadError = $state('');
 
   const titleMonth = $derived(
-    new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' }).format(focusDate)
+    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+      month: 'long',
+      year: 'numeric',
+    }).format(focusDate)
   );
 
   function monthRangeISO(d: Date): { from: string; to: string } {
@@ -63,9 +68,9 @@
     loadError = '';
     try {
       const { from, to } = monthRangeISO(focusDate);
-      // includePending : le backend ne renvoie les événements en attente qu'aux
-      // proposeurs / admins BDE / admins globaux (sinon ignoré). On le demande donc
-      // systématiquement et c'est le serveur qui filtre.
+      // includePending : le backend ne renvoie les evenements en attente qu'aux
+      // proposeurs / admins BDE / admins globaux (sinon ignore). On le demande donc
+      // systematiquement et c'est le serveur qui filtre.
       events = await listAggregatedCalendarFeed({
         from,
         to,
@@ -73,7 +78,7 @@
         includePending: true,
       });
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Erreur';
+      loadError = e instanceof Error ? e.message : m.common_generic_error_label();
       events = [];
     } finally {
       loading = false;
@@ -181,9 +186,9 @@
   let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
   let detailModalOpen = $state(false);
 
-  // ── Dépôt d'événement (admins globaux + validateurs BDE) ───────────────────
-  // Ces utilisateurs ont le pouvoir d'accepter les événements : leur dépôt est
-  // donc auto-validé. Un admin global poste directement sur l'asso choisie ; un
+  // ── Depot d'evenement (admins globaux + validateurs BDE) ───────────────────
+  // Ces utilisateurs ont le pouvoir d'accepter les evenements : leur depot est
+  // donc auto-valide. Un admin global poste directement sur l'asso choisie ; un
   // validateur BDE poste via son asso BDE et redirige avec `targetAssocId`.
 
   /** Whether the current user may deposit an auto-validated event for any association. */
@@ -223,11 +228,11 @@
 
   async function submitDeposit() {
     if (!depositTargetAssocId) {
-      depositError = 'Choisissez une association.';
+      depositError = m.calendar_error_choose_asso();
       return;
     }
     if (!depositTitle.trim() || !depositStart) {
-      depositError = 'Titre et date de début requis.';
+      depositError = m.calendar_error_title_required();
       return;
     }
     const startIso = new Date(depositStart).toISOString();
@@ -235,7 +240,7 @@
     depositSaving = true;
     depositError = '';
     try {
-      // Admin global : poste directement sur l'asso cible (auto-validé côté serveur).
+      // Admin global : poste directement sur l'asso cible (auto-valide cote serveur).
       // Validateur BDE : poste via son asso BDE avec targetAssocId vers l'asso cible.
       const urlAssocId = isGlobalAdmin() ? depositTargetAssocId : depositAuthorityAssoId;
       await createAssociationCalendarEvent(urlAssocId, {
@@ -249,15 +254,15 @@
       depositModalOpen = false;
       await loadMonth();
     } catch (e) {
-      depositError = e instanceof Error ? e.message : 'Erreur';
+      depositError = e instanceof Error ? e.message : m.common_generic_error_label();
     } finally {
       depositSaving = false;
     }
   }
 
   const exportHref = $derived.by(() => {
-    const m = `${focusDate.getFullYear()}-${String(focusDate.getMonth() + 1).padStart(2, '0')}`;
-    const parts = [`month=${encodeURIComponent(m)}`];
+    const monthKey = `${focusDate.getFullYear()}-${String(focusDate.getMonth() + 1).padStart(2, '0')}`;
+    const parts = [`month=${encodeURIComponent(monthKey)}`];
     if (filterAssociationId) parts.push(`association=${encodeURIComponent(filterAssociationId)}`);
     return `/calendar/export?${parts.join('&')}`;
   });
@@ -265,17 +270,17 @@
 
 <div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
   <a href="/associations" class="text-sm text-text-muted hover:text-text-main transition-colors">
-    ← Associations
+    ← {m.calendar_back_associations()}
   </a>
 
   <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
     <div>
       <h1 class="text-2xl font-extrabold text-text-main tracking-tight flex items-center gap-2">
         <CalendarDays size={28} class="text-cn-dark shrink-0" />
-        Agenda des associations
+        {m.calendar_heading()}
       </h1>
       <p class="text-sm text-text-muted mt-1">
-        Calendrier mensuel - cliquez sur un jour pour voir les événements.
+        {m.calendar_subtitle()}
       </p>
     </div>
     {#if canDepositEvent}
@@ -285,7 +290,7 @@
         class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
       >
         <CalendarPlus size={18} />
-        Déposer un événement
+        {m.calendar_deposit_button()}
       </button>
     {/if}
   </div>
@@ -299,14 +304,14 @@
         class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
       >
         <ShieldAlert size={18} />
-        Modérer les événements en attente
+        {m.calendar_moderate_label()}
         {#if pendingCount > 0}
           <span class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
             {pendingCount}
           </span>
         {/if}
       </span>
-      <span class="text-xs text-amber-800/80 dark:text-amber-200/80">Ouvrir la file →</span>
+      <span class="text-xs text-amber-800/80 dark:text-amber-200/80">{m.calendar_moderate_open()} →</span>
     </a>
   {/if}
 
@@ -317,7 +322,7 @@
           type="button"
           onclick={prevMonth}
           class="rounded-xl border border-cn-border p-2 text-text-main hover:bg-[var(--cn-surface)] transition-colors"
-          aria-label="Mois précédent"
+          aria-label={m.calendar_prev_month()}
         >
           <ChevronLeft size={20} />
         </button>
@@ -328,20 +333,20 @@
           type="button"
           onclick={nextMonth}
           class="rounded-xl border border-cn-border p-2 text-text-main hover:bg-[var(--cn-surface)] transition-colors"
-          aria-label="Mois suivant"
+          aria-label={m.calendar_next_month()}
         >
           <ChevronRight size={20} />
         </button>
       </div>
 
       <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted sm:min-w-[14rem]">
-        Association
+        {m.calendar_filter_label()}
         <select
           class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm font-medium text-text-main"
           bind:value={filterAssociationId}
           onchange={onFilterSelectChange}
         >
-          <option value="">Toutes les associations</option>
+          <option value="">{m.calendar_filter_all()}</option>
           {#each associations as a (a.id)}
             <option value={a.id}>{a.name}</option>
           {/each}
@@ -353,18 +358,16 @@
       <a
         href={exportHref}
         class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg transition-colors"
-        title="Personnaliser et exporter le calendrier en PDF"
       >
         <FileDown size={18} />
-        Exporter en PDF
+        {m.calendar_export_pdf()}
       </a>
       <a
         href={calendarSubscribeUrl()}
         class="hidden sm:inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
-        title="Abonner votre appli calendrier à ce feed (Apple Calendar, Google Calendar, Outlook…)"
       >
         <CalendarCheck size={18} />
-        S'abonner au calendrier
+        {m.calendar_subscribe()}
       </a>
     </div>
   </Card>
@@ -376,7 +379,7 @@
       {loadError}
     </div>
   {:else if !loading && sortedEvents.length === 0}
-    <Card class="p-8 text-center text-text-muted text-sm">Aucun événement ce mois-ci.</Card>
+    <Card class="p-8 text-center text-text-muted text-sm">{m.calendar_empty()}</Card>
   {:else}
     <CalendarDayEventsPanel
       {focusDate}
@@ -412,15 +415,15 @@
         aria-labelledby="deposit-modal-title"
       >
         <h3 id="deposit-modal-title" class="text-lg font-bold text-text-main">
-          Déposer un événement
+          {m.calendar_deposit_modal_title()}
         </h3>
         <p class="text-xs text-text-muted">
-          L'événement est publié immédiatement au nom de l'association choisie.
+          L'evenement est publie immediatement au nom de l'association choisie.
         </p>
 
         <div>
           <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-asso"
-            >Au nom de</label
+            >{m.calendar_deposit_on_behalf()}</label
           >
           <select
             id="deposit-asso"
@@ -433,12 +436,12 @@
           </select>
         </div>
 
-        <Input label="Titre" bind:value={depositTitle} />
+        <Input label={m.calendar_deposit_title_label()} bind:value={depositTitle} />
 
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
             <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-start"
-              >Début</label
+              >{m.calendar_deposit_start_label()}</label
             >
             <input
               id="deposit-start"
@@ -449,7 +452,7 @@
           </div>
           <div>
             <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-end"
-              >Fin (optionnel)</label
+              >{m.calendar_deposit_end_label()}</label
             >
             <input
               id="deposit-end"
@@ -461,10 +464,10 @@
         </div>
 
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">Description (optionnel)</p>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.calendar_deposit_desc_label()}</p>
           <MarkdownComposerField
             bind:value={depositDescription}
-            placeholder="Décrivez l'événement…"
+            placeholder={m.calendar_deposit_placeholder()}
             minHeight="100px"
           />
         </div>
@@ -481,7 +484,7 @@
             onclick={() => (depositModalOpen = false)}
             class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
           >
-            Annuler
+            {m.common_cancel_button()}
           </button>
           <button
             type="button"
@@ -489,7 +492,7 @@
             disabled={depositSaving}
             class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
           >
-            {depositSaving ? 'Publication…' : 'Publier'}
+            {depositSaving ? m.calendar_deposit_publishing() : m.calendar_deposit_publish()}
           </button>
         </div>
       </div>

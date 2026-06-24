@@ -12,6 +12,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
   import { ShoppingBag } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let products = $state<AssociationProduct[]>([]);
   let associations = new SvelteMap<string, Association>();
@@ -42,14 +43,14 @@
       products = prods;
       assos.forEach((a) => associations.set(a.id, a));
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de charger la boutique';
+      error = err instanceof Error ? err.message : m.shop_load_error_fallback();
     } finally {
       loading = false;
     }
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('purchase_success') === '1') {
-      showToast('Achat effectué avec succès !');
+      showToast(m.shop_purchase_success());
       history.replaceState(null, '', '/shop');
     } else if (params.get('purchase_cancel') === '1') {
       history.replaceState(null, '', '/shop');
@@ -63,15 +64,19 @@
     }
     if (p.allowCustomAmount) {
       const min = p.customAmountMinCents ? (p.customAmountMinCents / 100).toFixed(2) : '0';
-      const max = p.customAmountMaxCents ? (p.customAmountMaxCents / 100).toFixed(2) : '∞';
-      return `Libre (${min}-${max} ${p.currency.toUpperCase()})`;
+      const max = p.customAmountMaxCents ? (p.customAmountMaxCents / 100).toFixed(2) : 'inf';
+      return m.shop_price_libre({ min, max, currency: p.currency.toUpperCase() });
     }
-    return 'Gratuit';
+    return m.shop_price_free();
   }
 
   /** Returns a badge label for the product type. */
   function typeLabel(type: AssociationProduct['type']): string {
-    return type === 'membership' ? 'Cotisation' : type === 'balance_topup' ? 'Recharge' : 'Autre';
+    return type === 'membership'
+      ? m.shop_type_membership()
+      : type === 'balance_topup'
+        ? m.shop_type_topup()
+        : m.shop_type_other();
   }
 </script>
 
@@ -79,9 +84,9 @@
   <div class="flex items-center gap-3">
     <ShoppingBag class="h-7 w-7 text-cn-accent shrink-0" />
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Boutique</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.shop_heading()}</h1>
       <p class="text-sm text-text-muted mt-0.5">
-        Cotisations, recharges et produits des associations
+        {m.shop_subtitle()}
       </p>
     </div>
   </div>
@@ -90,13 +95,13 @@
     <div
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 text-center space-y-3"
     >
-      <p class="text-text-main font-semibold text-lg">Connexion requise</p>
-      <p class="text-text-muted text-sm">Connectez-vous pour accéder à la boutique.</p>
+      <p class="text-text-main font-semibold text-lg">{m.shop_login_required_title()}</p>
+      <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
       <a
         href="/login"
         class="inline-flex items-center gap-2 rounded-xl bg-cn-accent px-5 py-2.5 text-sm font-bold text-white hover:opacity-90 transition-opacity"
       >
-        Se connecter
+        {m.shop_login_button()}
       </a>
     </div>
   {:else if loading}
@@ -107,7 +112,7 @@
     <p class="text-red-500 text-sm">{error}</p>
   {:else if grouped.size === 0}
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center">
-      <p class="text-text-muted text-sm">Aucun produit disponible pour le moment.</p>
+      <p class="text-text-muted text-sm">{m.shop_empty()}</p>
     </div>
   {:else}
     {#each [...grouped.entries()] as [assocId, assocProducts] (assocId)}
@@ -170,7 +175,7 @@
                         ? product.customAmountMaxCents / 100
                         : undefined}
                       step="0.01"
-                      placeholder="Montant (€)"
+                      placeholder={m.shop_amount_placeholder()}
                       class="flex-1 rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-accent"
                       bind:value={customAmounts[product.id]}
                     />
