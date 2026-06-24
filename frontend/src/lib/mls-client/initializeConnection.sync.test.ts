@@ -77,7 +77,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     await done;
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Purge WASM ignorée'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM purge skipped'));
   });
 
   it('does not purge when getUserGroups returns empty but local groups exist (transient)', async () => {

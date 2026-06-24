@@ -51,7 +51,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       log,
     });
     expect(mls.connect).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('follower'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Follower tab'));
   });
 
   it('connects, publie les KeyPackages et envoie welcome_request pour les groupes absents', async () => {
@@ -150,7 +150,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     // État muté → saveState appelé
     expect(mls.saveState).toHaveBeenCalledWith('pin1');
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM retiré'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM removed'));
   });
 
   it("groupe avec successeur → sendWelcomeRequest sur le successeur, pas l'original", async () => {

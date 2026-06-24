@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
 </script>
 
@@ -16,7 +15,7 @@
     <!-- En-tête -->
     <div class="mb-10 text-center">
       <button
-        onclick={() => goto(-1 as never)}
+        onclick={() => history.back()}
         class="mb-6 inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-main transition-colors"
       >
         <svg

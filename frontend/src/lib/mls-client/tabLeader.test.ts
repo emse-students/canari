@@ -77,7 +77,7 @@ describe('tabLeader (preventive: single MLS ratchet per browser)', () => {
     const ok = await p;
     expect(ok).toBe(false);
     expect(getIsTabLeader()).toBe(false);
-    expect(logs.some((l) => l.includes('lecture seule'))).toBe(true);
+    expect(logs.some((l) => l.includes('read-only mode'))).toBe(true);
   });
 
   it('re-claims when heartbeat is stale (>10s)', async () => {
