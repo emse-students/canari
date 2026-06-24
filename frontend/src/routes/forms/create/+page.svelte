@@ -212,7 +212,7 @@
     <button
       onclick={() => goto(fromPostComposer ? '/posts' : returnTo)}
       class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
-      title={m.form_create_back_title()}
+      title={m.common_back()}
     >
       <ArrowLeft size={20} />
     </button>

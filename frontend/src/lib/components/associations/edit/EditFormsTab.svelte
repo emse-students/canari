@@ -191,13 +191,13 @@
                         type="button"
                         onclick={() => validateCash(form.id, sub.id)}
                         class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
-                        >{m.asso_forms_validate_cash()}</button
+                        >{m.common_validate_button()}</button
                       >
                       <button
                         type="button"
                         onclick={() => cancelCash(form.id, sub.id)}
                         class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors"
-                        >{m.asso_forms_cancel_cash()}</button
+                        >{m.common_cancel_button()}</button
                       >
                     </div>
                   </li>

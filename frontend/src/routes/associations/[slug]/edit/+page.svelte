@@ -326,7 +326,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <Users size={17} />
-            {m.asso_edit_tab_members()}
+            {m.common_members_label()}
           </button>
         {/if}
         {#if canManagePaymentsSection}
@@ -422,7 +422,7 @@
                 class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
               >
                 <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
-                {m.asso_stripe_refresh_button()}
+                {m.common_refresh_button()}
               </button>
             </div>
 

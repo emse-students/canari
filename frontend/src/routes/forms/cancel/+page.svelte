@@ -45,7 +45,7 @@
       href={formId ? `/forms/${formId}` : '/forms'}
       class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
     >
-      {formId ? m.form_cancel_retry_button() : m.form_cancel_back_button()}
+      {formId ? m.common_retry_button() : m.form_cancel_back_button()}
     </a>
   </div>
 </div>

@@ -102,7 +102,7 @@
     if (
       !(await showConfirm(m.asso_edit_logo_remove_confirm(), {
         danger: true,
-        confirmLabel: m.asso_edit_logo_remove_confirm_button(),
+        confirmLabel: m.common_remove_label(),
       }))
     )
       return;

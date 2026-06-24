@@ -313,7 +313,7 @@
           : 'text-text-main hover:bg-black/5'}"
       >
         <Users size={18} />
-        {m.chat_community_members_tab()}
+        {m.common_members_label()}
       </button>
 
       <div class="hidden md:block mt-auto pt-4 space-y-2">
@@ -391,7 +391,7 @@
 
       {#if activeTab === 'members'}
         <div class="space-y-6 max-w-3xl">
-          <h2 class="text-xl font-bold text-text-main">{m.chat_community_members_tab()}</h2>
+          <h2 class="text-xl font-bold text-text-main">{m.common_members_label()}</h2>
           <p class="text-sm text-text-muted">{m.chat_community_members_description()}</p>
 
           <!-- Placer ici une liste factice ou une vraie table -->

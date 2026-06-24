@@ -404,7 +404,7 @@
       onclick={() => goto(redirectTo)}
     >
       <ArrowLeft size={15} />
-      {m.form_view_back()}
+      {m.common_back()}
     </button>
     {#if form}
       <button
@@ -435,7 +435,7 @@
     >
       <p class="text-red-600 font-semibold">{error}</p>
       <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}
-        >{m.form_view_back()}</button
+        >{m.common_back()}</button
       >
     </div>
   {:else if form}

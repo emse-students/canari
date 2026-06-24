@@ -220,7 +220,7 @@
         disabled={isPushTestRunning}
         class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
       >
-        {isPushTestRunning ? m.admin_push_test_sending_label() : m.admin_push_test_button_label()}
+        {isPushTestRunning ? m.common_sending_label() : m.admin_push_test_button_label()}
       </button>
       {#if pushTestResult}
         <p class="text-xs text-text-muted">{pushTestResult}</p>

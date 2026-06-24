@@ -196,7 +196,7 @@
         class="flex items-center gap-1.5 rounded-lg border border-cn-border bg-[var(--cn-surface)] px-3 py-1.5 text-sm text-text-muted hover:border-cn-yellow hover:text-text-main transition-colors"
       >
         <RefreshCw size={14} />
-        {m.admin_status_refresh_button()}
+        {m.common_refresh_button()}
       </button>
     </div>
   </div>

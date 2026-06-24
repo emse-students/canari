@@ -203,7 +203,7 @@
                 class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
               >
                 <Check size={14} />
-                {m.admin_agenda_validate_button()}
+                {m.common_validate_button()}
               </button>
               <button
                 type="button"

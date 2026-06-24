@@ -343,7 +343,7 @@
     <button
       onclick={() => goto('/forms')}
       class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
-      title={m.form_create_back_title()}
+      title={m.common_back()}
     >
       <ArrowLeft size={20} />
     </button>
@@ -616,7 +616,7 @@
                 type="button"
                 onclick={() => handleRemoveCoOwner(co.id)}
                 class="rounded-lg border border-red-200 p-1.5 text-red-500 hover:bg-red-50 transition-colors"
-                title={m.form_coowner_remove_title()}
+                title={m.common_remove_label()}
               >
                 <Trash2 size={13} />
               </button>

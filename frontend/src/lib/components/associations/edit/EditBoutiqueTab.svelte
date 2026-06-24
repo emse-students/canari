@@ -625,7 +625,7 @@
               class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
             >
               <RefreshCw size={13} class={retryingDelivery === delivery.id ? 'animate-spin' : ''} />
-              {m.asso_boutique_webhook_retry_button()}
+              {m.common_retry_button()}
             </button>
           </li>
         {/each}

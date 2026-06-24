@@ -90,7 +90,7 @@
       {:else if status === 'sending'}
         <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
           <LoaderCircle size={12} class="animate-spin" />
-          {m.msg_envoi()}
+          {m.common_sending_label()}
         </span>
       {:else if status === 'error'}
         <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold text-red-500">

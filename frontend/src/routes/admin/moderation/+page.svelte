@@ -211,7 +211,7 @@
 
   async function handleDeletePost(report: ContentReport) {
     if (report.contentType !== 'post') return;
-    if (!await showConfirm(m.moderation_delete_post_confirm(), { danger: true, confirmLabel: m.moderation_supprimer() })) return;
+    if (!await showConfirm(m.moderation_delete_post_confirm(), { danger: true, confirmLabel: m.common_delete_button() })) return;
     processingId = report.id;
     error = '';
     try {
@@ -226,7 +226,7 @@
 
   async function handleDeleteComment(report: ContentReport) {
     if (report.contentType !== 'comment') return;
-    if (!await showConfirm(m.moderation_delete_comment_confirm(), { danger: true, confirmLabel: m.moderation_supprimer() })) return;
+    if (!await showConfirm(m.moderation_delete_comment_confirm(), { danger: true, confirmLabel: m.common_delete_button() })) return;
     processingId = report.id;
     error = '';
     try {
@@ -812,7 +812,7 @@
                 title={m.moderation_delete_permanently_hint()}
               >
                 <Trash2 size={13} />
-                {m.moderation_supprimer()}
+                {m.common_delete_button()}
               </button>
             </div>
           </div>

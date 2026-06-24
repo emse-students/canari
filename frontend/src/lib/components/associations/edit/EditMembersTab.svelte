@@ -167,7 +167,7 @@
 <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
   <div class="flex items-start justify-between gap-3 flex-wrap">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_members_title()}</h2>
+      <h2 class="text-lg font-bold text-text-main tracking-tight">{m.common_members_label()}</h2>
       <p class="text-sm text-text-muted mt-1">
         {m.asso_members_subtitle()}
       </p>
