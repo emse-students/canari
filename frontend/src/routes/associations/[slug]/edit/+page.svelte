@@ -40,6 +40,7 @@
   import EditBoutiqueTab from '$lib/components/associations/edit/EditBoutiqueTab.svelte';
   import EditAchatsTab from '$lib/components/associations/edit/EditAchatsTab.svelte';
   import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -48,7 +49,7 @@
   let resolvedMemberNames = $state<Record<string, string>>({});
 
   let userId = $derived(currentUserId());
-  let myMembership = $derived(members.find((m) => m.userId === userId));
+  let myMembership = $derived(members.find((mb) => mb.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
   /** BDE super-admin (MANAGE_ASSO): may administer this association without being a member. */
   let isSuperAdminUser = $derived(isAssociationSuperAdmin());
@@ -131,7 +132,7 @@
       if (!asso.stripeOnboardingComplete) {
         void pollStripeCompletion();
       } else {
-        console.log('[Stripe] Retour Stripe - onboarding déjà marqué complet en DB.');
+        console.log('[Stripe] Returned from Stripe - onboarding already complete in DB.');
       }
     }
   });
@@ -144,19 +145,19 @@
       asso = a;
       members = await listMembers(a.id);
       const names: Record<string, string> = {};
-      for (const m of members) {
-        // Prefer the module cache (warm on SPA navigation), then displayName from API
-        names[m.userId] = getUserDisplayNameSync(m.userId) || m.displayName?.trim() || m.userId;
+      for (const mb of members) {
+        // Prefer the module cache (warm on SPA navigation), then displayName from API.
+        names[mb.userId] = getUserDisplayNameSync(mb.userId) || mb.displayName?.trim() || mb.userId;
       }
       resolvedMemberNames = names;
-      // Always resolve asynchronously - API displayName may be stale or be the bare userId
-      for (const m of members) {
-        resolveUserDisplayName(m.userId).then((resolved) => {
-          if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [m.userId]: resolved };
+      // Always resolve asynchronously - API displayName may be stale or be the bare userId.
+      for (const mb of members) {
+        resolveUserDisplayName(mb.userId).then((resolved) => {
+          if (resolved) resolvedMemberNames = { ...resolvedMemberNames, [mb.userId]: resolved };
         });
       }
       const uid = currentUserId();
-      const mine = members.find((m) => m.userId === uid);
+      const mine = members.find((mb) => mb.userId === uid);
       // Await the BDE super-admin probe so the access decision is deterministic.
       const superAdmin = await ensureAssociationSuperAdmin();
       const canEdit = isGlobalAdmin() || superAdmin || (!!mine && mine.isAdmin);
@@ -165,7 +166,7 @@
         return;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Association introuvable';
+      error = err instanceof Error ? err.message : 'Association not found';
     } finally {
       loading = false;
     }
@@ -179,7 +180,7 @@
       const live = await fetchStripeConnectStatus(asso.id);
       stripeConnectStatus = live;
       console.log(
-        `[Stripe] Statut Connect - status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`
+        `[Stripe] Connect status - status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`
       );
       if (isStripeConnectReady(live) && !asso.stripeOnboardingComplete) {
         const refreshed = await getAssociationBySlug(slug);
@@ -187,7 +188,7 @@
         stripeConnectStatus = { ...live, dbOnboardingComplete: refreshed.stripeOnboardingComplete };
       }
     } catch (err) {
-      console.warn('[Stripe] Impossible de charger le statut Connect:', err);
+      console.warn('[Stripe] Failed to load Connect status:', err);
     } finally {
       stripeStatusLoading = false;
     }
@@ -202,8 +203,8 @@
       const { navigateExternal } = await import('$lib/utils/openExternal');
       await navigateExternal(url);
     } catch (err) {
-      console.error('[Stripe] Impossible d\'ouvrir le tableau de bord:', err);
-      error = err instanceof Error ? err.message : 'Impossible d\'ouvrir Stripe';
+      console.error('[Stripe] Failed to open dashboard:', err);
+      error = err instanceof Error ? err.message : 'Failed to open Stripe';
     } finally {
       stripeDashboardLoading = false;
     }
@@ -215,7 +216,7 @@
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const base = `${origin}/associations/${encodeURIComponent(asso.slug)}/edit`;
     console.log(
-      `[Stripe] Lancement onboarding - asso=${asso.id} accountId=${asso.stripeAccountId ?? 'nouveau'}`
+      `[Stripe] Starting onboarding - asso=${asso.id} accountId=${asso.stripeAccountId ?? 'new'}`
     );
     try {
       const result = await startStripeOnboarding(asso.id, asso.stripeAccountId ?? undefined, {
@@ -223,15 +224,15 @@
         refreshUrl: `${base}?stripe_return=1`,
       });
       console.log(
-        `[Stripe] URL onboarding reçue - accountId=${result.accountId} url=${result.url}`
+        `[Stripe] Onboarding URL received - accountId=${result.accountId} url=${result.url}`
       );
       if (result.accountId) {
         asso = { ...asso, stripeAccountId: result.accountId };
       }
       window.location.href = result.url;
     } catch (err) {
-      console.error('[Stripe] Échec démarrage onboarding:', err);
-      error = err instanceof Error ? err.message : 'Erreur Stripe';
+      console.error('[Stripe] Failed to start onboarding:', err);
+      error = err instanceof Error ? err.message : 'Stripe error';
       stripeLoading = false;
     }
   }
@@ -240,17 +241,17 @@
   async function pollStripeCompletion() {
     const MAX_ATTEMPTS = 10;
     const DELAY_MS = 3000;
-    console.log('[Stripe] Retour depuis Stripe - attente confirmation webhook (max 30 s)…');
+    console.log('[Stripe] Returned from Stripe - waiting for webhook confirmation (max 30 s)…');
     for (let i = 1; i <= MAX_ATTEMPTS; i++) {
       await new Promise((r) => setTimeout(r, DELAY_MS));
       try {
         const refreshed = await getAssociationBySlug(slug);
         console.log(
-          `[Stripe] Poll ${i}/${MAX_ATTEMPTS} - stripeOnboardingComplete=${refreshed.stripeOnboardingComplete} chargesEnabled=${refreshed.stripeOnboardingComplete}`
+          `[Stripe] Poll ${i}/${MAX_ATTEMPTS} - stripeOnboardingComplete=${refreshed.stripeOnboardingComplete}`
         );
         if (refreshed.stripeOnboardingComplete) {
           asso = refreshed;
-          console.log('[Stripe] ✓ Connexion Stripe confirmée - onboarding complet.');
+          console.log('[Stripe] Stripe connection confirmed - onboarding complete.');
           await refreshStripeConnectStatus();
           return;
         }
@@ -261,14 +262,13 @@
           return;
         }
       } catch (e) {
-        console.warn(`[Stripe] Poll ${i} échoué:`, e);
+        console.warn(`[Stripe] Poll ${i} failed:`, e);
       }
     }
     console.warn(
-      '[Stripe] Webhook non reçu après 30 s - vérifier le dashboard Stripe et la config STRIPE_WEBHOOK_SECRET.'
+      '[Stripe] Webhook not received after 30 s - check the Stripe dashboard and STRIPE_WEBHOOK_SECRET config.'
     );
   }
-
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
@@ -277,7 +277,7 @@
     class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
   >
     <ArrowLeft size={16} />
-    Retour à la page publique
+    {m.asso_edit_page_back()}
   </a>
 
   {#if loading}
@@ -290,7 +290,7 @@
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {:else if asso}
     <header class="space-y-1">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Gestion de l'association</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.asso_edit_page_title()}</h1>
       <p class="text-sm text-text-muted">@{asso.slug}</p>
     </header>
 
@@ -302,7 +302,7 @@
     <nav
       data-swipe-nav-ignore
       class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
-      aria-label="Sections édition"
+      aria-label="Edit sections"
     >
       <div class="flex flex-wrap gap-2">
         <button
@@ -314,7 +314,7 @@
             : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
         >
           <Building2 size={17} />
-          Profil
+          {m.asso_edit_tab_profile()}
         </button>
         {#if canManageMembers}
           <button
@@ -326,7 +326,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <Users size={17} />
-            Membres
+            {m.asso_edit_tab_members()}
           </button>
         {/if}
         {#if canManagePaymentsSection}
@@ -342,7 +342,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <CreditCard size={17} />
-            Paiements
+            {m.asso_edit_tab_payments()}
           </button>
         {/if}
         {#if canManageDocuments}
@@ -355,7 +355,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <FolderLock size={17} />
-            Documents
+            {m.asso_edit_tab_documents()}
           </button>
         {/if}
         {#if canManageProducts}
@@ -368,7 +368,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <UsersIcon size={17} />
-            Achats
+            {m.asso_edit_tab_achats()}
           </button>
         {/if}
         {#if canManageForms}
@@ -381,7 +381,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
           >
             <ClipboardList size={17} />
-            Formulaires
+            {m.asso_edit_tab_formulaires()}
           </button>
         {/if}
         {#if isGlobalAdminUser}
@@ -394,7 +394,7 @@
               : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-red-700'}"
           >
             <AlertTriangle size={17} />
-            Danger
+            {m.asso_edit_tab_danger()}
           </button>
         {/if}
       </div>
@@ -422,16 +422,16 @@
                 class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
               >
                 <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
-                Actualiser
+                {m.asso_stripe_refresh_button()}
               </button>
             </div>
 
             {#if stripeStatusLoading && !stripeConnectStatus}
-              <p class="text-sm text-text-muted">Vérification du statut Stripe…</p>
+              <p class="text-sm text-text-muted">{m.asso_stripe_status_verifying()}</p>
             {:else if stripeConnectStatus?.status === 'active' || stripePaymentsReady}
-              <p class="text-sm text-green-600 font-semibold">Stripe Connect activé</p>
+              <p class="text-sm text-green-600 font-semibold">{m.asso_stripe_connected_label()}</p>
               <p class="text-xs text-text-muted">
-                Les paiements en ligne (formulaires, boutique) sont disponibles.
+                {m.asso_stripe_connected_desc()}
               </p>
               {#if stripeConnectStatus?.balance}
                 <div
@@ -439,11 +439,11 @@
                 >
                   <p class="text-sm font-bold text-text-main flex items-center gap-2">
                     <Wallet size={18} class="text-cn-dark" />
-                    Solde
+                    {m.asso_stripe_balance_title()}
                   </p>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <p class="text-xs text-text-muted">Disponible</p>
+                      <p class="text-xs text-text-muted">{m.asso_stripe_balance_available()}</p>
                       <p class="text-lg font-extrabold text-text-main tabular-nums">
                         {formatStripeConnectAmount(
                           stripeConnectStatus.balance.availableCents,
@@ -452,7 +452,7 @@
                       </p>
                     </div>
                     <div>
-                      <p class="text-xs text-text-muted">En attente</p>
+                      <p class="text-xs text-text-muted">{m.asso_stripe_balance_pending()}</p>
                       <p class="text-lg font-extrabold text-text-muted tabular-nums">
                         {formatStripeConnectAmount(
                           stripeConnectStatus.balance.pendingCents,
@@ -462,9 +462,7 @@
                     </div>
                   </div>
                   <p class="text-xs text-text-muted leading-relaxed">
-                    Les fonds " en attente " seront disponibles après le délai de traitement Stripe.
-                    Les virements se gèrent sur le tableau de bord Stripe de l'association (compte
-                    Standard).
+                    {m.asso_stripe_balance_pending_note()}
                   </p>
                   {#if stripeConnectStatus.payoutsEnabled !== false}
                     <button
@@ -475,10 +473,10 @@
                     >
                       {#if stripeDashboardLoading}
                         <RefreshCw size={16} class="animate-spin" />
-                        Ouverture…
+                        {m.asso_stripe_manage_payouts_loading()}
                       {:else}
                         <ArrowUpRight size={16} />
-                        Gérer les virements sur Stripe
+                        {m.asso_stripe_manage_payouts_button()}
                       {/if}
                     </button>
                   {/if}
@@ -490,7 +488,7 @@
                   disabled={stripeDashboardLoading}
                   class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
                 >
-                  Gérer les virements sur Stripe →
+                  {m.asso_stripe_manage_payouts_link()}
                 </button>
               {/if}
             {:else if stripeConnectStatus?.status === 'pending'}
@@ -499,17 +497,14 @@
               >
                 <p class="text-sm font-semibold flex items-center gap-2">
                   <Clock size={18} class="shrink-0" />
-                  Vérification en cours chez Stripe
+                  {m.asso_stripe_verification_pending_title()}
                 </p>
                 <p class="text-sm leading-relaxed">
-                  Votre dossier a bien été transmis. Stripe valide généralement le compte sous
-                  quelques heures à quelques jours ouvrés - aucune action n'est requise de votre
-                  part pour l'instant.
+                  {m.asso_stripe_verification_pending_desc()}
                 </p>
                 {#if stripeConnectStatus.pendingVerification && stripeConnectStatus.pendingVerification.length > 0}
                   <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
-                    Éléments en cours de vérification : {stripeConnectStatus.pendingVerification
-                      .length}
+                    {m.asso_stripe_verification_items({ count: stripeConnectStatus.pendingVerification.length })}
                   </p>
                 {/if}
               </div>
@@ -517,28 +512,24 @@
               <div
                 class="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm space-y-1"
               >
-                <p class="font-semibold">Compte Stripe restreint</p>
+                <p class="font-semibold">{m.asso_stripe_restricted_title()}</p>
                 <p>
-                  Stripe a limité ce compte Connect. Consultez le
-                  <a
+                  {m.asso_stripe_restricted_prefix()}<a
                     href="https://dashboard.stripe.com/connect/accounts/{asso.stripeAccountId}"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="font-semibold underline">tableau de bord Stripe</a
-                  >
-                  ou contactez le support Stripe.
+                    class="font-semibold underline">{m.asso_stripe_restricted_dashboard_link()}</a
+                  >{m.asso_stripe_restricted_suffix()}
                 </p>
               </div>
             {:else if stripeConnectStatus?.status === 'unavailable'}
-              <p class="text-sm text-amber-700">Stripe n'est pas configuré sur le serveur.</p>
+              <p class="text-sm text-amber-700">{m.asso_stripe_unavailable()}</p>
             {:else}
               <p class="text-sm text-text-muted leading-relaxed">
                 {#if asso.stripeAccountId}
-                  Terminez la configuration sur Stripe ou attendez la validation si vous venez de
-                  soumettre votre dossier.
+                  {m.asso_stripe_complete_setup()}
                 {:else}
-                  Connectez un compte Stripe pour les paiements des formulaires, de la boutique et
-                  des billetteries de cette association.
+                  {m.asso_stripe_connect_account()}
                 {/if}
               </p>
               {#if stripeConnectStatus?.status === 'onboarding_required' || !asso.stripeAccountId}
@@ -549,10 +540,10 @@
                   class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
                 >
                   {stripeLoading
-                    ? 'Redirection…'
+                    ? m.asso_stripe_onboarding_loading()
                     : asso.stripeAccountId
-                      ? 'Continuer la configuration'
-                      : 'Configurer Stripe'}
+                      ? m.asso_stripe_continue_setup_button()
+                      : m.asso_stripe_configure_button()}
                 </button>
               {/if}
             {/if}
@@ -572,11 +563,10 @@
         <div>
           <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
             <FolderLock size={20} />
-            Coffre documentaire
+            {m.asso_doc_vault_title()}
           </h2>
           <p class="text-sm text-text-muted mt-1">
-            Documents chiffrés côté client (AES-256-GCM). Seuls les membres avec accès "Documents"
-            peuvent les télécharger. Le serveur ne voit jamais le contenu en clair.
+            {m.asso_doc_vault_desc()}
           </p>
         </div>
         <AssociationDocumentManager associationId={asso.id} />
