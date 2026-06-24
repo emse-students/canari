@@ -380,7 +380,7 @@
 
 <!-- Footer Container -->
 <footer class="chat-composer-footer" bind:this={composerFooter}>
-  <!-- Indicateur de frappe : juste au-dessus du champ, jamais derrière. -->
+  <!-- Typing indicator: sits just above the input field, never behind it. -->
   {#if typingLabel}
     <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 sm:px-4 md:px-6 pb-1">
       <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
@@ -393,7 +393,7 @@
       </span>
     </div>
   {/if}
-  <!-- Zone de Réponse (Reply) -->
+  <!-- Reply preview strip. -->
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
       <div
@@ -426,7 +426,7 @@
   {/if}
 
   <div class="px-3 sm:px-4 md:px-6 pointer-events-auto flex flex-col gap-2">
-    <!-- Zone des Fichiers en attente -->
+    <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
       <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
         <div class="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-2 px-1">
@@ -476,7 +476,7 @@
                 </div>
               {/if}
 
-              <!-- Overlay Gradient et Nom du fichier -->
+              <!-- Gradient overlay and file name. -->
               <div
                 class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-4 pb-1.5 px-2 pointer-events-none"
               >
@@ -488,7 +488,7 @@
                 </div>
               </div>
 
-              <!-- Bouton de suppression -->
+              <!-- Remove button. -->
               {#if onRemovePendingFile}
                 <button
                   type="button"
@@ -506,7 +506,7 @@
       </div>
     {/if}
 
-    <!-- Barre de saisie principale -->
+    <!-- Main input bar. -->
     <div
       role="group"
       aria-label={m.chat_composer_group_label()}
@@ -515,7 +515,7 @@
       ondragleave={!isMobileViewport ? handleDragLeave : undefined}
       ondrop={!isMobileViewport ? handleDrop : undefined}
     >
-      <!-- Badge de Drag & Drop au-dessus -->
+      <!-- Drag-and-drop badge overlay. -->
       {#if isDragOver}
         <div
           transition:fade={{ duration: 150 }}
@@ -529,7 +529,7 @@
         </div>
       {/if}
 
-      <!-- Bouton Pièce Jointe -->
+      <!-- Attachment button. -->
       <div class="shrink-0">
         <button
           onclick={() => fileInput?.click()}
@@ -546,7 +546,7 @@
         </button>
       </div>
 
-      <!-- Bouton Sondage (communautés uniquement : le parent fournit onCreatePoll) -->
+      <!-- Poll button (communities only: parent provides onCreatePoll). -->
       {#if onCreatePoll && !isComposing}
         <div class="shrink-0">
           <button
@@ -562,7 +562,7 @@
         </div>
       {/if}
 
-      <!-- Bouton GIF (visible si KLIPY configuré) -->
+      <!-- GIF button (shown when KLIPY is configured). -->
       {#if hasGifPicker && onSendGif && !isComposing}
         <div class="shrink-0">
           <button
@@ -578,7 +578,7 @@
         </div>
       {/if}
 
-      <!-- Enregistreur Vocal (Mobile uniquement) -->
+      <!-- Voice recorder (mobile only). -->
       {#if isVoiceRecordingSupported}
         <div class="shrink-0">
           <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
@@ -594,7 +594,7 @@
         onchange={handleFileChange}
       />
 
-      <!-- Zone de Texte auto-extensible -->
+      <!-- Auto-expanding text field. -->
       <MentionComposerInput
         bind:this={mentionComposer}
         value={messageText}
@@ -610,7 +610,7 @@
         onpaste={handlePaste}
       />
 
-      <!-- Bouton Envoyer Dynamique -->
+      <!-- Dynamic send button. -->
       <div class="shrink-0 pr-1">
         <button
           onmousedown={(e) => e.preventDefault()}
@@ -619,7 +619,7 @@
           aria-label={m.chat_send_message_label()}
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
         >
-          <!-- Léger décalage de l'icône Send pour un centrage optique parfait -->
+          <!-- Slight icon offset for optical centering. -->
           <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'ml-0.5 mt-0.5'} />
         </button>
       </div>

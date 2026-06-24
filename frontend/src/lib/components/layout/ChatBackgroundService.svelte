@@ -11,7 +11,7 @@
    * persists across all routes, not only /chat.
    */
   import { onMount, untrack } from 'svelte';
-  import { afterNavigate } from '$app/navigation';
+  import { afterNavigate, goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
@@ -122,10 +122,27 @@
     void globalNotifs.dismissIncomingCall();
   });
 
-  /** Opens the conversation targeted by a notification tap (works outside /chat). */
+  /**
+   * Notification target we have already routed to /chat for. Plain (non-reactive) so updating
+   * it never re-triggers the effect; it only dedupes the one-shot navigation per pending target.
+   */
+  let lastNavigatedNotifTarget: string | null = null;
+
+  /** Routes to the targeted conversation on a notification tap (works from any route). */
   $effect(() => {
     const id = notifNav.pending;
     if (!id || !globalSession.isLoggedIn) return;
+    // Route to /chat once per pending target. hooks.client.ts also calls goto('/chat'), but on a
+    // cold start that goto can fire before the SvelteKit router is ready and silently no-op,
+    // leaving the user on the home feed. This effect runs post-mount (router ready) and re-runs as
+    // login completes / conversations load, so it reliably reaches /chat and selects the target.
+    if (lastNavigatedNotifTarget !== id) {
+      lastNavigatedNotifTarget = id;
+      if (window.location.pathname !== '/chat') {
+        appendLog(`[notifNav] routing to /chat for pending conversation ${id}`);
+        void goto('/chat');
+      }
+    }
     if (openConversationFromId(globalConvs, convCtx(), id)) {
       notifNav.clear();
     }

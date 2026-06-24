@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import { sendReadReceipt } from '$lib/utils/chat/messaging';
   import { forceSyncReset } from '$lib/utils/chat/actions';
@@ -69,7 +70,7 @@
   );
 
   const messagingOverlayMessage = $derived(
-    !session.isLoggedIn ? 'Connexion en cours…' : 'Synchronisation des messages…'
+    !session.isLoggedIn ? m.chat_connecting_label() : m.chat_sync_overlay_message()
   );
 
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
@@ -82,7 +83,7 @@
   let showWsBanner = $state(false);
   $effect(() => {
     // Suppress during the initial messaging bring-up: the WS is legitimately not connected yet
-    // while MLS/session initialise, so showing "en attente de connexion" then is a false positive.
+    // while MLS/session initialise, so the disconnected banner would be a false positive.
     // Only arm the delayed banner once init is done and we are genuinely disconnected.
     if (session.isWsConnected || session.isMessagingInitializing) {
       showWsBanner = false;
@@ -106,7 +107,7 @@
 
   let messageText = $state('');
 
-  /** Message en cours de transfert (ouvre ForwardMessageModal quand non-null). */
+  /** Message pending forwarding (opens ForwardMessageModal when non-null). */
   let forwardingMessage = $state<ChatMessage | null>(null);
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
@@ -431,7 +432,7 @@
         e.preventDefault();
         if (session.isLoggedIn && session.userId) {
           forceSyncReset(session.userId, log);
-          log('[INFO] Rechargement de la page dans 1s...');
+          log('[INFO] Reloading page in 1s...');
           setTimeout(() => window.location.reload(), 1000);
         }
       }
@@ -515,16 +516,16 @@
     forwardingMessage = message;
   }
 
-  /** Transfère le message en cours vers la conversation choisie dans la modal. */
+  /** Forwards the pending message to the conversation chosen in the modal. */
   async function doForward(targetKey: string, target: Conversation) {
     const message = forwardingMessage;
     forwardingMessage = null;
     if (!message) return;
     const result = await messaging.forwardMessage(message.content, targetKey, msgCtx());
     if (result.success) {
-      showToast(`Message transféré à ${target.name}`, 'info');
+      showToast(m.chat_message_forwarded({ name: target.name }), 'info');
     } else {
-      showToast(result.error ?? 'Échec du transfert', 'error');
+      showToast(result.error ?? m.chat_forward_error_fallback(), 'error');
     }
   }
 
@@ -660,15 +661,15 @@
     const type = convo.conversationType ?? 'group';
     if (type === 'channel') return;
     if (convo.lifecycle !== 'active') {
-      showToast("La session sécurisée n'est pas encore prête. Réessayez dans un instant.", 'warning');
+      showToast(m.chat_call_session_not_ready(), 'warning');
       return;
     }
     session.callService.startCall(convo.id, video).catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
-        showToast('Ce groupe est désynchronisé. Supprimez cette conversation et recréez-en une nouvelle.');
+        showToast(m.chat_call_group_desynced());
       } else {
-        showToast(`Erreur appel : ${msg}`);
+        showToast(m.chat_call_error({ msg }));
       }
     });
   }
@@ -680,12 +681,12 @@
     {#if showWsBanner}
       <div class="flex items-center justify-center gap-1.5 py-1.5 px-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20">
         <WifiOff size={11} strokeWidth={2.5} class="shrink-0" />
-        En attente de connexion…
+        {m.chat_ws_waiting_label()}
       </div>
     {:else if isBackgroundSyncing}
       <div class="flex items-center justify-center gap-2 py-1.5 px-4 bg-cn-yellow/10 text-text-muted text-xs font-medium border-b border-cn-border/60">
         <span class="h-3 w-3 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent shrink-0"></span>
-        Synchronisation des messages…
+        {m.chat_sync_overlay_message()}
       </div>
     {/if}
 
@@ -693,18 +694,19 @@
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
       <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />
 
-      <svelte:boundary onerror={(e) => appendLog(`[UI] Erreur ChatArea récupérée: ${e}`)}>
+      <svelte:boundary onerror={(e) => appendLog(`[UI] ChatArea error recovered: ${e}`)}>
+
         {#snippet failed(_error, reset)}
           <div
             class="flex flex-1 min-h-0 flex-col items-center justify-center gap-4 p-8 text-center"
           >
-            <p class="text-sm text-text-muted">Impossible d'afficher cette discussion.</p>
+            <p class="text-sm text-text-muted">{m.chat_area_error_message()}</p>
             <button
               type="button"
               onclick={reset}
               class="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold"
             >
-              Réessayer
+              {m.common_retry_button()}
             </button>
           </div>
         {/snippet}

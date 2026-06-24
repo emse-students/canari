@@ -227,7 +227,7 @@
     return textSegments.every((s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === ''));
   });
   // GIF-only message (no surrounding text, no reply) - renders naked like an image/media,
-  // so the GIF n'a pas de cadre de bulle autour de lui.
+  // with no bubble frame around it.
   const isGifOnly = $derived.by(() => {
     if (!firstLink || !isGifUrl(firstLink) || effectiveReplyTo || isDeleted) return false;
     return textSegments.every((s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === ''));
@@ -558,7 +558,7 @@
         </div>
       {/if}
 
-      <!-- Bulle de message principale -->
+      <!-- Main message bubble. -->
       <div
         role="button"
         tabindex="0"

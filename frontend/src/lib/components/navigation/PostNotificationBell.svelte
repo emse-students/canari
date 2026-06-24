@@ -8,6 +8,7 @@
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { reactionTypeToEmoji } from '$lib/posts/reactions';
   import type { PostNotification } from '$lib/posts/api';
+  import { m } from '$lib/paraglide/messages';
 
   let open = $state(false);
 
@@ -61,14 +62,14 @@
       class="fixed z-[200] right-4 top-[calc(env(safe-area-inset-top,0px)+3.5rem)] w-80 rounded-xl border border-cn-border bg-white dark:bg-[#0f1622] shadow-2xl overflow-hidden"
     >
       <div class="px-4 py-3 border-b border-cn-border flex items-center justify-between">
-        <span class="text-sm font-semibold">Notifications</span>
+        <span class="text-sm font-semibold">{m.notif_bell_heading()}</span>
         {#if postNotifStore.notifications.some((n) => !n.read)}
-          <span class="text-xs text-text-muted">Marqué comme lu</span>
+          <span class="text-xs text-text-muted">{m.notif_bell_mark_read()}</span>
         {/if}
       </div>
 
       {#if postNotifStore.notifications.length === 0}
-        <p class="px-4 py-6 text-sm text-text-muted text-center">Aucune notification</p>
+        <p class="px-4 py-6 text-sm text-text-muted text-center">{m.notif_bell_empty()}</p>
       {:else}
         <ul class="max-h-96 overflow-y-auto divide-y divide-cn-border">
           {#each postNotifStore.notifications as notif (notif.id)}
@@ -93,17 +94,17 @@
                 </span>
                 <div class="min-w-0 flex-1">
                   <p class="text-sm leading-snug line-clamp-2">
-                    <span class="font-semibold">{notif.actorName || "Quelqu'un"}</span>
+                    <span class="font-semibold">{notif.actorName || m.notif_actor_unknown()}</span>
                     {#if notif.type === 'reaction'}
-                      <span> a réagi à votre publication</span>
+                      <span> {m.notif_reaction_text()}</span>
                     {:else if notif.type === 'mention'}
-                      <span> vous a mentionné</span>
+                      <span> {m.notif_mention_text()}</span>
                     {:else if notif.type === 'reply'}
-                      <span> a répondu à votre commentaire</span>
+                      <span> {m.notif_reply_text()}</span>
                     {:else if notif.type === 'form_reminder'}
                       <span> {notif.text}</span>
                     {:else}
-                      <span> a commenté : <span class="text-text-muted">{notif.text}</span></span>
+                      <span> {m.notif_comment_text()} <span class="text-text-muted">{notif.text}</span></span>
                     {/if}
                   </p>
                   <p class="text-xs text-text-muted mt-0.5">{formatRelative(notif.createdAt)}</p>
