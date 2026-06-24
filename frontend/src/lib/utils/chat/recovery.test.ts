@@ -28,10 +28,10 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     clearPendingWelcomeRequests: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
-    // Defaut = groupe vivant cote serveur (ni absent ni tombstone) : requestReAdd procede sans
-    // purge fantome (active != absent), et performReboot procede a la creation du candidat
-    // (active != unknown). Un 'absent' explicite declenche la purge ; un 'error' explicite simule
-    // le doute reseau (report du reboot dans performReboot).
+    // Default = group alive on server (neither absent nor tombstone): requestReAdd proceeds
+    // without phantom purge (active != absent), and performReboot proceeds to candidate creation
+    // (active != unknown). An explicit 'absent' triggers purge; an explicit 'error' simulates
+    // network uncertainty (reboot deferred in performReboot).
     getGroupServerStatus: vi
       .fn()
       .mockResolvedValue({ groupId: 'mock-group', deletedAt: null, successorId: null }),
@@ -91,7 +91,7 @@ describe('requestReAdd', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('envoie sendWelcomeRequest et arme un timer', async () => {
+  it('sends sendWelcomeRequest and arms a timer', async () => {
     const deps = makeDeps();
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -101,21 +101,21 @@ describe('requestReAdd', () => {
     expect(timers.has('g1')).toBe(true);
   });
 
-  it('un seul timer armé mais welcome_request renvoyée à chaque reconnexion', async () => {
+  it('only one timer armed but welcome_request resent on every reconnection', async () => {
     const deps = makeDeps();
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
     await requestReAdd('g1', deps, timers);
 
-    // La welcome_request est re-envoyée silencieusement même quand le timer tourne déjà
-    // (le peer peut être revenu en ligne depuis la dernière fois).
+    // The welcome_request is resent silently even when the timer is already running
+    // (the peer may have come back online since the last attempt).
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
-    // Mais un seul timer doit être actif (pas de double reboot).
+    // But only one timer should be active (no double reboot).
     expect(timers.size).toBe(1);
   });
 
-  it(`après ${RECOVERY_TIMEOUT_MS / 1000}s sans Welcome → renvoie welcome_request, pas de reboot (échéance non atteinte)`, async () => {
+  it(`after ${RECOVERY_TIMEOUT_MS / 1000}s without Welcome -> resends welcome_request, no reboot (deadline not reached)`, async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -123,17 +123,17 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps, timers);
     await vi.advanceTimersByTimeAsync(RECOVERY_TIMEOUT_MS);
 
-    // Échéance persistante de 1h non atteinte → pas de reboot, juste un nouveau welcome_request.
+    // Persistent 1h deadline not reached -> no reboot, just a new welcome_request.
     expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('reboot seulement une fois REBOOT_DEADLINE_MS écoulé en temps réel persistant', async () => {
+  it('reboot only once REBOOT_DEADLINE_MS has elapsed in persistent real time', async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    // Simule un groupe non-prêt depuis plus d'1h (échéance posée lors d'une session précédente).
+    // Simulates a group not ready for more than 1h (deadline set in a previous session).
     localStorage.setItem(
       'mls_not_ready_since:user-a:g1',
       String(Date.now() - REBOOT_DEADLINE_MS - 1_000)
@@ -146,7 +146,7 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.claimGroupSuccessor).toHaveBeenCalled();
   });
 
-  it('suit la chaîne de successeurs et envoie le welcome_request au terminal', async () => {
+  it('follows the successor chain and sends welcome_request to the terminal', async () => {
     const deps = makeDeps({
       mlsService: makeMls({
         getGroupMeta: vi.fn().mockImplementation((id: string) => {
@@ -166,9 +166,9 @@ describe('requestReAdd', () => {
     expect(timers.has('live')).toBe(true);
   });
 
-  it('Welcome reçu avant 60s → cancelReAdd annule le timer, pas de reboot', async () => {
+  it('Welcome received before 60s -> cancelReAdd cancels the timer, no reboot', async () => {
     const deps = makeDeps();
-    // Au moment du timeout, le groupe est dans le WASM (Welcome reçu entre-temps)
+    // At timeout the group is in WASM (Welcome received in the meantime)
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue(['g1']);
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -183,7 +183,7 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
   });
 
-  it('groupe confirmé absent du serveur → purge le fantôme, ni welcome_request ni timer', async () => {
+  it('group confirmed absent from server -> purges the phantom, no welcome_request or timer', async () => {
     const deps = makeDeps({
       mlsService: makeMls({
         getGroupMeta: vi.fn().mockResolvedValue(null),
@@ -191,36 +191,36 @@ describe('requestReAdd', () => {
         getLocalGroups: vi.fn().mockReturnValue([]),
       }),
       conversations: makeConversations([
-        ['ghost', { id: 'ghost', name: 'Fantôme', lifecycle: 'pending' }],
+        ['ghost', { id: 'ghost', name: 'Ghost', lifecycle: 'pending' }],
       ]),
     });
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('ghost', deps, timers);
 
-    // Boucle coupée : aucune welcome_request, aucun timer armé.
+    // Loop stopped: no welcome_request, no timer armed.
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(timers.has('ghost')).toBe(false);
-    // Conversation locale purgée.
+    // Local conversation purged.
     expect(deps.deleteConversation).toHaveBeenCalledWith('ghost');
     expect(deps.conversations.has('ghost')).toBe(false);
   });
 
-  it('groupe absent mais conversation removed → conservée (suppression manuelle), pas de welcome_request', async () => {
+  it('group absent but conversation removed -> kept (manual deletion), no welcome_request', async () => {
     const deps = makeDeps({
       mlsService: makeMls({
         getGroupMeta: vi.fn().mockResolvedValue(null),
         getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
       }),
       conversations: makeConversations([
-        ['tomb', { id: 'tomb', name: 'Supprimé', lifecycle: 'removed' }],
+        ['tomb', { id: 'tomb', name: 'Deleted', lifecycle: 'removed' }],
       ]),
     });
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('tomb', deps, timers);
 
-    // Le tombstone reste jusqu'à suppression manuelle (règles 2 & 4) mais la boucle est coupée.
+    // The tombstone remains until manual deletion (rules 2 & 4) but the loop is stopped.
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(deps.deleteConversation).not.toHaveBeenCalled();
     expect(deps.conversations.has('tomb')).toBe(true);
@@ -230,7 +230,7 @@ describe('requestReAdd', () => {
 // ── reboot ───────────────────────────────────────────────────────────────────
 
 describe('reboot', () => {
-  it('CAS gagné → sendCommit puis sendWelcome pour chaque membre', async () => {
+  it('CAS won -> sendCommit then sendWelcome for each member', async () => {
     const mls = makeMls({
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'other', deviceId: 'dev2' }]),
       fetchUserDevices: vi
@@ -258,7 +258,7 @@ describe('reboot', () => {
     );
   });
 
-  it('CAS perdu → candidate supprimé, sendWelcomeRequest vers gagnant', async () => {
+  it('CAS lost -> candidate deleted, sendWelcomeRequest towards winner', async () => {
     const mls = makeMls({
       claimGroupSuccessor: vi.fn().mockResolvedValue({ claimed: false, successorId: 'winner-id' }),
     });
@@ -266,15 +266,15 @@ describe('reboot', () => {
 
     await reboot('dead', deps);
 
-    // Candidat local nettoyé
+    // Local candidate cleaned up
     expect(mls.deleteGroupOnServer).toHaveBeenCalledWith('new-id');
     expect(mls.forgetGroup).toHaveBeenCalledWith('new-id');
-    // Rejoindre le gagnant
+    // Join the winner
     expect(mls.registerMember).toHaveBeenCalledWith('winner-id', 'user-a');
     expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('winner-id');
   });
 
-  it('verrou reboot cross-device détenu ailleurs → abstention, aucun candidat créé', async () => {
+  it('reboot cross-device lock held elsewhere -> abstention, no candidate created', async () => {
     const mls = makeMls({
       acquireRebootLock: vi.fn().mockResolvedValue(false),
     });
@@ -282,14 +282,14 @@ describe('reboot', () => {
 
     await reboot('dead', deps);
 
-    // Le perdant ne crée aucun candidat ni ne tente le CAS (le gagnant s'en charge).
+    // The loser creates no candidate and does not attempt CAS (the winner handles it).
     expect(mls.createRemoteGroup).not.toHaveBeenCalled();
     expect(mls.claimGroupSuccessor).not.toHaveBeenCalled();
-    // Le verrou n'ayant pas été acquis, on ne le relâche pas.
+    // Lock was not acquired, so it is not released.
     expect(mls.releaseRebootLock).not.toHaveBeenCalled();
   });
 
-  it('verrou reboot relâché après un reboot complet', async () => {
+  it('reboot lock released after a complete reboot', async () => {
     const mls = makeMls();
     const deps = makeDeps({ mlsService: mls });
 
@@ -299,7 +299,7 @@ describe('reboot', () => {
     expect(mls.releaseRebootLock).toHaveBeenCalledWith('dead');
   });
 
-  it("aucun autre membre → pas de sendWelcome, pas d'erreur", async () => {
+  it('no other member -> no sendWelcome, no error', async () => {
     const mls = makeMls({
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'user-a', deviceId: 'self' }]),
     });
@@ -309,9 +309,9 @@ describe('reboot', () => {
     expect(mls.sendWelcome).not.toHaveBeenCalled();
   });
 
-  it('getGroupMembers vide → fallback getGroupUserMembers → sendWelcome envoyé', async () => {
-    // Simule le cas device créateur supprimé via fresh-start :
-    // dm_device_group_memberships vide, mais dm_group_members peuplé.
+  it('getGroupMembers empty -> fallback getGroupUserMembers -> sendWelcome sent', async () => {
+    // Simulates the case of a creator device removed via fresh-start:
+    // dm_device_group_memberships empty, but dm_group_members populated.
     const mls = makeMls({
       getGroupMembers: vi.fn().mockResolvedValue([]),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'other' }]),
@@ -340,7 +340,7 @@ describe('reboot', () => {
     );
   });
 
-  it('getGroupMembers et getGroupUserMembers vides → pas de sendWelcome', async () => {
+  it('getGroupMembers and getGroupUserMembers empty -> no sendWelcome', async () => {
     const mls = makeMls({
       getGroupMembers: vi.fn().mockResolvedValue([]),
       getGroupUserMembers: vi.fn().mockResolvedValue([]),
@@ -352,10 +352,9 @@ describe('reboot', () => {
     expect(mls.sendWelcome).not.toHaveBeenCalled();
   });
 
-  it('findAncestorWithMembers : préfère le groupe courant (user-level) à un ancêtre (device-level)', async () => {
-    // Scénario : ancêtre A → dead. A a des device-level actifs (ancienne donnée),
-    // dead a des user-level (donnée à jour). Le reboot doit inviter depuis dead,
-    // pas depuis A.
+  it('findAncestorWithMembers: prefers the current group (user-level) over an ancestor (device-level)', async () => {
+    // Scenario: ancestor A -> dead. A has active device-level members (old data),
+    // dead has user-level members (up-to-date data). Reboot must invite from dead, not A.
     const mls = makeMls({
       getUserGroups: vi
         .fn()
@@ -391,7 +390,7 @@ describe('reboot', () => {
 
     await reboot('dead', deps);
 
-    // Doit inviter current-user (dm_group_members de dead), pas old-user (ancêtre)
+    // Must invite current-user (dm_group_members of dead), not old-user (ancestor)
     expect(mls.sendWelcome).toHaveBeenCalledWith(
       expect.any(Uint8Array),
       'current-user',
@@ -412,7 +411,7 @@ describe('reboot', () => {
 // ── migrateConversation ───────────────────────────────────────────────────────
 
 describe('migrateConversation', () => {
-  it("déplace la conversation de l'ancien vers le nouveau groupId", async () => {
+  it('moves the conversation from the old to the new groupId', async () => {
     const conversations = makeConversations([
       [
         'from-id',
@@ -435,10 +434,10 @@ describe('migrateConversation', () => {
     expect(conversations.get('to-id')?.name).toBe('Chat');
   });
 
-  it('cible déjà existante → messages migrés quand même (saveMessages est idempotent)', async () => {
-    // Bug A population 2 : quand le Welcome crée la conv cible avant que
-    // checkGroupSuccessors ne tourne, les messages de la source doivent quand
-    // même être copiés (sinon ils sont détruits lors de deleteConversation source).
+  it('existing target -> messages still migrated (saveMessages is idempotent)', async () => {
+    // Bug A population 2: when the Welcome creates the target conv before
+    // checkGroupSuccessors runs, messages from the source must still be copied
+    // (otherwise they are destroyed by deleteConversation on the source).
     const messages = [
       {
         id: 'm1',
@@ -484,15 +483,15 @@ describe('migrateConversation', () => {
 
     await migrateConversation('from-id', 'to-id', deps);
 
-    // Les messages sont copiés même si la cible existe (upsert idempotent)
+    // Messages are copied even when the target exists (idempotent upsert)
     expect(storage.getMessages).toHaveBeenCalledWith('from-id', 'pin123');
     expect(storage.saveMessages).toHaveBeenCalledTimes(1);
-    // Conversation déplacée correctement
+    // Conversation moved correctly
     expect(conversations.has('from-id')).toBe(false);
     expect(conversations.has('to-id')).toBe(true);
   });
 
-  it('appel double → messages copiés une seule fois', async () => {
+  it('double call -> messages copied only once', async () => {
     const storage = {
       getMessages: vi.fn().mockResolvedValue([
         {
@@ -525,7 +524,7 @@ describe('migrateConversation', () => {
     const deps = makeDeps({ conversations, storage });
 
     await migrateConversation('from-id', 'to-id', deps);
-    // Deuxième appel : 'from-id' n'existe plus → noop
+    // Second call: 'from-id' no longer exists -> noop
     await migrateConversation('from-id', 'to-id', deps);
 
     expect(storage.saveMessages).toHaveBeenCalledTimes(1);

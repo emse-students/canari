@@ -6,12 +6,12 @@ import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 
 /**
- * Remonte (log applicatif + `console.warn`) les devices ignorés par `addMembersBulk` parce que
- * leur KeyPackage était invalide/illisible. Sans cette remontée, un device sauté disparaîtrait
- * silencieusement : jamais invité, jamais retenté. Le remède (republication d'un KeyPackage frais
- * puis nouvel ajout/reboot) est manuel/différé ; ici on garantit au moins la visibilité. [[C5]]
+ * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
+ * was invalid/unreadable. Without this, a skipped device would vanish silently: never invited,
+ * never retried. The remedy (republish a fresh KeyPackage then re-add/reboot) is deferred;
+ * here we at least ensure visibility. [[C5]]
  *
- * @param tag Préfixe de log du caller (ex. `[ADD]`, `[SYNC]`, `[GROUP]`, `[REBOOT]`).
+ * @param tag Log prefix of the caller (e.g. `[ADD]`, `[SYNC]`, `[GROUP]`, `[REBOOT]`).
  */
 export function warnSkippedKeyPackages(
   skippedDeviceIds: string[],
@@ -21,10 +21,10 @@ export function warnSkippedKeyPackages(
 ): void {
   if (skippedDeviceIds.length === 0) return;
   log(
-    `${tag} ${skippedDeviceIds.length} device(s) ignoré(s) (KeyPackage invalide): ${skippedDeviceIds.join(', ')} - non invité(s), republication d'un KeyPackage requise.`
+    `${tag} ${skippedDeviceIds.length} device(s) skipped (invalid KeyPackage): ${skippedDeviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
   );
   console.warn(
-    `${tag}[C5] KeyPackage invalide pour ${skippedDeviceIds.length} device(s) sur ${groupId}:`,
+    `${tag}[C5] Invalid KeyPackage for ${skippedDeviceIds.length} device(s) on ${groupId}:`,
     skippedDeviceIds
   );
 }
@@ -36,14 +36,14 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
 }
 
 /**
- * Détecte une erreur de commit rejeté indiquant que l'état MLS local est forké EN RETARD
- * sur le serveur (l'epoch envoyé est strictement inférieur à l'`activeEpoch` serveur).
+ * Detects a rejected-commit error indicating the local MLS state is forked BEHIND the server
+ * (the sent epoch is strictly less than the server `activeEpoch`).
  *
- * Format reconnu (cf. `mlsDeliveryApi.sendValidatedCommit`) :
+ * Recognised format (cf. `mlsDeliveryApi.sendValidatedCommit`):
  *   `Commit rejected: epoch_mismatch (server epoch: 23, sent: 7)`
  *
- * Retourne `{ serverEpoch, sentEpoch }` si l'appareil est en retard, sinon `null`
- * (erreur d'un autre type, ou epoch serveur <= epoch envoyé).
+ * Returns `{ serverEpoch, sentEpoch }` if the device is behind, or `null`
+ * (different error type, or server epoch <= sent epoch).
  */
 export function parseForkedEpoch(err: unknown): { serverEpoch: number; sentEpoch: number } | null {
   const m = String(err).match(/server epoch:\s*(\d+),\s*sent:\s*(\d+)/);
@@ -56,30 +56,30 @@ export function parseForkedEpoch(err: unknown): { serverEpoch: number; sentEpoch
 }
 
 /**
- * Vrai si l'erreur de commit rejeté indique que CE device a forké en ayant DEJA mergé son
- * propre commit (chemin d'EMISSION : add/remove/kick suivi de `sendCommit`). Un seul écart
- * d'epoch suffit : on a perdu une course de commit concurrente, on a déjà avancé localement à
- * N+1 sur une branche divergente, et le commit gagnant (N -> N+1 sur l'autre branche) sera dropé
- * comme same-epoch bénin (cf. mls-core process_incoming) -> jamais adopté -> fork permanent. Le
- * seul remède est forget + re-Welcome pour adopter la branche gagnante. [[C7]]
+ * Returns true if the rejected-commit error indicates THIS device forked by already merging its
+ * own commit (SEND path: add/remove/kick followed by `sendCommit`). A single epoch gap suffices:
+ * we lost a concurrent commit race, already advanced locally to N+1 on a divergent branch, and
+ * the winning commit (N -> N+1 on the other branch) will be dropped as same-epoch benign (cf.
+ * mls-core process_incoming) -> never adopted -> permanent fork. The only remedy is forget +
+ * re-Welcome to adopt the winning branch. [[C7]]
  *
- * A ne PAS confondre avec un receveur en retard de 1 epoch (qui, lui, rattrape seul quand le
- * commit manquant arrive via la file) : ici l'epoch local a déjà été mergé par NOTRE commit.
- * Comme `parseForkedEpoch` ne renvoie non-null que pour `serverEpoch > sentEpoch`, tout
- * `epoch_mismatch` reçu APRES un merge local (chemin d'émission) est par définition un fork.
+ * NOT to be confused with a receiver one epoch behind (which catches up on its own when the
+ * missing commit arrives via the queue): here the local epoch has already been merged by OUR
+ * commit. Since `parseForkedEpoch` returns non-null only for `serverEpoch > sentEpoch`, any
+ * `epoch_mismatch` received AFTER a local merge (send path) is by definition a fork.
  */
 export function isSenderForkError(err: unknown): boolean {
   return parseForkedEpoch(err) !== null;
 }
 
 /**
- * Supprime un groupe MLS :
- *  1. Diffuse un message "groupDeleted" à tous les membres AVANT la suppression serveur.
- *  2. Supprime le groupe côté serveur (DB + Redis).
- *  3. Oublie l'état MLS local.
+ * Deletes an MLS group:
+ *  1. Broadcasts "groupDeleted" to all members BEFORE server deletion.
+ *  2. Deletes the group server-side (DB + Redis).
+ *  3. Forgets the local MLS state.
  *
- * L'ordre 1→2 est critique : deleteGroupOnServer hard-delete dm_group_members, ce qui
- * prive le serveur de toute info de routage. Un message envoyé après serait perdu.
+ * Order 1->2 is critical: deleteGroupOnServer hard-deletes dm_group_members, stripping
+ * the server of all routing info. A message sent afterwards would be lost.
  */
 export async function deleteGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -90,9 +90,9 @@ export async function deleteGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, pin, log } = params;
 
-  // 1. Notifier les pairs via MLS AVANT la suppression serveur.
-  // Le chiffrement requiert l'état WASM (donc le groupe doit être local),
-  // et le routage requiert dm_group_members (donc le groupe doit être sur le serveur).
+  // 1. Notify peers via MLS BEFORE server deletion.
+  // Encryption requires WASM state (group must be local),
+  // and routing requires dm_group_members (group must be on server).
   if (mlsService.getLocalGroups().includes(groupId)) {
     try {
       const controlMsg = encodeAppMessage(
@@ -100,31 +100,31 @@ export async function deleteGroupAndBroadcast(params: {
       );
       await mlsService.sendMessage(groupId, controlMsg);
     } catch {
-      // Non-blocking : les pairs découvriront la suppression lors du prochain pull
+      // Non-blocking: peers will discover the deletion on their next pull
     }
   }
 
-  // 2. Supprimer sur le serveur.
+  // 2. Delete on server.
   try {
     const serverDeleted = await mlsService.deleteGroupOnServer(groupId);
     if (!serverDeleted) {
-      log?.(`[DELETE] Groupe ${groupId.slice(0, 8)}… introuvable sur le serveur (déjà supprimé ?)`);
+      log?.(`[DELETE] Group ${groupId.slice(0, 8)}... not found on server (already deleted?)`);
     }
   } catch (e) {
-    log?.(`[DELETE] Erreur suppression serveur pour ${groupId.slice(0, 8)}…: ${String(e)}`);
+    log?.(`[DELETE] Server deletion error for ${groupId.slice(0, 8)}...: ${String(e)}`);
     console.error('[DELETE] deleteGroupOnServer failed:', e);
   }
 
-  // 3. Oublier le groupe localement - après l'envoi du message (le chiffrement requiert l'état MLS).
-  // Sans ça, le groupe reste dans l'état WASM du supprimeur et continue à apparaître
-  // dans getLocalGroups(), ce qui provoque des tentatives de recovery fantômes.
+  // 3. Forget the group locally - after sending the message (encryption requires MLS state).
+  // Without this, the group stays in the deleter's WASM state and keeps appearing
+  // in getLocalGroups(), triggering phantom recovery attempts.
   try {
     mlsService.forgetGroup(groupId);
   } catch {
-    /* non-bloquant */
+    /* non-blocking */
   }
 
-  // 4. Sauvegarder l'état MLS (forgetGroup a modifié l'arbre WASM)
+  // 4. Persist MLS state (forgetGroup modified the WASM tree)
   await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 }
 
@@ -177,10 +177,10 @@ export async function setGroupImageAndBroadcast(params: {
 }
 
 /**
- * Envoie un message système MLS pour notifier un changement de membership.
+ * Sends an MLS system message to notify a membership change.
  *
- * Toujours best-effort : si l'envoi échoue les pairs découvriront le changement
- * lors de leur prochain `getUserGroups`. Ne jamais appeler après `forgetGroup`.
+ * Always best-effort: if the send fails peers will discover the change on their next
+ * `getUserGroups` call. Never call after `forgetGroup`.
  */
 async function notifyMembershipChange(
   mlsService: IMlsService,
@@ -194,15 +194,15 @@ async function notifyMembershipChange(
       encodeAppMessage(mkSystem(event, JSON.stringify(payload)))
     );
   } catch {
-    /* non-bloquant */
+    /* non-blocking */
   }
 }
 
 /**
- * Retire un membre du groupe MLS (action d'un administrateur) :
- *  1. Commit MLS remove - retire le leaf de l'arbre et avance l'epoch pour tous.
- *  2. Diffuse `memberRemoved` aux membres restants.
- *  3. Nettoie le registre serveur (dm_group_members + dm_device_group_memberships).
+ * Removes a member from the MLS group (admin action):
+ *  1. MLS remove commit - removes the leaf from the tree and advances the epoch for all.
+ *  2. Broadcasts `memberRemoved` to remaining members.
+ *  3. Cleans the server registry (dm_group_members + dm_device_group_memberships).
  */
 export async function removeMemberAndBroadcast(params: {
   mlsService: IMlsService;
@@ -213,33 +213,33 @@ export async function removeMemberAndBroadcast(params: {
 }) {
   const { mlsService, groupId, memberId, userId, pin } = params;
 
-  // 1. MLS remove commit : retire le leaf du membre pour tous les membres restants.
+  // 1. MLS remove commit: removes the member's leaf for all remaining members.
   await mlsService.removeMember(groupId, [memberId]);
 
-  // 2. Notifier les membres restants.
+  // 2. Notify remaining members.
   await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
 
-  // 3. Nettoyer le registre serveur. Best-effort : le commit MLS fait foi.
+  // 3. Clean the server registry. Best-effort: the MLS commit is authoritative.
   try {
     await mlsService.removeMemberFromServer(groupId, memberId);
   } catch {
-    /* non-bloquant */
+    /* non-blocking */
   }
 
   await persistMlsStateAfterMutation(mlsService, userId, pin);
 }
 
 /**
- * Quitte un groupe MLS (auto-retrait du membre lui-même) :
- *  1. Diffuse `memberLeft` aux autres membres (avant toute suppression -
- *     l'état WASM doit être valide pour chiffrer le message).
- *  2. Se retire du registre serveur (dm_group_members + dm_device_group_memberships).
- *  3. Oublie le groupe localement pour ne pas laisser un leaf orphelin dans
- *     getLocalGroups() et déclencher des tentatives de recovery fantômes.
+ * Leaves an MLS group (self-removal by the member):
+ *  1. Broadcasts `memberLeft` to other members (before any deletion -
+ *     WASM state must be valid to encrypt the message).
+ *  2. Removes from the server registry (dm_group_members + dm_device_group_memberships).
+ *  3. Forgets the group locally to avoid leaving an orphan leaf in
+ *     getLocalGroups() that would trigger phantom recovery attempts.
  *
- * Contrairement à `removeMemberAndBroadcast`, cette fonction ne génère pas
- * de commit MLS remove : le leaf du membre reste dans l'arbre des autres
- * jusqu'au prochain commit, mais il ne reçoit plus de messages (server-side).
+ * Unlike `removeMemberAndBroadcast`, this function does not generate an MLS remove commit:
+ * the member's leaf remains in others' trees until the next commit, but they no longer
+ * receive messages (server-side).
  */
 export async function leaveGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -249,21 +249,21 @@ export async function leaveGroupAndBroadcast(params: {
 }): Promise<void> {
   const { mlsService, groupId, userId, pin } = params;
 
-  // 1. Notifier AVANT la suppression serveur (le WASM doit être intact pour chiffrer).
+  // 1. Notify BEFORE server deletion (WASM must be intact to encrypt).
   await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId });
 
-  // 2. Nettoyer le registre serveur.
+  // 2. Clean the server registry.
   try {
     await mlsService.removeMemberFromServer(groupId, userId);
   } catch {
-    /* non-bloquant */
+    /* non-blocking */
   }
 
-  // 3. Oublier l'état WASM local.
+  // 3. Forget the local WASM state.
   try {
     mlsService.forgetGroup(groupId);
   } catch {
-    /* non-bloquant */
+    /* non-blocking */
   }
 
   await persistMlsStateAfterMutation(mlsService, userId, pin);
@@ -282,7 +282,7 @@ export async function persistMlsStateAfterMutation(
   try {
     await persistMlsStructuralCheckpoint({ mlsService, pin, userId });
   } catch (e) {
-    log?.(`[MLS] Échec saveState après mutation: ${e instanceof Error ? e.message : String(e)}`);
+    log?.(`[MLS] saveState failed after mutation: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -300,12 +300,10 @@ export function forgetMlsGroupIfPresent(
   }
   try {
     mlsService.forgetGroup(groupId, 0);
-    log?.(`[MLS] forgetGroup ${groupId} (absent côté serveur)`);
+    log?.(`[MLS] forgetGroup ${groupId} (absent from server)`);
     return true;
   } catch (e) {
-    log?.(
-      `[MLS] forgetGroup échoué pour ${groupId}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log?.(`[MLS] forgetGroup failed for ${groupId}: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }
@@ -327,7 +325,7 @@ export async function purgeLocalConversationRecord(params: {
     await deleteConversation(contactKey).catch(() => {});
   }
   conversations.delete(contactKey);
-  log?.(`[UI] Conversation locale retirée (${groupId})`);
+  log?.(`[UI] Local conversation removed (${groupId})`);
 }
 
 /**
@@ -366,14 +364,14 @@ export async function isGroupActiveOnServer(
 }
 
 /**
- * Traitement unifié d'une erreur `DuplicateSignature` levée par `addMember` :
- * l'ancien KeyPackage du device est encore dans l'arbre MLS (état local perdu).
- * On kick le leaf stale et on reset le statut à pending pour que le device puisse
- * renvoyer une `welcome_request` avec un KeyPackage frais.
+ * Unified handler for a `DuplicateSignature` error raised by `addMember`:
+ * the device's old KeyPackage is still in the MLS tree (local state lost).
+ * Kicks the stale leaf and resets the status to pending so the device can
+ * resend a `welcome_request` with a fresh KeyPackage.
  *
- * Ne pas tester status='active' pour décider de skipper : `sendWelcome` marque
- * le device actif de façon optimiste avant que celui-ci traite le Welcome. Un device
- * qui a perdu son état sera toujours 'active' côté serveur.
+ * Do not check status='active' to decide whether to skip: `sendWelcome` marks
+ * the device active optimistically before it processes the Welcome. A device
+ * that has lost its state will always be 'active' server-side.
  */
 export async function handleDuplicateLeafError(params: {
   mlsService: IMlsService;
@@ -386,14 +384,14 @@ export async function handleDuplicateLeafError(params: {
 }): Promise<void> {
   const { mlsService, groupId, targetUserId, targetDeviceId, userId, pin, log } = params;
 
-  log(`[MLS] DuplicateSignature: kick leaf stale pour ${targetDeviceId.slice(0, 12)}…`);
+  log(`[MLS] DuplicateSignature: kicking stale leaf for ${targetDeviceId.slice(0, 12)}...`);
   await kickStaleLeaf(groupId, targetUserId, targetDeviceId, mlsService, log);
   await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 }
 
 /**
- * Retire silencieusement le leaf stale d'un device de l'arbre MLS (best-effort).
- * Encapsule removeMemberDevice + kickStaleDevice pour éviter la duplication.
+ * Silently removes the stale leaf of a device from the MLS tree (best-effort).
+ * Wraps removeMemberDevice + kickStaleDevice to avoid duplication.
  */
 export async function kickStaleLeaf(
   groupId: string,
@@ -403,29 +401,27 @@ export async function kickStaleLeaf(
   log: (msg: string) => void
 ): Promise<void> {
   const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
-  // Le remove génère un commit appliqué LOCALEMENT puis validé côté serveur. Si le serveur
-  // le rejette pour epoch_mismatch (NOTRE état est forké), il ne faut surtout pas avaler
-  // l'erreur : le commit a déjà avancé l'epoch local et réessayer ne ferait que creuser le
-  // fork (storm kick/re-add). On remonte l'erreur pour que l'appelant déclenche la recovery
-  // (forget + welcome_request). On escalade dès un écart de 1 (`isSenderForkError`) : ici
-  // l'epoch local a déjà été mergé, donc même un écart de 1 est un fork concurrent réel, pas
-  // un simple retard de receveur. Les autres erreurs (leaf déjà absent, etc.) restent
-  // best-effort. [[C7]]
+  // The remove generates a commit applied LOCALLY then validated server-side. If the server
+  // rejects it for epoch_mismatch (OUR state is forked), the error must NOT be swallowed:
+  // the commit already advanced the local epoch and retrying would only deepen the fork
+  // (kick/re-add storm). We surface the error so the caller triggers recovery (forget +
+  // welcome_request). We escalate at a gap of 1 (`isSenderForkError`): here the local epoch
+  // has already been merged, so even a gap of 1 is a real concurrent fork, not a simple
+  // receiver lag. Other errors (leaf already absent, etc.) remain best-effort. [[C7]]
   try {
     await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
   } catch (e) {
     if (isSenderForkError(e)) throw e;
   }
   await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
-  log(`[KICK] Leaf stale ${targetUserId}:${targetDeviceId} retiré de ${groupId}`);
+  log(`[KICK] Stale leaf ${targetUserId}:${targetDeviceId} removed from ${groupId}`);
 }
 
 /**
- * Sérialise un `StoredMessage` pour le transport dans un `history_bundle`.
+ * Serialises a `StoredMessage` for transport in a `history_bundle`.
  *
- * Inclut toutes les métadonnées (réactions, accusés de lecture, isDeleted, isEdited,
- * marqueurs temporels secondaires) pour que le destinataire obtienne l'état complet
- * et puisse trier les messages de façon stable même après une migration de groupe.
+ * Includes all metadata (reactions, read receipts, isDeleted, isEdited, secondary timestamps)
+ * so the recipient gets the complete state and can sort messages stably after a group migration.
  */
 function serializeForBundle(m: StoredMessage) {
   return {
@@ -437,29 +433,29 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.readBy?.length ? { readBy: m.readBy } : {}),
     ...(m.isDeleted ? { isDeleted: true } : {}),
     ...(m.isEdited ? { isEdited: true } : {}),
-    // Marqueurs temporels secondaires : nécessaires pour un tri stable post-migration
-    // et pour afficher correctement la date du premier accusé de lecture.
+    // Secondary timestamps: needed for stable post-migration sorting and for correctly
+    // displaying the first read-receipt date.
     ...(m.readAt ? { readAt: m.readAt } : {}),
     ...(m.serverTimestamp ? { serverTimestamp: m.serverTimestamp } : {}),
   };
 }
 
 /**
- * Envoie l'intégralité de l'historique local de `groupId` aux membres actifs du groupe,
- * chiffré sous l'epoch MLS courante, en chunks de `chunkSize` messages (défaut 200).
+ * Sends the full local history of `groupId` to active group members, encrypted under the
+ * current MLS epoch, in chunks of `chunkSize` messages (default 200).
  *
- * Cas d'usage :
- *  - Invitation d'un nouveau membre (handleWelcomeRequest, processPendingInvitations) :
- *    le bundle arrive après le Welcome, garanti en ordre par MLS.
- *  - Reboot CAS gagné : envoyé après inviteMembers pour que les members réinvités
- *    obtiennent l'historique migré depuis le groupe mort.
- *  - joinSuccessor : redistribue l'historique fraîchement migré au créateur du successeur
- *    qui avait un bundle vide (device sans historique local au moment du reboot).
- *  - resumePendingCasBundles : renvoi au redémarrage si le device a crashé entre
- *    l'écriture de la clé `cas_winner:{G}` et la suppression de celle-ci.
+ * Use cases:
+ *  - New member invitation (handleWelcomeRequest, processPendingInvitations):
+ *    the bundle arrives after the Welcome, guaranteed in-order by MLS.
+ *  - CAS-won reboot: sent after inviteMembers so re-invited members get the history
+ *    migrated from the dead group.
+ *  - joinSuccessor: redistributes the freshly-migrated history to the successor creator
+ *    who had an empty bundle (device with no local history at reboot time).
+ *  - resumePendingCasBundles: resent at startup if the device crashed between writing
+ *    the `cas_winner:{G}` key and deleting it.
  *
- * Le destinataire déduplique les messages par `id` à la réception - appels multiples
- * idempotents. S'arrête au premier chunk en erreur pour éviter de spammer le réseau.
+ * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
+ * Stops at the first chunk error to avoid spamming the network.
  */
 export async function sendFullHistoryBundle(
   groupId: string,
@@ -495,9 +491,9 @@ export async function sendFullHistoryBundle(
         `[HISTORY_BUNDLE] Chunk ${Math.floor(i / chunkSize) + 1}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
       );
     } catch (e) {
-      log(`[HISTORY_BUNDLE] Erreur envoi chunk ${Math.floor(i / chunkSize) + 1}: ${String(e)}`);
+      log(`[HISTORY_BUNDLE] Chunk send error ${Math.floor(i / chunkSize) + 1}: ${String(e)}`);
       return;
     }
   }
-  log(`[HISTORY_BUNDLE] Historique complet envoyé : ${messages.length} message(s)`);
+  log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
 }

@@ -49,8 +49,8 @@ function readyConversation(id: string): Conversation {
   } as Conversation;
 }
 
-describe("processPendingInvitations - leaf déjà dans l'arbre", () => {
-  it("skip sans kicker ni ré-ajouter quand le device est déjà membre de l'arbre MLS", async () => {
+describe('processPendingInvitations - leaf already in tree', () => {
+  it('skips without kicking or re-adding when device is already a member of the MLS tree', async () => {
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()
@@ -74,15 +74,15 @@ describe("processPendingInvitations - leaf déjà dans l'arbre", () => {
       log,
     });
 
-    // Le leaf valide ne doit jamais être kické ni ré-ajouté : l'invitation est remplie.
+    // A valid leaf must never be kicked or re-added: the invitation is fulfilled.
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(mlsService.sendWelcome).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("déjà dans l'arbre"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('already in tree'));
   });
 
-  it("ajoute normalement un device absent de l'arbre", async () => {
+  it('normally adds a device absent from the tree', async () => {
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()
@@ -117,8 +117,8 @@ describe("processPendingInvitations - leaf déjà dans l'arbre", () => {
   });
 });
 
-describe('processPendingInvitations - état local forké en retard', () => {
-  it('déclenche recoverForkedGroup et abandonne le groupe quand le commit est rejeté (écart > 1)', async () => {
+describe('processPendingInvitations - local state forked behind server', () => {
+  it('triggers recoverForkedGroup and abandons the group when commit is rejected (gap > 1)', async () => {
     const mlsService = makeMls({
       getPendingInvitations: vi.fn().mockResolvedValue([
         { id: 'i1', userId: 'peer', deviceId: 'peer-dev-1', groupId: 'g1', status: 'pending' },
@@ -154,18 +154,18 @@ describe('processPendingInvitations - état local forké en retard', () => {
       recoverForkedGroup,
     });
 
-    // Recovery déclenchée une seule fois pour le groupe, et la 2e invitation n'est pas tentée
-    // (break sur le groupe forké) : addMember appelé une seule fois.
+    // Recovery triggered once for the group, and the 2nd invitation is not attempted
+    // (break on forked group): addMember called only once.
     expect(recoverForkedGroup).toHaveBeenCalledTimes(1);
     expect(recoverForkedGroup).toHaveBeenCalledWith('g1', 23);
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
   });
 
-  it('déclenche la recovery dès un écart de 1 quand NOTRE commit est rejeté (fork concurrent émetteur, C7)', async () => {
-    // Cote emetteur, addMember a deja merge le commit localement (epoch N+1) avant le rejet
-    // serveur : un ecart de 1 est donc un fork concurrent reel (branche divergente), pas un
-    // simple retard de receveur. On doit recovery, sinon le commit gagnant est dropé comme
-    // same-epoch benin et le fork devient permanent.
+  it('triggers recovery at a gap of 1 when OUR commit is rejected (sender concurrent fork, C7)', async () => {
+    // On the sender side, addMember has already merged the commit locally (epoch N+1) before
+    // the server rejects it: a gap of 1 is a real concurrent fork (divergent branch), not a
+    // simple receiver lag. Must recover, otherwise the winning commit is dropped as same-epoch
+    // benign and the fork becomes permanent.
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()
@@ -204,7 +204,7 @@ describe('processPendingInvitations - état local forké en retard', () => {
     expect(recoverForkedGroup).toHaveBeenCalledWith('g1', 8);
   });
 
-  it('traite ALREADY_MEMBER comme une invitation remplie (skip, ni kick ni recovery)', async () => {
+  it('treats ALREADY_MEMBER as a fulfilled invitation (skip, no kick or recovery)', async () => {
     const mlsService = makeMls({
       getPendingInvitations: vi
         .fn()
@@ -238,6 +238,6 @@ describe('processPendingInvitations - état local forké en retard', () => {
     expect(recoverForkedGroup).not.toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('invitation remplie'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('invitation fulfilled'));
   });
 });

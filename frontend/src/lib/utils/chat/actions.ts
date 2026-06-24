@@ -47,10 +47,10 @@ export async function processPendingInvitations(params: {
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
   /**
-   * Recovery d'un groupe dont NOTRE état local est forké en retard (commit rejeté
-   * epoch_mismatch). Effectue forget + welcome_request pour rejoindre à l'epoch courante.
-   * `minEpoch` (epoch serveur connue) rejette les Welcomes stale d'une branche divergée.
-   * Injecté par la couche session (a besoin des timers/conversations de recovery).
+   * Recovery of a group whose LOCAL state is forked behind the server (commit rejected
+   * epoch_mismatch). Performs forget + welcome_request to rejoin at the current epoch.
+   * `minEpoch` (known server epoch) rejects stale Welcomes from a diverged branch.
+   * Injected by the session layer (needs recovery timers/conversations).
    */
   recoverForkedGroup?: (groupId: string, minEpoch?: number) => Promise<void>;
 }) {
@@ -69,13 +69,13 @@ export async function processPendingInvitations(params: {
   try {
     pendingInvitations = await mlsService.getPendingInvitations(userId, myDeviceId);
   } catch (e) {
-    log(`[PENDING] Erreur récupération invitations: ${e}`);
+    log(`[PENDING] Error fetching pending invitations: ${e}`);
     return;
   }
 
   if (pendingInvitations.length === 0) return;
 
-  log(`[PENDING] ${pendingInvitations.length} invitation(s) en attente à traiter`);
+  log(`[PENDING] ${pendingInvitations.length} pending invitation(s) to process`);
 
   // Group by groupId for sequential processing per group (avoids epoch races within a group)
   const byGroup = new Map<string, typeof pendingInvitations>();
@@ -88,14 +88,14 @@ export async function processPendingInvitations(params: {
   let totalWelcomes = 0;
 
   for (const [origGroupId, invitations] of byGroup) {
-    // Résoudre le terminal avant tout traitement (reboot peut avoir allongé la chaîne).
+    // Resolve the terminal before processing (reboot may have extended the chain).
     const { terminalId: groupId } = await resolveTerminalGroup(mlsService, origGroupId);
     const resolved = groupId;
 
-    // "Prêt pour inviter" = conversation prête ET groupe présent dans le WASM local.
-    // Après un forgetGroup de recovery (fork), la conversation reste isReady mais le groupe
-    // a quitté le WASM : tenter addMember y lèverait "Groupe introuvable" en boucle. On
-    // retombe alors dans la branche non-prêt (welcome_request de recovery déjà en vol).
+    // "Ready to invite" = conversation active AND group present in local WASM.
+    // After a recovery forgetGroup (fork), the conversation stays isReady but the group
+    // has left WASM: calling addMember would loop on "Group not found". We fall into the
+    // not-ready branch (recovery welcome_request already in flight).
     const readyForInvites =
       conversations.get(groupId)?.lifecycle === 'active' &&
       mlsService.getLocalGroups().includes(groupId);
@@ -104,12 +104,12 @@ export async function processPendingInvitations(params: {
         // Le successeur terminal existe mais n'est pas encore prêt (Welcome en transit).
         // onGroupReady() déclenchera un nouveau passage dans 500 ms.
         log(
-          `[PENDING] ${origGroupId.slice(0, 8)}… → successeur ${resolved.slice(0, 8)}… pas encore prêt - skip`
+          `[PENDING] ${origGroupId.slice(0, 8)}... -> successor ${resolved.slice(0, 8)}... not ready yet - skip`
         );
       } else {
-        // Groupe original non prêt localement. Si totalement absent (pas même un
-        // placeholder isReady:false), envoyer un welcome_request. Un placeholder indique
-        // que le Welcome est peut-être déjà en transit depuis la queue - on ne réenvoie pas.
+        // Original group not ready locally. If completely absent (not even an
+        // isReady:false placeholder), send a welcome_request. A placeholder indicates
+        // the Welcome may already be in transit from the queue - do not resend.
         const isAbsent = !conversations.has(origGroupId) && !conversations.has(resolved);
         if (isAbsent) {
           const active = await isGroupActiveOnServer(mlsService, userId, resolved);
@@ -138,11 +138,11 @@ export async function processPendingInvitations(params: {
     }
 
     if (resolved !== origGroupId) {
-      log(`[PENDING] Groupe ${origGroupId} → résolu via chaîne successeurs : ${resolved}`);
+      log(`[PENDING] Group ${origGroupId} -> resolved via successor chain: ${resolved}`);
     }
 
-    // Acquire distributed lock to prevent concurrent Add commits (TTL par defaut = pire cas
-    // mobile : bulk add + Argon2 + commit + Welcomes, cf. MLS_ADD_LOCK_TTL_MS / H1).
+    // Acquire distributed lock to prevent concurrent Add commits (default TTL = worst case
+    // mobile: bulk add + Argon2 + commit + Welcomes, cf. MLS_ADD_LOCK_TTL_MS / H1).
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
       log(`[PENDING] Groupe ${groupId}: verrou tenu par un autre appareil - skip`);
@@ -150,8 +150,8 @@ export async function processPendingInvitations(params: {
     }
 
     try {
-      // ── Ajouter les devices pending ───────────────────────────────────────
-      // Seul l'état 'pending' existe désormais (stale supprimé - RFC 9420).
+      // ── Add pending devices ───────────────────────────────────────────────
+      // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
 
       for (const inv of currentPending) {
@@ -159,8 +159,8 @@ export async function processPendingInvitations(params: {
           // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
           // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
           // older ones. null from the fallback means the device was deregistered.
-          // Best-effort (`.catch(() => [])`) : un echec reseau ici ne doit pas court-circuiter
-          // le fallback fetchDeviceKeyPackage ci-dessous (liste vide => on tente le fallback).
+          // Best-effort (`.catch(() => [])`) : a network error here must not short-circuit
+          // the fetchDeviceKeyPackage fallback below (empty list => try the fallback).
           const devices = await mlsService.fetchUserDevices(inv.userId).catch(() => []);
           let targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
           if (!targetDevice) {
@@ -168,30 +168,30 @@ export async function processPendingInvitations(params: {
               .fetchDeviceKeyPackage(inv.userId, inv.deviceId)
               .catch(() => null);
             if (!fallback) {
-              log(`[PENDING] Device ${inv.deviceId} introuvable (désenregistré) → nettoyage`);
+              log(`[PENDING] Device ${inv.deviceId} not found (deregistered) -> cleanup`);
               mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
               continue;
             }
             targetDevice = fallback;
-            log(`[PENDING] KeyPackage récupéré via fallback pour ${inv.deviceId} (> 30 jours)`);
+            log(`[PENDING] KeyPackage retrieved via fallback for ${inv.deviceId} (> 30 days)`);
           }
 
-          // Idempotence : si le leaf du device est déjà dans l'arbre MLS, l'invitation est
-          // remplie - on SKIP, quel que soit le statut serveur. On ne kicke JAMAIS ici.
+          // Idempotence: if the device's leaf is already in the MLS tree, the invitation is
+          // fulfilled - SKIP regardless of server status. Never kick here.
           //
-          // Un device hors-ligne rejoindra via son Welcome déjà en file quand il reviendra ;
-          // un device qui a réellement perdu son état émettra lui-même un welcome_request
-          // (chemin signal-driven, avec limiteur anti-livelock dans handleWelcomeRequest).
-          // Kicker proactivement un leaf valide est purement nuisible : ça inflate l'epoch à
-          // chaque sync, invalide le Welcome en file (le device reçoit alors un Welcome périmé
-          // → re-welcome_request → churn) et renvoie le bundle historique pour rien. C'est la
-          // cause des cycles kick+re-add répétés à chaque reconnexion sur les devices pairs
-          // hors-ligne (statut figé à 'pending' car ils ne confirment jamais 'active').
+          // An offline device will join via its already-queued Welcome when it reconnects;
+          // a device that has truly lost its state will itself emit a welcome_request
+          // (signal-driven path, with anti-livelock limiter in handleWelcomeRequest).
+          // Proactively kicking a valid leaf is purely harmful: it inflates the epoch on
+          // every sync, invalidates the queued Welcome (device receives a stale Welcome
+          // -> re-welcome_request -> churn) and resends the history bundle for nothing. This
+          // was the cause of repeated kick+re-add cycles on every reconnect for offline peer
+          // devices (status stuck at 'pending' because they never confirm 'active').
           try {
             const members = await mlsService.getGroupMembers(groupId);
             if (members.some((m) => m.deviceId === inv.deviceId)) {
               log(
-                `[PENDING] ${inv.deviceId} déjà dans l'arbre de ${groupId} - skip (rejoint via Welcome en file)`
+                `[PENDING] ${inv.deviceId} already in tree for ${groupId} - skip (will join via queued Welcome)`
               );
               continue;
             }
@@ -233,56 +233,58 @@ export async function processPendingInvitations(params: {
             }
           }
 
-          // Le history bundle = MESSAGES APPLICATIFS (pas un commit, ne passe pas par
-          // validateCommit). Le nouveau membre a deja rejoint via le Welcome (meme epoch que
-          // nous), donc on lui envoie l'historique meme si le broadcast du commit a echoue -
-          // sinon un commit rejete (course concurrente ou compteur serveur en retard) le
-          // priverait silencieusement de tout l'historique. [[C8]]
+          // The history bundle = APPLICATION MESSAGES (not a commit, does not go through
+          // validateCommit). The new member has already joined via the Welcome (same epoch as
+          // us), so we send the history even if the commit broadcast failed - otherwise a
+          // rejected commit (concurrent race or server counter lag) would silently deprive
+          // them of the full history. [[C8]]
           const bundlePromise = sendFullHistoryBundle(groupId, {
             storage,
             pin,
             mlsService,
             log,
           }).catch((e) =>
-            log(`[HISTORY_BUNDLE] Erreur envoi historique à ${inv.userId}: ${String(e)}`)
+            log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
           );
 
           if (commitError) {
-            // La recovery (catch) va forgetGroup : on attend la fin de l'envoi de l'historique
-            // pour ne pas le couper, puis on remonte l'erreur de commit.
+            // Recovery (catch) will forgetGroup: wait for the history send to complete
+            // before cutting it, then surface the commit error.
             await bundlePromise;
             throw commitError;
           }
         } catch (e) {
           const errStr = String(e);
 
-          // NOTRE commit (addMember mergé localement) a été rejeté pour epoch_mismatch : on a
-          // perdu une course concurrente et on est sur une branche divergente. Tous nos commits
-          // suivants seront rejetés et le commit gagnant sera dropé comme same-epoch bénin -> on
-          // ne rattrape jamais seul. On oublie l'état périmé (en rejetant les Welcomes < epoch
-          // serveur) et on redemande un Welcome, puis on abandonne CE groupe pour ce cycle. On
-          // escalade dès un écart de 1 (`isSenderForkError`), pas seulement >= 2. [[C7]]
+          // OUR commit (addMember merged locally) was rejected for epoch_mismatch: we lost a
+          // concurrent commit race and are on a divergent branch. All subsequent commits will
+          // be rejected and the winning commit dropped as same-epoch benign -> we never catch
+          // up alone. We forget the stale state (rejecting Welcomes < server epoch) and
+          // re-request a Welcome, then abandon THIS group for this cycle. We escalate at a
+          // gap of 1 (`isSenderForkError`), not only >= 2. [[C7]]
           const forked = parseForkedEpoch(e);
           if (isSenderForkError(e)) {
-            log(`[PENDING] ${groupId.slice(0, 8)}… forké (commit rejeté) - recovery + abandon`);
+            log(
+              `[PENDING] ${groupId.slice(0, 8)}... forked (commit rejected) - recovery + abandon`
+            );
             if (recoverForkedGroup)
               await recoverForkedGroup(groupId, forked?.serverEpoch).catch(() => {});
             break;
           }
 
-          // Device déjà membre de l'arbre : l'invitation est remplie (le device rejoindra via
-          // son Welcome en file). On ne kicke pas - skip silencieux pour stopper le re-essai.
+          // Device already a member: invitation fulfilled (device will join via queued Welcome).
+          // Do not kick - silent skip to stop the retry loop.
           if (errStr.includes('ALREADY_MEMBER')) {
             log(
-              `[PENDING] ${inv.deviceId} déjà membre de ${groupId.slice(0, 8)}… - invitation remplie, skip`
+              `[PENDING] ${inv.deviceId} already a member of ${groupId.slice(0, 8)}... - invitation fulfilled, skip`
             );
             continue;
           }
 
           if (errStr.includes('DuplicateSignatur')) {
-            log(`[PENDING] ${inv.deviceId} déjà dans l'arbre MLS de ${groupId}`);
-            // Le kick déclenché ici génère lui-même un commit : s'il est rejeté pour fork,
-            // handleDuplicateLeafError remonte l'erreur → on bascule en recovery.
+            log(`[PENDING] ${inv.deviceId} already in MLS tree of ${groupId}`);
+            // The kick triggered here itself generates a commit: if rejected for fork,
+            // handleDuplicateLeafError surfaces the error -> we switch to recovery.
             try {
               await handleDuplicateLeafError({
                 mlsService,
@@ -296,7 +298,7 @@ export async function processPendingInvitations(params: {
             } catch (kickErr) {
               if (isSenderForkError(kickErr)) {
                 log(
-                  `[PENDING] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery + abandon du groupe`
+                  `[PENDING] ${groupId.slice(0, 8)}... forked (kick rejected) - recovery + group abandoned`
                 );
                 if (recoverForkedGroup)
                   await recoverForkedGroup(groupId, parseForkedEpoch(kickErr)?.serverEpoch).catch(
@@ -305,27 +307,27 @@ export async function processPendingInvitations(params: {
                 break;
               }
               log(
-                `[PENDING] Erreur kick ${inv.deviceId} dans ${groupId}: ${String(kickErr).slice(0, 100)}`
+                `[PENDING] Kick error for ${inv.deviceId} in ${groupId}: ${String(kickErr).slice(0, 100)}`
               );
             }
           } else if (errStr.includes('WrongEpoch') || errStr.includes('epoch_mismatch')) {
-            // Course concurrente transitoire (écart 1) : un autre device a committé en même
-            // temps. On vérifie si l'invitation est déjà remplie, sinon on laisse le prochain
-            // cycle réessayer (le commit manquant arrive via la file et on rattrape seul).
-            log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} - vérification…`);
+            // Transient concurrent race (gap 1): another device committed simultaneously.
+            // Check if the invitation is already fulfilled; otherwise let the next cycle retry
+            // (the missing commit arrives via the queue and we catch up on our own).
+            log(`[PENDING] WrongEpoch for ${inv.deviceId} in ${groupId} - checking...`);
             try {
               const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
               const m = memberships.find((x) => x.groupId === groupId);
               if (m?.status === 'active') {
-                log(`[PENDING] ${inv.deviceId} déjà actif - skip`);
+                log(`[PENDING] ${inv.deviceId} already active - skip`);
                 continue;
               }
             } catch {
               /* ignore */
             }
-            log(`[PENDING] Erreur non-récupérable pour ${inv.deviceId}: ${errStr.slice(0, 100)}`);
+            log(`[PENDING] Non-recoverable error for ${inv.deviceId}: ${errStr.slice(0, 100)}`);
           } else {
-            log(`[PENDING] Erreur ajout ${inv.deviceId} à ${groupId}: ${errStr.slice(0, 100)}`);
+            log(`[PENDING] Add error for ${inv.deviceId} to ${groupId}: ${errStr.slice(0, 100)}`);
           }
         }
       }
@@ -335,7 +337,7 @@ export async function processPendingInvitations(params: {
   }
 
   if (totalWelcomes > 0) {
-    log(`[PENDING] ${totalWelcomes} Welcome(s) envoyé(s).`);
+    log(`[PENDING] ${totalWelcomes} Welcome(s) sent.`);
   }
 }
 
@@ -344,19 +346,19 @@ export async function processPendingInvitations(params: {
  * Clears any stale local MLS autosave so the next reload starts fresh.
  */
 export function forceSyncReset(_userId: string, log: (msg: string) => void) {
-  log(`[SYNC] Reset forcé. Rechargez la page pour relancer le traitement des invitations.`);
+  log(`[SYNC] Forced reset. Reload the page to restart pending invitation processing.`);
 }
 
 /**
- * Découverte des groupes manquants.
+ * Discovers missing groups.
  *
- * Crée des placeholders locaux pour les groupes serveur absents du client
- * (Welcome perdu, nouveau device, etc.) et supprime immédiatement les groupes
- * locaux absents du serveur (si la liste serveur a bien été récupérée).
+ * Creates local placeholders for server groups absent from the client
+ * (Welcome lost, new device, etc.) and immediately drops local groups
+ * absent from the server (when the server list was successfully fetched).
  *
- * IMPORTANT : l'identifiant unique est le couple (userId, deviceId).
- * Un même userId peut avoir plusieurs devices - ne jamais utiliser userId
- * seul pour identifier un participant ou un leaf node.
+ * IMPORTANT: the unique identifier is the pair (userId, deviceId).
+ * A given userId can have multiple devices - never use userId alone
+ * to identify a participant or a leaf node.
  */
 export async function discoverMissingGroups(params: {
   mlsService: IMlsService;
@@ -366,7 +368,7 @@ export async function discoverMissingGroups(params: {
   saveConversation?: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
-  /** Optionnel : accès IndexedDB pour vérifier que les messages ont été migrés avant purge. */
+  /** Optional: IndexedDB access to verify messages have been migrated before purge. */
   storage?: IStorage | null;
 }) {
   const {
@@ -413,9 +415,9 @@ export async function discoverMissingGroups(params: {
   if (serverFetchSucceeded) {
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
     const knownSuccessorIds = collectKnownSuccessorIds(uniqueServerGroups);
-    // Groupes que CET utilisateur a dismisses (suppression/quitter manuel sur un appareil) : ils
-    // doivent etre purges sur TOUS ses appareils (regles 3 & 5), pas affiches avec la banniere.
-    // Best-effort (`[]` sur echec -> on ne purge jamais sur un doute).
+    // Groups dismissed by THIS user (manual deletion/leave on one device): must be purged
+    // on ALL their devices (rules 3 & 5), not shown with the banner.
+    // Best-effort (`[]` on error -> never purge on doubt).
     const dismissedGroupIds = new Set(await mlsService.getDismissedGroups().catch(() => []));
     let mlsMutated = false;
 
@@ -440,16 +442,14 @@ export async function discoverMissingGroups(params: {
     for (const [key, convo] of conversations.entries()) {
       if (isChannelConversationId(key)) continue;
 
-      // Dismissé par l'utilisateur (suppression/quitter manuel sur un autre appareil). Deux cas :
-      //  - on n'est plus membre actif -> on PURGE (regles 3 & 5), sans bannière. Priorite max.
-      //  - on est de nouveau membre actif (RE-INVITE depuis) -> le dismiss est perime : on le leve
-      //    cote serveur et on garde la conversation (regle re-add). On ne purge surtout pas, sinon
-      //    on supprimerait un groupe qu'on vient de rejoindre.
+      // Dismissed by the user (manual deletion/leave on another device). Two cases:
+      //  - no longer an active member -> PURGE (rules 3 & 5), no banner. Top priority.
+      //  - active member again (RE-INVITE since) -> dismiss is stale: lift it
+      //    server-side and keep the conversation (re-add rule). Do NOT purge here,
+      //    or we would delete a group we just re-joined.
       if (dismissedGroupIds.has(convo.id)) {
         if (!serverGroupIds.has(convo.id)) {
-          log(
-            `[DISCOVERY] Groupe UI "${convo.name || convo.id}" dismissé par l'utilisateur - retrait`
-          );
+          log(`[DISCOVERY] UI group "${convo.name || convo.id}" dismissed by user - removing`);
           await purgeLocalConversationRecord({
             conversations,
             contactKey: key,
@@ -460,7 +460,7 @@ export async function discoverMissingGroups(params: {
           continue;
         }
         log(
-          `[DISCOVERY] "${convo.name || convo.id}" dismissé mais on en est de nouveau membre - dismiss levé`
+          `[DISCOVERY] "${convo.name || convo.id}" dismissed but we are a member again - dismiss lifted`
         );
         void mlsService.undismissGroup(convo.id).catch(() => {});
         // On laisse le traitement normal continuer (groupe actif).
@@ -470,19 +470,19 @@ export async function discoverMissingGroups(params: {
         () => ({ terminalId: convo.id, hasChain: false })
       );
       if (hasChain && terminalId !== convo.id && conversations.has(terminalId)) {
-        // Sécurité migration : ne pas supprimer la source si ses messages ne sont pas encore
-        // dans le groupe terminal (cas d'un reboot/migration interrompu).
+        // Migration safety: do not delete the source if its messages are not yet
+        // in the terminal group (interrupted reboot/migration).
         if (storage) {
           const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
           if (pendingMsgs.length > 0) {
             log(
-              `[DISCOVERY] ${convo.id.slice(0, 8)}… conservé - ${pendingMsgs.length} msg(s) non encore migrés vers ${terminalId.slice(0, 8)}…`
+              `[DISCOVERY] ${convo.id.slice(0, 8)}... kept - ${pendingMsgs.length} msg(s) not yet migrated to ${terminalId.slice(0, 8)}...`
             );
             continue;
           }
         }
         log(
-          `[DISCOVERY] Groupe UI "${convo.name || convo.id}" → terminal ${terminalId.slice(0, 8)}… - retrait`
+          `[DISCOVERY] UI group "${convo.name || convo.id}" -> terminal ${terminalId.slice(0, 8)}... - removing`
         );
         await purgeLocalConversationRecord({
           conversations,
@@ -496,19 +496,19 @@ export async function discoverMissingGroups(params: {
 
       const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
       if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {
-        // Sécurité migration : ne pas supprimer la source si ses messages ne sont pas encore
-        // dans le groupe successeur (cas d'un reboot/migration interrompu).
+        // Migration safety: do not delete the source if its messages are not yet
+        // in the successor group (interrupted reboot/migration).
         if (storage) {
           const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
           if (pendingMsgs.length > 0) {
             log(
-              `[DISCOVERY] ${convo.id.slice(0, 8)}… conservé - ${pendingMsgs.length} msg(s) non encore migrés vers ${serverEntry.successorId.slice(0, 8)}…`
+              `[DISCOVERY] ${convo.id.slice(0, 8)}... kept - ${pendingMsgs.length} msg(s) not yet migrated to ${serverEntry.successorId.slice(0, 8)}...`
             );
             continue;
           }
         }
         log(
-          `[DISCOVERY] Groupe UI "${convo.name || convo.id}" migré vers ${serverEntry.successorId} - retrait`
+          `[DISCOVERY] UI group "${convo.name || convo.id}" migrated to ${serverEntry.successorId} - removing`
         );
         await purgeLocalConversationRecord({
           conversations,
@@ -521,10 +521,10 @@ export async function discoverMissingGroups(params: {
       }
 
       if (!serverGroupIds.has(convo.id)) {
-        // Décision de sort centralisée dans `decideAbsentGroupFate` (source unique partagée avec
-        // les autres réconciliateurs). On ne sollicite le serveur que pour les cas réellement
-        // indécis : un successeur tombstone connu ou une conv déjà `deletedRemotely` court-circuitent
-        // sans appel réseau (la migration / la suppression manuelle s'en chargent).
+        // Fate decision centralised in `decideAbsentGroupFate` (single source shared with
+        // other reconcilers). We only query the server for genuinely undecided cases: a known
+        // tombstone successor or a conv already `deletedRemotely` short-circuit without a
+        // network call (migration / manual deletion handle them).
         const isKnownSuccessor = knownSuccessorIds.has(convo.id);
         let serverStatus: GroupServerStatus = { kind: 'unknown' };
         let isStillUserMember: boolean | null = null;
@@ -548,7 +548,7 @@ export async function discoverMissingGroups(params: {
         const label = convo.name || convo.id;
 
         if (fate.action === 'purge') {
-          log(`[DISCOVERY] Groupe UI "${label}" - ${fate.reason} - retrait`);
+          log(`[DISCOVERY] UI group "${label}" - ${fate.reason} - removing`);
           await purgeLocalConversationRecord({
             conversations,
             contactKey: key,
@@ -561,11 +561,11 @@ export async function discoverMissingGroups(params: {
         if (fate.action === 'markRemoved') {
           conversations.set(key, { ...convo, lifecycle: 'removed' });
           await saveConversation?.(key).catch(() => {});
-          log(`[DISCOVERY] Groupe UI "${label}" ${fate.reason} - marqué removed`);
+          log(`[DISCOVERY] UI group "${label}" ${fate.reason} - marked removed`);
           continue;
         }
         // keep
-        log(`[DISCOVERY] Groupe UI "${label}" conservé - ${fate.reason}`);
+        log(`[DISCOVERY] UI group "${label}" kept - ${fate.reason}`);
         continue;
       }
     }
@@ -579,7 +579,7 @@ export async function discoverMissingGroups(params: {
 
   if (missing.length > 0) {
     log(
-      `[DISCOVERY] ${missing.length} groupe(s) serveur absent(s) localement: ${missing.map((g) => g.name || g.groupId).join(', ')}`
+      `[DISCOVERY] ${missing.length} server group(s) missing locally: ${missing.map((g) => g.name || g.groupId).join(', ')}`
     );
   }
 
@@ -589,9 +589,9 @@ export async function discoverMissingGroups(params: {
     const directPeer = !g.isGroup ? parseDirectPeerFromName(g.name || '', userId) : null;
     const displayName = directPeer || g.name || g.groupId;
 
-    // Dédoublon local : si une conv directe avec ce même pair existe déjà
-    // sous un groupId différent (doublon côté serveur), on ne crée pas un
-    // second placeholder - on met juste à jour la clé si nécessaire.
+    // Local dedup: if a direct conv with this same peer already exists
+    // under a different groupId (server-side duplicate), do not create a
+    // second placeholder - just update the key if needed.
     if (directPeer) {
       const alreadyLoaded = [...conversations.values()].find(
         (c) =>
@@ -599,7 +599,7 @@ export async function discoverMissingGroups(params: {
           (c.directPeerId ?? c.contactName).toLowerCase() === directPeer
       );
       if (alreadyLoaded) {
-        log(`[DISCOVERY] Doublon ignoré pour "${directPeer}" (existant: ${alreadyLoaded.id})`);
+        log(`[DISCOVERY] Duplicate ignored for "${directPeer}" (existing: ${alreadyLoaded.id})`);
         continue;
       }
     }
@@ -621,11 +621,11 @@ export async function discoverMissingGroups(params: {
         await saveConversation(key);
       } catch (e) {
         log(
-          `[WARN] Echec persistance placeholder ${g.groupId}: ${e instanceof Error ? e.message : String(e)}`
+          `[WARN] Placeholder persistence failed for ${g.groupId}: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }
-    log(`[DISCOVERY] Placeholder "${displayName}" créé.`);
+    log(`[DISCOVERY] Placeholder "${displayName}" created.`);
   }
 
   // ── Seed group avatars from the server (source of truth) ─────────────────
@@ -678,7 +678,7 @@ export async function exportUserBackup(params: {
     const file = await fs.create(`${path}/${filename}`);
     await file.write(new Uint8Array(blob.buffer as ArrayBuffer));
     await file.close();
-    log(`[OK] Sauvegarde exportée : ${filename}`);
+    log(`[OK] Backup exported: ${filename}`);
   } else {
     const url = URL.createObjectURL(
       new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })
@@ -688,7 +688,7 @@ export async function exportUserBackup(params: {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    log(`[OK] Sauvegarde exportée : ${filename}`);
+    log(`[OK] Backup exported: ${filename}`);
   }
 }
 
@@ -718,14 +718,14 @@ export async function importUserBackup(params: {
     const existingMlsState = await loadMlsState(userId);
     if (backup.mlsState && !existingMlsState) {
       await saveMlsState(userId, fromHex(backup.mlsState));
-      log('État MLS restauré (même appareil).');
+      log('MLS state restored (same device).');
     } else if (existingMlsState) {
-      log('État MLS local conservé (appareil déjà actif).');
+      log('Local MLS state preserved (device already active).');
     }
   } else {
     log(
-      '[ATTENTION] Nouvel appareil detecte. Les conversations sont importees en lecture seule. ' +
-        "Reconnectez l'appareil exportateur pour declencher l'invitation automatique aux groupes."
+      '[WARNING] New device detected. Conversations are imported as read-only. ' +
+        'Reconnect the exporting device to trigger automatic group invitation.'
     );
   }
 
@@ -733,7 +733,7 @@ export async function importUserBackup(params: {
   await reloadConversations();
 
   log(
-    `[OK] Sauvegarde importee : ${backup.conversations.length} conversation(s), ` +
+    `[OK] Backup imported: ${backup.conversations.length} conversation(s), ` +
       `${backup.messages.length} message(s).`
   );
 }
@@ -773,39 +773,39 @@ export async function processDevWelcome(params: {
 // first one finishes).  Cross-device races are handled by acquireAddLock below.
 const welcomeRequestInProgress = new Set<string>();
 
-/** Ré-ajouts répétés par clé `${groupId}:${requesterDeviceId}` dans la fenêtre glissante. */
+/** Re-add attempts keyed by `${groupId}:${requesterDeviceId}` within the sliding window. */
 const reAddAttempts = new Map<string, { count: number; first: number }>();
 
-/** Au-delà de ce nombre de ré-ajouts d'un même device dans la fenêtre, on suspend. */
+/** Maximum re-add attempts for the same device within the window before suspending. */
 const MAX_READD_ATTEMPTS = 3;
 
-/** Fenêtre glissante du garde-fou anti-livelock de ré-ajout. */
+/** Sliding window duration for the re-add anti-livelock guard. */
 const READD_WINDOW_MS = 3 * 60_000;
 
-/** Horodatage du dernier Welcome envoyé par clé `${groupId}:${requesterDeviceId}`. */
+/** Timestamp of the last Welcome sent, keyed by `${groupId}:${requesterDeviceId}`. */
 const lastWelcomeSentAt = new Map<string, number>();
 
 /**
- * Délai pendant lequel un device fraîchement invité est présumé " en cours de jointure ".
- * Tant qu'il court, on ignore ses nouvelles welcome_request : son leaf est neuf, pas stale,
- * et le re-kicker l'évincerait (l'invité tomberait en UseAfterEviction à l'envoi). Doit
- * couvrir le déchiffrement du Welcome + l'ingestion du bundle historique (plusieurs secondes).
+ * Cooldown after which a freshly-invited device is presumed "still joining".
+ * While it runs, further welcome_requests from that device are ignored: its leaf is fresh,
+ * not stale, and kicking it would cause UseAfterEviction on send. Must cover Welcome
+ * decryption + history bundle ingestion (several seconds).
  */
 const WELCOME_COOLDOWN_MS = 30_000;
 
 /**
- * Traite un welcome_request reçu d'un device qui veut rejoindre un groupe.
+ * Handles a welcome_request received from a device that wants to join a group.
  *
- * Cas nominal : addMember → sendWelcome → sendCommit.
+ * Nominal case: addMember -> sendWelcome -> sendCommit.
  *
- * Cas "leaf déjà présent" : si le device était précédemment dans le groupe
- * (stale, crash, etc.), son leaf node est encore dans l'arbre MLS mais son
- * état local est perdu. Dans ce cas :
- *   1. removeMemberDevice (kick le leaf stale)
- *   2. kickStaleDevice (reset la membership serveur à pending)
- *   3. addMember avec un KeyPackage frais → sendWelcome → sendCommit
+ * "Leaf already present" case: if the device was previously in the group
+ * (stale, crash, etc.), its leaf node is still in the MLS tree but its
+ * local state is lost. In this case:
+ *   1. removeMemberDevice (kick the stale leaf)
+ *   2. kickStaleDevice (reset server membership to pending)
+ *   3. addMember with a fresh KeyPackage -> sendWelcome -> sendCommit
  *
- * IMPORTANT : l'identifiant unique est (userId, deviceId), pas userId seul.
+ * IMPORTANT: the unique identifier is (userId, deviceId), not userId alone.
  *
  * Security: refuses to re-add a requester absent from dm_group_members (a removed user).
  * The gateway authenticates the sender but does not check their membership before relaying.
@@ -820,12 +820,12 @@ export async function handleWelcomeRequest(params: {
   requesterUserId: string;
   requesterDeviceId: string;
   groupId: string;
-  /** Appelé quand le groupe terminal existe mais n'est pas encore prêt (Welcome en transit). */
+  /** Called when the terminal group exists but is not ready yet (Welcome in transit). */
   onNotReady?: (terminalGroupId: string) => void;
   /**
-   * Recovery d'un groupe dont NOTRE état local est forké en retard (commit rejeté
-   * epoch_mismatch lors de l'ajout). Effectue forget + welcome_request.
-   * `minEpoch` (epoch serveur connue) rejette les Welcomes stale d'une branche divergée.
+   * Recovery of a group whose LOCAL state is forked behind the server (commit rejected
+   * epoch_mismatch during add). Performs forget + welcome_request.
+   * `minEpoch` (known server epoch) rejects stale Welcomes from a diverged branch.
    */
   recoverForkedGroup?: (groupId: string, minEpoch?: number) => Promise<void>;
 }) {
@@ -843,16 +843,16 @@ export async function handleWelcomeRequest(params: {
     recoverForkedGroup,
   } = params;
 
-  // Garde anti-self : le gateway diffuse les welcome_request à TOUS les devices du
-  // user, émetteur compris. Un device ne doit jamais traiter sa propre demande : il se
-  // retrouverait lui-même dans l'arbre MLS et kickerait son propre leaf (auto-éviction),
-  // se retirant du groupe qu'il vient de créer et relançant la cascade de successeurs.
+  // Anti-self guard: the gateway broadcasts welcome_requests to ALL devices of the user,
+  // including the sender. A device must never handle its own request: it would add itself
+  // to the MLS tree and kick its own leaf (self-eviction), leaving the group it just created
+  // and restarting the successor cascade.
   if (requesterUserId === userId && requesterDeviceId === mlsService.getDeviceId()) {
-    log(`[WELCOME_REQ] Demande émise par soi-même (${requesterDeviceId.slice(0, 12)}…) - ignorée`);
+    log(`[WELCOME_REQ] Request from self (${requesterDeviceId.slice(0, 12)}...) - ignored`);
     return;
   }
 
-  // Résoudre le groupe terminal dans la lignée de successeurs (max 10 hops).
+  // Resolve the terminal group in the successor chain (max 10 hops).
   const {
     terminalId,
     groupMeta: terminalMeta,
@@ -861,13 +861,13 @@ export async function handleWelcomeRequest(params: {
 
   // Groupe introuvable sur le serveur.
   if (!terminalMeta) {
-    log(`[WELCOME_REQ] Groupe ${requestedGroupId.slice(0, 8)}… introuvable - refus`);
+    log(`[WELCOME_REQ] Group ${requestedGroupId.slice(0, 8)}... not found - refusing`);
     return;
   }
 
-  // Toute la lignée est supprimée - refuser d'inviter dans un groupe mort.
+  // Entire lineage is deleted - refuse to invite into a dead group.
   if (terminalMeta.deletedAt) {
-    log(`[WELCOME_REQ] Lignée de ${requestedGroupId.slice(0, 8)}… supprimée - refus`);
+    log(`[WELCOME_REQ] Lineage of ${requestedGroupId.slice(0, 8)}... deleted - refusing`);
     return;
   }
 
@@ -875,7 +875,7 @@ export async function handleWelcomeRequest(params: {
     log(`[WELCOME_REQ] ${requestedGroupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}…`);
   }
 
-  // groupId pointe désormais vers le terminal de la lignée.
+  // groupId now points to the terminal of the lineage.
   const groupId = terminalId;
 
   // ── Membership guard (security) ─────────────────────────────────────────────
@@ -901,28 +901,28 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
-  // Défense en profondeur : vérifier qu'on a une conversation prête pour ce groupe terminal.
-  // Si ce device n'est pas encore dans le groupe terminal (Welcome en transit ou sync initial
-  // pas terminé), signaler via onNotReady pour que l'appelant diffère et réessaie.
+  // Defence in depth: verify we have a ready conversation for this terminal group.
+  // If this device is not yet in the terminal group (Welcome in transit or initial sync
+  // not complete), signal via onNotReady so the caller defers and retries.
   if (conversations.get(groupId)?.lifecycle !== 'active') {
-    log(`[WELCOME_REQ] Pas de conversation prête pour ${groupId.slice(0, 8)}… - report`);
+    log(`[WELCOME_REQ] No ready conversation for ${groupId.slice(0, 8)}... - deferring`);
     onNotReady?.(groupId);
     return;
   }
 
-  // Guard in-process : empêche deux traitements simultanés du même groupe
-  // dans le même onglet (les retries rapides arrivent avant la fin du premier)
+  // Guard in-process: prevents two concurrent handles for the same group
+  // in the same tab (rapid retries arrive before the first one finishes)
   if (welcomeRequestInProgress.has(groupId)) {
-    log(`[WELCOME_REQ] Déjà en cours pour ${groupId} - skip`);
+    log(`[WELCOME_REQ] Already in progress for ${groupId} - skip`);
     return;
   }
   welcomeRequestInProgress.add(groupId);
 
-  // Acquérir le verrou distribué pour éviter les races avec
-  // processPendingInvitations sur un autre device du même groupe (TTL par defaut, cf. H1)
+  // Acquire the distributed lock to prevent races with
+  // processPendingInvitations on another device of the same group (default TTL, cf. H1)
   const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
   if (!lockAcquired) {
-    log(`[WELCOME_REQ] Verrou occupé pour ${groupId} - autre device en cours, skip`);
+    log(`[WELCOME_REQ] Lock busy for ${groupId} - another device in progress, skip`);
     welcomeRequestInProgress.delete(groupId);
     return;
   }
@@ -931,39 +931,39 @@ export async function handleWelcomeRequest(params: {
     const attemptKey = `${groupId}:${requesterDeviceId}`;
     const now = Date.now();
 
-    // Cooldown post-Welcome : si on a envoyé un Welcome à ce device récemment, il est
-    // presque sûrement encore en train de le traiter (déchiffrement + bundle historique
-    // prennent plusieurs secondes). Le re-kicker maintenant évincerait un leaf fraîchement
-    // ajouté → l'invité tombe en UseAfterEviction à l'envoi. On le laisse finir de rejoindre.
+    // Post-Welcome cooldown: if we sent a Welcome to this device recently, it is almost
+    // certainly still processing it (decryption + history bundle take several seconds).
+    // Kicking now would evict a freshly-added leaf -> the invitee falls into
+    // UseAfterEviction on send. Let it finish joining.
     const lastWelcome = lastWelcomeSentAt.get(attemptKey);
     if (lastWelcome && now - lastWelcome < WELCOME_COOLDOWN_MS) {
       log(
-        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… Welcome envoyé il y a ${Math.round((now - lastWelcome) / 1000)}s - jointure en cours, skip`
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... Welcome sent ${Math.round((now - lastWelcome) / 1000)}s ago - still joining, skip`
       );
       return;
     }
 
-    // Garde-fou anti-livelock : limite les ré-ajouts répétés du même device dans une
-    // fenêtre glissante. Si l'invité reboucle (ses KeyPackages publiés sont orphelins
-    // de leur clé privée → NoMatchingKeyPackage côté invité), le re-add est inutile et
-    // resaturerait le serveur (Welcome + bundle historique à chaque tour). La correction
-    // est côté invité (republication) ; ici on cesse simplement de re-boucler.
+    // Anti-livelock guard: limits repeated re-adds of the same device within a sliding
+    // window. If the invitee loops (their published KeyPackages are orphaned from their
+    // private key -> NoMatchingKeyPackage client-side), re-adding is pointless and would
+    // saturate the server (Welcome + history bundle each round). The fix is client-side
+    // (republish); here we simply stop looping.
     const prev = reAddAttempts.get(attemptKey);
     const attempt = prev && now - prev.first < READD_WINDOW_MS ? prev : { count: 0, first: now };
     attempt.count += 1;
     reAddAttempts.set(attemptKey, attempt);
     if (attempt.count > MAX_READD_ATTEMPTS) {
       log(
-        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… ré-ajouté ${attempt.count - 1}× en vain sur ${groupId.slice(0, 8)}… - re-add suspendu (cause côté invité)`
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... re-added ${attempt.count - 1}x in vain on ${groupId.slice(0, 8)}... - re-add suspended (fix needed client-side)`
       );
       return;
     }
 
-    // Récupérer le KeyPackage frais du device demandeur.
-    // Si absent : le device n'a pas encore publié ses KP → on ne peut pas l'inviter.
-    // La causalité est assurée en amont : syncConnectionAfterWsOpen n'envoie pas de
-    // welcome_request tant que generateKeyPackage n'a pas réussi.
-    // Best-effort : un echec reseau ne doit pas court-circuiter le fallback fetchDeviceKeyPackage.
+    // Fetch a fresh KeyPackage for the requesting device.
+    // If absent: the device has not yet published its KP -> cannot invite it.
+    // Causality is guaranteed upstream: syncConnectionAfterWsOpen does not send a
+    // welcome_request until generateKeyPackage has succeeded.
+    // Best-effort: a network error must not short-circuit the fetchDeviceKeyPackage fallback.
     const devices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
     let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
     if (!targetDevice) {
@@ -982,25 +982,23 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] KeyPackage récupéré via fallback pour ${requesterDeviceId} (> 30 jours)`);
     }
 
-    // ── Vérifier si le leaf du device est déjà dans l'arbre MLS ────────
-    // Ne pas tester status='active' ici : sendWelcome marque le device actif de façon
-    // optimiste avant que le téléphone traite le Welcome. Si le device perd son état
-    // WASM (redémarrage, fresh-install, NoMatchingKeyPackage), il renvoie une
-    // welcome_request alors qu'il est déjà marqué 'active' côté serveur.
-    // → toujours kicker + ré-ajouter quand le leaf est présent dans l'arbre.
+    // ── Check if the device's leaf is already in the MLS tree ────────────
+    // Do not check status='active' here: sendWelcome marks the device active
+    // optimistically before the phone processes the Welcome. If the device loses its
+    // WASM state (restart, fresh-install, NoMatchingKeyPackage), it resends a
+    // welcome_request while already marked 'active' server-side.
+    // -> always kick + re-add when the leaf is present in the tree.
     try {
       const currentMembers = await mlsService.getGroupMembers(groupId);
       if (currentMembers.some((m) => m.deviceId === requesterDeviceId)) {
-        log(
-          `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}… leaf dans l'arbre MLS - kick + ré-ajout`
-        );
+        log(`[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add`);
         await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 
-        // Sauvegarder l'état MLS après le remove commit
+        // Save MLS state after the remove commit
         await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
-        // Re-fetch le KeyPackage (peut avoir changé après le kick)
-        // Best-effort : liste vide sur echec reseau => freshDevice introuvable => skip propre.
+        // Re-fetch KeyPackage (may have changed after kick)
+        // Best-effort: empty list on network error => freshDevice not found => clean skip.
         const freshDevices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
         const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
         if (!freshDevice) {
@@ -1011,14 +1009,14 @@ export async function handleWelcomeRequest(params: {
         targetDevice.keyPackage = freshDevice.keyPackage;
       }
     } catch {
-      // En cas d'erreur sur la vérification, on tente quand même l'ajout
+      // On verification error, still attempt the add
     }
 
-    // ── Ajouter le device au groupe MLS ────────────────────────────────
+    // ── Add the device to the MLS group ────────────────────────────────
     const result = await mlsService.addMember(groupId, targetDevice.keyPackage);
     await mlsService.registerMember(groupId, requesterUserId);
 
-    // Envoyer le Welcome au device demandeur
+    // Send the Welcome to the requesting device
     if (result.welcome) {
       await mlsService.sendWelcome(
         result.welcome,
@@ -1028,13 +1026,13 @@ export async function handleWelcomeRequest(params: {
         result.ratchetTree
       );
       lastWelcomeSentAt.set(attemptKey, Date.now());
-      log(`[WELCOME_REQ] Welcome → ${requesterUserId}:${requesterDeviceId} pour ${groupId}`);
+      log(`[WELCOME_REQ] Welcome -> ${requesterUserId}:${requesterDeviceId} for ${groupId}`);
     }
 
-    // Sauvegarder l'état MLS avant le commit (crash-safety)
+    // Save MLS state before the commit (crash-safety)
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
-    // Broadcaster le commit en excluant l'inviteur (self) et l'invité
+    // Broadcast the commit excluding the inviter (self) and the invitee
     let commitError: unknown = null;
     if (result.commit) {
       try {
@@ -1046,38 +1044,40 @@ export async function handleWelcomeRequest(params: {
       }
     }
 
-    // Envoyer l'intégralité de l'historique au nouveau membre. C'est des MESSAGES APPLICATIFS
-    // (pas un commit, ne passe pas par validateCommit) : le destinataire a deja rejoint via le
-    // Welcome (meme epoch que nous), donc on lui envoie l'historique MEME SI le broadcast du
-    // commit a echoue - sinon un commit rejete (course concurrente, compteur serveur en retard)
-    // le priverait silencieusement de tout l'historique. Le bundle arrive apres le Welcome cote
-    // destinataire (ordre garanti par MLS) et lit l'IndexedDB (y compris les messages migres
-    // depuis le predecesseur via migrateConversation). [[C8]]
+    // Send the full history to the new member. These are APPLICATION MESSAGES
+    // (not a commit, do not go through validateCommit): the recipient has already joined via
+    // the Welcome (same epoch as us), so we send the history EVEN IF the commit broadcast
+    // failed - otherwise a rejected commit (concurrent race, server counter lag) would silently
+    // deprive them of the full history. The bundle arrives after the Welcome client-side
+    // (order guaranteed by MLS) and reads IndexedDB (including messages migrated from the
+    // predecessor via migrateConversation). [[C8]]
     const bundlePromise = sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch(
-      (e) => log(`[HISTORY_BUNDLE] Erreur envoi historique à ${requesterUserId}: ${String(e)}`)
+      (e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
     );
 
     if (commitError) {
-      // La recovery (catch) va forgetGroup : on attend la fin de l'envoi de l'historique pour ne
-      // pas le couper, puis on remonte l'erreur de commit pour declencher la heal (C7).
+      // Recovery (catch) will forgetGroup: wait for the history send to complete before
+      // cutting it, then surface the commit error to trigger the heal (C7).
       await bundlePromise;
       throw commitError;
     }
   } catch (e) {
     const errStr = String(e);
 
-    // NOTRE commit (addMember mergé localement) a été rejeté pour epoch_mismatch : branche
-    // divergente après une course concurrente perdue, on ne rattrape jamais seul (le commit
-    // gagnant est dropé comme same-epoch bénin). On oublie l'état périmé et on redemande un
-    // Welcome pour nous-mêmes. On escalade dès un écart de 1 (`isSenderForkError`). [[C7]]
+    // OUR commit (addMember merged locally) was rejected for epoch_mismatch: divergent branch
+    // after a lost concurrent race, we never catch up alone (the winning commit is dropped as
+    // same-epoch benign). We forget the stale state and re-request a Welcome for ourselves.
+    // We escalate at a gap of 1 (`isSenderForkError`). [[C7]]
     const forked = parseForkedEpoch(e);
     if (isSenderForkError(e)) {
-      log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké (commit rejeté) - recovery`);
+      log(`[WELCOME_REQ] ${groupId.slice(0, 8)}... forked (commit rejected) - recovery`);
       if (recoverForkedGroup)
         await recoverForkedGroup(groupId, forked?.serverEpoch).catch(() => {});
     } else if (errStr.includes('ALREADY_MEMBER')) {
-      // Device déjà membre : la demande est satisfaite (il rejoindra via son Welcome en file).
-      log(`[WELCOME_REQ] ${requesterDeviceId} déjà membre de ${groupId.slice(0, 8)}… - skip`);
+      // Device already a member: request fulfilled (will join via queued Welcome).
+      log(
+        `[WELCOME_REQ] ${requesterDeviceId} already a member of ${groupId.slice(0, 8)}... - skip`
+      );
     } else if (errStr.includes('DuplicateSignatur')) {
       try {
         await handleDuplicateLeafError({
@@ -1092,17 +1092,17 @@ export async function handleWelcomeRequest(params: {
       } catch (kickErr) {
         const kickForked = parseForkedEpoch(kickErr);
         if (isSenderForkError(kickErr)) {
-          log(`[WELCOME_REQ] ${groupId.slice(0, 8)}… forké (kick rejeté) - recovery`);
+          log(`[WELCOME_REQ] ${groupId.slice(0, 8)}... forked (kick rejected) - recovery`);
           if (recoverForkedGroup)
             await recoverForkedGroup(groupId, kickForked?.serverEpoch).catch(() => {});
         } else {
           log(
-            `[WELCOME_REQ] Erreur kick pour ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`
+            `[WELCOME_REQ] Kick error for ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`
           );
         }
       }
     } else {
-      log(`[WELCOME_REQ] Erreur pour ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
+      log(`[WELCOME_REQ] Error for ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }
   } finally {
     await mlsService.releaseAddLock(groupId).catch(() => {});
