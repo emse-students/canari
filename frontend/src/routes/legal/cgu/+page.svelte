@@ -1,6 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { m } from '$lib/paraglide/messages';
 </script>
+
+<svelte:head>
+  <title>{m.legal_cgu_title()} - Canari</title>
+</svelte:head>
 
 <div
   class="min-h-dvh overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
@@ -26,15 +31,15 @@
             clip-rule="evenodd"
           />
         </svg>
-        Retour
+        {m.common_back()}
       </button>
       <div
         class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#151B2C] shadow-lg"
       >
         <img src="/favicon.png" alt="Canari" class="h-8 w-8 object-contain" />
       </div>
-      <h1 class="text-3xl font-bold text-text-main">Conditions Générales d'Utilisation</h1>
-      <p class="mt-2 text-sm text-text-muted">Canari - Messagerie sécurisée EMSE</p>
+      <h1 class="text-3xl font-bold text-text-main">{m.legal_cgu_title()}</h1>
+      <p class="mt-2 text-sm text-text-muted">{m.legal_cgu_subtitle()}</p>
       <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 28/05/2026</p>
     </div>
 
@@ -42,7 +47,7 @@
     <nav
       class="mb-8 rounded-2xl border border-white/30 bg-white/10 p-4 dark:border-white/10 dark:bg-white/5"
     >
-      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">Sommaire</p>
+      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">{m.legal_toc_heading()}</p>
       <ul class="space-y-1 text-sm text-cn-yellow">
         {#each [['#definitions', '1. Définitions'], ['#age', '2. Âge minimum et accès'], ['#hebergement', '3. Accès et hébergement'], ['#chiffrement', '4. Chiffrement et sécurité'], ['#regles', "5. Règles d'utilisation"], ['#contenu', '6. Contenu, modération et signalement'], ['#enfants', '7. Sécurité des enfants'], ['#paiements', '8. Paiements et remboursements'], ['#suppression', '9. Suppression de compte'], ['#donnees', '10. Données personnelles'], ['#propriete', '11. Propriété intellectuelle'], ['#responsabilite', '12. Responsabilité'], ['#droit', '13. Droit applicable et litiges'], ['#modifications', '14. Modifications des CGU'], ['#contact', '15. Contact']] as [href, label], i (i)}
           <li><a {href} class="hover:underline">{label}</a></li>
@@ -260,7 +265,7 @@
           et un signalement aux autorités judiciaires compétentes. Pour en savoir plus ou signaler
           un abus, consultez nos
           <a href="/legal/child-safety" class="text-cn-yellow hover:underline font-medium"
-            >Normes de sécurité des enfants</a
+            >{m.legal_child_safety_link()}</a
           >.
         </p>
       </section>
@@ -362,7 +367,7 @@
           Certaines données peuvent être conservées au-delà si la loi l'exige (ex. données
           comptables liées à des transactions). Ces exceptions sont détaillées dans la
           <a href="/legal/privacy#retention" class="text-cn-yellow hover:underline"
-            >Politique de confidentialité §5</a
+            >{m.legal_privacy_link()} §5</a
           >.
         </p>
 
@@ -378,7 +383,7 @@
         <p class="text-text-muted">
           Le traitement de vos données personnelles est détaillé dans notre
           <a href="/legal/privacy" class="text-cn-yellow hover:underline font-medium"
-            >Politique de confidentialité</a
+            >{m.legal_privacy_link()}</a
           >. Conformément au RGPD, vous disposez d'un droit d'accès, de rectification, de
           suppression, de limitation, de portabilité et d'opposition. Pour toute demande :
           <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline"
@@ -473,13 +478,10 @@
 
     <!-- Footer -->
     <div class="mt-10 border-t border-white/20 pt-6 text-center text-xs text-text-muted">
-      <p>Canari - Mines Saint-Étienne · Association Rootz</p>
+      <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
-        <a href="/legal/privacy" class="text-cn-yellow hover:underline"
-          >Politique de confidentialité</a
-        >
-        <a href="/legal/child-safety" class="text-cn-yellow hover:underline">Sécurité des enfants</a
-        >
+        <a href="/legal/privacy" class="text-cn-yellow hover:underline">{m.legal_privacy_link()}</a>
+        <a href="/legal/child-safety" class="text-cn-yellow hover:underline">{m.legal_child_safety_link()}</a>
       </div>
     </div>
   </div>

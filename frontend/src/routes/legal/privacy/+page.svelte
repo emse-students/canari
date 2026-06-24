@@ -1,6 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { m } from '$lib/paraglide/messages';
 </script>
+
+<svelte:head>
+  <title>{m.legal_privacy_title()} - Canari</title>
+</svelte:head>
 
 <div
   class="min-h-dvh overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
@@ -26,15 +31,15 @@
             clip-rule="evenodd"
           />
         </svg>
-        Retour
+        {m.common_back()}
       </button>
       <div
         class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#151B2C] shadow-lg"
       >
         <img src="/favicon.png" alt="Canari" class="h-8 w-8 object-contain" />
       </div>
-      <h1 class="text-3xl font-bold text-text-main">Politique de confidentialité</h1>
-      <p class="mt-2 text-sm text-text-muted">Canari - Association Rootz · EMSE</p>
+      <h1 class="text-3xl font-bold text-text-main">{m.legal_privacy_title()}</h1>
+      <p class="mt-2 text-sm text-text-muted">{m.legal_privacy_subtitle()}</p>
       <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 21/05/2026</p>
     </div>
 
@@ -42,7 +47,7 @@
     <nav
       class="mb-8 rounded-2xl border border-white/30 bg-white/10 p-4 dark:border-white/10 dark:bg-white/5"
     >
-      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">Sommaire</p>
+      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">{m.legal_toc_heading()}</p>
       <ul class="space-y-1 text-sm text-cn-yellow">
         {#each [['#qui', '1. Qui sommes-nous'], ['#collecte', '2. Données collectées'], ['#tiers', '3. Sous-traitants et tiers'], ['#utilisation', '4. Utilisation des données'], ['#retention', '5. Durée de conservation'], ['#stockage', '6. Stockage et sécurité'], ['#transferts', '7. Transferts internationaux'], ['#age', '8. Âge minimum'], ['#droits', '9. Vos droits (RGPD)'], ['#modifications', '10. Modifications'], ['#contact', '11. Contact']] as [href, label], i (i)}
           <li><a {href} class="hover:underline">{label}</a></li>
@@ -111,7 +116,7 @@
               Firebase Cloud Messaging (Google LLC, Mountain View, CA, USA) est utilisé pour l'envoi
               de notifications push sur mobile. Le jeton FCM de votre appareil est transmis aux
               serveurs Google pour acheminer les notifications. Ce transfert est couvert par les
-              clauses contractuelles types UE‑US (section 7). Politique de confidentialité Google :
+              clauses contractuelles types UE-US (section 7). Politique de confidentialité Google :
               <a
                 href="https://policies.google.com/privacy"
                 target="_blank"
@@ -326,11 +331,10 @@
 
     <!-- Footer -->
     <div class="mt-10 border-t border-white/20 pt-6 text-center text-xs text-text-muted">
-      <p>Canari - Mines Saint-Étienne · Association Rootz</p>
+      <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
-        <a href="/legal/cgu" class="text-cn-yellow hover:underline">Conditions d'utilisation</a>
-        <a href="/legal/child-safety" class="text-cn-yellow hover:underline">Sécurité des enfants</a
-        >
+        <a href="/legal/cgu" class="text-cn-yellow hover:underline">{m.legal_cgu_link()}</a>
+        <a href="/legal/child-safety" class="text-cn-yellow hover:underline">{m.legal_child_safety_link()}</a>
       </div>
     </div>
   </div>

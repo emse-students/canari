@@ -109,6 +109,7 @@
   "chat_manage_community_roles_label": "Gérer les communautés et rôles",
   "chat_manage_community_roles_title": "Gérer les communautés et rôles",
   "common_close_label": "Fermer",
+  "common_back": "Retour",
 
   "chat_modal_contact_tab": "Contact",
   "chat_modal_group_tab": "Groupe",
@@ -1349,5 +1350,17 @@
   "form_view_error_answer": "Veuillez répondre à \"{label}\"",
   "form_view_error_payment_failed": "Le paiement a échoué. Vous pouvez soumettre à nouveau le formulaire.",
   "form_view_payment_success": "Paiement effectué avec succès !",
-  "form_view_submission_success": "Réponse envoyée !"
+  "form_view_submission_success": "Réponse envoyée !",
+
+  "legal_toc_heading": "Sommaire",
+  "legal_cgu_title": "Conditions Générales d'Utilisation",
+  "legal_cgu_subtitle": "Canari - Messagerie sécurisée EMSE",
+  "legal_child_safety_title": "Normes de sécurité des enfants",
+  "legal_child_safety_subtitle": "Canari - Association Rootz",
+  "legal_privacy_title": "Politique de confidentialité",
+  "legal_privacy_subtitle": "Canari - Association Rootz · EMSE",
+  "legal_footer_credits": "Canari - Mines Saint-Étienne · Association Rootz",
+  "legal_cgu_link": "Conditions d'utilisation",
+  "legal_privacy_link": "Politique de confidentialité",
+  "legal_child_safety_link": "Sécurité des enfants"
 }

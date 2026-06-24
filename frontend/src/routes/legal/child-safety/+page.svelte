@@ -1,6 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { m } from '$lib/paraglide/messages';
 </script>
+
+<svelte:head>
+  <title>{m.legal_child_safety_title()} - Canari</title>
+</svelte:head>
 
 <div
   class="min-h-dvh overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
@@ -26,15 +31,15 @@
             clip-rule="evenodd"
           />
         </svg>
-        Retour
+        {m.common_back()}
       </button>
       <div
         class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#151B2C] shadow-lg"
       >
         <img src="/favicon.png" alt="Canari" class="h-8 w-8 object-contain" />
       </div>
-      <h1 class="text-3xl font-bold text-text-main">Normes de sécurité des enfants</h1>
-      <p class="mt-2 text-sm text-text-muted">Canari - Association Rootz</p>
+      <h1 class="text-3xl font-bold text-text-main">{m.legal_child_safety_title()}</h1>
+      <p class="mt-2 text-sm text-text-muted">{m.legal_child_safety_subtitle()}</p>
       <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 21/05/2026</p>
     </div>
 
@@ -74,7 +79,7 @@
           la communauté EMSE, dont les membres sont majoritairement des adultes. Tout accès non
           autorisé est prohibé par les
           <a href="/legal/cgu" class="text-cn-yellow hover:underline"
-            >Conditions Générales d'Utilisation</a
+            >{m.legal_cgu_link()}</a
           >.
         </p>
       </section>
@@ -139,12 +144,10 @@
 
     <!-- Footer -->
     <div class="mt-10 border-t border-white/20 pt-6 text-center text-xs text-text-muted">
-      <p>Canari - Mines Saint-Étienne · Association Rootz</p>
+      <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
-        <a href="/legal/cgu" class="text-cn-yellow hover:underline">Conditions d'utilisation</a>
-        <a href="/legal/privacy" class="text-cn-yellow hover:underline"
-          >Politique de confidentialité</a
-        >
+        <a href="/legal/cgu" class="text-cn-yellow hover:underline">{m.legal_cgu_link()}</a>
+        <a href="/legal/privacy" class="text-cn-yellow hover:underline">{m.legal_privacy_link()}</a>
       </div>
     </div>
   </div>
