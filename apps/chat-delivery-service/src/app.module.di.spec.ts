@@ -5,7 +5,7 @@ import { join } from 'path';
 
 /**
  * Garde-fou DI infra-free : toute entite injectee via `@InjectRepository(Entity)` DOIT etre
- * enregistree dans un `TypeOrmModule.forFeature([...])`, sinon le provider `<Entity>Repository`
+ * enregistree dans un `TypeOrmModule.forFeature([…])`, sinon le provider `<Entity>Repository`
  * n'existe pas et le bootstrap NestJS jette `UnknownDependenciesException` AU DEMARRAGE (erreur
  * runtime invisible a `tsc` et aux specs unitaires qui ne compilent pas `AppModule`).
  *
@@ -39,7 +39,7 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 describe('AppModule - enregistrement DI des repositories TypeORM', () => {
   const files = listSourceFiles(SRC_ROOT);
 
-  it('chaque @InjectRepository(Entity) est present dans un TypeOrmModule.forFeature([...])', () => {
+  it('chaque @InjectRepository(Entity) est present dans un TypeOrmModule.forFeature([…])', () => {
     // 1. Toutes les entites injectees via @InjectRepository(X), avec le fichier de la 1ere occurrence.
     const injectedAt = new Map<string, string>();
     const injectRe = /@InjectRepository\(\s*([A-Za-z0-9_]+)\s*\)/g;
@@ -51,7 +51,7 @@ describe('AppModule - enregistrement DI des repositories TypeORM', () => {
       }
     }
 
-    // 2. Toutes les entites enregistrees dans un forFeature([...]) (n'importe quel module).
+    // 2. Toutes les entites enregistrees dans un forFeature([…]) (n'importe quel module).
     const registered = new Set<string>();
     const forFeatureRe = /forFeature\(\s*\[([\s\S]*?)\]/g;
     for (const file of files) {

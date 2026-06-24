@@ -77,7 +77,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (seq !== fetchSeq) return;
-      // KLIPY wraps the list as { result, data: { data: [...] } }.
+      // KLIPY wraps the list as { result, data: { data: […] } }.
       results = mapData(json?.data?.data ?? []);
     } catch {
       if (seq !== fetchSeq) return;

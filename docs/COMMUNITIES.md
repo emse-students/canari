@@ -8,7 +8,7 @@ Les communautés sont gérées par **social-service** (NestJS, PostgreSQL).
 
 ```
 Workspace (communauté)
-  ├── Rôles (Administrateur, Modérateur, Membre, ...)
+  ├── Rôles (Administrateur, Modérateur, Membre, …)
   ├── Membres (utilisateurs avec rôles assignés)
   └── Channels (canaux de discussion)
         └── Messages chiffrés
@@ -84,7 +84,7 @@ Un **Channel** est un fil de discussion au sein d'un workspace. Il peut être pu
 | `nonce`       | string    | IV GCM (base64)                 |
 | `keyVersion`  | integer   | Version de clé utilisée         |
 | `replyTo`     | UUID?     | Message cité                    |
-| `attachments` | JSONB     | Pièces jointes (media_id, ...)  |
+| `attachments` | JSONB     | Pièces jointes (media_id, …)  |
 | `reactions`   | JSONB     | Réactions emoji                 |
 | `metadata`    | JSONB     | Données supplémentaires         |
 | `createdAt`   | timestamp |                                 |
@@ -236,14 +236,14 @@ social-service publie sur le canal Redis `chat:channel_events`, chat-gateway les
 | ------------------------- | ------------------- | ----------------------------------------- |
 | `channel.member.joined`   | Invitation acceptée | `{ workspaceId, channelId, userId }`      |
 | `channel.member.kicked`   | Expulsion           | `{ workspaceId, channelId, userId }`      |
-| `channel.message.created` | Nouveau message     | `{ channelId, messageId, senderId, ... }` |
+| `channel.message.created` | Nouveau message     | `{ channelId, messageId, senderId, … }` |
 
 Format du message Redis :
 
 ```json
 {
   "type": "channel.message.created",
-  "data": { "channelId": "...", "messageId": "...", "senderId": "..." },
+  "data": { "channelId": "…", "messageId": "…", "senderId": "…" },
   "userIds": ["userId1", "userId2"],
   "timestamp": "2026-04-12T10:00:00Z"
 }

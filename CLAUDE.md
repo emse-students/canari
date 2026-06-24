@@ -181,9 +181,9 @@ These rules apply to every file, every function, every PR - no exceptions.
 
 Always add debug logs in new code:
 
-- Kotlin: `Log.d(TAG, "...")`
-- TypeScript: `appendLog("...")` (chat/session code) or `console.log(...)` (elsewhere)
-- Rust: `log::debug!(...)` or `eprintln!(...)` for Android JNI
+- Kotlin: `Log.d(TAG, "…")`
+- TypeScript: `appendLog("…")` (chat/session code) or `console.log(…)` (elsewhere)
+- Rust: `log::debug!(…)` or `eprintln!(…)` for Android JNI
 
 Logs must be present at: function entry for non-trivial paths, after key decisions, on every error/fallback branch. They are essential for diagnosing issues on real devices where a debugger is unavailable.
 

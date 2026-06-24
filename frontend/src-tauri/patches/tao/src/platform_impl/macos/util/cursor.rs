@@ -67,13 +67,13 @@ impl From<CursorIcon> for Cursor {
       // CursorIcon::Move => Cursor::Undocumented("_moveCursor"),
       // CursorIcon::Wait => Cursor::Undocumented("_waitCursor"),
 
-      // An even more undocumented cursor...
+      // An even more undocumented cursor…
       // https://bugs.eclipse.org/bugs/show_bug.cgi?id=522349
       // This is the wrong semantics for `Wait`, but it's the same as
       // what's used in Safari and Chrome.
       CursorIcon::Wait | CursorIcon::Progress => Cursor::Undocumented("busyButClickableCursor"),
 
-      // For the rest, we can just snatch the cursors from WebKit...
+      // For the rest, we can just snatch the cursors from WebKit…
       // They fit the style of the native cursors, and will seem
       // completely standard to macOS users.
       // https://stackoverflow.com/a/21786835/5435443

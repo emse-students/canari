@@ -72,7 +72,7 @@ export function useSyncSession() {
       isSyncSessionBusy = true;
       isSyncSessionOpen = true;
       syncMode = 'offer';
-      syncStatusText = 'Initialisation de la session QR...';
+      syncStatusText = 'Initialisation de la session QR…';
 
       const offerPublicKey = generateEphemeralPublicKey();
       const session = await startSyncSession(ctx.historyBaseUrl, {
@@ -83,7 +83,7 @@ export function useSyncSession() {
 
       syncQrPayloadText = encodeSyncQrPayload(session.qrPayload);
       syncQrDataUrl = await createSyncQrDataUrl(syncQrPayloadText);
-      syncStatusText = 'Session créée. En attente de jonction du second appareil...';
+      syncStatusText = 'Session créée. En attente de jonction du second appareil…';
 
       const waitUntil = Date.now() + 180_000;
       let pollInterval = 1200;
@@ -94,7 +94,7 @@ export function useSyncSession() {
           userId: ctx.userId,
         });
         if (state.state === 'joined' && state.answerDeviceId) {
-          syncStatusText = 'Appareil rejoint. Synchronisation bidirectionnelle en cours...';
+          syncStatusText = 'Appareil rejoint. Synchronisation bidirectionnelle en cours…';
           await runSyncRound(session.sessionId, state.answerDeviceId, ctx);
           syncStatusText = 'Synchronisation terminée.';
           return;
@@ -129,7 +129,7 @@ export function useSyncSession() {
     try {
       isCancelled = false;
       isSyncSessionBusy = true;
-      syncStatusText = 'Lecture du payload QR...';
+      syncStatusText = 'Lecture du payload QR…';
 
       const payload = parseSyncQrPayload(syncJoinPayload.trim());
       if (payload.userId !== ctx.userId) {
@@ -145,7 +145,7 @@ export function useSyncSession() {
         answerPublicKey,
       });
 
-      syncStatusText = 'Session rejointe. Synchronisation bidirectionnelle en cours...';
+      syncStatusText = 'Session rejointe. Synchronisation bidirectionnelle en cours…';
       await runSyncRound(payload.sessionId, joinRes.offerDeviceId, ctx);
       syncStatusText = 'Synchronisation terminée.';
     } catch (e) {

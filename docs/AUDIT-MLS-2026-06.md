@@ -46,7 +46,7 @@ re-essayant plus tard. Seul le **gap d'epoch** justifie une mise en file.
 | H3 | Mutations conversations non atomiques | FIXED (runExclusiveForGroup : verrou par-groupe sur migrateConversation + upsertConversation) | (ce commit) |
 | H4 | validateCommit bypass epoch 0 | FIXED (P4: gate stricte baseEpoch==activeEpoch) | (ce commit) |
 | H5 | Push differe + background redondants | DEFERRED (perf, pas correctness ; redondance subsumee par C1/C2 - a re-mesurer une fois les moteurs unifies) | - |
-| H6 | Evenements de controle (reactions/edits/...) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
+| H6 | Evenements de controle (reactions/edits/…) hors outbox -> perte silencieuse | FIXED (kind 'control' outbox) | 7f38eeeb |
 | S1 | `getGroupMeta` null = 404 ET reseau -> reboot duplique un successeur | FIXED (P5: performReboot via getGroupServerStatus) | (ce commit) |
 | S2 | Retours `[]` indistinguables de l'echec -> invitations sautees | FIXED (P5: getters de liste stricts + opt-in best-effort) | (ce commit) |
 | S4 | Troncature u64->u32 sur les epochs | FIXED (u64 cote Tauri + f64 cote WASM = pas de troncature ; reste un `number` JS exact <= 2^53) | (ce commit) |
@@ -88,9 +88,9 @@ commit `9f3afd91` rebuild WASM sans bump). Pas de bump manuel pour eviter un con
 **Symptome reel** (envoi de plusieurs messages d'un coup, mobile) :
 
 ```
-recevoir_message_bytes failed: ... Process error:
+recevoir_message_bytes failed: … Process error:
   ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInThePast))) [msg_epoch=1, group_epoch=1]
-[GAP] Sender Ratchet gap pour group=e207b952... - message mis en file SQLite
+[GAP] Sender Ratchet gap pour group=e207b952… - message mis en file SQLite
 ```
 
 `msg_epoch == group_epoch` : il n'y a **aucun gap d'epoch**. C'est une generation passee dont la
@@ -336,8 +336,8 @@ A correler avec les lenteurs.
 ### H6 - Les evenements de controle MLS contournent l'outbox durable (perte silencieuse)
 
 Reactions, edits, suppressions, pins et accuses de lecture partent en direct via
-`mlsService.sendMessage(..., silent=true)` avec le pattern `if (!conversation.isReady) return;`
-puis `try { ... } catch { console.warn }`. Aucun retry, aucune file durable.
+`mlsService.sendMessage(…, silent=true)` avec le pattern `if (!conversation.isReady) return;`
+puis `try { … } catch { console.warn }`. Aucun retry, aucune file durable.
 
 Lieux : `frontend/src/lib/utils/chat/messaging.ts` - `addReaction:188-218`, `removeReaction:224-242`,
 `editMessage:244-261`, `deleteMessage:264-274`, `setMessagePinned:277-293`, `sendReadReceipt:296-311` ;
@@ -362,7 +362,7 @@ d'epoch cote serveur. Pre-existant.
 
 **Preuve (mobile, ligne 515 de logs.txt) :**
 ```
-[WELCOME_REQ] Erreur ... Commit rejected: epoch_mismatch (server epoch: 1, sent: 3)
+[WELCOME_REQ] Erreur … Commit rejected: epoch_mismatch (server epoch: 1, sent: 3)
 ```
 Le compteur `activeEpoch` serveur est fige a 1 alors que l'epoch MLS reel est monte a 4.
 
@@ -427,7 +427,7 @@ sur acceptation, ou annule (`clear_pending_commit_for` / `annuler_commit` / `cle
 sur rejet. L'epoch local ne bouge jamais avant l'acceptation -> AUCUN fork possible sur un retrait
 rejete. C'est le chemin vise par l'edge concurrent restant : les removes/kicks ne prennent PAS
 l'add-lock (contrairement aux adds), donc deux retraits concurrents - ou un retrait pendant un
-ajout - pouvaient se forker. Cote service, `sendCommit(..., staged=true)` orchestre
+ajout - pouvaient se forker. Cote service, `sendCommit(…, staged=true)` orchestre
 validate->merge/clear ; le rejet leve une erreur SANS le motif `server epoch:.., sent:..` pour que
 `isSenderForkError` ne declenche PAS de recovery (il n'y a pas de fork a healer, juste un retry).
 La persistance reste a la charge de l'appelant (`persistMlsStateAfterMutation`, meme fenetre
@@ -531,7 +531,7 @@ consomme uniquement sous `.catch(()=>{})`) et `acquireAddLock`->`false` (fail-sa
 
 - `deliveryMeta: any` : `frontend/src/lib/mls-client/messagePipeline/setupMessageHandler.ts:483`.
 - `onChannelEvent?: (event: { type: string; data: any })` : `frontend/src/lib/services/BaseMlsService.ts:52`.
-- `devices.map((d: any) => ...)` : `frontend/src/lib/mls-client/mlsDeliveryApi.ts:150`.
+- `devices.map((d: any) => …)` : `frontend/src/lib/mls-client/mlsDeliveryApi.ts:150`.
 `IncomingDeliveryMeta` existe deja -> l'utiliser partout.
 
 **FIXED** : `KnownGroupArgs.deliveryMeta` type `IncomingDeliveryMeta | undefined` (import ajoute) ;
@@ -587,7 +587,7 @@ l'autre.
 - `classifyServerStatus(raw)` -> etat serveur explicite `active | tombstone | absent | unknown`
   (leve l'ambiguite `null`/'error' partagee). Consomme par discovery ET requestReAdd.
 - `decideAbsentGroupFate(input)` -> reducteur PUR `(etat serveur + signaux locaux) -> {keep |
-  purge | markRemoved}`. C'est l'ancien bloc `!serverGroupIds.has(...)` de la discovery,
+  purge | markRemoved}`. C'est l'ancien bloc `!serverGroupIds.has(…)` de la discovery,
   extrait tel quel, teste exhaustivement (table de verite + invariant "seul un absent confirme
   purge"). `discoverMissingGroups` et `requestReAdd` consomment ce noyau unique.
 Tests : `groupLifecycle.test.ts` (16 cas).
@@ -639,18 +639,18 @@ chemin natif Tauri.
 
 Parcours audite : enrolement du token -> reception FCM (`onMessageReceived`) -> branchements
 (welcome_request / Welcome / social / process_queue / message chiffre) -> traitement background JNI
--> affichage de notification. Fichier : `frontend/src-tauri/gen/android/.../CanariFirebaseMessagingService.kt`.
+-> affichage de notification. Fichier : `frontend/src-tauri/gen/android/…/CanariFirebaseMessagingService.kt`.
 
 ### Diagnostic terrain (logs 2026-06-21, B mobile)
 A envoie, B (mobile) ne voit RIEN et n'a AUCUNE notification. Logs SERVEUR :
-`[SEND] recipient=...:web-...-mqigddgf online=false` + `[PUSH_SEND] No push token` pour CHAQUE
+`[SEND] recipient=…:web-…-mqigddgf online=false` + `[PUSH_SEND] No push token` pour CHAQUE
 message de A, et `FALLBACK_MEMBERS_CACHE count=1`. -> les messages de A ne sont routes QUE vers le
 device WEB de B (hors-ligne, navigateur = pas de token FCM). Le device MOBILE de B n'est PAS dans la
 liste des destinataires car `dm_device_group_memberships` ne le liste pas en `status='active'`
 (la resolution des destinataires filtre sur active, `messaging.service.ts:458-465`).
 
 ### DB1 - SQLite sans busy_timeout : messages dechiffres mais jamais affiches (FIXED)
-Sur le mobile, le rattrapage d'historique echoue : `[WARN] Echec replay historique ... database is
+Sur le mobile, le rattrapage d'historique echoue : `[WARN] Echec replay historique … database is
 locked`. Le replay (`history.ts`) dechiffre via `recevoir_messages_batch` (le ratchet AVANCE, mls.bin
 persiste) PUIS `saveMessages` ; si une autre connexion tient le verrou d'ecriture (moteur natif
 background/FCM/WorkManager, ou checkpoint WAL), l'ecriture echoue IMMEDIATEMENT (aucun `busy_timeout`)
@@ -666,7 +666,7 @@ a `active` SANS appeler le serveur -> membership figee a `pending` -> exclue du 
 `updateInvitationStatus('active')` (fire-and-forget) ajoute sur ce chemin (commit de cette passe).
 
 ### FCM1 - Le join Welcome en BACKGROUND ne promeut JAMAIS la membership 'active' (OPEN)
-`processReceivedWelcomeBackground` (`...Service.kt:814`) rejoint le groupe MLS (JNI
+`processReceivedWelcomeBackground` (`…Service.kt:814`) rejoint le groupe MLS (JNI
 `nativeProcessWelcomeBackground`) mais n'appelle NI `registerMember` NI `updateInvitationStatus('active')`.
 Il ne le PEUT pas : le background s'authentifie en `PushSecret`, or `invitations/status` est garde par
 JWT (`HeaderAuthGuard`). Consequence : un device qui rejoint un groupe en arriere-plan reste `pending`
@@ -676,7 +676,7 @@ background pure reste cassee. FIX a faire : endpoint PushSecret d'activation de 
 `processReceivedWelcomeBackground` apres un join reussi (et idealement par le worker apres un drain).
 
 ### FCM2 - `onNewToken` ne pousse pas le token au backend (OPEN)
-`onNewToken` (`...Service.kt:188`) persiste le token localement (SharedPrefs + `fcm_token.txt`) mais ne
+`onNewToken` (`…Service.kt:188`) persiste le token localement (SharedPrefs + `fcm_token.txt`) mais ne
 le transmet jamais au backend ; l'enregistrement serveur n'a lieu qu'au prochain demarrage foreground
 (`registerPushToken`). Si FCM fait tourner le token pendant que l'app est tuee, le serveur garde l'ancien
 token -> push vers un token mort (echec silencieux, ou `[PUSH_SEND] No push token`) jusqu'a reouverture.
@@ -690,7 +690,7 @@ arrive pile a cet instant peut n'etre traite NI par le background (croit que le 
 foreground (WS pas encore re-etabli). Meme racine que C1/C2 (verrou commun WebView<->JNI manquant).
 
 ### Points FCM sains
-- `welcome_request_pending` background (`...Service.kt:439`) : add-lock Redis + retries, JNI sous
+- `welcome_request_pending` background (`…Service.kt:439`) : add-lock Redis + retries, JNI sous
   `MlsStateLock`, `sendWelcomeAndCommit` transmet `baseEpoch` pour `validateCommit` (C6). Solide.
 - `tryDecrypt` : `fetchProto` hors verrou, `MlsStateLock` tenu uniquement pour le JNI (mls.bin+Argon2).
 - `showNotification` : supprimee si l'app est au premier plan ; fallback generique si dechiffrement KO.
@@ -858,5 +858,5 @@ DF13. FIXED - notify-reaction renvoyait 401 "User is not authenticated". `notify
     un `fetch` brut avec seulement Content-Type, SANS header Authorization. Le token d'acces etant
     en memoire (jamais en cookie), nginx `auth_request` ne recevait aucun token -> 401. Bascule sur
     `apiFetch` (injecte le Bearer + rejoue une fois sur 401 apres refresh). Sweep complet des autres
-    `fetch('/api/...')` relatifs : pin-change/pin-status/pin-reset/pin-check attachent deja le token,
+    `fetch('/api/…')` relatifs : pin-change/pin-status/pin-reset/pin-check attachent deja le token,
     ackRetry/deliveryKeepalive recoivent les headers du caller -> notifyReaction etait le seul oubli.

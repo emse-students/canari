@@ -39,15 +39,15 @@ Published by `chat-delivery-service` when a message is queued for a specific dev
 {
   "recipientId": "user123",
   "deviceId": "dev456",
-  "senderId": "...",
-  "senderDeviceId": "...",
-  "groupId": "...",
+  "senderId": "…",
+  "senderDeviceId": "…",
+  "groupId": "…",
   "proto": "<base64-encoded MLS ciphertext or JSON notification>",
   "isWelcome": false,
   "isCommit": false,
   "isWelcomeRequest": false,
   "ratchetTree": null,
-  "queuedMessageId": "..."
+  "queuedMessageId": "…"
 }
 ```
 
@@ -65,7 +65,7 @@ Published by `social-service` for channel membership changes, role updates, etc.
 {
   "userIds": ["user1", "user2"],
   "type": "channel_event",
-  "data": { ... }
+  "data": { … }
 }
 ```
 

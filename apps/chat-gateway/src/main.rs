@@ -125,12 +125,12 @@ async fn main() {
         let connected_users = app_state.connected_users.clone();
         tokio::spawn(async move {
             loop {
-                tracing::info!("Tentative de connexion au pub/sub Redis...");
+                tracing::info!("Tentative de connexion au pub/sub Redis…");
                 let pubsub_result = redis_client.get_async_pubsub().await;
                 let mut pubsub = match pubsub_result {
                     Ok(p) => p,
                     Err(e) => {
-                        tracing::warn!("Echec connexion pub/sub Redis: {}. Retry dans 5s...", e);
+                        tracing::warn!("Echec connexion pub/sub Redis: {}. Retry dans 5s…", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -139,7 +139,7 @@ async fn main() {
                 match pubsub.subscribe("chat:messages").await {
                     Ok(_) => tracing::info!("Abonné au canal Redis 'chat:messages'"),
                     Err(e) => {
-                        tracing::warn!("Echec abonnement Redis: {}. Retry dans 5s...", e);
+                        tracing::warn!("Echec abonnement Redis: {}. Retry dans 5s…", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
@@ -149,7 +149,7 @@ async fn main() {
                     Ok(_) => tracing::info!("Abonné au canal Redis 'chat:channel_events'"),
                     Err(e) => {
                         tracing::warn!(
-                            "Echec abonnement Redis channel_events: {}. Retry dans 5s...",
+                            "Echec abonnement Redis channel_events: {}. Retry dans 5s…",
                             e
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -363,7 +363,7 @@ async fn main() {
                                 }
                             } else if channel_name == "chat:channel_events" {
                                 // Expected payload format:
-                                // { "userIds": ["user1", "user2"], "type": "channel_event", "data": { ... } }
+                                // { "userIds": ["user1", "user2"], "type": "channel_event", "data": { … } }
                                 let user_ids = match json.get("userIds").and_then(|v| v.as_array())
                                 {
                                     Some(arr) => {
@@ -432,7 +432,7 @@ async fn main() {
                     }
                 }
                 // Stream ended (Redis disconnected) - retry with back-off.
-                tracing::warn!("Stream Redis pub/sub terminé, reconnexion dans 5s...");
+                tracing::warn!("Stream Redis pub/sub terminé, reconnexion dans 5s…");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });

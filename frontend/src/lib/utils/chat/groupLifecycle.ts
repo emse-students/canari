@@ -85,7 +85,7 @@ export interface AbsentGroupFateInput {
 
 /**
  * Reducteur PUR : decide du sort d'une conversation locale ABSENTE de notre membership active
- * (`getUserGroups`). C'est l'ancien bloc `if (!serverGroupIds.has(...))` de `discoverMissingGroups`,
+ * (`getUserGroups`). C'est l'ancien bloc `if (!serverGroupIds.has(…))` de `discoverMissingGroups`,
  * extrait tel quel pour etre teste exhaustivement et partage.
  *
  * Principe directeur : la source de verite est le SERVEUR pour l'existence, SAUF les survivants

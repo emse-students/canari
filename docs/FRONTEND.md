@@ -21,7 +21,7 @@ frontend/src/
 │   ├── components/        # Composants réutilisables
 │   │   ├── chat/          # Interface de messagerie
 │   │   ├── messages/      # Bulles de message, médias, actions
-│   │   ├── ui/            # Composants génériques (boutons, modals...)
+│   │   ├── ui/            # Composants génériques (boutons, modals…)
 │   │   └── communities/   # Interface des workspaces/channels
 │   ├── services/
 │   │   ├── WebMlsService.ts    # Implémentation MLS pour le web (WASM)
@@ -30,7 +30,7 @@ frontend/src/
 │   │   ├── auth.ts             # Session utilisateur, tokens
 │   │   ├── conversations.ts    # État des conversations MLS
 │   │   ├── ui.ts               # État UI (thème, navigation)
-│   │   └── ...
+│   │   └── …
 │   ├── sync/
 │   │   └── syncEngine.ts       # Synchronisation multi-device
 │   ├── composables/
@@ -91,7 +91,7 @@ export const accessToken: Writable<string | null>;
 
 // Actions
 export function setWsSessionCookie(token: string): void;
-// → document.cookie = 'canari_ws_token=...; SameSite=Lax; path=/'
+// → document.cookie = 'canari_ws_token=…; SameSite=Lax; path=/'
 export function clearWsSessionCookie(): void;
 
 export async function refreshAccessToken(): Promise<string | null>;

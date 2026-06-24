@@ -283,7 +283,7 @@ export class InvitationsController {
     }
 
     // 2. Find all pending memberships in those groups.
-    // Utilise In() pour générer un seul prédicat WHERE groupId IN (...) AND status = 'pending'
+    // Utilise In() pour générer un seul prédicat WHERE groupId IN (…) AND status = 'pending'
     // au lieu de N clauses OR (une par groupe), ce qui est nettement plus efficace avec PostgreSQL.
     const pending = await this.deviceGroupRepo.find({
       where: { groupId: In(myGroupIds), status: 'pending' as const },

@@ -65,9 +65,9 @@ Payload envoyé actuellement :
 ```json
 {
   "type": "message",
-  "groupId": "...",
-  "queuedMessageId": "...",
-  "senderId": "..."
+  "groupId": "…",
+  "queuedMessageId": "…",
+  "senderId": "…"
 }
 ```
 
@@ -88,7 +88,7 @@ Le service `CanariFirebaseMessagingService` :
 3. lit `mls.bin`
 4. appelle `GET /api/mls/messages/:userId/:deviceId`
 5. retrouve le message par `queuedMessageId`
-6. appelle `nativeDecryptMessage(...)` côté Rust/JNI
+6. appelle `nativeDecryptMessage(…)` côté Rust/JNI
 7. extrait un texte utilisateur si possible
 8. affiche une notification locale Android
 

@@ -59,7 +59,7 @@
   let pwPromptError = $state('');
   let pwPromptBusy = $state(false);
 
-  /** True when the document is password-protected (has a `[pw:...]` marker). */
+  /** True when the document is password-protected (has a `[pw:…]` marker). */
   function isProtected(doc: AssociationDocument): boolean {
     return parseVaultMarkers(doc.description).pwSalt !== null;
   }

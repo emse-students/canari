@@ -18,7 +18,7 @@ import { AssociationsService } from '../associations.service';
 /**
  * Allows the request if `X-Global-Admin` is true or the caller is a cross-association
  * super-admin (BDE member with `MANAGE_ASSO`), else requires association membership
- * with the flag declared via `@SetMetadata(PERM_FLAG_KEY, ...)` (default: 0 = any member).
+ * with the flag declared via `@SetMetadata(PERM_FLAG_KEY, …)` (default: 0 = any member).
  */
 @Injectable()
 export class GlobalAdminOrAssociationRoleGuard implements CanActivate {

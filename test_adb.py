@@ -76,7 +76,7 @@ def download_android_cli_tools() -> bool:
     import shutil
     from urllib.request import urlopen
 
-    print("[INFO] Telechargement des Android CLI Tools...")
+    print("[INFO] Telechargement des Android CLI Tools…")
 
     # URL officielle des CLI Tools (Windows 64-bit)
     cli_tools_url = "https://dl.google.com/android/repository/commandlinetools-win-10406996_latest.zip"
@@ -112,7 +112,7 @@ def download_android_cli_tools() -> bool:
         print("[OK] Telechargement complete")
 
         # Extraire
-        print("[INFO] Extraction des fichiers...")
+        print("[INFO] Extraction des fichiers…")
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             zip_ref.extractall(cmdline_tools_path)
 
@@ -139,7 +139,7 @@ def install_android_sdk() -> bool:
     """Tente d'installer le SDK Android via sdkmanager si disponible."""
     import shutil
 
-    print("[INFO] Tentative d'installation du SDK Android...")
+    print("[INFO] Tentative d'installation du SDK Android…")
 
     # Chercher sdkmanager dans les emplacements standards
     possible_sdkmanager_paths = [
@@ -155,7 +155,7 @@ def install_android_sdk() -> bool:
 
     # Si sdkmanager n'existe pas, télécharger les CLI Tools
     if not sdkmanager_path:
-        print("[INFO] sdkmanager non trouve. Telechargement des Android CLI Tools...")
+        print("[INFO] sdkmanager non trouve. Telechargement des Android CLI Tools…")
         if not download_android_cli_tools():
             print("[ERROR] Impossible de telecharger les CLI Tools")
             return False
@@ -177,7 +177,7 @@ def install_android_sdk() -> bool:
         print(f"[INFO] ANDROID_HOME={android_home}")
 
         # Accepter les licenses automatiquement (requis par sdkmanager)
-        print("[INFO] Acceptation des licenses Android...")
+        print("[INFO] Acceptation des licenses Android…")
         licenses_result = subprocess.run(
             [sdkmanager_path, "--licenses"],
             input="y\n" * 10,  # Répond "y" à chaque prompt de license
@@ -196,7 +196,7 @@ def install_android_sdk() -> bool:
         ]
 
         for package in packages:
-            print(f"[INFO] Installation de {package}...")
+            print(f"[INFO] Installation de {package}…")
 
             result = subprocess.run(
                 [sdkmanager_path, package],
@@ -233,7 +233,7 @@ def detect_devices() -> dict[str, str]:
     devices = {}
     try:
         # Étape 1 : Démarrer le serveur ADB (important sur Windows)
-        print("[INFO] Demarrage du serveur ADB...")
+        print("[INFO] Demarrage du serveur ADB…")
         start_result = subprocess.run(
             ['adb', 'start-server'],
             capture_output=True,
@@ -243,7 +243,7 @@ def detect_devices() -> dict[str, str]:
         )
 
         # Étape 2 : Lister les appareils (avec timeout plus long)
-        print("[INFO] Detection des appareils...")
+        print("[INFO] Detection des appareils…")
         result = subprocess.run(
             ['adb', 'devices', '-l'],
             capture_output=True,
@@ -275,7 +275,7 @@ def detect_devices() -> dict[str, str]:
             print("[WARN] Aucun appareil detecte (verifiez les connexions USB et les autorisations)")
 
     except subprocess.TimeoutExpired:
-        print("[TIMEOUT] Detection ADB (serveur lent a demarrer). Reessayez...")
+        print("[TIMEOUT] Detection ADB (serveur lent a demarrer). Reessayez…")
     except FileNotFoundError:
         print("[ERROR] ADB non trouve. Installez le SDK Platform-Tools Android.")
     except Exception as e:
@@ -372,7 +372,7 @@ class TauriManagerApp:
             if selected:
                 path_var.set(selected)
 
-        ttk.Button(path_frame, text="Parcourir...", command=browse_path).pack(side=tk.LEFT)
+        ttk.Button(path_frame, text="Parcourir…", command=browse_path).pack(side=tk.LEFT)
 
         # --- Section Android SDK ---
         ttk.Label(config_win, text="Android SDK :", font=("Segoe UI", 10, "bold")).pack(pady=(15, 5), padx=10, anchor=tk.W)
@@ -392,7 +392,7 @@ class TauriManagerApp:
             if selected:
                 android_var.set(selected)
 
-        ttk.Button(android_frame, text="Parcourir...", command=browse_android).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(android_frame, text="Parcourir…", command=browse_android).pack(side=tk.LEFT, padx=(0, 5))
 
         sdk_status_label = ttk.Label(config_win, text="", foreground="gray", font=("Segoe UI", 9))
         sdk_status_label.pack(pady=2, padx=10, anchor=tk.W)
@@ -416,7 +416,7 @@ class TauriManagerApp:
                     )
 
         def install_sdk_button():
-            sdk_status_label.config(text="[INFO] Installation en cours... (peut prendre 5-10 minutes)", foreground="blue")
+            sdk_status_label.config(text="[INFO] Installation en cours… (peut prendre 5-10 minutes)", foreground="blue")
             config_win.update()
 
             def install_task():
@@ -462,7 +462,7 @@ class TauriManagerApp:
 
         def detect_and_refresh():
             device_listbox.delete(0, tk.END)
-            status_label.config(text="[INFO] Detection en cours (peut prendre 10-30 secondes)...", foreground="blue")
+            status_label.config(text="[INFO] Detection en cours (peut prendre 10-30 secondes)…", foreground="blue")
             config_win.update()
 
             detected = detect_devices()
@@ -625,7 +625,7 @@ class TauriManagerApp:
     # === LOGIQUE D'AFFICHAGE ===
     def refresh_devices(self) -> None:
         """Détecte les appareils et met à jour l'interface."""
-        self.log("Système", "🔄 Détection des appareils...")
+        self.log("Système", "🔄 Détection des appareils…")
         new_devices = detect_devices()
         if new_devices == self.devices:
             self.log("Système", "Aucun changement détecté.")
@@ -681,7 +681,7 @@ class TauriManagerApp:
 
     def stop_all_processes(self) -> None:
         """Interrompt tous les processus en cours (Ctrl-C)."""
-        self.log("Système", "⏹️ Interruption de tous les processus...")
+        self.log("Système", "⏹️ Interruption de tous les processus…")
 
         # Interruption des processus courants
         killed_count = 0
@@ -835,7 +835,7 @@ class TauriManagerApp:
         self.log("Système", f"--- DÉPLOIEMENT SUR {device_name} ---")
         def task() -> None:
             # Désinstallation préalable
-            self.log("Système", f"Désinstallation de {PACKAGE_NAME}...")
+            self.log("Système", f"Désinstallation de {PACKAGE_NAME}…")
             result = subprocess.run(
                 ['adb', '-s', device_id, 'uninstall', PACKAGE_NAME],
                 cwd=PROJECT_DIR,

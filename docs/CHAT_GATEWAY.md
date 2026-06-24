@@ -48,7 +48,7 @@ Un `ConnectionGuard` est créé à chaque connexion WS. Son `Drop` nettoie autom
 
 ## 3. Authentification WebSocket
 
-À la connexion (`GET /api/ws?device_id=...`), le token JWT est extrait depuis :
+À la connexion (`GET /api/ws?device_id=…`), le token JWT est extrait depuis :
 
 1. Le cookie `canari_ws_token` (priorité)
 2. Le query parameter `token=` (fallback)
@@ -174,7 +174,7 @@ Format :
 ```json
 {
   "type": "channel.message.created",
-  "data": { "channelId": "...", "messageId": "...", "senderId": "..." },
+  "data": { "channelId": "…", "messageId": "…", "senderId": "…" },
   "userIds": ["userId1", "userId2", "userId3"],
   "timestamp": "2026-04-12T10:00:00Z"
 }

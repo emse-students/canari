@@ -31,7 +31,7 @@ case "$ENV" in
 
     # Check if .env exists
     if [ ! -f "infrastructure/.env" ]; then
-      echo -e "${YELLOW}⚠️  No .env file found. Creating from template...${RESET}"
+      echo -e "${YELLOW}⚠️  No .env file found. Creating from template…${RESET}"
       cp infrastructure/.env.example infrastructure/.env
       echo -e "${RED}❌ Please configure infrastructure/.env before deploying to production!${RESET}"
       exit 1
@@ -54,7 +54,7 @@ echo -e "${BOLD}═════════════════════�
 echo ""
 
 # Pre-deployment checks
-echo -e "${BLUE}🔍 Running pre-deployment checks...${RESET}"
+echo -e "${BLUE}🔍 Running pre-deployment checks…${RESET}"
 
 # Check Docker
 if ! command -v docker &> /dev/null; then
@@ -73,27 +73,27 @@ echo -e "${GREEN}✅ Docker and Docker Compose are available${RESET}"
 # Build or pull images
 if [ "$ENV" = "local" ]; then
     echo ""
-    echo -e "${BLUE}🏗️  Building Docker images...${RESET}"
+    echo -e "${BLUE}🏗️  Building Docker images…${RESET}"
     docker compose -f "$COMPOSE_FILE" build
 else
     echo ""
-    echo -e "${BLUE}📥 Pulling Docker images from registry...${RESET}"
+    echo -e "${BLUE}📥 Pulling Docker images from registry…${RESET}"
     docker compose -f "$COMPOSE_FILE" pull
 fi
 
 # Stop existing containers
 echo ""
-echo -e "${BLUE}🛑 Stopping existing containers...${RESET}"
+echo -e "${BLUE}🛑 Stopping existing containers…${RESET}"
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 
 # Start services
 echo ""
-echo -e "${BLUE}🚀 Starting services...${RESET}"
+echo -e "${BLUE}🚀 Starting services…${RESET}"
 docker compose -f "$COMPOSE_FILE" up -d
 
 # Wait for health checks
 echo ""
-echo -e "${BLUE}⏳ Waiting for services to be healthy...${RESET}"
+echo -e "${BLUE}⏳ Waiting for services to be healthy…${RESET}"
 sleep 5
 
 # Check service status
@@ -103,7 +103,7 @@ docker compose -f "$COMPOSE_FILE" ps
 
 # Health checks
 echo ""
-echo -e "${BLUE}🔍 Running health checks...${RESET}"
+echo -e "${BLUE}🔍 Running health checks…${RESET}"
 
 HEALTHY=true
 

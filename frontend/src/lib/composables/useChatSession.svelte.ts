@@ -257,7 +257,7 @@ export function useChatSession() {
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
-    cb.log('[TAB] Promotion leader - connexion WebSocket...');
+    cb.log('[TAB] Promotion leader - connexion WebSocket…');
     void attemptReconnectImpl(ctx, cb);
   });
 

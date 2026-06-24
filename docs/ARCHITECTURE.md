@@ -62,7 +62,7 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
 1. Frontend → startOidcLogin()
      → redirect vers Authentik /authorize (PKCE, state anti-CSRF)
 
-2. Authentik → redirect vers /auth/callback?code=...&state=...
+2. Authentik → redirect vers /auth/callback?code=…&state=…
 
 3. Frontend → POST /api/auth/oidc/callback { code, redirect_uri }
      → core-service échange le code contre tokens Authentik (server-side)
@@ -95,7 +95,7 @@ Nginx est l'unique entrée HTTP. Il implémente l'authentification via le sous-m
 
 | Canal                 | Producteur            | Consommateur | Format                                                              |
 | --------------------- | --------------------- | ------------ | ------------------------------------------------------------------- |
-| `chat:messages`       | chat-delivery-service | chat-gateway | `{ recipientId, deviceId, proto (base64), groupId, senderId, ... }` |
+| `chat:messages`       | chat-delivery-service | chat-gateway | `{ recipientId, deviceId, proto (base64), groupId, senderId, … }` |
 | `chat:channel_events` | social-service        | chat-gateway | `{ type, data, userIds[], timestamp }`                              |
 
 **Types d'événements canal** (`chat:channel_events`) :

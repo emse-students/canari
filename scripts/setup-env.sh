@@ -26,7 +26,7 @@ command -v openssl >/dev/null || die "openssl requis (apt install openssl)"
 
 # ── infrastructure/.env ────────────────────────────────────────────────────────
 if [[ ! -f "$INFRA_ENV" ]]; then
-    info "Création de infrastructure/.env depuis le template..."
+    info "Création de infrastructure/.env depuis le template…"
     cp "$ROOT/infrastructure/.env.example" "$INFRA_ENV"
 fi
 
@@ -59,7 +59,7 @@ fi
 # ── frontend/.env (dev uniquement) ────────────────────────────────────────────
 if [[ "$PROD" == "false" ]]; then
     if [[ ! -f "$FRONTEND_ENV" ]]; then
-        info "Création de frontend/.env depuis le template..."
+        info "Création de frontend/.env depuis le template…"
         cp "$ROOT/frontend/.env.example" "$FRONTEND_ENV"
     fi
     if grep -q '^VITE_MEDIA_URL=' "$FRONTEND_ENV"; then
@@ -79,9 +79,9 @@ fi
 
 # ── Résumé ────────────────────────────────────────────────────────────────────
 echo ""
-echo "infrastructure/.env → JWT_SECRET: ${JWT_SECRET:0:16}..."
+echo "infrastructure/.env → JWT_SECRET: ${JWT_SECRET:0:16}…"
 if [[ "$PROD" == "false" ]]; then
-    echo "frontend/.env      → VITE_JWT_SECRET: ${JWT_SECRET:0:16}..."
+    echo "frontend/.env      → VITE_JWT_SECRET: ${JWT_SECRET:0:16}…"
     echo ""
     echo "Prochaines étapes :"
     echo "  make install"

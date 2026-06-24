@@ -17,8 +17,8 @@ rebuilds** (les changements touchent serveur, Kotlin, TS et Tauri/SQLite selon l
 3. Ouvrir l'app de B.
 **Attendu** :
 - B recoit une **notification** par message (avant ouverture).
-- Logs serveur : `[SEND] recipient=...:tauri-...` (le mobile EST destinataire) + `[MEMBERSHIP_ACTIVE] device=B:tauri-...` au join background.
-- A l'ouverture : messages **affiches**, plus de `[WARN] Echec replay historique ... database is locked`.
+- Logs serveur : `[SEND] recipient=…:tauri-…` (le mobile EST destinataire) + `[MEMBERSHIP_ACTIVE] device=B:tauri-…` au join background.
+- A l'ouverture : messages **affiches**, plus de `[WARN] Echec replay historique … database is locked`.
 **Commits si KO** :
 - Pas de notif / mobile absent des destinataires -> `92029137` (FCM1, membership active background) + `9b234252` (FCM0).
 - Messages recus mais pas affiches a l'ouverture -> `05eeeb26` (DB1, busy_timeout SQLite).
@@ -36,7 +36,7 @@ rebuilds** (les changements touchent serveur, Kotlin, TS et Tauri/SQLite selon l
 **Etapes** :
 1. Sur B : **effacer les donnees** de l'app (ou reinstaller) -> nouveau token FCM ; se reconnecter une fois.
 2. **Sans rouvrir l'app**, A envoie un message.
-**Attendu** : notification recue. Logs serveur : `[PUSH_REFRESH] user=B device=...`, pas de `No push token`.
+**Attendu** : notification recue. Logs serveur : `[PUSH_REFRESH] user=B device=…`, pas de `No push token`.
 **Commits si KO** : `92029137` (FCM2, onNewToken -> /mls/push/refresh-token).
 
 ## T4 - Boucle de purge fantome (groupe absent du serveur)
@@ -44,7 +44,7 @@ rebuilds** (les changements touchent serveur, Kotlin, TS et Tauri/SQLite selon l
 **Etapes** :
 1. Provoquer un groupe local dont la ligne serveur a disparu (base videe / hard-purge).
 2. Recharger l'app plusieurs fois.
-**Attendu** : log `[READD] ...absent du serveur (confirme) - fantome purge` **une seule fois**, pas a chaque reload.
+**Attendu** : log `[READD] …absent du serveur (confirme) - fantome purge` **une seule fois**, pas a chaque reload.
 **Commits si KO** : `a51c1b4a` (getUserGroups n'expose plus un successorId danglant).
 
 ## T5 - Badge Sync sur groupe mort (UI)
@@ -56,7 +56,7 @@ rebuilds** (les changements touchent serveur, Kotlin, TS et Tauri/SQLite selon l
 ## T6 - Reboot via reseau incertain (S1)
 **But** : un blip reseau pendant un reboot ne cree pas de successeur duplique.
 **Etapes** : declencher un reboot de groupe avec une connexion instable (couper le reseau au mauvais moment).
-**Attendu** : pas de successeur orphelin/duplique ; log `[REBOOT] ... statut serveur incertain (reseau) - report`.
+**Attendu** : pas de successeur orphelin/duplique ; log `[REBOOT] … statut serveur incertain (reseau) - report`.
 **Commits si KO** : `88e64233` (performReboot via getGroupServerStatus).
 
 ## T7 - Invitations non sautees sur erreur reseau (S2)
@@ -72,7 +72,7 @@ rebuilds** (les changements touchent serveur, Kotlin, TS et Tauri/SQLite selon l
    idealement avec un Welcome recu pendant un tick de sync.
 **Attendu** :
 - Pas de **conversation dupliquee**, pas de **messages disparus** pendant la migration.
-- Log `[MIGRATE] Successeur ... pas encore dans le WASM - predecesseur conserve (H2)` est **normal/sain**.
+- Log `[MIGRATE] Successeur … pas encore dans le WASM - predecesseur conserve (H2)` est **normal/sain**.
 - **Critique (anti-deadlock)** : la messagerie ne **gele jamais** (un Welcome pendant un tick ne bloque pas l'UI).
 **Commits si KO** :
 - Double migration / messages ecrases -> `3df8e399` (H3, runExclusiveForGroup).
@@ -140,7 +140,7 @@ reveille le device, et un delete ne notifie pas les pairs.
 1. B (mobile, **app tuee**) a un message texte en attente (ex : compose hors-ligne puis kill).
 2. A envoie un message a B (reveille le service FCM de B).
 **Attendu** :
-- Logs B : `drainOutboxBackground: ... envoye` -> le message en attente de B part **sans** push
+- Logs B : `drainOutboxBackground: … envoye` -> le message en attente de B part **sans** push
   Welcome ni reouverture. A le recoit.
 3. B supprime un message (delete) puis l'app est tuee avant l'envoi ; A envoie un message a B.
 **Attendu** :
@@ -150,7 +150,7 @@ reveille le device, et un delete ne notifie pas les pairs.
 - Rien n'est envoye au reveil par un message entrant -> (commit suite Passe 2 : appel
   `drainOutboxBackground` dans `onMessageReceived`).
 - Notif parasite pour un delete/reaction -> (commit suite Passe 2 : flag `silent` du mirror jusqu'a
-  `/mls/push/send` ; verifier `[BG_SEND] ... silent=true`).
+  `/mls/push/send` ; verifier `[BG_SEND] … silent=true`).
 - Delete jamais livre en background -> (commit suite Passe 2 : `toMirrorEntry` inclut bien les
   entrees `control`).
 

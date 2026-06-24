@@ -16,7 +16,7 @@ Run `npm run test -- --run src/lib/services/desyncPrevention.contract.test.ts` i
 
 - **`POST /api/mls/groups/:groupId/reset`** (**group_reset**) - Sets memberships to **pending**, **`activeEpoch = 0`**, clears Redis **`group:members`**, notifies clients (WebSocket + queued offline rows). Prevents forked MLS sessions from diverging without a shared line in the sand. Guard: **`HeaderAuthGuard`**.
 
-- **`POST /api/mls/groups/:groupId/claim-bootstrap`** / **`GET .../bootstrap-info`** - **Optimistic lock** on **`bootstrapVersion`** so only one device wins re-creation of a group. Guard: **`HeaderAuthGuard`**.
+- **`POST /api/mls/groups/:groupId/claim-bootstrap`** / **`GET …/bootstrap-info`** - **Optimistic lock** on **`bootstrapVersion`** so only one device wins re-creation of a group. Guard: **`HeaderAuthGuard`**.
 
 ### 3. Server - add-member races
 

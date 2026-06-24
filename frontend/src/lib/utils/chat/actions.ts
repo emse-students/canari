@@ -312,7 +312,7 @@ export async function processPendingInvitations(params: {
             // Course concurrente transitoire (écart 1) : un autre device a committé en même
             // temps. On vérifie si l'invitation est déjà remplie, sinon on laisse le prochain
             // cycle réessayer (le commit manquant arrive via la file et on rattrape seul).
-            log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} - vérification...`);
+            log(`[PENDING] WrongEpoch pour ${inv.deviceId} dans ${groupId} - vérification…`);
             try {
               const memberships = await mlsService.getDeviceMemberships(inv.userId, inv.deviceId);
               const m = memberships.find((x) => x.groupId === groupId);

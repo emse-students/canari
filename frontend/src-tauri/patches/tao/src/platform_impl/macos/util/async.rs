@@ -238,7 +238,7 @@ pub unsafe fn set_focus(ns_window: &NSWindow) {
 }
 
 // `close:` is thread-safe, but we want the event to be triggered from the main
-// thread. Though, it's a good idea to look into that more...
+// thread. Though, it's a good idea to look into that more…
 pub unsafe fn close_async(ns_window: &NSWindow) {
   let ns_window = MainThreadSafe(ns_window.retain());
   run_on_main(move || {

@@ -930,7 +930,7 @@ export class MessagingService {
     }
 
     // Upsert DeviceGroupMembership to active.
-    // INSERT ... ON CONFLICT DO UPDATE garantit la création du record même si aucune
+    // INSERT … ON CONFLICT DO UPDATE garantit la création du record même si aucune
     // invitation préalable n'existait (cas reboot : groupe tout neuf, aucun record pending).
     // Un plain UPDATE WHERE status='pending' touchait 0 lignes dans ce cas, laissant
     // le device sans record → processPendingInvitations le kickait par erreur.

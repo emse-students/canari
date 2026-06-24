@@ -101,7 +101,7 @@ export class SqliteStorage implements IStorage {
     // IMMEDIATEMENT en "database is locked" (SQLITE_BUSY). Sans ca, un replay d'historique qui
     // tombe sur un verrou perd les messages : le ratchet MLS a deja avance (session.finish), donc
     // une nouvelle tentative ne peut plus les dechiffrer -> messages definitivement invisibles
-    // cote destinataire (symptome observe : "Echec replay historique ... database is locked").
+    // cote destinataire (symptome observe : "Echec replay historique … database is locked").
     await this.db.execute('PRAGMA busy_timeout=5000');
 
     // Schéma : la conversation porte son état de cycle de vie (active|pending|removed).

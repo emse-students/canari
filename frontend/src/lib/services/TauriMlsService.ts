@@ -474,7 +474,7 @@ export class TauriMlsService extends BaseMlsService {
   async saveState(pin: string): Promise<Uint8Array> {
     await this.awaitRustMutations();
     // Native command handles save_encrypted + mls.bin write in one invoke to
-    // avoid JS Array.from(...) conversion on large state blobs (notably Android).
+    // avoid JS Array.from(…) conversion on large state blobs (notably Android).
     const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { pin });
     const bytes = Uint8Array.from(raw);
     return bytes;

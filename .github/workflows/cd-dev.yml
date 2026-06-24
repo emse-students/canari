@@ -366,7 +366,7 @@ jobs:
 
       - name: Log deployment start
         run: |
-          echo "🚀 Starting DEV deployment on self-hosted runner..."
+          echo "🚀 Starting DEV deployment on self-hosted runner…"
           echo "User: $(whoami)"
           echo "Working directory: $(pwd)"
           echo "Deploy path: ${{ env.DEPLOY_PATH }}"
@@ -401,7 +401,7 @@ jobs:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
-          echo "🔐 Logging into GHCR..."
+          echo "🔐 Logging into GHCR…"
           if [ "$DOCKER_CLI" = "docker" ]; then
             echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
           else
@@ -418,7 +418,7 @@ jobs:
       - name: Pull latest code
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "📥 Updating repository (dev branch)..."
+          echo "📥 Updating repository (dev branch)…"
           git init || true
           git remote add origin https://github.com/emse-students/canari || true
           git fetch origin dev
@@ -559,7 +559,7 @@ jobs:
       - name: Check environment configuration
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "🔍 Checking environment configuration..."
+          echo "🔍 Checking environment configuration…"
 
           FRONTEND_HOST_PORT=3080
           if [ -f infrastructure/.env ]; then
@@ -603,14 +603,14 @@ jobs:
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
           TAG: dev
         run: |
-          echo "🚀 Deploying DEV services with zero-downtime..."
+          echo "🚀 Deploying DEV services with zero-downtime…"
           set +e
           eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml up -d --remove-orphans"
           DEPLOY_STATUS=$?
           set -e
 
           if [ "$DEPLOY_STATUS" -ne 0 ]; then
-            echo "⚠️ First deploy attempt failed. Checking for port conflicts..."
+            echo "⚠️ First deploy attempt failed. Checking for port conflicts…"
 
             CONFLICTS=$(eval "$DOCKER_CLI ps --filter 'publish=$FRONTEND_HOST_PORT' --format '{{.ID}} {{.Image}} {{.Names}}'")
 
@@ -638,7 +638,7 @@ jobs:
               exit 1
             fi
 
-            echo "🔁 Retrying deployment after cleanup..."
+            echo "🔁 Retrying deployment after cleanup…"
             eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml up -d --remove-orphans"
           fi
 
@@ -647,7 +647,7 @@ jobs:
       - name: Wait for services to be healthy
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "⏳ Waiting for critical DEV services to be running..."
+          echo "⏳ Waiting for critical DEV services to be running…"
           critical_services=(
             chat-gateway
             call-service
@@ -664,7 +664,7 @@ jobs:
             all_healthy=true
             for service in "${critical_services[@]}"; do
               if ! eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.dev.yml ps --services --filter 'status=running' | grep -q ^$service\$"; then
-                echo "  ... $service is not yet running"
+                echo "  … $service is not yet running"
                 all_healthy=false
               fi
             done

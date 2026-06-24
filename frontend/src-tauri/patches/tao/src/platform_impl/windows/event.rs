@@ -145,7 +145,7 @@ fn layout_uses_altgr() -> bool {
     }
 
     let mut keyboard_state_altgr = [0u8; 256];
-    // AltGr is an alias for Ctrl+Alt for... some reason. Whatever it is, those are the keypresses
+    // AltGr is an alias for Ctrl+Alt for… some reason. Whatever it is, those are the keypresses
     // we have to emulate to do an AltGr test.
     keyboard_state_altgr[VK_MENU as usize] = 0x80;
     keyboard_state_altgr[VK_CONTROL as usize] = 0x80;
@@ -372,9 +372,9 @@ pub fn handle_extended_keys(
       match scancode {
         // When VK_PAUSE is pressed it emits a LeftControl + NumLock scancode event sequence, but reports VK_PAUSE
         // as the virtual key on both events, or VK_PAUSE on the first event or 0xFF when using raw input.
-        // Don't emit anything for the LeftControl event in the pair...
+        // Don't emit anything for the LeftControl event in the pair…
         0xE01D if vkey == VK_PAUSE => return None,
-        // ...and emit the Pause event for the second event in the pair.
+        // …and emit the Pause event for the second event in the pair.
         0x45 if vkey == VK_PAUSE || vkey == 0xFF as _ => {
           scancode = 0xE059;
           VK_PAUSE

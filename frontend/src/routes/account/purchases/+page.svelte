@@ -133,7 +133,7 @@
                     {m.purchases_tag_no_expiry()}
                   {/if}
                   {#if tag.issuingAssocId}
-                    · emis par {tag.issuingAssocId.slice(0, 8)}...
+                    · emis par {tag.issuingAssocId.slice(0, 8)}…
                   {/if}
                 </p>
               </div>

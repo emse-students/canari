@@ -76,15 +76,15 @@ class User {
 ```
 1. Frontend appelle startOidcLogin()
    → génère state (PKCE anti-CSRF) dans sessionStorage
-   → redirect vers Authentik /authorize?...
+   → redirect vers Authentik /authorize?…
 
-2. Authentik redirect → /auth/callback?code=...&state=...
+2. Authentik redirect → /auth/callback?code=…&state=…
    Frontend vérifie state, extrait code
 
 3. POST /api/auth/oidc/callback { code, redirect_uri }
    → core-service échange le code côté serveur (secret Authentik)
-   → Authentik retourne { id_token, access_token, ... }
-   → core-service décode l'id_token → { sub, email, name, ... }
+   → Authentik retourne { id_token, access_token, … }
+   → core-service décode l'id_token → { sub, email, name, … }
    → Upsert utilisateur en PostgreSQL
    → Signe un JWT Canari (HS256, 15 min, payload: { sub, email })
    → Génère un refresh token (cookie HttpOnly, SameSite=Strict, 7 jours)
@@ -225,9 +225,9 @@ Le payload FCM actuel est minimal et transporte surtout :
 {
    data: {
       type: 'message',
-      groupId: '...',
-      queuedMessageId: '...',
-      senderId: '...'
+      groupId: '…',
+      queuedMessageId: '…',
+      senderId: '…'
    }
 }
 ```
@@ -268,7 +268,7 @@ Validation JWT HS256 maison via `Authorization: Bearer <token>` (même `JWT_SECR
 2. Chiffre le fichier : AES-256-GCM(CEK, IV, plaintext) → ciphertext
 3. POST /api/media/upload { file: ciphertext, mimetype }
    ← { mediaId }
-4. Envoie un message MLS MediaMsg { media_id, key=CEK, iv=IV, ... }
+4. Envoie un message MLS MediaMsg { media_id, key=CEK, iv=IV, … }
    (CEK + IV chiffrés dans le proto MLS - jamais vus par le serveur)
 ```
 

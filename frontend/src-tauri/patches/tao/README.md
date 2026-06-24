@@ -36,7 +36,7 @@ And add this to the example file to add the native activity glue:
 ```rust
 #[cfg_attr(target_os = "android", ndk_glue::main(backtrace = "on"))]
 fn main() {
-    ...
+    …
 }
 ```
 

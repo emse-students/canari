@@ -4,33 +4,33 @@
 
 //! The `Event` enum and assorted supporting types.
 //!
-//! These are sent to the closure given to [`EventLoop::run(...)`][event_loop_run], where they get
+//! These are sent to the closure given to [`EventLoop::run(…)`][event_loop_run], where they get
 //! processed and used to modify the program state. For more details, see the root-level documentation.
 //!
 //! Some of these events represent different "parts" of a traditional event-handling loop. You could
-//! approximate the basic ordering loop of [`EventLoop::run(...)`][event_loop_run] like this:
+//! approximate the basic ordering loop of [`EventLoop::run(…)`][event_loop_run] like this:
 //!
 //! ```rust,ignore
 //! let mut control_flow = ControlFlow::Poll;
 //! let mut start_cause = StartCause::Init;
 //!
 //! while control_flow != ControlFlow::Exit {
-//!     event_handler(NewEvents(start_cause), ..., &mut control_flow);
+//!     event_handler(NewEvents(start_cause), …, &mut control_flow);
 //!
 //!     for e in (window events, user events, device events) {
-//!         event_handler(e, ..., &mut control_flow);
+//!         event_handler(e, …, &mut control_flow);
 //!     }
-//!     event_handler(MainEventsCleared, ..., &mut control_flow);
+//!     event_handler(MainEventsCleared, …, &mut control_flow);
 //!
 //!     for w in (redraw windows) {
-//!         event_handler(RedrawRequested(w), ..., &mut control_flow);
+//!         event_handler(RedrawRequested(w), …, &mut control_flow);
 //!     }
-//!     event_handler(RedrawEventsCleared, ..., &mut control_flow);
+//!     event_handler(RedrawEventsCleared, …, &mut control_flow);
 //!
 //!     start_cause = wait_if_necessary(control_flow);
 //! }
 //!
-//! event_handler(LoopDestroyed, ..., &mut control_flow);
+//! event_handler(LoopDestroyed, …, &mut control_flow);
 //! ```
 //!
 //! This leaves out timing details like `ControlFlow::WaitUntil` but hopefully

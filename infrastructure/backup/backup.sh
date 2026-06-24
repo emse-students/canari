@@ -35,7 +35,7 @@ BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 log() { printf '[backup] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 fail() { printf '[backup] ERROR %s\n' "$*" >&2; exit 1; }
 
-# Charge les variables (POSTGRES_USER, BACKUP_S3_*, ...) depuis infrastructure/.env.
+# Charge les variables (POSTGRES_USER, BACKUP_S3_*, …) depuis infrastructure/.env.
 if [ -f "$ENV_FILE" ]; then
   set -a
   # shellcheck disable=SC1090
@@ -66,18 +66,18 @@ log "Demarrage de la sauvegarde -> $ARCHIVE_PATH"
 
 # ── 1. PostgreSQL Canari (auth_db) ────────────────────────────────────────────
 # Dump logique coherent via le conteneur (auth socket trust, pas de mot de passe).
-log "Dump PostgreSQL auth_db..."
+log "Dump PostgreSQL auth_db…"
 "${DC[@]}" exec -T postgres sh -c "pg_dump -U \"$POSTGRES_USER\" -d auth_db --clean --if-exists" \
   | gzip > "$STAGE/postgres_auth_db.sql.gz"
 
 # ── 2. MongoDB (chat_db) ──────────────────────────────────────────────────────
-log "Dump MongoDB chat_db..."
+log "Dump MongoDB chat_db…"
 "${DC[@]}" exec -T mongo sh -c "mongodump --db=chat_db --archive --gzip" \
   > "$STAGE/mongo_chat_db.archive.gz"
 
 # ── 3. MinIO (blobs media chiffres) ───────────────────────────────────────────
 # Copie du volume objet via une image jetable (lecture seule).
-log "Archivage du volume MinIO..."
+log "Archivage du volume MinIO…"
 docker run --rm \
   -v infrastructure_minio_data:/data:ro \
   -v "$STAGE":/out \
@@ -85,7 +85,7 @@ docker run --rm \
   tar czf /out/minio_data.tar.gz -C /data .
 
 # ── 4. Metadonnees media-service ──────────────────────────────────────────────
-log "Archivage du volume media_meta..."
+log "Archivage du volume media_meta…"
 docker run --rm \
   -v infrastructure_media_meta:/data:ro \
   -v "$STAGE":/out \
@@ -94,7 +94,7 @@ docker run --rm \
 
 # ── 5. Authentik (stack miconnect) ────────────────────────────────────────────
 if [ -n "$MICONNECT_PG_CONTAINER" ] && docker inspect "$MICONNECT_PG_CONTAINER" >/dev/null 2>&1; then
-  log "Dump PostgreSQL Authentik..."
+  log "Dump PostgreSQL Authentik…"
   docker exec "$MICONNECT_PG_CONTAINER" sh -c \
     'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
     | gzip > "$STAGE/authentik_db.sql.gz"
@@ -116,19 +116,19 @@ contenu:
   - authentik_db.sql.gz       (Authentik: identites, config OIDC)
 EOF
 
-log "Creation de l archive finale..."
+log "Creation de l archive finale…"
 tar czf "$ARCHIVE_PATH" -C "$STAGE" .
 ARCHIVE_SIZE="$(du -h "$ARCHIVE_PATH" | cut -f1)"
 log "Archive locale ecrite ($ARCHIVE_SIZE)"
 
 # ── 7. Retention locale ───────────────────────────────────────────────────────
-log "Purge des sauvegardes locales > ${BACKUP_RETENTION_DAYS} jours..."
+log "Purge des sauvegardes locales > ${BACKUP_RETENTION_DAYS} jours…"
 find "$BACKUP_DIR" -maxdepth 1 -name 'canari-backup-*.tar.gz' -type f \
   -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete || true
 
 # ── 8. Copie offsite via SSH/rsync (serveur LAN mitv) ─────────────────────────
 if [ -n "$BACKUP_SSH_HOST" ]; then
-  log "Envoi offsite vers ${BACKUP_SSH_HOST}:${BACKUP_SSH_PATH}..."
+  log "Envoi offsite vers ${BACKUP_SSH_HOST}:${BACKUP_SSH_PATH}…"
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$BACKUP_SSH_HOST" "mkdir -p '$BACKUP_SSH_PATH'"
   rsync -az --partial -e "ssh -o BatchMode=yes -o ConnectTimeout=10" \
     "$ARCHIVE_PATH" "${BACKUP_SSH_HOST}:${BACKUP_SSH_PATH}/" \

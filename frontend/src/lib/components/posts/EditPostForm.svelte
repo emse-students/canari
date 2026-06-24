@@ -361,7 +361,7 @@
     >
       <MarkdownComposerField
         bind:value={markdown}
-        placeholder="Écrivez votre message ici..."
+        placeholder="Écrivez votre message ici…"
         minHeight="120px"
         toolbarClass="mb-1"
         editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"

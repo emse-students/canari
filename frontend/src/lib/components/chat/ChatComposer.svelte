@@ -166,7 +166,7 @@
   function toReplyPreview(value: string): string {
     const normalized = value.replace(/\s+/g, ' ').trim();
     if (normalized.length <= 96) return normalized;
-    return `${normalized.slice(0, 93)}...`;
+    return `${normalized.slice(0, 93)}…`;
   }
 
   let replyPreviewText = $derived.by(() => {

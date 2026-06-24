@@ -432,7 +432,7 @@
         e.preventDefault();
         if (session.isLoggedIn && session.userId) {
           forceSyncReset(session.userId, log);
-          log('[INFO] Reloading page in 1s...');
+          log('[INFO] Reloading page in 1s…');
           setTimeout(() => window.location.reload(), 1000);
         }
       }

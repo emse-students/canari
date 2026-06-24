@@ -7,7 +7,7 @@ export function shortenReplyPreview(text: string): string {
   if (!text) return '';
   const normalized = formatMentionsForPreview(text).replace(/\s+/g, ' ').trim();
   if (normalized.length <= 84) return normalized;
-  return `${normalized.slice(0, 81)}...`;
+  return `${normalized.slice(0, 81)}…`;
 }
 
 const HTTP_URL_RE = /https?:\/\/[^\s<>\])}"']+/gi;
@@ -57,7 +57,7 @@ export function getGifEmbedUrl(url: string): string {
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
-    // Tenor /view/... pages → media.tenor.com embed
+    // Tenor /view/… pages → media.tenor.com embed
     if (host.includes('tenor.com') && u.pathname.includes('/view/')) {
       return `https://media.tenor.com/${u.pathname.split('-').pop()}/tenor.gif`;
     }

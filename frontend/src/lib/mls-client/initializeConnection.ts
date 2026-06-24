@@ -51,7 +51,7 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     return false;
   }
 
-  log('Connexion Gateway...');
+  log('Connexion Gateway…');
   try {
     const { getToken } = await import('$lib/stores/auth');
     const token = await getToken();

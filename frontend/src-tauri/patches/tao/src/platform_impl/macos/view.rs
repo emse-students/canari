@@ -568,7 +568,7 @@ extern "C" fn do_command_by_selector(_this: &Object, _sel: Sel, _command: Sel) {
 
   //     let mut events = VecDeque::with_capacity(1);
   //     if command == sel!(insertNewline:) {
-  //         // The `else` condition would emit the same character, but I'm keeping this here both...
+  //         // The `else` condition would emit the same character, but I'm keeping this here both…
   //         // 1) as a reminder for how `doCommandBySelector` works
   //         // 2) to make our use of carriage return explicit
   //         events.push_back(EventWrapper::StaticEvent(Event::WindowEvent {
@@ -688,7 +688,7 @@ extern "C" fn key_down(this: &mut Object, _sel: Sel, event: &NSEvent) {
       *marked_text_ref = Retained::into_raw(NSMutableAttributedString::new());
       state.key_triggered_ime = false;
 
-      // Some keys (and only *some*, with no known reason) don't trigger `insertText`, while others do...
+      // Some keys (and only *some*, with no known reason) don't trigger `insertText`, while others do…
       // So, we don't give repeats the opportunity to trigger that, since otherwise our hack will cause some
       // keys to generate twice as many characters.
       let array: id = msg_send![class!(NSArray), arrayWithObject: event];

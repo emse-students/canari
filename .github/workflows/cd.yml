@@ -401,7 +401,7 @@ jobs:
 
       - name: Log deployment start
         run: |
-          echo "🚀 Starting deployment on self-hosted runner..."
+          echo "🚀 Starting deployment on self-hosted runner…"
           echo "User: $(whoami)"
           echo "Working directory: $(pwd)"
           echo "Deploy path: ${{ env.DEPLOY_PATH }}"
@@ -437,7 +437,7 @@ jobs:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
-          echo "🔐 Logging into GHCR..."
+          echo "🔐 Logging into GHCR…"
           if [ "$DOCKER_CLI" = "docker" ]; then
             echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USERNAME" --password-stdin
           else
@@ -453,7 +453,7 @@ jobs:
       - name: Pull latest code
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "📥 Updating repository..."
+          echo "📥 Updating repository…"
           git fetch origin
           git reset --hard origin/main
           echo "✅ Code updated to $(git rev-parse --short HEAD)"
@@ -621,7 +621,7 @@ jobs:
       - name: Check environment configuration
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "🔍 Checking environment configuration..."
+          echo "🔍 Checking environment configuration…"
 
           FRONTEND_HOST_PORT=80
           if [ -f infrastructure/.env ]; then
@@ -655,7 +655,7 @@ jobs:
           fi
 
           if [ ! -f frontend/.env ]; then
-            echo "⚠️ frontend/.env manquant, création depuis template..."
+            echo "⚠️ frontend/.env manquant, création depuis template…"
             cp frontend/.env.example frontend/.env
           fi
 
@@ -690,14 +690,14 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
         run: |
-          echo "🚀 Deploying services with zero-downtime..."
+          echo "🚀 Deploying services with zero-downtime…"
           set +e
           eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
           DEPLOY_STATUS=$?
           set -e
 
           if [ "$DEPLOY_STATUS" -ne 0 ]; then
-            echo "⚠️ First deploy attempt failed. Checking for frontend host port conflicts..."
+            echo "⚠️ First deploy attempt failed. Checking for frontend host port conflicts…"
 
             CONFLICTS=$(eval "$DOCKER_CLI ps --filter 'publish=$FRONTEND_HOST_PORT' --format '{{.ID}} {{.Image}} {{.Names}}'")
 
@@ -725,7 +725,7 @@ jobs:
               exit 1
             fi
 
-            echo "🔁 Retrying deployment after frontend cleanup..."
+            echo "🔁 Retrying deployment after frontend cleanup…"
             eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml up -d --remove-orphans"
           fi
 
@@ -736,7 +736,7 @@ jobs:
         env:
           POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
         run: |
-          echo "🗄️ Running database migrations..."
+          echo "🗄️ Running database migrations…"
 
           # Wait for PostgreSQL to accept connections (up to 60s).
           # psql and pg_isready connect via unix socket inside the container → trust auth, no password needed.
@@ -745,7 +745,7 @@ jobs:
               echo "✅ PostgreSQL is ready"
               break
             fi
-            echo "⏳ Waiting for PostgreSQL... ($i/30)"
+            echo "⏳ Waiting for PostgreSQL… ($i/30)"
             sleep 2
             if [ "$i" -eq 30 ]; then
               echo "❌ PostgreSQL did not become ready in time"
@@ -753,7 +753,7 @@ jobs:
             fi
           done
 
-          # Run all *.sql files found under apps/*/src/migrations/, sorted by filename (001_, 002_, ...).
+          # Run all *.sql files found under apps/*/src/migrations/, sorted by filename (001_, 002_, …).
           # All migration files must be idempotent (use IF NOT EXISTS / ON CONFLICT DO NOTHING).
           MIGRATIONS=$(find apps/*/src/migrations -name "*.sql" 2>/dev/null | sort)
 
@@ -826,7 +826,7 @@ jobs:
       - name: Wait for services to be healthy
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
-          echo "⏳ Waiting for critical services to be running..."
+          echo "⏳ Waiting for critical services to be running…"
           critical_services=(
             chat-gateway
             call-service
@@ -874,7 +874,7 @@ jobs:
 
       - name: Cleanup old resources
         run: |
-          echo "🧹 Cleaning up old Docker resources..."
+          echo "🧹 Cleaning up old Docker resources…"
           eval "$DOCKER_CLI image prune -af --filter 'until=24h'"
           eval "$DOCKER_CLI container prune -f"
           # Le build cache n etait jamais purge et grossissait sans limite
@@ -897,7 +897,7 @@ jobs:
 
       - name: Health Check
         run: |
-          echo "🔍 Performing health checks..."
+          echo "🔍 Performing health checks…"
           sleep 5
 
           FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-8080}"

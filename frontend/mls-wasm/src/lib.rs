@@ -64,7 +64,7 @@ pub struct WasmMlsClient {
 
 #[wasm_bindgen]
 impl WasmMlsClient {
-    // Constructeur appelé depuis JavaScript (ex: new WasmMlsClient(...))
+    // Constructeur appelé depuis JavaScript (ex: new WasmMlsClient(…))
     #[wasm_bindgen(constructor)]
     pub fn new(
         user_id: &str,

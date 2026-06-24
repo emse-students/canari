@@ -202,7 +202,7 @@ export function useMessaging() {
     if (bulkIngestActive) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
-        console.warn(`[ADD_MSG] conversation "${normalized}" introuvable (bulk)...`);
+        console.warn(`[ADD_MSG] conversation "${normalized}" introuvable (bulk)…`);
         return;
       }
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
@@ -223,7 +223,7 @@ export function useMessaging() {
 
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
-      console.warn(`[ADD_MSG] conversation "${normalized}" introuvable...`);
+      console.warn(`[ADD_MSG] conversation "${normalized}" introuvable…`);
       return;
     }
 
@@ -284,10 +284,10 @@ export function useMessaging() {
             unreadCount: updatedConvo.unreadCount ?? 0,
           });
         }
-        console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}...`);
+        console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}…`);
         return;
       }
-      console.log(`[ADD_MSG] Doublon ignoré id=${newMsg.id}...`);
+      console.log(`[ADD_MSG] Doublon ignoré id=${newMsg.id}…`);
       return;
     }
 
@@ -305,7 +305,7 @@ export function useMessaging() {
       messages: insertMessageOrdered(convo.messages, newMsg),
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
     });
-    console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}...`);
+    console.log(`[ADD_MSG] ✓ Message ajouté: id=${newMsg.id}…`);
 
     publishTabMessageUpdate({
       type: 'message_added',

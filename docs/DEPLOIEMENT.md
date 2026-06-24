@@ -146,7 +146,7 @@ cd ~/canari
 ./scripts/setup-env.sh --prod
 # Crée infrastructure/.env avec JWT_SECRET aléatoire
 nano infrastructure/.env
-# Remplir : POSTGRES_PASSWORD, DOMAIN, ALLOW_ORIGIN, Authentik, Stripe, Firebase...
+# Remplir : POSTGRES_PASSWORD, DOMAIN, ALLOW_ORIGIN, Authentik, Stripe, Firebase…
 ```
 
 **3. Configurer le secret GitHub**
@@ -217,7 +217,7 @@ jobs:
         env:
           PUBLIC_JWT_SECRET: ${{ secrets.JWT_SECRET }}
           VITE_GATEWAY_URL: https://canari-emse.fr
-          # ... autres VITE_* variables
+          # … autres VITE_* variables
 
   build-docker:
     needs: build-frontend

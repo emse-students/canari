@@ -105,16 +105,16 @@ jobs:
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          echo "Decoding keystore..."
+          echo "Decoding keystore…"
           cd frontend/src-tauri/gen/android
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release.jks
-          echo "Creating keystore.properties..."
+          echo "Creating keystore.properties…"
           echo "keyAlias=$ANDROID_KEY_ALIAS" > keystore.properties
           echo "keyPassword=$ANDROID_KEY_PASSWORD" >> keystore.properties
           echo "storePassword=$ANDROID_STORE_PASSWORD" >> keystore.properties
           echo "storeFile=release.jks" >> keystore.properties
 
-          echo "Writing google-services.json from secret..."
+          echo "Writing google-services.json from secret…"
           echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
           echo "✅ google-services.json written"
 

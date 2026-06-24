@@ -269,7 +269,7 @@ static WINDOW_DELEGATE_CLASS: Lazy<WindowDelegateClass> = Lazy::new(|| unsafe {
 });
 
 // This function is definitely unsafe, but labeling that would increase
-// boilerplate and wouldn't really clarify anything...
+// boilerplate and wouldn't really clarify anything…
 fn with_state<F: FnOnce(&mut WindowDelegateState) -> T, T>(this: &Object, callback: F) {
   #[allow(deprecated)] // TODO: Use define_class!
   let state_ptr = unsafe {

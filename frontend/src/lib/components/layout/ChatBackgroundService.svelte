@@ -697,7 +697,7 @@
           await globalSession.ensureMls().reloadStateFromDisk();
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           if (!globalSession.isWsConnected) {
-            appendLog('Page visible again - reconnecting...');
+            appendLog('Page visible again - reconnecting…');
             void globalSession.attemptReconnect(sessionCb());
           }
           checkSiblingCallWarning();
@@ -814,7 +814,7 @@
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
-    appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}...`);
+    appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}…`);
     try {
       const token = await getToken();
       const res = await fetch('/api/mls/security/pin-reset', {

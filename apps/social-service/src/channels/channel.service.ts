@@ -287,7 +287,7 @@ export class ChannelService {
   /**
    * Returns a workspace slug guaranteed free of collisions with existing communities.
    * Communities may share a display name (Discord-style), but `channel_workspaces.slug`
-   * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, ...)
+   * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, …)
    * is appended when the requested slug is already taken.
    */
   private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {

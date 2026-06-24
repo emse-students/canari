@@ -1252,7 +1252,7 @@ fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
 ///   field 6 = message_id (string)
 ///   field 8 = sent_at (int64 varint, ms epoch)
 ///
-/// Retourne {"ok":true,"text":"...","messageId":"...","sentAt":0,"type":"text|reply|media","replyTo":null,"mediaKind":null}
+/// Retourne {"ok":true,"text":"…","messageId":"…","sentAt":0,"type":"text|reply|media","replyTo":null,"mediaKind":null}
 /// ou {"ok":false} si le message n'est pas affichable (réaction, système, etc.).
 #[cfg(target_os = "android")]
 fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
@@ -1329,7 +1329,7 @@ fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
 // ─── Fonction JNI appelée par CanariFirebaseMessagingService ─────────────────
 
 /// Déchiffre un message MLS et retourne ses métadonnées complètes en JSON.
-/// Format retourné : {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
+/// Format retourné : {"ok":true,"text":"…","messageId":"…","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
 /// Sur échec : {"ok":false}
 /// Appelée directement depuis Kotlin via System.loadLibrary("mines_app_lib").
 #[cfg(target_os = "android")]
@@ -2163,7 +2163,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
 /// - Appelle `add_member` avec le `key_package_b64` du requester.
 /// - Sauvegarde l'état MLS mis à jour dans `{files_dir}/mls.bin`.
 /// - Retourne un JSON : `{"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>","baseEpoch":<u64>}`
-///   ou `{"ok":false,"error":"..."}` en cas d'échec. `baseEpoch` est l'epoch AVANT l'ajout : le
+///   ou `{"ok":false,"error":"…"}` en cas d'échec. `baseEpoch` est l'epoch AVANT l'ajout : le
 ///   backend le valide (validateCommit) pour garder son compteur en phase avec l'epoch reel (C6).
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -2359,7 +2359,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
 /// ciphertext MLS (base64) que le service Kotlin POST à `/api/mls/push/send`.
 ///
 /// - `proto_b64` : bytes du proto AppMessage en clair (base64), construits côté TS au compose.
-/// - Retourne un JSON : `{"ok":true,"ciphertext":"<b64>"}` ou `{"ok":false,"error":"..."}`.
+/// - Retourne un JSON : `{"ok":true,"ciphertext":"<b64>"}` ou `{"ok":false,"error":"…"}`.
 ///   Un échec `GroupNotFound` (groupe pas encore rejoint) ressort en erreur : l'appelant laisse
 ///   l'entrée en file et la livrera au prochain foreground.
 #[cfg(target_os = "android")]

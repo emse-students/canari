@@ -177,7 +177,7 @@ else
     echo -e "     ${YELLOW}→ Is Authentik running? Check the URL and firewall.${NC}"
   elif [[ "$HTTP_CODE" == "404" ]]; then
     warn "Discovery returned 404 - the application slug might not be 'canari'"
-    echo -e "     ${YELLOW}→ Trying generic well-known at provider level...${NC}"
+    echo -e "     ${YELLOW}→ Trying generic well-known at provider level…${NC}"
     # Try the base /.well-known/openid-configuration
     GENERIC_URL="$CHECK_URL/.well-known/openid-configuration"
     GEN_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$GENERIC_URL" 2>/dev/null || echo "000")

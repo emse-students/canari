@@ -18,7 +18,7 @@
     placeholder?: string;
   }
 
-  let { users, onUsersChange, placeholder = 'Ajouter un utilisateur...' }: Props = $props();
+  let { users, onUsersChange, placeholder = 'Ajouter un utilisateur…' }: Props = $props();
 
   let inputValue = $state('');
   let suggestions = $state<User[]>([]);

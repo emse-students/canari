@@ -39,7 +39,7 @@ export interface OutboxMirrorEntry {
   sentAt: number;
   /**
    * Silent send (no recipient notification) - true for control events (reaction/edit/delete/read),
-   * mirroring the foreground flusher (`sendMessage(..., entry.kind === 'control')`). The server
+   * mirroring the foreground flusher (`sendMessage(…, entry.kind === 'control')`). The server
    * cannot infer this from the E2E ciphertext, so it must travel with the entry; without it a
    * background-sent delete/reaction would trigger a spurious push on peers.
    */

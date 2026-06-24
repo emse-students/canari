@@ -75,7 +75,7 @@ async function fetchDevicesWithRetry(
     }
     if (attempt < attempts) {
       log(
-        `[RETRY] Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s...`
+        `[RETRY] Appareils introuvables pour ${userId} (tentative ${attempt}/${attempts}), nouvelle tentative dans ${delayMs / 1000}s…`
       );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -138,7 +138,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         if (bulk.welcome) {
           for (const did of bulk.addedDeviceIds) {
             try {
-              log(`[GROUP] Envoi Welcome a ${userId}:${did}...`);
+              log(`[GROUP] Envoi Welcome a ${userId}:${did}…`);
               await mlsService.sendWelcome(bulk.welcome, userId, groupId, did, bulk.ratchetTree);
               log(`[GROUP] Welcome envoye a ${did}`);
             } catch (e) {
@@ -226,7 +226,7 @@ async function processBulkAddition(
   const targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
   if (targetUsers.length === 0) return;
 
-  log(`Invitation de ${targetUsers.length} membres: ${targetUsers.join(', ')}...`);
+  log(`Invitation de ${targetUsers.length} membres: ${targetUsers.join(', ')}…`);
 
   try {
     await mlsService.registerMember(conversation.id, userId);
@@ -287,7 +287,7 @@ async function processBulkAddition(
           const tUser = userMap.get(did);
           if (!tUser) continue;
           try {
-            log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.id}...`);
+            log(`[SYNC] Envoi Welcome a ${tUser}:${did} pour groupe ${conversation.id}…`);
             await mlsService.sendWelcome(
               bulk.welcome,
               tUser,
@@ -542,7 +542,7 @@ export async function startNewConversation(
       }
 
       // MLS state missing locally - recover via successor / welcome flow.
-      log(`[1v1] État MLS absent pour ${key} - déclenchement de la récupération...`);
+      log(`[1v1] État MLS absent pour ${key} - déclenchement de la récupération…`);
       if (deadKey && conversations.has(deadKey) && !conversations.has(key)) {
         await ensureDirectConvo(deadKey, false);
       } else {
@@ -574,7 +574,7 @@ export async function startNewConversation(
 
   // IMPORTANT: Check if contact is available BEFORE creating the group
   // This prevents orphaned groups on other devices if the contact isn't online
-  log(`Vérification de la disponibilité de ${contact}...`);
+  log(`Vérification de la disponibilité de ${contact}…`);
   const contactDevices = await fetchDevicesWithRetry(mlsService, contact, log);
   if (contactDevices.length === 0) {
     log(

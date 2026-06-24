@@ -58,7 +58,7 @@ export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<v
  * so future logins require biometric authentication.
  */
 export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
-  appendLog('[BIOMETRIE] Inscription biométrique en cours...');
+  appendLog('[BIOMETRIE] Inscription biométrique en cours…');
   try {
     await BiometricService.enableBiometric(ctx.getPin());
     // PIN is now protected by the hardware keystore - wipe the session cache

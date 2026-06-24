@@ -45,7 +45,7 @@ Interface glisser-déposer (ou liste dynamique) pour construire des formulaires.
 
 #### `api.ts`
 
-Client HTTP dédié aux formulaires (`http://.../api/forms`).
+Client HTTP dédié aux formulaires (`http://…/api/forms`).
 
 - `createForm`, `getForms`, `submitForm`, `checkSubmission`, `exportSubmissions`.
 
@@ -209,7 +209,7 @@ import {
 
   let isLoggedIn = $state(false);
   let userId = $state("");
-  // ... autres états
+  // … autres états
 </script>
 
 {#if !isLoggedIn}
@@ -235,7 +235,7 @@ import {
         {conversations}
         {selectedContact}
         onSelectConversation={selectConversation}
-        ...
+        …
       />
 
       <ChatArea
@@ -243,7 +243,7 @@ import {
         {messageText}
         onMessageChange={(v) => (messageText = v)}
         onSend={handleSendChat}
-        ...
+        …
       />
     </main>
   </div>

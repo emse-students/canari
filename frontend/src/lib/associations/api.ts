@@ -212,7 +212,7 @@ export async function listLinkableValidatedCalendarEvents(
   return listAssociationCalendarEvents(associationId, { from, to });
 }
 
-/** Media API base for resolving `/api/media/...` paths (Tauri needs an absolute URL). */
+/** Media API base for resolving `/api/media/…` paths (Tauri needs an absolute URL). */
 export function mediaPublicBaseUrl(): string {
   const fromEnv =
     typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_MEDIA_URL?.trim();
@@ -221,7 +221,7 @@ export function mediaPublicBaseUrl(): string {
   return 'http://localhost:3011';
 }
 
-/** Resolve association logo URL for `<img src>` (handles relative `/api/...` paths). */
+/** Resolve association logo URL for `<img src>` (handles relative `/api/…` paths). */
 export function associationLogoSrc(logoUrl: string | null | undefined): string | null {
   if (!logoUrl?.trim()) return null;
   const u = logoUrl.trim();

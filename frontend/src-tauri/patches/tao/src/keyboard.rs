@@ -1147,10 +1147,10 @@ pub enum Key<'a> {
   /// Spellcheck the current document or selection. (`APPCOMMAND_SPELL_CHECK`)
   SpellCheck,
   /// The `11` key found on media numpads that
-  /// have buttons from `1` ... `12`.
+  /// have buttons from `1` … `12`.
   Key11,
   /// The `12` key found on media numpads that
-  /// have buttons from `1` ... `12`.
+  /// have buttons from `1` … `12`.
   Key12,
   /// Adjust audio balance leftward. (`VK_AUDIO_BALANCE_LEFT`)
   AudioBalanceLeft,
@@ -1250,7 +1250,7 @@ pub enum Key<'a> {
   LastNumberRedial,
   /// The Notification key. (`KEYCODE_NOTIFICATION`)
   Notification,
-  /// Toggle between manner mode state: silent, vibrate, ring, ... (`KEYCODE_MANNER_MODE`)
+  /// Toggle between manner mode state: silent, vibrate, ring, … (`KEYCODE_MANNER_MODE`)
   MannerMode,
   VoiceDial,
   /// Switch to viewing TV. (`KEYCODE_TV`)

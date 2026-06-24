@@ -71,7 +71,7 @@ export function scheduleReconnectImpl(ctx: SessionContext, cb: ChatSessionCallba
     ctx.RECONNECT_DELAYS[Math.min(ctx.getReconnectAttempts(), ctx.RECONNECT_DELAYS.length - 1)];
   ctx.setReconnectAttempts(ctx.getReconnectAttempts() + 1);
   cb.log(
-    `Connexion perdue. Nouvelle tentative dans ${delay / 1000}s... (tentative ${ctx.getReconnectAttempts()}/${ctx.MAX_RECONNECT_ATTEMPTS})`
+    `Connexion perdue. Nouvelle tentative dans ${delay / 1000}s… (tentative ${ctx.getReconnectAttempts()}/${ctx.MAX_RECONNECT_ATTEMPTS})`
   );
   ctx.timers.reconnect = setTimeout(() => attemptReconnectImpl(ctx, cb), delay);
 }
@@ -92,7 +92,7 @@ export async function attemptReconnectImpl(
   }
   ctx.setIsReconnecting(true);
   try {
-    cb.log('Reconnexion en cours...');
+    cb.log('Reconnexion en cours…');
     const mlsService = ctx.ensureMls();
     const connectionDeps = {
       mlsService,
@@ -172,7 +172,7 @@ export async function resumeConnectionImpl(
   cb: ChatSessionCallbacks
 ): Promise<void> {
   if (!ctx.isLoggedIn()) return;
-  appendLog('[LIFECYCLE] App au premier plan - reconnexion...');
+  appendLog('[LIFECYCLE] App au premier plan - reconnexion…');
   await attemptReconnectImpl(ctx, cb);
 }
 
@@ -192,7 +192,7 @@ export function startConnectionWatchdogImpl(ctx: SessionContext, cb: ChatSession
     }
     if (ctx.isWsConnected()) ctx.setIsWsConnected(false);
     if (ctx.timers.reconnect !== null || ctx.isReconnecting()) return;
-    cb.log('[WS] Surveillance: socket inactif, reconnexion...');
+    cb.log('[WS] Surveillance: socket inactif, reconnexion…');
     scheduleReconnectImpl(ctx, cb);
   }, CONNECTION_WATCHDOG_MS);
 }

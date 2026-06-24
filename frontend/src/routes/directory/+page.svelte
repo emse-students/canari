@@ -58,7 +58,7 @@
   }
 
   function displayName(user: DirectoryUserRow): string {
-    return user.displayName?.trim() || getUserDisplayNameSync(user.id, user.id.slice(0, 8) + '...');
+    return user.displayName?.trim() || getUserDisplayNameSync(user.id, user.id.slice(0, 8) + '…');
   }
 </script>
 
@@ -113,7 +113,7 @@
           id="dir-formation"
           type="text"
           bind:value={formationFilter}
-          placeholder="ICM, GC..."
+          placeholder="ICM, GC…"
           class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2.5 text-sm"
         />
       </div>

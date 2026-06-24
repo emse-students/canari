@@ -9,7 +9,7 @@
   interface Props {
     /** Association display name, used for initials fallback. */
     name: string;
-    /** Logo URL (relative /api/... path or absolute). Null/undefined shows initials only. */
+    /** Logo URL (relative /api/… path or absolute). Null/undefined shows initials only. */
     logoUrl?: string | null;
     /** Avatar size preset. */
     size?: 'sm' | 'md' | 'lg';

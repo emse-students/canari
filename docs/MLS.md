@@ -181,7 +181,7 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
 6. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` → POST `/api/mls/welcome`
 7. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)` → POST `/api/mls/groups/:id/members`
 8. Peer: Welcome arrives via WS or pending queue → `processWelcome(bytes, ratchetTree)` → group joined in WASM
-9. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(..., 'welcome_received')`
+9. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(…, 'welcome_received')`
 10. Peer: `saveState(pin)` → persisted to IndexedDB
 
 ### 5.3 Sending a Message
@@ -211,7 +211,7 @@ All routes require `X-User-Id` header (injected by Nginx auth_request) unless no
    - Acquire add-lock
    - `addMembersBulk(groupId, [newDeviceKP])` → commit + welcome
    - `sendCommit()` + `sendWelcome()`
-   - `updateInvitationStatus(..., 'welcome_sent')`
+   - `updateInvitationStatus(…, 'welcome_sent')`
 5. New device receives Welcome → joins group → saves state
 
 ### 5.6 Epoch Recovery (diverged state)

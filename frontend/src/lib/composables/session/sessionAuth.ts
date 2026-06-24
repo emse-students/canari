@@ -247,7 +247,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
   try {
     const mlsService = ctx.ensureMls();
-    cb.log('Verification du PIN...');
+    cb.log('Verification du PIN…');
 
     // Start MLS state load immediately - pure I/O, doesn't need the token.
     const { loadMlsState } = await import('$lib/utils/hex');
@@ -294,7 +294,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       );
     }
 
-    cb.log('Initialisation MLS...');
+    cb.log('Initialisation MLS…');
     // Resolve the device id and verify the PIN BEFORE init(). init() decrypts the
     // encrypted MLS state, and a WRONG PIN makes that decryption fail - which would
     // trigger a destructive fresh-start (generate a new id + deleteDevice → revocation).
@@ -640,7 +640,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if ('onWelcomeProcessed' in mlsService) {
       (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
         if (groupId) {
-          cb.log(`[SYNC] Welcome traité pour ${groupId}, rafraîchissement...`);
+          cb.log(`[SYNC] Welcome traité pour ${groupId}, rafraîchissement…`);
           if (!cb.conversations.has(groupId)) {
             cb.conversations.set(groupId, {
               id: groupId,
@@ -661,7 +661,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             cb.log(`[WARN] Erreur refresh conv ${groupId}: ${e}`)
           );
         } else {
-          cb.log('[SYNC] Welcome traité, rafraîchissement des conversations...');
+          cb.log('[SYNC] Welcome traité, rafraîchissement des conversations…');
           cb.loadAndRestoreConversations().catch((e) =>
             cb.log(`[WARN] Erreur refresh convs: ${e}`)
           );
@@ -822,7 +822,7 @@ export async function nativeStorageLoginImpl(
     const { invoke } = await import('@tauri-apps/api/core');
     const nativeCtx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
     if (!nativeCtx?.pin || !nativeCtx.userId || nativeCtx.userId !== ctx.getUserId()) return false;
-    appendLog('[PIN] PIN restauré depuis stockage natif - login auto...');
+    appendLog('[PIN] PIN restauré depuis stockage natif - login auto…');
     ctx.setPin(nativeCtx.pin);
     await loginImpl(ctx, cb);
     return ctx.isLoggedIn();
@@ -840,7 +840,7 @@ export async function biometricLoginImpl(
   cb: ChatSessionCallbacks
 ): Promise<void> {
   ctx.setLoginError('');
-  cb.log('[BIOMETRIE] Tentative de connexion biométrique...');
+  cb.log('[BIOMETRIE] Tentative de connexion biométrique…');
   try {
     const savedUser = currentUserId();
     if (!savedUser) {
@@ -848,7 +848,7 @@ export async function biometricLoginImpl(
       cb.log('[BIOMETRIE] Echec - aucun utilisateur local');
       return;
     }
-    cb.log(`[BIOMETRIE] Authentification pour userId=${savedUser.slice(0, 8)}...`);
+    cb.log(`[BIOMETRIE] Authentification pour userId=${savedUser.slice(0, 8)}…`);
     const retrieved = await BiometricService.authenticateAndGetSecret();
     if (!retrieved) {
       ctx.setLoginError("L'authentification biometrique a echoue. Entrez votre PIN manuellement.");
@@ -959,7 +959,7 @@ export async function recoverPinImpl(
  * deregisters the device push token, and redirects to /login.
  */
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
-  cb.log(`[LOGOUT] Déconnexion de userId=${ctx.getUserId()?.slice(0, 8) ?? 'inconnu'}...`);
+  cb.log(`[LOGOUT] Déconnexion de userId=${ctx.getUserId()?.slice(0, 8) ?? 'inconnu'}…`);
   unregisterOutbox();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();

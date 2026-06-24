@@ -53,7 +53,7 @@ fi
 
 # Recuperation de la derniere archive depuis mitv si demande.
 if [ "$FROM_MITV" = "yes" ]; then
-  log "Recuperation de la derniere archive depuis ${BACKUP_SSH_HOST}..."
+  log "Recuperation de la derniere archive depuis ${BACKUP_SSH_HOST}…"
   LATEST="$(ssh -o BatchMode=yes "$BACKUP_SSH_HOST" \
     "ls -1t '$BACKUP_SSH_PATH'/canari-backup-*.tar.gz 2>/dev/null | head -1")"
   [ -n "$LATEST" ] || fail "aucune archive sur mitv"
@@ -71,26 +71,26 @@ fi
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/canari-restore.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
-log "Extraction de l archive..."
+log "Extraction de l archive…"
 tar xzf "$ARCHIVE" -C "$STAGE"
 [ -f "$STAGE/MANIFEST.txt" ] && cat "$STAGE/MANIFEST.txt"
 
 # ── PostgreSQL Canari ─────────────────────────────────────────────────────────
 if [ -f "$STAGE/postgres_auth_db.sql.gz" ]; then
-  log "Restauration PostgreSQL auth_db..."
+  log "Restauration PostgreSQL auth_db…"
   gunzip -c "$STAGE/postgres_auth_db.sql.gz" \
     | "${DC[@]}" exec -T postgres psql -U "$POSTGRES_USER" -d auth_db -v ON_ERROR_STOP=0
 fi
 
 # ── MongoDB ───────────────────────────────────────────────────────────────────
 if [ -f "$STAGE/mongo_chat_db.archive.gz" ]; then
-  log "Restauration MongoDB chat_db..."
+  log "Restauration MongoDB chat_db…"
   "${DC[@]}" exec -T mongo mongorestore --gzip --archive --drop < "$STAGE/mongo_chat_db.archive.gz"
 fi
 
 # ── MinIO (volume objet) ──────────────────────────────────────────────────────
 if [ -f "$STAGE/minio_data.tar.gz" ]; then
-  log "Restauration du volume MinIO (arret temporaire de minio)..."
+  log "Restauration du volume MinIO (arret temporaire de minio)…"
   "${DC[@]}" stop minio media-service
   docker run --rm \
     -v infrastructure_minio_data:/data \
@@ -102,7 +102,7 @@ fi
 
 # ── Metadonnees media-service ─────────────────────────────────────────────────
 if [ -f "$STAGE/media_meta.tar.gz" ]; then
-  log "Restauration du volume media_meta..."
+  log "Restauration du volume media_meta…"
   "${DC[@]}" stop media-service
   docker run --rm \
     -v infrastructure_media_meta:/data \
@@ -115,7 +115,7 @@ fi
 # ── Authentik ─────────────────────────────────────────────────────────────────
 if [ -f "$STAGE/authentik_db.sql.gz" ]; then
   if docker inspect "$MICONNECT_PG_CONTAINER" >/dev/null 2>&1; then
-    log "Restauration PostgreSQL Authentik..."
+    log "Restauration PostgreSQL Authentik…"
     gunzip -c "$STAGE/authentik_db.sql.gz" \
       | docker exec -i "$MICONNECT_PG_CONTAINER" sh -c \
         'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0'

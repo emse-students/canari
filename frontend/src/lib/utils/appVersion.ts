@@ -165,7 +165,7 @@ export function releaseTag(version: string): string {
 
 /**
  * Direct APK download URL for a release (`/releases/download/vX.Y.Z/app-universal-release.apk`).
- * Falls back to `/releases/latest/download/...` when version is unknown.
+ * Falls back to `/releases/latest/download/…` when version is unknown.
  */
 export function getReleaseApkDownloadUrl(version: string | null): string {
   const base = `https://github.com/${CANARI_RELEASES_REPO}/releases`;

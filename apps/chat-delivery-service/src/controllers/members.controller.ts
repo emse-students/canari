@@ -238,7 +238,7 @@ export class MembersController {
       `[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`,
     );
 
-    // Upsert atomique : INSERT ... ON CONFLICT DO UPDATE évite la race findOne+save.
+    // Upsert atomique : INSERT … ON CONFLICT DO UPDATE évite la race findOne+save.
     // Fenêtre alignée sur la rétention : un device encore récupérable (vu < 90 j) doit
     // recevoir un membership pending, même s'il dort depuis > 30 j.
     const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);

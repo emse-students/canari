@@ -454,9 +454,9 @@ async fn handle_signal(
                     Ok(sender) if track.is_video => {
                         // This peer subscribes to a video track published before it joined,
                         // so it missed the last keyframe: ask the publisher for a fresh IDR now
-                        // (otherwise it only gets undecodable delta frames = black video)...
+                        // (otherwise it only gets undecodable delta frames = black video)…
                         request_keyframe_burst(track.publisher_pc.clone(), track.media_ssrc);
-                        // ...and relay its future keyframe requests to the publisher on demand.
+                        // …and relay its future keyframe requests to the publisher on demand.
                         forward_pli_from_subscriber(
                             sender,
                             track.publisher_pc.clone(),
