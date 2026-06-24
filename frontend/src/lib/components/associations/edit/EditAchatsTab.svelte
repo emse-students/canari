@@ -10,6 +10,8 @@
   } from '$lib/associations/api';
   import { Gift, Users as UsersIcon } from '@lucide/svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     asso: Association;
@@ -50,7 +52,7 @@
       products = prods;
       purchases = rows;
     } catch (e) {
-      purchasesError = e instanceof Error ? e.message : 'Erreur';
+      purchasesError = e instanceof Error ? e.message : 'Error';
     } finally {
       purchasesLoading = false;
     }
@@ -63,16 +65,17 @@
     return purchase.userId.slice(0, 8) + '…';
   }
 
+  /** Maps a payment method identifier to its display label. */
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
-    if (method === 'cash') return 'Espèces / manuel';
-    if (method === 'stripe') return 'Stripe';
+    if (method === 'cash') return m.asso_achats_payment_cash();
+    if (method === 'stripe') return m.asso_achats_payment_stripe();
     return method;
   }
 
   async function handleGrantProduct() {
     if (!grantUserId.trim() || !grantProductId) return;
     if (grantNeedsAmount && grantAmountEuros === '') {
-      purchasesError = 'Indiquez le montant payé pour ce produit.';
+      purchasesError = m.asso_achats_grant_amount_error();
       return;
     }
     grantingProduct = true;
@@ -89,7 +92,7 @@
       grantAmountEuros = '';
       await loadPurchases();
     } catch (e) {
-      purchasesError = e instanceof Error ? e.message : 'Erreur';
+      purchasesError = e instanceof Error ? e.message : 'Error';
     } finally {
       grantingProduct = false;
     }
@@ -101,23 +104,22 @@
     <div>
       <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
         <UsersIcon size={20} />
-        Achats et acheteurs
+        {m.asso_achats_title()}
       </h2>
       <p class="text-sm text-text-muted mt-1">
-        Historique des paiements boutique et formulaires payants. Attribuez un produit manuellement
-        (espèces, paiement antérieur à Canari).
+        {m.asso_achats_subtitle()}
       </p>
     </div>
     <div class="w-full sm:w-64 space-y-1">
       <label for="purchase-filter" class="text-xs font-semibold text-text-muted"
-        >Filtrer par produit</label
+        >{m.asso_achats_filter_label()}</label
       >
       <select
         id="purchase-filter"
         bind:value={purchaseFilterProductId}
         class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
       >
-        <option value="">Tous les achats</option>
+        <option value="">{m.asso_achats_filter_all()}</option>
         {#each products as product (product.id)}
           <option value={product.id}>{product.name}</option>
         {/each}
@@ -134,24 +136,24 @@
   >
     <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
       <Gift size={16} />
-      Attribuer un produit
+      {m.asso_achats_grant_title()}
     </h3>
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <div class="sm:col-span-2">
         <label for="grant-user" class="text-xs font-semibold text-text-muted block mb-1"
-          >Utilisateur</label
+          >{m.asso_achats_grant_user_label()}</label
         >
         <UserAutocomplete
           value={grantUserId}
           onValueChange={(v) => (grantUserId = v)}
-          placeholder="Rechercher un utilisateur…"
+          placeholder={m.asso_members_user_placeholder()}
           inputId="grant-user"
           onSubmit={handleGrantProduct}
         />
       </div>
       <div>
         <label for="grant-product" class="text-xs font-semibold text-text-muted block mb-1"
-          >Produit</label
+          >{m.asso_achats_grant_product_label()}</label
         >
         <select
           id="grant-product"
@@ -159,7 +161,7 @@
           class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
           required
         >
-          <option value="">Choisir…</option>
+          <option value="">{m.asso_achats_grant_product_placeholder()}</option>
           {#each products as product (product.id)}
             <option value={product.id}>{product.name}</option>
           {/each}
@@ -168,7 +170,7 @@
       {#if grantNeedsAmount}
         <div>
           <label for="grant-amount" class="text-xs font-semibold text-text-muted block mb-1"
-            >Montant payé (€)</label
+            >{m.asso_achats_grant_amount_label()}</label
           >
           <input
             id="grant-amount"
@@ -185,13 +187,11 @@
     </div>
     <p class="text-xs text-text-muted">
       {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
-        Le tag <span class="font-mono">{grantSelectedProduct.grantedTagName}</span> sera accordé
-        automatiquement.
+        {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
       {:else if grantSelectedProduct?.type === 'balance_topup'}
-        Les recharges Cercle ne sont pas créditées automatiquement - utilisez l'interface Cercle si
-        nécessaire.
+        {m.asso_achats_grant_topup_hint()}
       {:else}
-        L'achat apparaîtra dans l'historique comme un paiement manuel.
+        {m.asso_achats_grant_other_hint()}
       {/if}
     </p>
     <button
@@ -199,7 +199,7 @@
       disabled={grantingProduct || !grantUserId.trim() || !grantProductId}
       class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
     >
-      {grantingProduct ? 'Attribution…' : 'Attribuer comme acheté'}
+      {grantingProduct ? m.asso_achats_grant_submitting() : m.asso_achats_grant_button()}
     </button>
   </form>
 
@@ -214,7 +214,7 @@
       <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
     </div>
   {:else if filteredPurchases.length === 0}
-    <p class="text-sm text-text-muted text-center py-8">Aucun achat enregistré.</p>
+    <p class="text-sm text-text-muted text-center py-8">{m.asso_achats_no_purchases()}</p>
   {:else}
     <div class="overflow-x-auto rounded-xl border border-cn-border/70">
       <table class="w-full text-sm">
@@ -222,19 +222,19 @@
           class="bg-cn-bg/60 text-left text-xs font-bold uppercase tracking-wide text-text-muted"
         >
           <tr>
-            <th class="px-4 py-3">Date</th>
-            <th class="px-4 py-3">Acheteur</th>
-            <th class="px-4 py-3">Article</th>
-            <th class="px-4 py-3">Type</th>
-            <th class="px-4 py-3">Paiement</th>
-            <th class="px-4 py-3 text-right">Montant</th>
+            <th class="px-4 py-3">{m.asso_achats_col_date()}</th>
+            <th class="px-4 py-3">{m.asso_achats_col_buyer()}</th>
+            <th class="px-4 py-3">{m.asso_achats_col_item()}</th>
+            <th class="px-4 py-3">{m.asso_achats_col_type()}</th>
+            <th class="px-4 py-3">{m.asso_achats_col_payment()}</th>
+            <th class="px-4 py-3 text-right">{m.asso_achats_col_amount()}</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-cn-border/50">
           {#each filteredPurchases as purchase (purchase.id)}
             <tr class="bg-cn-bg/20 hover:bg-cn-bg/40">
               <td class="px-4 py-3 text-text-muted whitespace-nowrap">
-                {new Date(purchase.paidAt).toLocaleString('fr-FR')}
+                {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>
               <td class="px-4 py-3 font-medium text-text-main">{purchaseBuyerName(purchase)}</td>
               <td class="px-4 py-3 text-text-main">{purchase.productName}</td>
@@ -244,7 +244,7 @@
                     ? 'bg-emerald-100 text-emerald-700'
                     : 'bg-sky-100 text-sky-700'}"
                 >
-                  {purchase.source === 'product' ? 'Boutique' : 'Formulaire'}
+                  {purchase.source === 'product' ? m.asso_achats_source_product() : m.asso_achats_source_form()}
                 </span>
               </td>
               <td class="px-4 py-3 text-text-muted">{paymentMethodLabel(purchase.paymentMethod)}</td>
@@ -257,7 +257,7 @@
       </table>
     </div>
     <p class="text-xs text-text-muted text-right">
-      {filteredPurchases.length} achat{filteredPurchases.length > 1 ? 's' : ''}
+      {m.asso_achats_count_label({ count: filteredPurchases.length })}
     </p>
   {/if}
 </div>

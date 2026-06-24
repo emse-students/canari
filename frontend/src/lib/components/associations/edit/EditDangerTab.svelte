@@ -2,6 +2,7 @@
   import { updateAssociation, deleteAssociation, type Association } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Building2, Trash2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     asso: Association;
@@ -15,9 +16,6 @@
 
   let { asso, onUpdated, onDeleted, kind = 'association' }: Props = $props();
 
-  const noun = $derived(kind === 'list' ? 'la liste' : "l'association");
-  const Noun = $derived(kind === 'list' ? 'La liste' : "L'association");
-
   let archiving = $state(false);
   let error = $state('');
 
@@ -26,8 +24,8 @@
     if (
       next &&
       !(await showConfirm(
-        `Archiver ${noun} ? Elle passera dans " Anciennes " et disparaîtra des " Mes associations " de ses membres.`,
-        { confirmLabel: 'Archiver' }
+        kind === 'list' ? m.asso_danger_archive_confirm_list() : m.asso_danger_archive_confirm_asso(),
+        { confirmLabel: m.asso_danger_archive_confirm_button() }
       ))
     )
       return;
@@ -36,7 +34,7 @@
     try {
       onUpdated(await updateAssociation(asso.id, { archived: next }));
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur';
+      error = err instanceof Error ? err.message : 'Error';
     } finally {
       archiving = false;
     }
@@ -44,17 +42,17 @@
 
   async function handleDelete() {
     if (
-      !(await showConfirm(`Supprimer ${noun} ? Cette action est irréversible.`, {
-        danger: true,
-        confirmLabel: 'Supprimer',
-      }))
+      !(await showConfirm(
+        kind === 'list' ? m.asso_danger_delete_confirm_list() : m.asso_danger_delete_confirm_asso(),
+        { danger: true, confirmLabel: m.common_delete_button() }
+      ))
     )
       return;
     try {
       await deleteAssociation(asso.id);
       onDeleted();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur lors de la suppression';
+      error = err instanceof Error ? err.message : 'Error deleting';
     }
   }
 </script>
@@ -67,12 +65,14 @@
   <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm">
     <h2 class="text-base font-bold text-text-main flex items-center gap-2">
       <Building2 size={18} />
-      {asso.archived ? `${Noun} archivée` : `Archiver ${noun}`}
+      {asso.archived
+        ? (kind === 'list' ? m.asso_danger_archive_title_archived_list() : m.asso_danger_archive_title_archived_asso())
+        : (kind === 'list' ? m.asso_danger_archive_title_list() : m.asso_danger_archive_title_asso())}
     </h2>
     <p class="text-sm text-text-muted">
       {asso.archived
-        ? `${Noun} est archivée : elle apparaît sous " Anciennes " et n'est plus listée dans les " Mes associations " de ses membres. Vous pouvez la réactiver.`
-        : `Déplace ${noun} vers " Anciennes " sans rien supprimer. Réversible à tout moment.`}
+        ? (kind === 'list' ? m.asso_danger_archived_desc_list() : m.asso_danger_archived_desc_asso())
+        : (kind === 'list' ? m.asso_danger_unarchived_desc_list() : m.asso_danger_unarchived_desc_asso())}
     </p>
     <button
       type="button"
@@ -80,25 +80,28 @@
       disabled={archiving}
       class="rounded-xl border border-cn-border px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
     >
-      {archiving ? '…' : asso.archived ? `Réactiver ${noun}` : `Archiver ${noun}`}
+      {archiving
+        ? '…'
+        : asso.archived
+          ? (kind === 'list' ? m.asso_danger_reactivate_list() : m.asso_danger_reactivate_asso())
+          : (kind === 'list' ? m.asso_danger_archive_list() : m.asso_danger_archive_asso())}
     </button>
   </div>
 
   <div class="rounded-2xl border border-red-200 bg-red-50/60 p-6 space-y-3">
     <h2 class="text-base font-bold text-red-700 flex items-center gap-2">
       <Trash2 size={18} />
-      Zone de danger
+      {m.asso_danger_title()}
     </h2>
     <p class="text-sm text-red-800/90">
-      Supprime définitivement {noun} et ses liens (membres, événements d'agenda). Les messages du fil
-      peuvent rester visibles selon la politique serveur.
+      {kind === 'list' ? m.asso_danger_delete_desc_list() : m.asso_danger_delete_desc_asso()}
     </p>
     <button
       type="button"
       onclick={handleDelete}
       class="rounded-xl bg-white border border-red-300 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100"
     >
-      Supprimer {noun}
+      {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
     </button>
   </div>
 </div>

@@ -16,6 +16,8 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import AssociationTagAutocomplete from '$lib/components/shared/AssociationTagAutocomplete.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     asso: Association;
@@ -67,7 +69,7 @@
       products = prods;
       webhookFailures = failures;
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Erreur';
+      productsError = e instanceof Error ? e.message : 'Error';
     } finally {
       productsLoading = false;
     }
@@ -115,7 +117,7 @@
       resetProductForm();
       await loadProducts();
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Erreur';
+      productsError = e instanceof Error ? e.message : 'Error';
     } finally {
       savingProduct = false;
     }
@@ -128,7 +130,7 @@
         p.id === product.id ? { ...p, isActive: !product.isActive } : p
       );
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Erreur';
+      productsError = e instanceof Error ? e.message : 'Error';
     }
   }
 
@@ -151,7 +153,7 @@
       });
       products = products.map((p) => (p.id === product.id ? updated : p));
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Erreur';
+      productsError = e instanceof Error ? e.message : 'Error';
     } finally {
       savingProductSettings = null;
     }
@@ -159,9 +161,9 @@
 
   async function handleDeleteProduct(product: AssociationProduct) {
     if (
-      !(await showConfirm(`Supprimer le produit " ${product.name} " ? Cette action est irréversible.`, {
+      !(await showConfirm(m.asso_boutique_delete_product_confirm({ name: product.name }), {
         danger: true,
-        confirmLabel: 'Supprimer',
+        confirmLabel: m.common_delete_button(),
       }))
     )
       return;
@@ -169,7 +171,7 @@
       await deleteProduct(asso.id, product.id);
       products = products.filter((p) => p.id !== product.id);
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Erreur';
+      productsError = e instanceof Error ? e.message : 'Error';
     }
   }
 
@@ -179,7 +181,7 @@
       await retryWebhookDelivery(asso.id, delivery.id);
       await loadProducts();
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Erreur';
+      productsError = e instanceof Error ? e.message : 'Error';
     } finally {
       retryingDelivery = null;
     }
@@ -191,10 +193,10 @@
     <div>
       <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
         <ShoppingBag size={20} />
-        Boutique
+        {m.asso_boutique_title()}
       </h2>
       <p class="text-sm text-text-muted mt-1">
-        Produits disponibles à l'achat sur la page /shop et la page publique de l'association.
+        {m.asso_boutique_subtitle()}
       </p>
     </div>
     <button
@@ -203,7 +205,7 @@
       class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
     >
       <Plus size={16} />
-      Nouveau produit
+      {m.asso_boutique_new_product_button()}
     </button>
   </div>
 
@@ -216,15 +218,13 @@
   {#if !stripePaymentsReady}
     <div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
       {#if stripePending}
-        Stripe Connect en cours de validation. Les produits seront créés inactifs jusqu'à
-        l'activation du compte (généralement sous quelques jours).
+        {m.asso_boutique_stripe_pending()}
       {:else}
-        Stripe Connect non configuré. Les produits seront créés inactifs jusqu'à la complétion de
-        l'onboarding.
+        {m.asso_boutique_stripe_not_configured()}
         {#if canManageStripeConnect}
-          <span class="ml-1">Voir la section Stripe Connect ci-dessus.</span>
+          <span class="ml-1">{m.asso_boutique_stripe_see_above()}</span>
         {:else}
-          <span class="ml-1">Demandez à un responsable disposant de l'accès Stripe Connect.</span>
+          <span class="ml-1">{m.asso_boutique_stripe_ask_manager()}</span>
         {/if}
       {/if}
     </div>
@@ -239,11 +239,13 @@
         void handleCreateProduct();
       }}
     >
-      <h3 class="font-bold text-sm text-text-main">Nouveau produit</h3>
+      <h3 class="font-bold text-sm text-text-main">{m.asso_boutique_form_title()}</h3>
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
-          <label for="new-product-name" class="text-xs font-semibold text-text-muted">Nom *</label>
+          <label for="new-product-name" class="text-xs font-semibold text-text-muted"
+            >{m.asso_boutique_name_label()}</label
+          >
           <input
             id="new-product-name"
             type="text"
@@ -254,15 +256,17 @@
           />
         </div>
         <div class="space-y-1">
-          <label for="new-product-type" class="text-xs font-semibold text-text-muted">Type *</label>
+          <label for="new-product-type" class="text-xs font-semibold text-text-muted"
+            >{m.asso_boutique_type_label()}</label
+          >
           <select
             id="new-product-type"
             bind:value={newProductType}
             class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
           >
-            <option value="membership">Cotisation (membership)</option>
-            <option value="balance_topup">Recharge Cercle</option>
-            <option value="other">Autre</option>
+            <option value="membership">{m.asso_boutique_type_membership()}</option>
+            <option value="balance_topup">{m.asso_boutique_type_topup()}</option>
+            <option value="other">{m.asso_boutique_type_other()}</option>
           </select>
         </div>
       </div>
@@ -272,15 +276,15 @@
           id="new-product-description"
           bind:value={newProductDescription}
           rows={2}
-          placeholder="Description affichée dans la boutique"
-          label="Description"
+          placeholder={m.asso_boutique_description_placeholder()}
+          label={m.asso_boutique_description_label()}
         />
       </div>
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
           <label for="new-product-amount" class="text-xs font-semibold text-text-muted"
-            >Prix fixe (€) - vide = libre uniquement</label
+            >{m.asso_boutique_fixed_price_label()}</label
           >
           <input
             id="new-product-amount"
@@ -295,7 +299,7 @@
         <div class="space-y-1 flex flex-col justify-end">
           <label class="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" bind:checked={newProductAllowCustom} class="rounded" />
-            Permettre un montant libre
+            {m.asso_boutique_allow_custom_label()}
           </label>
         </div>
       </div>
@@ -303,7 +307,9 @@
       {#if newProductAllowCustom}
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="space-y-1">
-            <label for="new-product-min" class="text-xs font-semibold text-text-muted">Min (€)</label>
+            <label for="new-product-min" class="text-xs font-semibold text-text-muted"
+              >{m.asso_boutique_min_label()}</label
+            >
             <input
               id="new-product-min"
               type="number"
@@ -315,7 +321,9 @@
             />
           </div>
           <div class="space-y-1">
-            <label for="new-product-max" class="text-xs font-semibold text-text-muted">Max (€)</label>
+            <label for="new-product-max" class="text-xs font-semibold text-text-muted"
+              >{m.asso_boutique_max_label()}</label
+            >
             <input
               id="new-product-max"
               type="number"
@@ -339,20 +347,20 @@
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="space-y-1">
             <label for="new-product-tag" class="text-xs font-semibold text-text-muted"
-              >Tag accordé à l'achat</label
+              >{m.asso_boutique_tag_label()}</label
             >
             <AssociationTagAutocomplete
               associationId={asso.id}
               value={newProductGrantedTag}
               onValueChange={(v) => (newProductGrantedTag = v)}
               inputId="new-product-tag"
-              placeholder="Rechercher ou créer un tag…"
+              placeholder={m.asso_boutique_tag_search_placeholder()}
               allowCreate={true}
             />
           </div>
           <div class="space-y-1">
             <label for="new-product-tag-expires" class="text-xs font-semibold text-text-muted"
-              >Expiration du tag</label
+              >{m.asso_boutique_tag_expiry_label()}</label
             >
             <input
               id="new-product-tag-expires"
@@ -368,7 +376,7 @@
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="space-y-1">
             <label for="new-product-webhook-url" class="text-xs font-semibold text-text-muted"
-              >URL webhook Cercle</label
+              >{m.asso_boutique_webhook_url_label()}</label
             >
             <input
               id="new-product-webhook-url"
@@ -380,13 +388,13 @@
           </div>
           <div class="space-y-1">
             <label for="new-product-webhook-secret" class="text-xs font-semibold text-text-muted"
-              >Secret HMAC</label
+              >{m.asso_boutique_webhook_secret_label()}</label
             >
             <input
               id="new-product-webhook-secret"
               type="password"
               bind:value={newProductWebhookSecret}
-              placeholder="Secret partagé avec Cercle"
+              placeholder={m.asso_boutique_webhook_secret_placeholder()}
               class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
             />
           </div>
@@ -394,16 +402,16 @@
       {/if}
 
       <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
-        <p class="text-xs font-bold text-text-main uppercase tracking-wide">Limites d'achat</p>
+        <p class="text-xs font-bold text-text-main uppercase tracking-wide">{m.asso_boutique_limits_title()}</p>
         <label class="flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" bind:checked={newProductAllowRepeat} class="rounded" />
-          Autoriser les achats multiples
+          {m.asso_boutique_allow_repeat_label()}
         </label>
         {#if newProductAllowRepeat}
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="space-y-1">
               <label for="new-product-max-user" class="text-xs font-semibold text-text-muted"
-                >Max par utilisateur (vide = illimité)</label
+                >{m.asso_boutique_max_per_user_label()}</label
               >
               <input
                 id="new-product-max-user"
@@ -411,13 +419,13 @@
                 min="1"
                 step="1"
                 bind:value={newProductMaxPerUser}
-                placeholder="Illimité"
+                placeholder={m.asso_boutique_unlimited_placeholder()}
                 class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
               />
             </div>
             <div class="space-y-1">
               <label for="new-product-max-total" class="text-xs font-semibold text-text-muted"
-                >Stock global (vide = illimité)</label
+                >{m.asso_boutique_max_total_label()}</label
               >
               <input
                 id="new-product-max-total"
@@ -425,15 +433,14 @@
                 min="1"
                 step="1"
                 bind:value={newProductMaxTotal}
-                placeholder="Illimité"
+                placeholder={m.asso_boutique_unlimited_placeholder()}
                 class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
               />
             </div>
           </div>
         {:else}
           <p class="text-xs text-text-muted">
-            Sans achats multiples, un utilisateur ne peut acheter qu'une fois (renouvellement possible
-            si le tag membership a expiré).
+            {m.asso_boutique_no_repeat_hint()}
           </p>
         {/if}
       </div>
@@ -444,12 +451,12 @@
           disabled={savingProduct || !newProductName.trim()}
           class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
         >
-          {savingProduct ? 'Création…' : 'Créer le produit'}
+          {savingProduct ? m.asso_boutique_creating() : m.asso_boutique_create_button()}
         </button>
         <button
           type="button"
           onclick={resetProductForm}
-          class="text-sm text-text-muted hover:text-text-main">Annuler</button
+          class="text-sm text-text-muted hover:text-text-main">{m.common_cancel_button()}</button
         >
       </div>
     </form>
@@ -461,7 +468,7 @@
       <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
     </div>
   {:else if products.length === 0}
-    <p class="text-sm text-text-muted text-center py-6">Aucun produit pour le moment.</p>
+    <p class="text-sm text-text-muted text-center py-6">{m.asso_boutique_no_products()}</p>
   {:else}
     <ul class="space-y-3">
       {#each products as product (product.id)}
@@ -475,20 +482,20 @@
                     ? 'bg-emerald-100 text-emerald-700'
                     : 'bg-cn-surface-alt text-text-muted'}"
                 >
-                  {product.isActive ? 'Actif' : 'Inactif'}
+                  {product.isActive ? m.asso_boutique_product_active() : m.asso_boutique_product_inactive()}
                 </span>
                 <span class="text-xs text-text-muted">{product.type}</span>
               </div>
               <p class="text-xs text-text-muted mt-0.5">
                 {product.amountCents != null
                   ? `${(product.amountCents / 100).toFixed(2)} €`
-                  : 'Montant libre'}
-                {product.grantedTagName ? ` · Tag: ${product.grantedTagName}` : ''}
+                  : m.asso_boutique_product_free()}
+                {product.grantedTagName ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}` : ''}
                 {#if product.allowRepeatPurchase}
-                  · Achats multiples
+                  · {m.asso_boutique_product_repeat_label()}
                 {/if}
                 {#if product.maxPurchasesTotal != null}
-                  · Stock max {product.maxPurchasesTotal}
+                  · {m.asso_boutique_product_stock_label({ count: product.maxPurchasesTotal })}
                 {/if}
               </p>
             </div>
@@ -498,7 +505,7 @@
                 onclick={() => toggleProductSettings(product)}
                 class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
               >
-                Limites
+                {m.asso_boutique_limits_button()}
                 <ChevronDown
                   size={12}
                   class="transition-transform {expandedProductSettingsId === product.id
@@ -511,12 +518,12 @@
                 onclick={() => handleToggleProduct(product)}
                 class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
               >
-                {product.isActive ? 'Désactiver' : 'Activer'}
+                {product.isActive ? m.asso_boutique_deactivate_button() : m.asso_boutique_activate_button()}
               </button>
               <button
                 type="button"
                 onclick={() => handleDeleteProduct(product)}
-                title="Supprimer"
+                title={m.common_delete_button()}
                 class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
               >
                 <Trash2 size={14} />
@@ -540,11 +547,11 @@
                     checked={product.allowRepeatPurchase}
                     class="rounded"
                   />
-                  Autoriser les achats multiples
+                  {m.asso_boutique_allow_repeat_label()}
                 </label>
                 <div class="space-y-1">
                   <label for="max-user-{product.id}" class="text-xs font-semibold text-text-muted"
-                    >Max par utilisateur</label
+                    >{m.asso_boutique_max_per_user_field_label()}</label
                   >
                   <input
                     id="max-user-{product.id}"
@@ -552,13 +559,13 @@
                     type="number"
                     min="1"
                     value={product.maxPurchasesPerUser ?? ''}
-                    placeholder="Illimité"
+                    placeholder={m.asso_boutique_unlimited_placeholder()}
                     class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
                 <div class="space-y-1">
                   <label for="max-total-{product.id}" class="text-xs font-semibold text-text-muted"
-                    >Stock global</label
+                    >{m.asso_boutique_max_total_field_label()}</label
                   >
                   <input
                     id="max-total-{product.id}"
@@ -566,7 +573,7 @@
                     type="number"
                     min="1"
                     value={product.maxPurchasesTotal ?? ''}
-                    placeholder="Illimité"
+                    placeholder={m.asso_boutique_unlimited_placeholder()}
                     class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
@@ -576,8 +583,8 @@
                   class="sm:col-span-2 text-xs rounded-lg bg-cn-yellow px-4 py-2 font-bold text-cn-dark disabled:opacity-50 w-fit"
                 >
                   {savingProductSettings === product.id
-                    ? 'Enregistrement…'
-                    : 'Enregistrer les limites'}
+                    ? m.asso_boutique_saving_limits_label()
+                    : m.asso_boutique_save_limits_button()}
                 </button>
               </form>
             </div>
@@ -592,7 +599,7 @@
     <div class="border-t border-cn-border pt-5 space-y-3">
       <h3 class="text-sm font-bold text-text-main flex items-center gap-2 text-amber-700">
         <AlertTriangle size={16} />
-        Livraisons Cercle échouées ({webhookFailures.length})
+        {m.asso_boutique_webhook_failures_title({ count: webhookFailures.length })}
       </h3>
       <ul class="space-y-2">
         {#each webhookFailures as delivery (delivery.id)}
@@ -602,9 +609,9 @@
                 {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(0, 20)}…
               </p>
               <p class="text-xs text-text-muted">
-                Tentatives: {delivery.attemptCount} ·
+                {m.asso_boutique_webhook_attempts({ count: delivery.attemptCount })} ·
                 {delivery.lastAttemptAt
-                  ? new Date(delivery.lastAttemptAt).toLocaleString('fr-FR')
+                  ? new Date(delivery.lastAttemptAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')
                   : '-'}
               </p>
               {#if delivery.lastError}
@@ -618,7 +625,7 @@
               class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
             >
               <RefreshCw size={13} class={retryingDelivery === delivery.id ? 'animate-spin' : ''} />
-              Réessayer
+              {m.asso_boutique_webhook_retry_button()}
             </button>
           </li>
         {/each}

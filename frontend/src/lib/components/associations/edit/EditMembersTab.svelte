@@ -16,6 +16,8 @@
   import { Download, GripVertical, Tag, UserPlus } from '@lucide/svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     asso: Association;
@@ -165,9 +167,9 @@
 <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
   <div class="flex items-start justify-between gap-3 flex-wrap">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight">Membres</h2>
+      <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_members_title()}</h2>
       <p class="text-sm text-text-muted mt-1">
-        Rôles affichés sur la page publique. Gérez les droits d'accès de chaque membre.
+        {m.asso_members_subtitle()}
       </p>
     </div>
     <button
@@ -177,7 +179,7 @@
       class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg transition-colors shrink-0 disabled:opacity-50"
     >
       <Download size={15} />
-      {exportingPdf ? 'Génération…' : 'Trombinoscope PDF'}
+      {exportingPdf ? m.common_generating_label() : m.asso_members_pdf_button()}
     </button>
   </div>
   <div class="space-y-2">
@@ -195,7 +197,7 @@
       >
         <button
           type="button"
-          aria-label="Déplacer ce membre"
+          aria-label={m.asso_members_drag_label()}
           class="mt-3.5 cursor-grab touch-none text-text-muted hover:text-text-main transition-colors shrink-0"
         >
           <GripVertical size={18} />
@@ -216,18 +218,17 @@
   <div class="border-t border-cn-border pt-5 space-y-3">
     <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
       <Tag size={16} />
-      Statuts cotisants actifs
+      {m.asso_members_tags_title()}
     </h3>
     <p class="text-xs text-text-muted">
-      Tags accordés via la boutique ou attribution manuelle. Les achats passent aussi par l'onglet
-      Achats.
+      {m.asso_members_tags_desc()}
     </p>
     {#if assoTagsLoading}
-      <p class="text-sm text-text-muted">Chargement…</p>
+      <p class="text-sm text-text-muted">{m.common_loading_label()}</p>
     {:else if assoTagsError}
       <p class="text-sm text-red-600">{assoTagsError}</p>
     {:else if assoTags.length === 0}
-      <p class="text-sm text-text-muted">Aucun statut actif pour le moment.</p>
+      <p class="text-sm text-text-muted">{m.asso_members_no_active_tags()}</p>
     {:else}
       <ul class="space-y-2">
         {#each assoTags as tag (tag.id)}
@@ -237,16 +238,16 @@
               <p class="text-xs text-text-muted mt-0.5">
                 {tagHolderName(tag)}
                 {#if tag.expiresAt}
-                  · expire le {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
+                  · {m.asso_members_tag_expires({ date: new Date(tag.expiresAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}
                 {:else}
-                  · sans expiration
+                  · {m.asso_members_tag_no_expiry()}
                 {/if}
               </p>
             </div>
             <span
               class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-2.5 py-0.5 text-xs font-bold"
             >
-              Actif
+              {m.asso_members_tag_active_badge()}
             </span>
           </li>
         {/each}
@@ -257,7 +258,7 @@
   <div class="border-t border-cn-border pt-5">
     <h3 class="text-sm font-bold text-text-main mb-3 flex items-center gap-2">
       <UserPlus size={17} />
-      Ajouter un membre
+      {m.asso_members_add_title()}
     </h3>
     <form
       class="flex flex-col lg:flex-row gap-3"
@@ -270,7 +271,7 @@
         <UserAutocomplete
           value={newMemberUserId}
           onValueChange={(v) => (newMemberUserId = v)}
-          placeholder="Rechercher un utilisateur…"
+          placeholder={m.asso_members_user_placeholder()}
           inputId="edit-add-member-autocomplete"
           onSubmit={handleAddMember}
         />
@@ -278,22 +279,22 @@
       <input
         type="text"
         bind:value={newMemberRole}
-        placeholder="Rôle affiché"
+        placeholder={m.asso_members_role_placeholder()}
         class="w-full lg:w-36 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
       />
       <select
         bind:value={newMemberPermissions}
         class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-full lg:w-auto"
       >
-        <option value={0}>Membre</option>
-        <option value={ASSOCIATION_ADMIN_PRESET}>Admin</option>
+        <option value={0}>{m.asso_members_role_member()}</option>
+        <option value={ASSOCIATION_ADMIN_PRESET}>{m.asso_members_role_admin()}</option>
       </select>
       <button
         type="submit"
         disabled={addingMember || !newMemberUserId.trim()}
         class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
       >
-        {addingMember ? '…' : 'Ajouter'}
+        {addingMember ? '…' : m.common_add_button()}
       </button>
     </form>
     {#if memberError}

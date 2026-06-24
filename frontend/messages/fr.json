@@ -1051,6 +1051,7 @@
   "asso_boutique_type_topup": "Recharge Cercle",
   "asso_boutique_type_other": "Autre",
   "asso_boutique_description_label": "Description",
+  "asso_boutique_description_placeholder": "Description affichee dans la boutique",
   "asso_boutique_fixed_price_label": "Prix fixe (€) - vide = libre uniquement",
   "asso_boutique_allow_custom_label": "Permettre un montant libre",
   "asso_boutique_min_label": "Min (€)",

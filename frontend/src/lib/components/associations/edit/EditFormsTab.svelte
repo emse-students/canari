@@ -9,6 +9,8 @@
   } from '$lib/forms/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { ClipboardList, AlertTriangle } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     asso: Association;
@@ -50,7 +52,7 @@
       );
       pendingCash = cashMap;
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Erreur';
+      formsError = e instanceof Error ? e.message : 'Error';
     } finally {
       formsLoading = false;
     }
@@ -64,16 +66,16 @@
         [formId]: pendingCash[formId].filter((s) => s.id !== subId),
       };
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Erreur';
+      formsError = e instanceof Error ? e.message : 'Error';
     }
   }
 
   async function cancelCash(formId: string, subId: string) {
     if (
-      !(await showConfirm('Annuler ce paiement ?', {
+      !(await showConfirm(m.asso_forms_cancel_cash_confirm(), {
         danger: true,
-        confirmLabel: 'Annuler le paiement',
-        cancelLabel: 'Non',
+        confirmLabel: m.asso_forms_cancel_cash_confirm_button(),
+        cancelLabel: m.asso_forms_cancel_cash_cancel(),
       }))
     )
       return;
@@ -84,7 +86,7 @@
         [formId]: pendingCash[formId].filter((s) => s.id !== subId),
       };
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Erreur';
+      formsError = e instanceof Error ? e.message : 'Error';
     }
   }
 </script>
@@ -93,10 +95,10 @@
   <div>
     <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
       <ClipboardList size={20} />
-      Formulaires
+      {m.asso_forms_title()}
     </h2>
     <p class="text-sm text-text-muted mt-1">
-      Formulaires liés à cette association. Validez les paiements en espèces en attente.
+      {m.asso_forms_subtitle()}
     </p>
   </div>
 
@@ -107,17 +109,15 @@
       <AlertTriangle size={15} class="shrink-0 mt-0.5" />
       <span>
         {#if canManageStripeConnect}
-          Certains formulaires sont payants mais <strong
-            >Stripe Connect n'est pas encore configuré</strong
-          >. Les paiements en ligne ne fonctionneront pas tant que vous n'aurez pas
-          <button
+          {m.asso_forms_stripe_missing_can_manage_prefix()}<strong
+            >{m.asso_forms_stripe_missing_strong()}</strong
+          >{m.asso_forms_stripe_missing_suffix()}<button
             type="button"
             class="underline font-semibold hover:no-underline"
-            onclick={onGoToPayments}>configuré Stripe dans l'onglet Paiements</button
+            onclick={onGoToPayments}>{m.asso_forms_stripe_configure_link()}</button
           >.
         {:else}
-          Certains formulaires sont payants mais <strong>Stripe Connect n'est pas configuré</strong>.
-          Demandez à un responsable disposant de l'accès <em>Gérer Stripe Connect</em> de l'activer.
+          {m.asso_forms_stripe_missing_no_manage()}
         {/if}
       </span>
     </div>
@@ -134,7 +134,7 @@
       <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
     </div>
   {:else if forms.length === 0}
-    <p class="text-sm text-text-muted text-center py-8">Aucun formulaire lié à cette association.</p>
+    <p class="text-sm text-text-muted text-center py-8">{m.asso_forms_no_forms()}</p>
   {:else}
     <ul class="space-y-4">
       {#each forms as form (form.id)}
@@ -146,15 +146,15 @@
                 <p class="text-xs text-text-muted mt-0.5 line-clamp-2">{form.description}</p>
               {/if}
               <p class="text-xs text-text-muted mt-1 flex items-center gap-1.5 flex-wrap">
-                {form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : 'Gratuit'}
-                {form.allowCashPayment ? ' · Espèces acceptées' : ''}
+                {form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : m.asso_forms_price_free()}
+                {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
                 {#if form.basePrice > 0 && !stripePaymentsReady}
                   <span
                     class="inline-flex items-center gap-1 text-amber-700 font-medium"
-                    title="Stripe Connect non configuré - les paiements en ligne sont inactifs"
+                    title="Stripe Connect non configure - paiements en ligne inactifs"
                   >
                     <AlertTriangle size={11} />
-                    Stripe non configuré
+                    {m.asso_forms_stripe_not_configured_badge()}
                   </span>
                 {/if}
               </p>
@@ -163,7 +163,7 @@
               href="/forms/{form.id}"
               class="text-xs font-semibold text-cn-yellow hover:underline shrink-0"
               target="_blank"
-              rel="noopener noreferrer">Voir le formulaire ↗</a
+              rel="noopener noreferrer">{m.asso_forms_view_link()}</a
             >
           </div>
 
@@ -171,8 +171,7 @@
             <div class="border-t border-cn-border/50 pt-3 space-y-2">
               <p class="text-xs font-bold text-amber-700 flex items-center gap-1.5">
                 <AlertTriangle size={13} />
-                {pendingCash[form.id].length} paiement{pendingCash[form.id].length > 1 ? 's' : ''} en
-                attente de validation
+                {m.asso_forms_pending_cash_label({ count: pendingCash[form.id].length })}
               </p>
               <ul class="space-y-2">
                 {#each pendingCash[form.id] as sub (sub.id)}
@@ -184,7 +183,7 @@
                       <p class="text-xs text-text-muted">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(
                           sub.createdAt
-                        ).toLocaleDateString('fr-FR')}
+                        ).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
                       </p>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
@@ -192,13 +191,13 @@
                         type="button"
                         onclick={() => validateCash(form.id, sub.id)}
                         class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
-                        >Valider</button
+                        >{m.asso_forms_validate_cash()}</button
                       >
                       <button
                         type="button"
                         onclick={() => cancelCash(form.id, sub.id)}
                         class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors"
-                        >Annuler</button
+                        >{m.asso_forms_cancel_cash()}</button
                       >
                     </div>
                   </li>
@@ -207,7 +206,7 @@
             </div>
           {:else if form.allowCashPayment}
             <p class="text-xs text-text-muted border-t border-cn-border/50 pt-3">
-              Aucun paiement en espèces en attente.
+              {m.asso_forms_no_pending_cash()}
             </p>
           {/if}
         </li>

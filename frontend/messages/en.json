@@ -1051,6 +1051,7 @@
   "asso_boutique_type_topup": "Cercle top-up",
   "asso_boutique_type_other": "Other",
   "asso_boutique_description_label": "Description",
+  "asso_boutique_description_placeholder": "Description shown in the shop",
   "asso_boutique_fixed_price_label": "Fixed price (€) — leave empty for pay-what-you-want only",
   "asso_boutique_allow_custom_label": "Allow a custom amount",
   "asso_boutique_min_label": "Min (€)",

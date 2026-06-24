@@ -9,6 +9,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Check } from '@lucide/svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import { m } from '$lib/paraglide/messages';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -99,9 +100,9 @@
 
   async function handleRemoveLogo() {
     if (
-      !(await showConfirm('Retirer le logo affiché sur le fil et la page publique ?', {
+      !(await showConfirm(m.asso_edit_logo_remove_confirm(), {
         danger: true,
-        confirmLabel: 'Retirer',
+        confirmLabel: m.asso_edit_logo_remove_confirm_button(),
       }))
     )
       return;
@@ -117,7 +118,7 @@
 </script>
 
 <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
-  <h2 class="text-lg font-bold text-text-main tracking-tight">Profil et logo</h2>
+  <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_edit_profile_title()}</h2>
   <div class="flex flex-wrap items-start gap-4">
     <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
     {#if canEdit}
@@ -128,7 +129,7 @@
           disabled={logoBusy}
           class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
         >
-          {showCropper ? 'Fermer le recadrage' : 'Changer le logo'}
+          {showCropper ? m.asso_edit_logo_close_cropper() : m.asso_edit_logo_change()}
         </button>
         {#if asso.logoUrl}
           <button
@@ -137,7 +138,7 @@
             disabled={logoBusy}
             class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            Retirer le logo
+            {m.asso_edit_logo_remove()}
           </button>
         {/if}
       </div>
@@ -148,37 +149,37 @@
     <AssociationLogoCropper onExport={onLogoExported} onCancel={() => (showCropper = false)} />
   {/if}
 
-  <Input label="Nom" bind:value={editName} />
+  <Input label={m.asso_edit_name_label()} bind:value={editName} />
   <Input
-    label="E-mail de contact"
+    label={m.asso_edit_contact_email_label()}
     type="email"
     bind:value={editContactEmail}
     placeholder="contact@asso.fr"
   />
   <div class="space-y-2">
-    <span class="block text-sm font-bold text-text-main ml-1">Description (sous le titre)</span>
+    <span class="block text-sm font-bold text-text-main ml-1">{m.asso_edit_description_label()}</span>
     <MarkdownComposerField
       bind:value={editDescription}
       maxlength={2000}
       minHeight="72px"
       class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
       editorClass="min-h-[72px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
-      placeholder="Courte présentation de l'association…"
+      placeholder={m.asso_edit_description_placeholder()}
     />
   </div>
   <div class="space-y-2">
-    <span class="block text-sm font-bold text-text-main ml-1">Bio détaillée</span>
+    <span class="block text-sm font-bold text-text-main ml-1">{m.asso_edit_bio_label()}</span>
     <MarkdownComposerField
       bind:value={editBioMarkdown}
       maxlength={16000}
       minHeight="160px"
       class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
       editorClass="min-h-[160px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
-      placeholder="Présentation complète, liens, listes…"
+      placeholder={m.asso_edit_bio_placeholder()}
     />
   </div>
   <div class="flex flex-col gap-3">
-    <span class="block text-sm font-bold text-text-main ml-1">Couleur de l'agenda</span>
+    <span class="block text-sm font-bold text-text-main ml-1">{m.asso_edit_calendar_color_label()}</span>
     <div class="flex flex-wrap gap-1.5">
       {#each PRESET_COLORS as c (c)}
         <button
@@ -195,26 +196,26 @@
       {/each}
     </div>
     <div class="flex items-center gap-2 ml-0.5">
-      <span class="text-xs text-text-muted">Personnalisée</span>
+      <span class="text-xs text-text-muted">{m.asso_edit_custom_color_label()}</span>
       <ColorPicker bind:value={editColor} label="Couleur personnalisée" />
     </div>
   </div>
 
   <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3">
-    <p class="font-semibold text-text-main">Aperçu</p>
+    <p class="font-semibold text-text-main">{m.asso_edit_preview_label()}</p>
     {#if editDescription.trim()}
       <div>
-        <p class="font-medium text-text-main mb-1">Description</p>
+        <p class="font-medium text-text-main mb-1">{m.asso_edit_preview_description_label()}</p>
         <ProfileBioMarkdown source={editDescription} class="text-sm" />
       </div>
     {/if}
     {#if editBioMarkdown.trim()}
       <div>
-        <p class="font-medium text-text-main mb-1">Bio</p>
+        <p class="font-medium text-text-main mb-1">{m.asso_edit_preview_bio_label()}</p>
         <ProfileBioMarkdown source={editBioMarkdown} />
       </div>
     {:else if !editDescription.trim()}
-      <p>(vide)</p>
+      <p>{m.asso_edit_preview_empty()}</p>
     {/if}
   </div>
   {#if settingsError}
@@ -228,18 +229,18 @@
         disabled={saving}
         class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
       >
-        {saving ? 'Enregistrement…' : 'Enregistrer le profil'}
+        {saving ? m.asso_edit_saving_label() : m.asso_edit_save_profile_button()}
       </button>
       {#if saveSuccess}
         <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
           <Check size={15} />
-          Modifications enregistrées
+          {m.asso_edit_saved_success()}
         </span>
       {/if}
     </div>
   {:else}
     <p class="text-sm text-text-muted">
-      Vous n'avez pas le droit de modifier le profil (flag MANAGE_MEMBERS requis).
+      {m.asso_edit_no_manage_permission()}
     </p>
   {/if}
 </div>
