@@ -23,6 +23,7 @@ import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
+import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
@@ -44,6 +45,8 @@ export class PushController {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
+    @InjectRepository(GroupMember)
+    private groupMemberRepo: Repository<GroupMember>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly messagingService: MessagingService,
   ) {}
@@ -429,6 +432,22 @@ export class PushController {
     this.logger.log(
       `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId} baseEpoch=${body.baseEpoch ?? 'n/a'}`,
     );
+
+    // Membership guard (security): refuse to re-add a target absent from dm_group_members (a
+    // removed user). This is the single chokepoint for the background (push) re-add path - its
+    // foreground counterpart enforces the same check client-side in handleWelcomeRequest. The
+    // source of truth is dm_group_members (user-level): a removed user has no row, whereas a
+    // legitimate invited/pending user has one created before any welcome_request. Without this,
+    // an online device honoring a welcome_request via FCM would re-add a kicked user.
+    const targetMembership = await this.groupMemberRepo.findOne({
+      where: { groupId, userId: targetUserId },
+    });
+    if (!targetMembership) {
+      this.logger.warn(
+        `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`,
+      );
+      return { status: 'rejected', reason: 'not_a_member' };
+    }
 
     // Le commit background avance l'epoch reel : on le valide d'abord (comme le chemin foreground)
     // pour garder activeEpoch en phase, sinon le prochain commit foreground est rejete a tort (C6).
