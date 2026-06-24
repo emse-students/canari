@@ -580,7 +580,7 @@
                 />
                 <span
                   class="text-[0.65rem] font-semibold text-text-muted group-hover:text-text-main leading-tight"
-                  >{qtype.label}</span
+                  >{qtype.label()}</span
                 >
               </button>
             {/each}

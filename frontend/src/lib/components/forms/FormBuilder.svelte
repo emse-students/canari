@@ -200,7 +200,7 @@
           <button
             id="type-picker-{item.id}"
             type="button"
-            aria-label="{m.form_builder_type_label()}: {cur?.label ?? item.type}"
+            aria-label="{m.form_builder_type_label()}: {cur?.label() ?? item.type}"
             aria-haspopup="listbox"
             aria-expanded={showTypePicker}
             onclick={() => (showTypePicker = !showTypePicker)}
@@ -209,7 +209,7 @@
             {#if cur}
               {@const CurIcon = cur.Icon}
               <CurIcon size={15} class="shrink-0 text-text-muted" />
-              <span class="flex-1 truncate">{cur.label}</span>
+              <span class="flex-1 truncate">{cur.label()}</span>
             {:else}
               <span class="flex-1">{item.type}</span>
             {/if}
@@ -239,7 +239,7 @@
                     size={14}
                     class="shrink-0 {item.type === qt.value ? 'text-cn-dark' : 'text-text-muted'}"
                   />
-                  <span class="min-w-0 break-words text-xs font-medium leading-tight">{qt.label}</span>
+                  <span class="min-w-0 break-words text-xs font-medium leading-tight">{qt.label()}</span>
                 </button>
               {/each}
             </div>

@@ -1,19 +1,25 @@
-/** "3 min", "2 h", "4 j", or a short date for older entries. */
+import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime';
+
+/** "3 min", "2 h", "4 j" / "4 d", or a short date for older entries. */
 export function timeAgo(dateStr: string): string {
   const diffSec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (diffSec < 60) return "À l'instant";
-  const m = Math.floor(diffSec / 60);
-  if (m < 60) return `${m} min`;
-  const h = Math.floor(m / 60);
+  if (diffSec < 60) return m.time_just_now();
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
   if (h < 24) return `${h} h`;
   const d = Math.floor(h / 24);
-  if (d < 7) return `${d} j`;
-  return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  if (d < 7) return m.time_short_days({ count: d });
+  return new Date(dateStr).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+    day: 'numeric',
+    month: 'short',
+  });
 }
 
-/** Full date + time formatted in French: "12 mai 2026 à 14:30". */
+/** Full date + time, locale-aware: "12 mai 2026 à 14:30" / "May 12, 2026, 2:30 PM". */
 export function exactDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString('fr-FR', {
+  return new Date(dateStr).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -22,12 +28,12 @@ export function exactDate(dateStr: string): string {
   });
 }
 
-/** "il y a 3 min", "il y a 2h", "il y a 4j". */
+/** "il y a 3 min" / "3 min ago", etc. */
 export function formatRelative(iso: string): string {
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (m < 1) return "à l'instant";
-  if (m < 60) return `il y a ${m} min`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `il y a ${h}h`;
-  return `il y a ${Math.floor(h / 24)}j`;
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return m.time_just_now_lower();
+  if (mins < 60) return m.time_minutes_ago({ count: mins });
+  const h = Math.floor(mins / 60);
+  if (h < 24) return m.time_hours_ago({ count: h });
+  return m.time_days_ago({ count: Math.floor(h / 24) });
 }

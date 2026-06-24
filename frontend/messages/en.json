@@ -110,6 +110,7 @@
   "chat_manage_community_roles_title": "Manage clubs and roles",
   "common_close_label": "Close",
   "common_back": "Back",
+  "common_confirm_button": "Confirm",
 
   "chat_modal_contact_tab": "Contact",
   "chat_modal_group_tab": "Group",
@@ -1362,5 +1363,38 @@
   "legal_footer_credits": "Canari - Mines Saint-Etienne · Association Rootz",
   "legal_cgu_link": "Terms of service",
   "legal_privacy_link": "Privacy policy",
-  "legal_child_safety_link": "Child safety"
+  "legal_child_safety_link": "Child safety",
+
+  "qtype_short_text": "Short text",
+  "qtype_long_text": "Paragraph",
+  "qtype_single_choice": "Single choice",
+  "qtype_multiple_choice": "Checkboxes",
+  "qtype_dropdown": "Dropdown",
+  "qtype_linear_scale": "Scale",
+  "qtype_matrix_single": "Single-answer grid",
+  "qtype_matrix_multiple": "Multiple-answer grid",
+
+  "time_just_now": "Just now",
+  "time_just_now_lower": "just now",
+  "time_short_days": "{count} d",
+  "time_minutes_ago": "{count} min ago",
+  "time_hours_ago": "{count}h ago",
+  "time_days_ago": "{count}d ago",
+
+  "nav_posts_label": "Feed",
+  "nav_posts_desc": "The community social feed",
+  "nav_communities_label": "Communities",
+  "nav_communities_desc": "Association spaces and channels",
+  "nav_chat_label": "Chats",
+  "nav_chat_desc": "Direct messages and small groups",
+  "nav_notifications_label": "Notifs",
+  "nav_notifications_desc": "Reactions, mentions and comments",
+  "nav_calendar_label": "Calendar",
+  "nav_calendar_desc": "Events and calendar",
+  "nav_forms_label": "Forms",
+  "nav_forms_desc": "Registrations and surveys",
+  "nav_shop_label": "Shop",
+  "nav_shop_desc": "Products and memberships",
+  "nav_dashboard_label": "Dashboard",
+  "nav_dashboard_desc": "Application overview"
 }

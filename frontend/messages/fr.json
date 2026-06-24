@@ -110,6 +110,7 @@
   "chat_manage_community_roles_title": "Gérer les communautés et rôles",
   "common_close_label": "Fermer",
   "common_back": "Retour",
+  "common_confirm_button": "Confirmer",
 
   "chat_modal_contact_tab": "Contact",
   "chat_modal_group_tab": "Groupe",
@@ -1362,5 +1363,38 @@
   "legal_footer_credits": "Canari - Mines Saint-Étienne · Association Rootz",
   "legal_cgu_link": "Conditions d'utilisation",
   "legal_privacy_link": "Politique de confidentialité",
-  "legal_child_safety_link": "Sécurité des enfants"
+  "legal_child_safety_link": "Sécurité des enfants",
+
+  "qtype_short_text": "Texte court",
+  "qtype_long_text": "Paragraphe",
+  "qtype_single_choice": "Choix unique",
+  "qtype_multiple_choice": "Cases à cocher",
+  "qtype_dropdown": "Liste déroulante",
+  "qtype_linear_scale": "Échelle",
+  "qtype_matrix_single": "Grille unique",
+  "qtype_matrix_multiple": "Grille multiple",
+
+  "time_just_now": "À l'instant",
+  "time_just_now_lower": "à l'instant",
+  "time_short_days": "{count} j",
+  "time_minutes_ago": "il y a {count} min",
+  "time_hours_ago": "il y a {count}h",
+  "time_days_ago": "il y a {count}j",
+
+  "nav_posts_label": "Feed",
+  "nav_posts_desc": "Le fil social de la communauté",
+  "nav_communities_label": "Communautés",
+  "nav_communities_desc": "Espaces d'associations et canaux",
+  "nav_chat_label": "Discussions",
+  "nav_chat_desc": "Messages directs et petits groupes",
+  "nav_notifications_label": "Notifs",
+  "nav_notifications_desc": "Réactions, mentions et commentaires",
+  "nav_calendar_label": "Agenda",
+  "nav_calendar_desc": "Événements et calendrier",
+  "nav_forms_label": "Formulaires",
+  "nav_forms_desc": "Inscriptions et sondages",
+  "nav_shop_label": "Boutique",
+  "nav_shop_desc": "Produits et cotisations",
+  "nav_dashboard_label": "Tableau de bord",
+  "nav_dashboard_desc": "Vue d'ensemble de l'application"
 }

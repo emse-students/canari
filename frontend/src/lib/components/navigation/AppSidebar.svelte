@@ -89,7 +89,7 @@
       <a
         href={place.href}
         data-sveltekit-preload-code="viewport"
-        title={isExpanded ? undefined : place.label}
+        title={isExpanded ? undefined : place.label()}
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex items-center gap-4 h-12 rounded-2xl px-3 text-left transition-all duration-200 w-full overflow-hidden
           {isActive
@@ -125,12 +125,12 @@
             : 'opacity-0 -translate-x-4 delay-0'}"
         >
           <span class="block text-[0.9rem] font-bold leading-tight truncate whitespace-nowrap">
-            {place.label}
+            {place.label()}
           </span>
           <span
             class="block text-xs font-medium opacity-70 leading-snug mt-0.5 truncate whitespace-nowrap"
           >
-            {place.description}
+            {place.description()}
           </span>
         </span>
 

@@ -1,3 +1,5 @@
+import { m } from '$lib/paraglide/messages';
+
 /**
  * Global imperative confirmation dialog store.
  *
@@ -37,8 +39,8 @@ export function showConfirm(message: string, opts: ConfirmOptions = {}): Promise
   return new Promise((resolve) => {
     _pending = {
       message,
-      confirmLabel: opts.confirmLabel ?? 'Confirmer',
-      cancelLabel: opts.cancelLabel ?? 'Annuler',
+      confirmLabel: opts.confirmLabel ?? m.common_confirm_button(),
+      cancelLabel: opts.cancelLabel ?? m.common_cancel_button(),
       danger: opts.danger ?? false,
       resolve,
     };

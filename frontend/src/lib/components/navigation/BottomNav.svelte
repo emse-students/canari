@@ -76,7 +76,7 @@
             ? 'opacity-100'
             : 'opacity-70 font-medium'}"
         >
-          {place.label}
+          {place.label()}
         </span>
 
         {#if isActive}

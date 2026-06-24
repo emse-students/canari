@@ -50,8 +50,8 @@ function placeSeo(pathname: string): SeoMeta | null {
   const place = APP_PLACES.find((p) => path === p.href || path.startsWith(`${p.href}/`));
   if (!place) return null;
   return {
-    title: place.label,
-    description: `${place.description} - ${SITE.name}, ${SITE.tagline}.`,
+    title: place.label(),
+    description: `${place.description()} - ${SITE.name}, ${SITE.tagline}.`,
     path: place.href,
   };
 }
