@@ -23,9 +23,9 @@
   });
 
   $effect(() => {
-    // Pendant le chargement (isMessagingInitializing) l'election du leader n'est pas encore
-    // tranchee : ne rien afficher, sinon la banniere flashe sur l'onglet leader le temps que
-    // la connexion s'etablisse. On n'affiche que pour un follower confirme, hors mobile.
+    // During init (isMessagingInitializing) the leader election is not settled yet:
+    // show nothing, otherwise the banner flickers on the leader tab while connecting.
+    // Only show for a confirmed follower tab, never on mobile.
     const shouldShow =
       session.isLoggedIn &&
       !session.isMessagingInitializing &&
@@ -39,7 +39,7 @@
     return () => clearTimeout(t);
   });
 
-  /** Demande à l'onglet leader de céder le contrôle à cet onglet (il se recharge alors en follower). */
+  /** Requests the leader tab to yield control to this tab (it reloads as follower). */
   function takeOver() {
     session.requestTabTakeover();
   }

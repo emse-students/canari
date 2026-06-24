@@ -223,8 +223,8 @@
         convs.sendError = msg;
       },
       onReadReceiptReceived: (e: { conversationKey: string; senderId: string; messageIds: string[] }) => {
-        // Son uniquement quand quelqu'un d'autre lit MON message, dans la conversation
-        // ouverte à l'écran et l'onglet visible (pas mes propres lectures cross-device).
+        // Sound only when someone else reads MY message, in the currently open conversation
+        // on the visible tab (never for my own cross-device reads).
         if (e.senderId === session.userId) return;
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
         if (e.conversationKey !== convs.selectedContact) return;

@@ -1,18 +1,18 @@
 <script lang="ts">
   /**
-   * ChatBackgroundService - toujours actif dans le layout.
+   * Always-on layout component for the MLS session lifecycle.
    *
-   * Responsabilités :
-   * - Initialisation de la session MLS + WebSocket (PIN, biométrie).
-   * - Reconnexion au WS lors des changements de visibilité de page.
-   * - Affichage global : modal PIN, overlay d'appel, notices d'invitation de canal,
-   * prompt d'enrôlement biométrique.
+   * Responsibilities:
+   * - MLS session + WebSocket initialization (PIN, biometrics).
+   * - WS reconnection on page visibility changes.
+   * - Global UI: PIN modal, call overlay, channel invite notices, biometric enrollment prompt.
    *
-   * En utilisant les singletons globaux (globalChatSingleton.svelte.ts), la
-   * connexion persiste sur toutes les routes et non seulement sur /chat.
+   * Uses global singletons (globalChatSingleton.svelte.ts) so the connection
+   * persists across all routes, not only /chat.
    */
   import { onMount, untrack } from 'svelte';
   import { afterNavigate } from '$app/navigation';
+  import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
   import { getToken } from '$lib/stores/auth';
@@ -118,7 +118,7 @@
     }
     globalNotifs.stopIncomingCallRingtone();
     // Call left the "incoming" state (answered on any device, declined, or ended):
-    // close the lingering "X vous appelle" OS notification.
+    // dismiss the lingering incoming-call OS notification.
     void globalNotifs.dismissIncomingCall();
   });
 
@@ -198,7 +198,7 @@
         }
       );
       if (!globalSession.isLoggedIn) {
-        throw new Error(failMsg || 'Échec de la connexion après récupération.');
+        throw new Error(failMsg || 'Login failed after recovery.');
       }
       showRecoverModal = false;
       showPinModal = false;
@@ -222,7 +222,7 @@
   async function ensurePlatformAllowsUnlock(): Promise<boolean> {
     await refreshAppVersionCheck();
     if (shouldBlockSessionUnlock(isGlobalAdmin())) {
-      appendLog('[platform] Déverrouillage MLS bloqué (maintenance ou version minimale)');
+      appendLog('[platform] MLS unlock blocked (maintenance or minimum version gate)');
       return false;
     }
     return true;
@@ -269,7 +269,7 @@
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
 
-  /** Ferme PIN/biométrie dès que MLS est déverrouillé ; le rattrapage continue en arrière-plan. */
+  /** Closes PIN/biometric modals as soon as MLS unlocks; catch-up continues in the background. */
   function dismissAuthPrompts() {
     showBiometricSheet = false;
     showPinModal = false;
@@ -278,7 +278,7 @@
   }
 
   // ── Context builders ──────────────────────────────────────────────────────
-  // Mirror de MainChatPage mais référence les singletons globaux.
+  // Same shape as MainChatPage context builders, but references global singletons.
 
   function convCtx(): ConversationContext {
     return {
@@ -356,7 +356,7 @@
   }
 
   /**
-   * Callbacks complets pour globalSession.login() / session callbacks.
+   * Builds the full callback object for globalSession.login() / session callbacks.
    * @param overrides Per-call hooks (e.g. handlePinSubmit step timer).
    */
   function sessionCb(
@@ -397,7 +397,7 @@
             mlsStateHex: null,
           });
         }
-        appendLog(`Ajout au canal #${event.channelName || event.channelId}`);
+        appendLog(`Joined channel #${event.channelName || event.channelId}`);
       },
       onChannelMemberKicked: (event: any) => {
         if (!event.channelId) return;
@@ -412,7 +412,7 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        appendLog(`Retiré du canal #${event.channelName || event.channelId}`);
+        appendLog(`Removed from channel #${event.channelName || event.channelId}`);
       },
       onChannelUpdated: (event: { channelId: string; name?: string; imageMediaId?: string }) => {
         if (!event.channelId) return;
@@ -457,8 +457,8 @@
         senderId: string;
         messageIds: string[];
       }) => {
-        // Son uniquement quand un autre utilisateur lit MON message, dans la conversation
-        // ouverte et l'onglet visible (jamais pour mes propres lectures cross-device).
+        // Sound only when another user reads MY message, in the open conversation on the visible tab
+        // (never for my own cross-device reads).
         if (e.senderId === globalSession.userId) return;
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
         if (e.conversationKey !== globalConvs.selectedContact) return;
@@ -484,7 +484,7 @@
     return { ...base, ...overrides, onMlsReady: base.onMlsReady };
   }
 
-  // ── Post-login : chargement des canaux ─────────────────────────────────
+  // ── Post-login: load channel workspaces ───────────────────────────────────
   $effect(() => {
     if (!globalSession.isLoggedIn) return;
     untrack(() => {
@@ -493,9 +493,8 @@
   });
 
   /**
-   * Consomme le cache FCM natif et injecte les messages directement dans l'état
-   * réactif en mémoire. Permet un affichage immédiat sans attendre le prochain
-   * rechargement de l'historique (poll 5 s et retour au premier plan).
+   * Consumes the native FCM cache and injects messages directly into reactive memory,
+   * enabling immediate display without waiting for the next history poll (5s or foreground resume).
    */
   async function flushFcmCache(pin: string, storage: IStorage) {
     if (globalMessaging.isMessageCatchupActive) return;
@@ -573,7 +572,7 @@
           dismissAuthPrompts();
         }
         if (!globalSession.isLoggedIn) {
-          // Biométrie annulée, échouée ou non disponible → fallback modal PIN
+          // Biometric cancelled, failed, or unavailable: fall back to PIN modal.
           const savedUser2 = currentUserId();
           if (savedUser2) {
             globalSession.isLoginInProgress = false;
@@ -631,7 +630,7 @@
 
   // ── Mount ─────────────────────────────────────────────────────────────────
   onMount(() => {
-    // Déjà connecté (ex. navigation depuis /chat) → rien à faire.
+    // Already logged in (e.g. navigating from /chat): nothing to do.
     if (globalSession.isLoggedIn) return;
 
     const w = window as Window & {
@@ -681,11 +680,11 @@
           await globalSession.ensureMls().reloadStateFromDisk();
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
           if (!globalSession.isWsConnected) {
-            appendLog('Page visible de nouveau - reconnexion...');
+            appendLog('Page visible again - reconnecting...');
             void globalSession.attemptReconnect(sessionCb());
           }
           checkSiblingCallWarning();
-          // Injecter les messages FCM mis en cache pendant l'arrière-plan
+          // Flush FCM messages cached while the app was in the background.
           if (pin && storage) {
             void flushFcmCache(pin, storage);
           }
@@ -723,7 +722,7 @@
         storage
           .deleteOldMessages(MESSAGE_MAX_AGE)
           .then((n) => {
-            if (n > 0) appendLog(`[GC] ${n} ancien(s) message(s) supprimé(s) de IndexedDB`);
+            if (n > 0) appendLog(`[GC] Deleted ${n} old message(s) from IndexedDB`);
           })
           .catch(() => {});
       }
@@ -754,21 +753,21 @@
     if (globalSession.isLoggedIn) {
       dismissAuthPrompts();
     } else if (!pinError) {
-      pinError = "L'empreinte digitale a échoué. Entrez votre PIN.";
+      pinError = m.auth_biometric_failed_fallback();
     }
   }
 
   function handlePinSubmit(submittedPin: string) {
     pinError = '';
     pinLoading = true;
-    pinStep = 'Vérification du PIN…';
+    pinStep = m.auth_pin_step_verifying();
     canRecoverPin = false;
     globalSession.pin = submittedPin;
     _loginInProgress = true;
 
     // Transition to the MLS loading step after PIN derivation (~800 ms)
     const stepTimer = setTimeout(() => {
-      if (pinLoading) pinStep = 'Chargement MLS…';
+      if (pinLoading) pinStep = m.auth_pin_step_loading_mls();
     }, 800);
 
     void globalSession.login(
@@ -788,7 +787,7 @@
   }
 
   /**
-   * "PIN oublié" reset: wipes the user's PIN-protected MLS state server-side (keeping
+   * "Forgot PIN" reset: wipes the user's PIN-protected MLS state server-side (keeping
    * the account, posts and community), clears local MLS state, then re-opens the modal
    * in first-setup mode so the user chooses a new PIN. Past encrypted messages are lost.
    */
@@ -797,8 +796,8 @@
     if (!uid) return;
     pinError = '';
     pinLoading = true;
-    pinStep = 'Réinitialisation du PIN…';
-    appendLog(`[PIN_RESET] Démarrage pour userId=${uid.slice(0, 8)}…`);
+    pinStep = m.auth_pin_step_resetting();
+    appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}...`);
     try {
       const token = await getToken();
       const res = await fetch('/api/mls/security/pin-reset', {
@@ -806,16 +805,16 @@
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ userId: uid }),
       });
-      if (!res.ok) throw new Error('Échec de la réinitialisation côté serveur.');
+      if (!res.ok) throw new Error('Server-side PIN reset failed.');
       // Local MLS state is encrypted under the old PIN - wipe it so a new PIN starts fresh.
       await globalSession.resetDeviceAsFresh(uid, sessionCb());
-      appendLog('[PIN_RESET] État MLS effacé - choix d un nouveau PIN.');
+      appendLog('[PIN_RESET] MLS state wiped - choose a new PIN.');
       globalSession.userId = uid;
       isFirstPinSetup = true;
       showPinModal = true;
     } catch (e) {
       pinError = e instanceof Error ? e.message : String(e);
-      appendLog(`[PIN_RESET] Échec: ${pinError}`);
+      appendLog(`[PIN_RESET] Failed: ${pinError}`);
     } finally {
       pinLoading = false;
       pinStep = '';
@@ -887,7 +886,7 @@
 <!-- Biometric choice sheet (shown before OS biometric prompt) -->
 <BiometricBottomSheet open={showBiometricSheet} onSkip={onBiometricSkip} />
 
-<!-- PIN modal global (visible sur toutes les routes) -->
+<!-- PIN modal (visible on all routes) -->
 <PinModal
   open={showPinModal}
   onSubmit={handlePinSubmit}
@@ -906,7 +905,7 @@
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
 />
 
-<!-- Récupération après changement de PIN sur un autre appareil -->
+<!-- PIN recovery after a cross-device PIN change -->
 <ChangePinModal
   open={showRecoverModal}
   variant="recover"
@@ -925,7 +924,7 @@
   />
 {/if}
 
-<!-- Prompt d'enrôlement biométrique (toutes routes) -->
+<!-- Biometric enrollment prompt (all routes) -->
 {#if globalSession.showBiometricEnrollPrompt}
   <div
     data-keyboard-aware-toast
@@ -939,20 +938,20 @@
       </div>
 
       <div class="flex-1 min-w-0 pr-2">
-        <p class="text-sm font-bold text-text-main mb-0.5">Connexion rapide</p>
+        <p class="text-sm font-bold text-text-main mb-0.5">{m.auth_biometric_enroll_title()}</p>
         <p class="text-[11px] sm:text-xs text-text-muted leading-relaxed">
-          Activer l'empreinte digitale ?
+          {m.auth_biometric_enroll_prompt()}
         </p>
       </div>
     </div>
 
-    <!-- Le conteneur des boutons est maintenant compact et aligné à droite sur mobile -->
+    <!-- Buttons container: compact and right-aligned on mobile. -->
     <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto mt-1 sm:mt-0">
       <button
         onclick={() => globalSession.dismissBiometricPrompt()}
         class="px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       >
-        Plus tard
+        {m.auth_biometric_later_btn()}
       </button>
       <button
         onclick={async () => {
@@ -960,10 +959,10 @@
             await globalSession.enrollBiometric();
             globalSession.showBiometricEnrollPrompt = false;
           } catch (e) {
-            // Si l'appareil n'a pas d'empreinte configurée, on attrape l'erreur
+            // If the device has no enrolled biometric, catch the error.
             if (String(e).includes('At least one biometric must be enrolled')) {
               showToast(
-                "Aucune empreinte n'est configurée. Ajoutez-en une dans les paramètres Android.",
+                m.auth_biometric_no_fingerprint_android(),
                 'info'
               );
               globalSession.showBiometricEnrollPrompt = false;
@@ -972,7 +971,7 @@
         }}
         class="px-4 py-2 text-xs font-bold text-[#151B2C] bg-amber-500 rounded-xl hover:bg-amber-400 shadow-sm transition-all whitespace-nowrap"
       >
-        Activer
+        {m.auth_biometric_enable_btn()}
       </button>
     </div>
   </div>

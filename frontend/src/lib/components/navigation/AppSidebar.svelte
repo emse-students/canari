@@ -11,7 +11,7 @@
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
 
   let isExpanded = $state(false);
-  let isHovering = false; // Permet de savoir si la souris est physiquement sur la barre
+  let isHovering = false; // Tracks whether the cursor is physically over the sidebar.
   let expandTimer: ReturnType<typeof setTimeout>;
 
   const ICONS = {
@@ -35,8 +35,7 @@
       : 0
   );
 
-  // Intention de survol : on attend un court instant avant d'ouvrir
-  // pour éviter les ouvertures accidentelles quand on traverse l'écran
+  // Hover intent: short delay before expanding to avoid accidental opens when the cursor crosses the bar.
   function handleMouseEnter() {
     isHovering = true;
     expandTimer = setTimeout(() => {
@@ -51,14 +50,14 @@
   }
 
   afterNavigate(() => {
-    // Ne ferme la barre après une navigation QUE si la souris n'est plus dessus
+    // Collapse the sidebar after navigation only when the cursor has left it.
     if (!isHovering) {
       isExpanded = false;
     }
   });
 </script>
 
-<!-- Fond assombri lors du survol (avec transition douce) -->
+<!-- Dimmed backdrop shown when the sidebar is expanded (smooth transition). -->
 {#if isExpanded}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -96,20 +95,20 @@
           ? 'bg-amber-500/15 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:hover:bg-amber-400/20 text-amber-700 dark:text-amber-400 shadow-sm shadow-amber-500/5'
           : 'text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main'}"
       >
-        <!-- Petite barre latérale d'accentuation pour l'élément actif -->
+        <!-- Narrow left accent bar for the active item. -->
         {#if isActive}
           <div
             class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]"
           ></div>
         {/if}
 
-        <!-- Conteneur d'icône avec effet de zoom au survol -->
+        <!-- Icon container with scale-on-hover effect. -->
         <span
           class="relative flex-shrink-0 w-7 flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <PlaceIcon size={22} strokeWidth={isActive ? 2.5 : 2} />
 
-          <!-- Petit point rouge (mini badge) quand non étendu -->
+          <!-- Red dot mini-badge shown when the sidebar is collapsed. -->
           {#if unread > 0 && !isExpanded}
             <span
               class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-[var(--surface-elevated)] dark:ring-[#151B2C]"
@@ -117,7 +116,7 @@
           {/if}
         </span>
 
-        <!-- Texte avec effet de glissement et léger délai pour éviter l'écrasement -->
+        <!-- Label with slide-in animation and a short delay to avoid clipping during collapse. -->
         <span
           class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
             {isExpanded
@@ -134,7 +133,7 @@
           </span>
         </span>
 
-        <!-- Badge compteur complet quand étendu -->
+        <!-- Full count badge, visible only when the sidebar is expanded. -->
         {#if unread > 0}
           <span
             class="ml-auto flex-shrink-0 inline-flex items-center justify-center rounded-full bg-red-500 px-2 py-0.5 text-[0.7rem] font-bold text-white leading-none shadow-sm shadow-red-500/30 transition-all duration-300

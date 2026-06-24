@@ -183,12 +183,11 @@
   /** Whether the poll composer modal is open (channels only). */
   let showPollComposer = $state(false);
 
-  // Fenetre rendue a l'ouverture d'une conversation. Volontairement reduite a ~un ecran :
-  // rendre des centaines de bulles en une passe synchrone retarde le layout, et le
-  // scroll-to-bottom se declenche alors que la hauteur grandit encore -> on n'atterrit pas
-  // en bas et on voit un "moment de chargement". 60 groupes remplissent n'importe quel
-  // viewport tout en restant un rendu instantane ; loadOlderGroups (scroll vers le haut)
-  // pagine les plus anciens au fur et a mesure (DF8).
+  // Initial render window when opening a conversation, intentionally capped at ~one screen:
+  // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
+  // scroll-to-bottom fires while the height is still growing -> we overshoot and see a
+  // loading flicker. 60 groups fill any viewport while remaining an instant render;
+  // loadOlderGroups (scroll up) paginates older ones lazily (DF8).
   const INITIAL_RENDER_GROUPS = 60;
   const RENDER_GROUPS_STEP = 140;
   const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // cap on DOM nodes

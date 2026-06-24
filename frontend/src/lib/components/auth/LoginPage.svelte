@@ -12,7 +12,7 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { m } from '$lib/paraglide/messages';
 
-  // ─── État de l'authentification ─────────────────────────────────────────────
+  // ─── Auth state ─────────────────────────────────────────────────────────────
   let isLoggingIn = $state(false);
   let loginError = $state('');
   let biometricAvailable = $state(false);
@@ -25,15 +25,15 @@
     return platformInfo.maintenance.message || m.auth_maintenance_default();
   });
 
-  // ─── Utilitaires ────────────────────────────────────────────────────────────
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
     const target = requestedReturnTo?.startsWith('/') ? requestedReturnTo : '/posts';
-    // Évite les boucles de redirection vers la page de login elle-même
+    // Prevent redirect loops back to the login page.
     if (target === '/login' || target.startsWith('/login?')) return '/posts';
     return target;
   }
 
-  // ─── Initialisation ─────────────────────────────────────────────────────────
+  // ─── Initialization ──────────────────────────────────────────────────────────
   onMount(() => {
     void refreshAppVersionCheck();
 
@@ -48,7 +48,7 @@
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
 
-    // 1. Récupération sécurisée de l'URL de retour
+    // 1. Safely extract the return URL from query params.
     try {
       const url = new URL(window.location.href);
       requestedReturnTo = url.searchParams.get('returnTo') ?? '';
@@ -56,14 +56,14 @@
       requestedReturnTo = '';
     }
 
-    // 2. Vérification unifiée de la session et de la biométrie
+    // 2. Unified session + biometric check.
     const initAuth = async () => {
       await refreshAppVersionCheck();
       if (isBelowMinClientVersion()) return;
 
       const isTauri = isTauriRuntime();
 
-      // Vérification biométrique spécifique à Tauri
+      // Biometric check is Tauri-only.
       if (isTauri) {
         try {
           biometricAvailable = await BiometricService.isAvailable();
@@ -72,20 +72,20 @@
         }
       }
 
-      // Vérification de session unifiée (Tauri + Web)
+      // Session check (Tauri + Web).
       if (await hasStoredSession()) {
         try {
           await getToken();
           const target = getSafeReturnTarget();
           const current = window.location.pathname + window.location.search;
 
-          // On ne redirige que si on n'est pas déjà sur la bonne page
+          // Only redirect when not already on the target page.
           if (target !== current) {
             await goto(target, { replaceState: true });
           }
         } catch {
-          // Le token est expiré ou invalide : on reste sur la page pour se reconnecter
-          console.debug('Session invalide, re-connexion requise.');
+          // Token expired or invalid: stay on login so the user can re-authenticate.
+          console.debug('Session expired or invalid, re-login required.');
         }
       }
     };
@@ -98,7 +98,7 @@
     };
   });
 
-  // ─── Gestionnaires d'événements ───────────────────────────────────────────
+  // ─── Event handlers ────────────────────────────────────────────────────────
   async function handleLogin() {
     loginError = '';
     await refreshAppVersionCheck();
@@ -109,7 +109,7 @@
     isLoggingIn = true;
     try {
       startOidcLogin(getSafeReturnTarget());
-      // Le navigateur navigue vers Authentik - pas besoin de réinitialiser isLoggingIn
+      // The browser navigates to Authentik - no need to reset isLoggingIn.
     } catch (e: unknown) {
       loginError = e instanceof Error ? e.message : String(e);
       isLoggingIn = false;
@@ -117,7 +117,7 @@
   }
 
   async function resetAll() {
-    // Nettoyage IndexedDB uniquement pour les utilisateurs Web
+    // IndexedDB cleanup is web-only (Tauri uses native app data instead).
     if (!isTauriRuntime()) {
       try {
         if (indexedDB.databases) {
@@ -136,7 +136,7 @@
           await Promise.all(deletePromises);
         }
       } catch (e) {
-        console.warn('Erreur lors du nettoyage de la base de données:', e);
+        console.warn('Error clearing IndexedDB databases:', e);
       }
     } else {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -151,7 +151,7 @@
       await invoke('clear_app_data');
     }
 
-    // Nettoyage complet du stockage local
+    // Clear all browser storage.
     localStorage.clear();
     sessionStorage.clear();
     loginError = '';

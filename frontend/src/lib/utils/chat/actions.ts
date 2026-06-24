@@ -806,6 +806,9 @@ const WELCOME_COOLDOWN_MS = 30_000;
  *   3. addMember avec un KeyPackage frais → sendWelcome → sendCommit
  *
  * IMPORTANT : l'identifiant unique est (userId, deviceId), pas userId seul.
+ *
+ * Security: refuses to re-add a requester absent from dm_group_members (a removed user).
+ * The gateway authenticates the sender but does not check their membership before relaying.
  */
 export async function handleWelcomeRequest(params: {
   mlsService: IMlsService;
@@ -874,6 +877,29 @@ export async function handleWelcomeRequest(params: {
 
   // groupId pointe désormais vers le terminal de la lignée.
   const groupId = terminalId;
+
+  // ── Membership guard (security) ─────────────────────────────────────────────
+  // The gateway authenticates the sender (no spoofing) but relays the request without checking
+  // membership; we must therefore refuse here to re-add a REMOVED user. The source of truth is
+  // dm_group_members (user-level): a removed user no longer has a row, whereas a legitimate
+  // invited/pending user has one BEFORE emitting any welcome_request (addGroupMember /
+  // acceptGroupInvite create it first). We cannot gate on group:members / the MLS tree: the very
+  // purpose of a welcome_request is to serve someone absent from routing (lost WASM state).
+  // Fail-closed: if the list is unavailable (network), refuse - the requester retries (60s cadence)
+  // and another peer can honor it. Never re-add on doubt.
+  const userMembers = await mlsService.getGroupUserMembers(groupId).catch(() => null);
+  if (userMembers === null) {
+    log(
+      `[WELCOME_REQ] Members of ${groupId.slice(0, 8)}… unavailable - refused (requester will retry)`
+    );
+    return;
+  }
+  if (!userMembers.some((m) => m.userId === requesterUserId)) {
+    log(
+      `[WELCOME_REQ] ${requesterUserId} not a member of ${groupId.slice(0, 8)}… (removed) - re-add refused`
+    );
+    return;
+  }
 
   // Défense en profondeur : vérifier qu'on a une conversation prête pour ce groupe terminal.
   // Si ce device n'est pas encore dans le groupe terminal (Welcome en transit ou sync initial

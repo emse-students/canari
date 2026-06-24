@@ -18,12 +18,11 @@
 
   let editTextareaEl = $state<HTMLTextAreaElement>();
 
-  // Svelte 5 : L'effet s'exécute automatiquement après le rendu du DOM
-  // si 'editing' devient vrai et que l'élément est monté.
+  // Svelte 5: effect runs after DOM render whenever `editing` becomes true and the element is mounted.
   $effect(() => {
     if (editing && editTextareaEl) {
       editTextareaEl.focus();
-      // Place le curseur directement à la fin du texte existant
+      // Move the cursor to the end of the existing text.
       const length = editTextareaEl.value.length;
       editTextareaEl.selectionStart = length;
       editTextareaEl.selectionEnd = length;
@@ -53,7 +52,7 @@
     ></textarea>
 
     <div class="flex items-center justify-between">
-      <!-- Indice des raccourcis claviers (caché sur mobile) -->
+      <!-- Keyboard shortcut hint (hidden on mobile) -->
       <span class="text-[0.65rem] font-medium opacity-60 text-cn-ink hidden sm:block">
         {m.msg_edit_keyboard_hint()}
       </span>
