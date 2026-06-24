@@ -1,0 +1,203 @@
+# Plan de normalisation Canari (i18n + wiki + commentaires + nettoyage docs)
+
+> Document de suivi du chantier lance le 2026-06-23. Source de verite pour le plan,
+> l'avancement, et la methode. A amender au fur et a mesure. Ne jamais perdre ce fichier.
+>
+> **Pour l'executant (Sonnet)** : la section "LISTE DE TACHES" est concue pour etre suivie
+> ligne par ligne, sans avoir a reflechir. Respecter l'ordre. Cocher au fur et a mesure.
+> Apres CHAQUE fichier de code touche, verifier si un test lui est associe et le mettre a jour
+> (sinon CI rouge). Commit + push apres chaque sous-section.
+
+---
+
+## Objectif global
+
+Passer **tout le projet** (frontend + backends NestJS/Rust + infrastructure) au peigne fin,
+fichier par fichier, en menant simultanement quatre chantiers :
+
+1. **i18n FR/EN** (frontend, Paraglide) - rendre toute l'UI bilingue.
+2. **Wiki technique anglais** (`docs/wiki/`) - documenter tout le projet, par feature/module.
+3. **Commentaires + dev strings en anglais** (tous fichiers).
+4. **Nettoyage des `.md`** - consolider l'ancienne doc dans le wiki, supprimer le mort.
+
+En parallele : corriger/supprimer imprecisions et code mort en passant ; noter ce qui servira
+plus tard a la **doc utilisateur en francais** (utilisateurs, responsables associatifs).
+
+---
+
+## METHODE (regles a respecter imperativement)
+
+### i18n / cles Paraglide
+- Cles dans `frontend/messages/fr.json` (source) + `frontend/messages/en.json` (trad).
+- Import `import { m } from '$lib/paraglide/messages'`. Usage `{m.key()}` ou `m.key({ param })`.
+- **Avant toute nouvelle cle** : grep `fr.json` pour eviter les doublons. Reutiliser une cle
+  identique mot pour mot. Reutiliser les `common_*` existantes.
+- Glossaire EMSE : **"Association" -> "Club"** en anglais.
+- **Ne PAS traduire les valeurs stockees en BDD** (roles 'Membre'/'Admin', `submitLabel` de form) :
+  seuls les libelles d'affichage UI sont traduits.
+- Pas de balise `<a>` en parametre Paraglide : couper en cles prefixe/suffixe.
+
+### Svelte 5
+- Tout `Record`/tableau dependant de `m.*()` dans un `<script>` : `$derived({...})` / `$derived([...])`
+  pour rester reactif au changement de langue sans remount.
+- Variable locale nommee `m` : la renommer (`mo`, `mb`, ...) pour eviter la collision avec `import { m }`.
+
+### Dates/heures
+- `import { getLocale } from '$lib/paraglide/runtime'` puis `getLocale() === 'en' ? 'en-US' : 'fr-FR'`.
+
+### Typographie (cf. CLAUDE.md)
+- ASCII droit partout : `'` (jamais `'`), `"` (jamais `" "` ni `« »`), `-` (jamais `—`/`–`).
+  Echapper `\'` / `\"`. **Exception** : l'ellipse `…` est gardee partout.
+- Corriger en chemin les fautes FR (espaces avant ponctuation, accents manquants).
+
+### Commentaires / dev strings
+- Tous en **anglais**. JSDoc/doc-comment sur chaque export. Voir CLAUDE.md (section qualite).
+
+### Wiki
+- **Anglais**, par feature/module (pas par fichier). Precise, exhaustive, **concise**.
+- Calquer le style des pages deja faites : `docs/wiki/architecture.md`, `docs/wiki/services/chat-gateway.md`
+  (intro role, tables routes/env, sections responsabilites). Tables Markdown privilegiees.
+
+### Outil Edit/Write
+- Exige un **Read recent du fichier dans la session courante** (un Read d'avant compaction ne compte pas).
+  Refaire un Read juste avant si erreur "File has not been read yet".
+
+### Verification & commits (NON NEGOCIABLE)
+- **Changer un fichier de code = verifier/mettre a jour son test associe** (assertions sur logs
+  traduits, cles renommees, etc.), sinon CI rouge.
+- Frontend : `cd frontend && bun run check` -> **0 erreur, 0 warning**, puis `bun run test` (Vitest).
+- NestJS : `npm test` dans le service touche. Rust : `cargo test` + `cargo clippy`.
+- **Avant push** : `rm -rf apps/*/dist` (sinon le hook pre-push rejoue les specs compilees).
+- Le hook pre-commit lance `eslint --fix` + `prettier` et re-stage tout le frontend dirty : normal.
+- Commit + push **apres chaque sous-section**. Toujours sur `main`. Pull avant de commencer.
+- **Surveiller les commits externes entre sessions** : verifier qu'ils suivent le standard.
+
+---
+
+## AVANCEMENT
+
+### Chantier 1 - i18n (frontend) : QUASI TERMINE
+Batches 1 a 9c livres : navigation/profil/chat/messages, posts, admin/moderation, associations (5a-5d),
+forms (5e), pages legales (6), modules .ts (7), error/auth/profile/purchases (8a), shop/calendar/events
+(8b), associations/directory/dashboard (8c), layout/notifications/lists/invites (8d), shared (8e),
+MainChatPage/composer/bubble (9a), dev strings & commentaires chat (9b/9c), consolidation des cles.
+**Reste** : balayage final des chaines FR residuelles + parite des cles (voir taches I1-I3).
+
+### Chantier 2 - Wiki technique : DEMARRE (gros reste)
+Faits : `docs/wiki/index.md`, `docs/wiki/architecture.md`, `docs/wiki/services/chat-gateway.md`.
+**Reste** : toutes les autres pages listees dans `index.md` (voir taches W1-W6).
+
+### Chantier 3 - Commentaires anglais : EN COURS
+Applique au fil des fichiers frontend touches (passes 9b/9c dediees au chat). **Reste** : balayage
+systematique des backends NestJS/Rust + infra (voir taches C1-C4).
+
+### Chantier 4 - Nettoyage docs : NON DEMARRE
+Voir taches D1-D3 (consolidation puis suppression).
+
+---
+
+## LISTE DE TACHES (ordonnee, a suivre sans reflechir)
+
+> Ordre conseille : I (cloturer i18n) -> D+W (consolider docs dans le wiki) -> C (commentaires backend).
+> Cocher `[x]` une fois fait + committe.
+
+### Bloc I - Cloture i18n frontend
+
+- [ ] **I1** - Detecter les chaines FR residuelles dans le template/UI. Depuis `frontend/` :
+  `git grep -nIE "(é|è|ê|à|ù|ç|î|ô|â)" -- "src/**/*.svelte"` puis trier : toute chaine
+  **visible par l'utilisateur** encore en dur -> la passer en `m.key()` (creer la cle FR+EN).
+  Ignorer les commentaires (chantier 3) et les valeurs BDD.
+- [ ] **I2** - Verifier la parite des cles entre les deux fichiers de messages. Script rapide :
+  `node -e "const a=require('./frontend/messages/fr.json'),b=require('./frontend/messages/en.json');const ka=Object.keys(a),kb=Object.keys(b);console.log('FR only:',ka.filter(k=>!(k in b)));console.log('EN only:',kb.filter(k=>!(k in a)))"`.
+  Toute cle presente d'un seul cote -> ajouter la trad manquante OU supprimer la cle morte.
+- [ ] **I3** - Detecter les cles definies mais jamais utilisees : pour un echantillon de cles,
+  `git grep -c "m\.<key>" frontend/src`. Supprimer les cles mortes des DEUX json. `bun run check` -> 0.
+- [ ] **I4** - `cd frontend && bun run check` (0/0) + `bun run test`. Commit + push (`rm -rf apps/*/dist` avant).
+
+### Bloc D - Consolidation docs (migrer le contenu unique vers le wiki AVANT toute suppression)
+
+> Regle d'or : ne JAMAIS supprimer un `.md` ancien tant que son contenu unique n'est pas dans le wiki.
+> Chaque tache D = "lire l'ancien doc -> verser l'info manquante dans la page wiki cible -> supprimer l'ancien".
+
+- [ ] **D1** - `docs/ARCHITECTURE.md` (FR) : verifier que tout est couvert par `docs/wiki/architecture.md`
+  (topologie, routage, auth, Kafka/Redis). Verser le manquant, puis **supprimer** `docs/ARCHITECTURE.md`.
+- [ ] **D2** - `docs/CHAT_GATEWAY.md` : compare a `docs/wiki/services/chat-gateway.md`. Verser le
+  manquant, puis **supprimer** `docs/CHAT_GATEWAY.md`.
+- [ ] **D3** - `docs/MLS_REWRITE_PLAN.md` (plan termine du 2026-06-03) : migrer les **invariants**
+  (5 invariants non-negociables) et la **table des bugs corriges** vers `docs/wiki/mls-protocol.md`
+  (tache W6), puis **supprimer** `docs/MLS_REWRITE_PLAN.md`.
+
+### Bloc W - Construction du wiki (1 page par entree de `docs/wiki/index.md`)
+
+> Pour chaque page : lire les sources indiquees, ecrire la page en anglais (style des pages existantes),
+> corriger imprecisions/code mort reperes en passant. Mettre a jour `index.md` si un lien change.
+> Commit + push apres chaque page (ou petit groupe).
+
+- [ ] **W1 - Services backend** (`docs/wiki/services/`)
+  - [ ] `chat-delivery.md` <- `apps/chat-delivery-service/src/app.controller.ts` (+ modules `src/`).
+        Lister les ~40 endpoints, le sync engine, la push, l'historique Redis Streams. Verser `docs/PUSH_NOTIFICATIONS.md` et `docs/STORAGE.md` (parties chat-delivery).
+  - [ ] `core-service.md` <- `apps/core-service/src/` (auth OIDC Authentik, users, Stripe).
+  - [ ] `media-service.md` <- `apps/media-service/src/` (blobs chiffres, MinIO).
+  - [ ] `social-service.md` <- `apps/social-service/src/` (posts, forms, channels, associations).
+        Verser `docs/COMMUNITIES.md`.
+- [ ] **W2 - Frontend** (`docs/wiki/frontend/`)
+  - [ ] `architecture.md` <- structure `frontend/src/`, stores, routing, Paraglide. Verser `docs/FRONTEND.md`.
+  - [ ] `mls-wasm.md` <- `frontend/mls-core/`, `frontend/mls-wasm/`, `frontend/src/lib/mls-client/ARCHITECTURE.md`.
+- [ ] **W3 - Modules frontend** (`docs/wiki/frontend/modules/`) : `auth.md`, `chat.md`, `associations.md`,
+  `forms.md`, `calendar.md`, `posts.md`, `payments.md`, `admin.md`. Source = les dossiers de composants
+  correspondants sous `frontend/src/lib/components/` et `frontend/src/routes/`.
+- [ ] **W4 - Infrastructure** (`docs/wiki/infrastructure/`) : `docker.md`, `nginx.md`, `databases.md`,
+  `kafka.md`, `backup.md`. Sources = `infrastructure/`, `docker-compose*.yml`,
+  `infrastructure/local/Dockerfile.frontend`, `infrastructure/backup/`. Verser `docs/STORAGE.md` (restant).
+  - [ ] Optionnel : `deployment.md` (EN) <- `docs/DEPLOIEMENT.md` (FR) + recoupage `infrastructure/MIGRATION.md`
+        (garder MIGRATION.md). Puis supprimer `docs/DEPLOIEMENT.md`.
+- [ ] **W5 - API surface** : `docs/wiki/api-surface.md` <- tous les controllers NestJS + routes gateway.
+- [ ] **W6 - MLS protocol** : `docs/wiki/mls-protocol.md` <- `docs/MLS.md` + invariants de D3 +
+  liens vers les docs vivantes `MLS_DESYNC_PREVENTION.md` / `MLS_RECOVERY_LADDER.md` / `AUDIT-MLS-2026-06.md`.
+  Puis **supprimer** `docs/MLS.md`.
+
+> Suppressions finales (apres migration confirmee dans le wiki) : `docs/ARCHITECTURE.md`,
+> `docs/CHAT_GATEWAY.md`, `docs/BACKEND.md`, `docs/FRONTEND.md`, `docs/COMMUNITIES.md`,
+> `docs/STORAGE.md`, `docs/MLS.md`, `docs/PUSH_NOTIFICATIONS.md`, `docs/MLS_REWRITE_PLAN.md`,
+> `docs/DEPLOIEMENT.md`. **A GARDER** : `docs/AUDIT-MLS-2026-06.md`, `docs/MLS_DESYNC_PREVENTION.md`,
+> `docs/MLS_RECOVERY_LADDER.md`, `docs/TESTS-DEVICE-PENDING.md`, `docs/NORMALIZATION-PLAN.md`,
+> tout `docs/wiki/`.
+
+### Bloc C - Commentaires & dev strings backend/infra en anglais
+
+> Balayer service par service. Pour chaque fichier : traduire commentaires + dev strings (logs, erreurs
+> internes) en anglais, ajouter JSDoc/doc-comment sur les exports manquants. **Mettre a jour les tests**
+> qui asserte sur ces strings. Lancer les tests du service avant commit.
+
+- [ ] **C1** - `apps/core-service/` : commentaires/logs FR -> EN, JSDoc exports. `npm test`. Normaliser
+  aussi `apps/core-service/README.md` en anglais (le reduire a un court pointeur vers `wiki/services/core-service.md`).
+- [ ] **C2** - `apps/social-service/` : idem. `npm test`. Normaliser `apps/social-service/README.md`
+  (-> pointeur vers `wiki/services/social-service.md`).
+- [ ] **C3** - `apps/media-service/` + `apps/chat-delivery-service/` : idem. `npm test` chacun.
+- [ ] **C4** - `apps/chat-gateway/` (Rust) + `frontend/mls-core/` (Rust) : commentaires/`log`/`eprintln`
+  FR -> EN, doc-comments `///`. `cargo test` + `cargo clippy`.
+
+### Bloc U - Notes pour la future doc utilisateur (FR) - au fil de l'eau
+- [ ] **U1** - Tenir un fichier `docs/USER-DOC-NOTES.md` (FR, scratch) : pour chaque feature documentee
+  cote wiki, noter les points a expliquer aux utilisateurs/responsables assos (parcours, ecrans cles,
+  permissions). Servira plus tard a rediger la vraie doc utilisateur en francais.
+
+### Bloc R - Reecriture du README (a faire sur Opus, en fin de chantier)
+- [ ] **R1** - Reecrire `README.md` pour integrer tous les changements : nouveau quick start,
+  stack a jour, lien vers le wiki (`docs/wiki/index.md`) et vers ce plan, suppression des sections
+  perimees. Le README doit etre la porte d'entree qui renvoie vers le wiki pour le detail.
+
+### Bloc DOC-UTILISATEUR - Documentations utilisateurs FR (a faire sur Opus, plus tard)
+> Gros chantier separe, lance une fois le wiki technique stable. Une doc par role, en francais,
+> orientee "comment faire", a partir des notes du Bloc U.
+- [ ] **DU1** - Utilisateur standard (membre) : ICM et non-ICM (parcours d'inscription/connexion differents).
+- [ ] **DU2** - Responsables d'association : secretaire, tresorier, president (gestion membres, calendrier,
+  boutique/Stripe, formulaires, documents, finances).
+- [ ] **DU3** - Administrateurs plateforme (dashboard admin, moderation, configuration).
+- [ ] **DU4** - Decider du format/emplacement (wiki FR dedie, PDF, pages dans l'app ?) avant de rediger.
+
+---
+
+## Reutilisation (rappel final - a faire sur Opus)
+- [ ] **REUSE1** - Une fois Canari termine, **rejouer toute cette methodologie** (i18n + wiki + commentaires
+  + nettoyage docs) sur **Sky**, puis **MiGallery**. Cf. memoire `project_normalization_methodology`.
