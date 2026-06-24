@@ -78,7 +78,7 @@
       </span>
     </div>
 
-    <!-- Heure de modification (si applicable) -->
+    <!-- Edit timestamp (if applicable). -->
     {#if isEdited}
       <div class="flex items-center gap-1.5 opacity-90">
         <Pencil size={12} class="text-text-muted shrink-0" />
@@ -88,7 +88,7 @@
       </div>
     {/if}
 
-    <!-- Liste de lecture -->
+    <!-- Read receipt list. -->
     {#if readBy.length > 0}
       <div
         class="flex items-center gap-1.5 mt-1 pt-1.5 border-t border-black/5 dark:border-white/10"

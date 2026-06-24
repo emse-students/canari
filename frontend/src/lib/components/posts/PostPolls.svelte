@@ -103,7 +103,7 @@
       <div
         class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-xl p-5 shadow-sm"
       >
-        <!-- En-tête du sondage -->
+        <!-- Poll header. -->
         <div class="flex items-start gap-3 mb-5">
           <div
             class="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5"
@@ -140,7 +140,7 @@
           </div>
         </div>
 
-        <!-- Options du sondage -->
+        <!-- Poll options. -->
         <div class="space-y-2.5">
           {#each poll.options as option (option.id)}
             {@const isSelected = selectedOptions.includes(option.id)}
@@ -157,7 +157,7 @@
               onclick={() => onVoteClick(poll.id, option.id, poll.multipleChoice)}
               aria-pressed={isSelected}
             >
-              <!-- Barre de progression visuelle des votes en arrière-plan -->
+              <!-- Visual vote progress bar in the background. -->
               {#if totalVotes > 0}
                 <div
                   class="absolute inset-y-0 left-0 bg-black/5 dark:bg-white/5 transition-all duration-1000 ease-out z-0 {isSelected
@@ -167,10 +167,10 @@
                 ></div>
               {/if}
 
-              <!-- Contenu de l'option -->
+              <!-- Option content. -->
               <div class="relative z-10 flex justify-between items-center gap-4">
                 <div class="flex items-center gap-3 flex-1 min-w-0">
-                  <!-- Icône de sélection (Unique vs Multiple) -->
+                  <!-- Selection icon (single vs multiple choice). -->
                   <div
                     class="shrink-0 transition-colors {isSelected
                       ? 'text-amber-500'
@@ -197,7 +197,7 @@
                     {/if}
                   </div>
 
-                  <!-- Libellé de l'option -->
+                  <!-- Option label. -->
                   <span class="font-bold text-[0.95rem] text-text-main truncate">
                     {option.label}
                   </span>
@@ -240,7 +240,7 @@
           {/each}
         </div>
 
-        <!-- Pied du sondage (Total + Bouton de validation pour multi-choice) -->
+        <!-- Poll footer (total votes + submit button for multi-choice). -->
         <div class="mt-5 flex items-center justify-between">
           <span class="text-xs font-semibold text-text-muted">
             {m.post_poll_total_votes_label({ count: totalVotes })}

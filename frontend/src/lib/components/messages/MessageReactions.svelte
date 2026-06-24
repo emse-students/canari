@@ -57,7 +57,7 @@
     aria-label={m.msg_reactions_label()}
   >
     {#each Object.entries(groupedReactions) as [emoji, users] (emoji)}
-      <!-- On vérifie si l'utilisateur actuel a réagi avec cet émoji -->
+      <!-- Check whether the current user has reacted with this emoji. -->
       {@const hasReacted = currentUserId ? users.includes(currentUserId) : false}
 
       <button

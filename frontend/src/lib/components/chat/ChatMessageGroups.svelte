@@ -75,7 +75,7 @@
 
   let resolvedSenderNames = $state<Record<string, string>>({});
 
-  // Dernier message envoyé par l'utilisateur (statut Envoi / Envoyé).
+  // Last message sent by the current user (Send / Sent status).
   const lastOwnMessageId = $derived(
     [...visibleMessageGroups]
       .reverse()
@@ -85,7 +85,7 @@
       )?.message.id ?? null
   );
 
-  // Dernier message envoyé lu par au moins un interlocuteur (indicateur " Lu ").
+  // Last sent message read by at least one recipient (Read indicator).
   const lastReadOwnMessageId = $derived(
     [...visibleMessageGroups]
       .reverse()
@@ -142,7 +142,7 @@
   {#each visibleMessageGroups as group, index (group?.type === 'message' ? group.message?.id : `${group?.type ?? ''}-${index}`)}
     <!-- Svelte 5 teardown race: group can be null when the {#key} parent destroys this component
          while the {#each} key expression is still being evaluated. All accesses use ?. -->
-    <!-- Séparateur de Date -->
+    <!-- Date separator. -->
     {#if group?.type === 'date_separator'}
       <div class="flex justify-center my-5">
         <div
@@ -153,7 +153,7 @@
         </div>
       </div>
 
-      <!-- Séparateur de Temps (Heure) -->
+      <!-- Time separator (hour). -->
     {:else if group?.type === 'time_separator'}
       <div class="flex justify-center my-3">
         <div class="px-2 py-0.5 text-[0.65rem] font-semibold text-text-muted/70 tracking-wider">
@@ -216,7 +216,7 @@
         </div>
       {:else}
         <div class="flex gap-2.5 {msg.isOwn ? 'justify-end' : 'justify-start'} w-full">
-          <!-- Avatar de l'expéditeur (uniquement pour les messages reçus) -->
+          <!-- Sender avatar (received messages only). -->
           {#if !msg.isOwn}
             <div class="w-8 shrink-0 flex flex-col justify-end pb-1">
               {#if groupPosition === 'end' || groupPosition === 'single'}
@@ -225,13 +225,13 @@
             </div>
           {/if}
 
-          <!-- Conteneur Bulle + Nom -->
+          <!-- Bubble + sender name container. -->
           <div
             class="flex min-w-0 flex-col {msg.isOwn
               ? 'items-end'
               : 'items-start'} max-w-[85%] md:max-w-[70%] lg:max-w-[65%]"
           >
-            <!-- Nom de l'expéditeur -->
+            <!-- Sender name. -->
             {#if showSender && !msg.isSystem}
               <div class="text-[0.75rem] text-text-muted px-1 mb-1 font-bold tracking-wide">
                 <a

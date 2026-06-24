@@ -83,7 +83,7 @@
   </div>
 {/if}
 
-<!-- Tooltip "Qui a réagi" - hover uniquement -->
+<!-- "Who reacted" tooltip - hover only. -->
 {#if popupReactionType && popupPos}
   <div
     use:portal

@@ -281,10 +281,10 @@
   </div>
 
   <div class="p-4 sm:p-5">
-    <!-- Sélecteurs association (événement lié + paiement) si c'est un post d'asso -->
+    <!-- Association selectors (linked event + payment) for association posts. -->
     {#if post.associationId}
       <div class="mb-5 grid gap-4 sm:grid-cols-2">
-        <!-- Lier à un événement validé -->
+        <!-- Link to a validated event. -->
         <div class="sm:col-span-2">
           <label
             for="edit-post-linked-calendar-event"
@@ -355,7 +355,7 @@
       </div>
     {/if}
 
-    <!-- Zone de texte + aperçu images -->
+    <!-- Text area + image preview. -->
     <div
       class="relative rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-black/40 shadow-inner p-2 mb-2 transition-colors focus-within:bg-white/50 dark:focus-within:bg-black/60"
     >
@@ -367,7 +367,7 @@
         editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
       />
 
-      <!-- Images existantes + nouvelles images -->
+      <!-- Existing images + newly added images. -->
       {#if existingImages.length > 0 || newFilePreviews.length > 0}
         <div
           class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pb-3 pt-2 custom-scrollbar"
@@ -405,7 +405,7 @@
             </div>
           {/each}
 
-          <!-- Nouvelles images (locales, pas encore uploadées) -->
+          <!-- New images (local, not yet uploaded). -->
           {#each newFilePreviews as src, i (src)}
             <div
               class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"
@@ -443,7 +443,7 @@
     </div>
   </div>
 
-  <!-- Sections optionnelles & footer -->
+  <!-- Optional sections & footer. -->
   <div class="space-y-4 border-t border-black/5 dark:border-white/10 px-4 pb-5 pt-5 sm:px-5">
     <!-- Sondage -->
     {#if includePoll}
@@ -490,7 +490,7 @@
       <div
         class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto"
       >
-        <!-- Ajouter des photos -->
+        <!-- Add photos. -->
         <label
           for={imageInputId}
           title="Photos"

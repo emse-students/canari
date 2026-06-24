@@ -277,7 +277,7 @@
 
     <div class="flex-1 min-w-0">
       {#if isEditing}
-        <!-- Mode édition inline -->
+        <!-- Inline edit mode. -->
         <div
           class="flex items-center gap-2 bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 border border-amber-500/40"
         >
@@ -316,7 +316,7 @@
             {getCommentAuthorName(comment)}
           </a>
           {#if isReply}
-            <!-- Badge "En réponse à" sur les replies rendus -->
+            <!-- "In reply to" badge on rendered replies. -->
             {@const parentComment = comments.find((c) => c.id === comment.parentId)}
             {#if parentComment}
               <span
@@ -438,7 +438,7 @@
   <div
     class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
   >
-    <!-- Contrôles : afficher/masquer + tri -->
+    <!-- Controls: show/hide + sort. -->
     <div class="flex items-center justify-between mb-2 gap-2">
       <div>
         {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
@@ -482,14 +482,14 @@
       {/if}
     </div>
 
-    <!-- Liste des commentaires -->
+    <!-- Comment list. -->
     <div class="space-y-1 mb-4">
       {#each visibleComments as comment (comment.id)}
         {@render commentNode(comment, false)}
       {/each}
     </div>
 
-    <!-- Charger tous les commentaires (si backend en retourne plus) -->
+    <!-- Load all comments (if the backend returns more). -->
     {#if onLoadAllComments && totalCommentCount !== undefined && totalCommentCount >= 20 && showComments}
       <button
         type="button"
@@ -501,7 +501,7 @@
       </button>
     {/if}
 
-    <!-- Zone de saisie -->
+    <!-- Input area. -->
     <div class="pt-3 flex flex-col gap-2">
       {#if replyingToId}
         <div

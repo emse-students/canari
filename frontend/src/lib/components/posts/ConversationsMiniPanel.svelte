@@ -175,7 +175,7 @@
     </a>
   </div>
 
-  <!-- Liste des conversations -->
+  <!-- Conversation list. -->
   <div class="flex-1 overflow-y-auto py-2 custom-scrollbar">
     {#if isLoading}
       <div class="flex flex-col justify-center items-center py-10 gap-3 text-text-muted">
