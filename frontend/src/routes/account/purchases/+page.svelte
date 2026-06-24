@@ -5,6 +5,8 @@
   import { currentUserId } from '$lib/stores/user';
   import { ShoppingBag, Tag, ArrowLeft } from '@lucide/svelte';
   import type { UserTag } from '$lib/associations/api';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface PurchaseRecord {
     id: string;
@@ -44,7 +46,7 @@
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       data = (await res.json()) as PurchasesResponse;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Impossible de charger les achats';
+      error = err instanceof Error ? err.message : m.purchases_load_error_fallback();
     } finally {
       loading = false;
     }
@@ -56,9 +58,12 @@
 
   function statusLabel(status: PurchaseRecord['status']): string {
     return (
-      { paid: 'Payé', pending_cash: 'En attente (cash)', cancelled: 'Annulé', expired: 'Expiré' }[
-        status
-      ] ?? status
+      {
+        paid: m.purchases_status_paid(),
+        pending_cash: m.purchases_status_pending_cash(),
+        cancelled: m.purchases_status_cancelled(),
+        expired: m.purchases_status_expired(),
+      }[status] ?? status
     );
   }
 
@@ -71,7 +76,7 @@
   }
 
   function sourceLabel(source: PurchaseRecord['source']): string {
-    return source === 'form' ? 'Formulaire' : 'Boutique';
+    return source === 'form' ? m.purchases_source_form() : m.purchases_source_shop();
   }
 </script>
 
@@ -82,23 +87,23 @@
       class="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text-main transition-colors"
     >
       <ArrowLeft size={16} />
-      Profil
+      {m.purchases_back_profile()}
     </a>
   </div>
 
   <div class="flex items-center gap-3">
     <ShoppingBag class="h-7 w-7 text-cn-accent shrink-0" />
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Mes achats</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.purchases_heading()}</h1>
       <p class="text-sm text-text-muted mt-0.5">
-        Historique de vos paiements et statuts de cotisation
+        {m.purchases_subtitle()}
       </p>
     </div>
   </div>
 
   {#if !isLoggedIn}
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 text-center">
-      <p class="text-text-muted text-sm">Connectez-vous pour voir vos achats.</p>
+      <p class="text-text-muted text-sm">{m.purchases_login_required()}</p>
     </div>
   {:else if loading}
     <div class="flex justify-center py-16">
@@ -112,7 +117,7 @@
       <section class="space-y-3">
         <h2 class="text-base font-bold text-text-main flex items-center gap-2">
           <Tag size={18} class="text-cn-accent" />
-          Cotisations actives
+          {m.purchases_active_tags_heading()}
         </h2>
         <ul class="space-y-2">
           {#each data.activeTags as tag (tag.id)}
@@ -123,19 +128,19 @@
                 <p class="font-semibold text-sm text-text-main">{tag.tagName}</p>
                 <p class="text-xs text-text-muted mt-0.5">
                   {#if tag.expiresAt}
-                    Expire le {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
+                    {m.purchases_tag_expires_at({ date: new Date(tag.expiresAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}
                   {:else}
-                    Pas d'expiration
+                    {m.purchases_tag_no_expiry()}
                   {/if}
                   {#if tag.issuingAssocId}
-                    · émis par {tag.issuingAssocId.slice(0, 8)}…
+                    · emis par {tag.issuingAssocId.slice(0, 8)}...
                   {/if}
                 </p>
               </div>
               <span
                 class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-xs font-bold"
               >
-                Actif
+                {m.purchases_tag_active_badge()}
               </span>
             </li>
           {/each}
@@ -147,19 +152,19 @@
     <section class="space-y-3">
       <h2 class="text-base font-bold text-text-main flex items-center gap-2">
         <ShoppingBag size={18} class="text-cn-accent" />
-        Historique ({data.purchases.length})
+        {m.purchases_history_heading({ count: data.purchases.length })}
       </h2>
 
       {#if data.purchases.length === 0}
         <div
           class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center"
         >
-          <p class="text-text-muted text-sm">Aucun achat pour le moment.</p>
+          <p class="text-text-muted text-sm">{m.purchases_empty_title()}</p>
           <a
             href="/shop"
             class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-cn-accent hover:underline"
           >
-            Explorer la boutique
+            {m.purchases_explore_shop()}
           </a>
         </div>
       {:else}
@@ -185,13 +190,13 @@
                   </span>
                 </div>
                 <p class="text-xs text-text-muted mt-1">
-                  {new Date(purchase.paidAt).toLocaleDateString('fr-FR', {
+                  {new Date(purchase.paidAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
                   })}
                   ·
-                  {purchase.paymentMethod === 'cash' ? 'Espèces' : 'Carte bancaire'}
+                  {purchase.paymentMethod === 'cash' ? m.purchases_payment_cash() : m.purchases_payment_card()}
                 </p>
               </div>
               <span class="shrink-0 font-bold text-sm text-text-main">

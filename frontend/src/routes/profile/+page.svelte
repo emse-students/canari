@@ -77,6 +77,8 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import type { UserTag } from '$lib/associations/api';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -144,8 +146,7 @@
         newPin
       );
       showChangePinModal = false;
-      changePinSuccess =
-        'PIN modifié. Vos autres appareils devront se reconnecter avec le nouveau PIN.';
+      changePinSuccess = m.profile_pin_changed();
     } catch (e) {
       changePinError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -165,7 +166,7 @@
       try {
         const memberships = await session.ensureMls().getDeviceMemberships(userId, deviceId);
         if (!cancelled) {
-          pendingInvitationCount = memberships.filter((m) => m.status === 'pending').length;
+          pendingInvitationCount = memberships.filter((mem) => mem.status === 'pending').length;
         }
       } catch {
         // MLS not ready yet
@@ -203,7 +204,7 @@
     try {
       noteInput = await fetchMyNotes();
     } catch {
-      noteError = 'Impossible de charger le bloc-notes.';
+      noteError = m.profile_notepad_load_error();
     } finally {
       noteLoading = false;
     }
@@ -218,7 +219,7 @@
       noteSaved = true;
       setTimeout(() => (noteSaved = false), 2000);
     } catch {
-      noteError = 'Échec de la sauvegarde.';
+      noteError = m.profile_notepad_save_error();
     } finally {
       noteSaving = false;
     }
@@ -241,7 +242,7 @@
       await clearAuth();
       await goto('/login', { replaceState: true });
     } catch (err) {
-      deletionError = err instanceof Error ? err.message : 'Erreur lors de la suppression';
+      deletionError = err instanceof Error ? err.message : m.profile_delete_error_fallback();
       deleting = false;
     }
   }
@@ -293,7 +294,7 @@
     // Check for payment setup redirect result
     const params = new URLSearchParams(window.location.search);
     if (params.get('payment_setup') === 'success') {
-      paymentSuccess = 'Moyen de paiement enregistré avec succès.';
+      paymentSuccess = m.profile_payment_setup_success();
       history.replaceState(null, '', '/profile');
     }
 
@@ -366,23 +367,22 @@
         await navigateExternal(result.url);
       }
     } catch (err) {
-      paymentError =
-        err instanceof Error ? err.message : 'Erreur de connexion au service de paiement';
+      paymentError = err instanceof Error ? err.message : m.profile_payment_setup_error();
       paymentSetupLoading = false;
     }
   }
 
   async function handleDeletePaymentMethod(id: string) {
     if (
-      !(await showConfirm('Supprimer cette carte bancaire ?', {
+      !(await showConfirm(m.profile_payment_delete_confirm(), {
         danger: true,
-        confirmLabel: 'Supprimer',
+        confirmLabel: m.common_delete_button(),
       }))
     )
       return;
     try {
       await deletePaymentMethod(id);
-      paymentMethods = paymentMethods.filter((m) => m.id !== id);
+      paymentMethods = paymentMethods.filter((pm) => pm.id !== id);
     } catch (err) {
       paymentError = err instanceof Error ? err.message : 'Erreur lors de la suppression';
     }
@@ -420,14 +420,14 @@
   }
 
   function formatYear(year: number | null): string {
-    if (!year) return 'Non renseignée';
-    return `Promotion ${year}`;
+    if (!year) return m.profile_promo_unknown();
+    return m.profile_promo_value({ year });
   }
 
   // Utilitaire pour afficher un nom par défaut si displayName est vide
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
-    return 'Mon Profil';
+    return m.profile_default_name();
   });
 </script>
 
@@ -435,7 +435,7 @@
   {#if loading}
     <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
       <Loader2 size={32} class="animate-spin text-cn-yellow" strokeWidth={2.5} />
-      <span class="text-sm font-bold tracking-wider uppercase">Chargement du profil...</span>
+      <span class="text-sm font-bold tracking-wider uppercase">{m.profile_loading()}</span>
     </div>
   {:else if error}
     <div
@@ -444,7 +444,7 @@
     >
       <AlertCircle size={20} class="shrink-0 mt-0.5" />
       <div>
-        <h3 class="font-bold text-sm mb-1">Erreur</h3>
+        <h3 class="font-bold text-sm mb-1">{m.common_generic_error_label()}</h3>
         <p class="text-sm font-medium">{error}</p>
       </div>
     </div>
@@ -462,8 +462,8 @@
         <button
           type="button"
           onclick={changeProfilePhoto}
-          title="Changer la photo de profil"
-          aria-label="Changer la photo de profil"
+          title={m.profile_photo_change_label()}
+          aria-label={m.profile_photo_change_label()}
           class="absolute bottom-0 right-0 flex items-center justify-center w-8 h-8 rounded-full
                  bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink
                  shadow-md shadow-cn-yellow/30 ring-2 ring-white dark:ring-[var(--cn-bg)]
@@ -497,14 +497,14 @@
           <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <UserRound size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-lg font-extrabold text-text-main">À propos de moi</h2>
+          <h2 class="text-lg font-extrabold text-text-main">{m.profile_bio_heading()}</h2>
         </div>
         {#if !editingBio}
           <button
             onclick={startEditBio}
             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold text-text-muted hover:text-cn-dark hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-95"
           >
-            <Edit3 size={16} strokeWidth={2.5} /> Modifier
+            <Edit3 size={16} strokeWidth={2.5} /> {m.common_edit_label()}
           </button>
         {/if}
       </div>
@@ -517,7 +517,7 @@
             minHeight="100px"
             class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-cn-yellow/50 focus-within:ring-2 focus-within:ring-cn-yellow/30 transition-all overflow-hidden"
             editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
-            placeholder="Décris-toi en quelques mots…"
+            placeholder={m.profile_bio_placeholder()}
           />
           <div class="flex items-center justify-between">
             <span
@@ -532,7 +532,7 @@
                 onclick={cancelEditBio}
                 class="rounded-xl px-4 py-2 text-sm font-bold text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
               >
-                Annuler
+                {m.common_cancel_button()}
               </button>
               <button
                 onclick={saveBio}
@@ -540,9 +540,9 @@
                 class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-cn-yellow/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
               >
                 {#if saving}
-                  <Loader2 size={16} class="animate-spin" strokeWidth={3} /> Enregistrement...
+                  <Loader2 size={16} class="animate-spin" strokeWidth={3} /> {m.common_saving_label()}
                 {:else}
-                  <Check size={16} strokeWidth={3} /> Enregistrer
+                  <Check size={16} strokeWidth={3} /> {m.common_save_button()}
                 {/if}
               </button>
             </div>
@@ -554,7 +554,7 @@
             <ProfileBioMarkdown source={profile.bio} />
           {:else}
             <p class="text-[0.95rem] text-text-main leading-relaxed opacity-90">
-              Aucune bio pour le moment. N'hésite pas à te présenter !
+              {m.profile_bio_empty()}
             </p>
           {/if}
         </div>
@@ -571,14 +571,14 @@
           <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <Building2 size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-lg font-extrabold text-text-main">Mes associations</h2>
+          <h2 class="text-lg font-extrabold text-text-main">{m.profile_assoc_heading()}</h2>
         </div>
         <a
           href="/directory"
           class="inline-flex items-center gap-1 text-xs font-bold text-cn-dark hover:underline"
         >
           <Users size={14} />
-          Annuaire
+          {m.profile_directory_link()}
         </a>
       </div>
       <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
@@ -593,7 +593,7 @@
         <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <History size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">Parcours associatif</h2>
+        <h2 class="text-lg font-extrabold text-text-main">{m.profile_career_heading()}</h2>
         {#if roleHistoryLoading}
           <Loader2 size={16} class="animate-spin text-cn-yellow" />
         {/if}
@@ -614,7 +614,7 @@
         <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <Info size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">Informations du compte</h2>
+        <h2 class="text-lg font-extrabold text-text-main">{m.profile_info_heading()}</h2>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -626,7 +626,7 @@
           </div>
           <div class="min-w-0">
             <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
-              Promotion
+              {m.profile_promo_label()}
             </p>
             <p class="text-sm font-bold text-text-main truncate">{formatYear(profile.promo)}</p>
           </div>
@@ -640,10 +640,10 @@
           </div>
           <div class="min-w-0">
             <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
-              Membre depuis le
+              {m.profile_member_since_label()}
             </p>
             <p class="text-sm font-bold text-text-main capitalize">
-              {new Date(profile.createdAt).toLocaleDateString('fr-FR', {
+              {new Date(profile.createdAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric',
@@ -662,23 +662,23 @@
       <div class="flex items-center justify-between gap-2 mb-4">
         <h2 class="text-lg font-bold text-text-main flex items-center gap-2">
           <NotebookPen size={20} class="text-cn-dark" />
-          Bloc-notes personnel
+          {m.profile_notepad_heading()}
         </h2>
-        <span class="text-xs text-text-muted">Privé · visible de toi seul</span>
+        <span class="text-xs text-text-muted">{m.profile_notepad_private()}</span>
       </div>
       {#if noteLoading}
-        <p class="text-sm text-text-muted py-3">Chargement…</p>
+        <p class="text-sm text-text-muted py-3">{m.common_loading_label()}</p>
       {:else}
         <MarkdownComposerField
           bind:value={noteInput}
-          placeholder="Notez tout et n'importe quoi…"
+          placeholder={m.profile_notepad_placeholder()}
           minHeight="140px"
         />
         <div class="flex items-center justify-end gap-3 pt-3">
           {#if noteError}
             <span class="text-xs text-red-600 mr-auto">{noteError}</span>
           {:else if noteSaved}
-            <span class="text-xs text-green-600 mr-auto">Enregistré ✓</span>
+            <span class="text-xs text-green-600 mr-auto">{m.profile_notepad_saved()}</span>
           {/if}
           <button
             type="button"
@@ -686,7 +686,7 @@
             disabled={noteSaving}
             class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
           >
-            {noteSaving ? 'Enregistrement…' : 'Enregistrer'}
+            {noteSaving ? m.common_saving_label() : m.common_save_button()}
           </button>
         </div>
       {/if}
@@ -704,7 +704,7 @@
         <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <Shield size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">Sécurité &amp; appareils</h2>
+        <h2 class="text-lg font-extrabold text-text-main">{m.profile_security_heading()}</h2>
       </div>
 
       {#if changePinSuccess}
@@ -727,9 +727,9 @@
                 <KeyRound size={20} strokeWidth={2.5} />
               </div>
               <div class="min-w-0">
-                <p class="text-sm font-bold text-text-main">Code PIN de chiffrement</p>
+                <p class="text-sm font-bold text-text-main">{m.profile_pin_heading()}</p>
                 <p class="text-xs font-medium text-text-muted mt-0.5">
-                  Modifiez le PIN qui protège vos messages chiffrés de bout en bout
+                  Modifiez le PIN qui protege vos messages chiffres de bout en bout
                 </p>
               </div>
             </div>
@@ -741,7 +741,7 @@
               class="shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
             >
               <KeyRound size={16} strokeWidth={2.5} />
-              <span class="hidden sm:inline">Changer</span>
+              <span class="hidden sm:inline">{m.profile_pin_change_btn()}</span>
             </button>
           </div>
 
@@ -753,9 +753,9 @@
                 <Monitor size={20} strokeWidth={2.5} />
               </div>
               <div class="min-w-0">
-                <p class="text-sm font-bold text-text-main">Appareils connectés</p>
+                <p class="text-sm font-bold text-text-main">{m.profile_devices_heading()}</p>
                 <p class="text-xs font-medium text-text-muted mt-0.5">
-                  Renommez ou révoquez les appareils liés à votre compte
+                  Renommez ou revoquez les appareils lies a votre compte
                 </p>
               </div>
             </div>
@@ -764,7 +764,7 @@
               class="relative shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
             >
               <Monitor size={16} strokeWidth={2.5} />
-              <span class="hidden sm:inline">Gérer</span>
+              <span class="hidden sm:inline">{m.profile_devices_manage_btn()}</span>
               {#if pendingInvitationCount > 0}
                 <span
                   class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center px-1 shadow"
@@ -777,8 +777,7 @@
         </div>
       {:else}
         <p class="text-sm text-text-muted leading-relaxed">
-          Déverrouillez la messagerie (saisie de votre PIN) pour gérer votre sécurité et vos
-          appareils.
+          {m.profile_security_locked()}
         </p>
       {/if}
     </div>
@@ -792,11 +791,11 @@
         <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
           <RefreshCw size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">Sauvegarde &amp; synchronisation</h2>
+        <h2 class="text-lg font-extrabold text-text-main">{m.profile_sync_heading()}</h2>
       </div>
       <p class="text-xs font-medium text-text-muted mb-6 sm:pl-[3.75rem] leading-relaxed">
-        Transférez vos conversations vers un autre appareil (QR) ou sauvegardez-les dans un fichier
-        chiffré <code class="font-mono">.canari</code>.
+        Transferez vos conversations vers un autre appareil (QR) ou sauvegardez-les dans un fichier
+        chiffre <code class="font-mono">.canari</code>.
       </p>
 
       {#if session.isLoggedIn}
@@ -806,11 +805,10 @@
             onclick={() => sync.handleStartSyncSession(syncCtx())}
             disabled={sync.isSyncSessionBusy}
             class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-            title="Démarrer une synchronisation QR"
           >
             <ScanLine size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">Transférer</span>
-            <span class="text-[0.7rem] text-text-muted">Afficher le QR</span>
+            <span class="text-sm font-bold text-text-main">{m.profile_sync_transfer_label()}</span>
+            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_transfer_sub()}</span>
           </button>
 
           <button
@@ -818,11 +816,10 @@
             onclick={() => sync.openJoinSyncModal()}
             disabled={sync.isSyncSessionBusy}
             class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-            title="Rejoindre une synchronisation QR"
           >
             <Smartphone size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">Scanner</span>
-            <span class="text-[0.7rem] text-text-muted">Scanner un QR</span>
+            <span class="text-sm font-bold text-text-main">{m.profile_sync_scan_label()}</span>
+            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_scan_sub()}</span>
           </button>
 
           <button
@@ -830,11 +827,10 @@
             onclick={triggerImport}
             disabled={session.isImporting}
             class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-            title="Importer une sauvegarde (.canari)"
           >
             <Upload size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">Importer</span>
-            <span class="text-[0.7rem] text-text-muted">Restaurer</span>
+            <span class="text-sm font-bold text-text-main">{m.profile_sync_import_label()}</span>
+            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_import_sub()}</span>
           </button>
 
           <button
@@ -842,16 +838,15 @@
             onclick={() => session.handleExport(appendLog)}
             disabled={session.isExporting}
             class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-            title="Exporter les conversations"
           >
             <Download size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">Exporter</span>
-            <span class="text-[0.7rem] text-text-muted">Sauvegarder</span>
+            <span class="text-sm font-bold text-text-main">{m.profile_sync_export_label()}</span>
+            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_export_sub()}</span>
           </button>
         </div>
       {:else}
         <p class="text-sm text-text-muted leading-relaxed">
-          Déverrouillez la messagerie pour synchroniser ou sauvegarder vos conversations.
+          {m.profile_sync_locked()}
         </p>
       {/if}
     </div>
@@ -866,7 +861,7 @@
           <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <CreditCard size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-lg font-extrabold text-text-main">Moyens de paiement</h2>
+          <h2 class="text-lg font-extrabold text-text-main">{m.profile_payment_heading()}</h2>
         </div>
 
         <button
@@ -875,9 +870,9 @@
           class="hidden sm:inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all disabled:opacity-50 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
         >
           {#if paymentSetupLoading}
-            <Loader2 size={16} class="animate-spin" /> Redirection...
+            <Loader2 size={16} class="animate-spin" /> {m.profile_payment_redirecting()}
           {:else}
-            <Plus size={18} strokeWidth={2.5} /> Ajouter une carte
+            <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card()}
           {/if}
         </button>
       </div>
@@ -904,7 +899,7 @@
 
       {#if paymentLoading}
         <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-4">
-          <Loader2 size={18} class="animate-spin" /> Chargement sécurisé des cartes...
+          <Loader2 size={18} class="animate-spin" /> {m.profile_payment_loading()}
         </div>
       {:else}
         {#if paymentMethods.length > 0}
@@ -941,8 +936,8 @@
                 <button
                   onclick={() => handleDeletePaymentMethod(pm.id)}
                   class="p-2.5 rounded-xl text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-all opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
-                  title="Supprimer cette carte"
-                  aria-label="Supprimer"
+                  title={m.profile_payment_delete_label()}
+                  aria-label={m.common_delete_button()}
                 >
                   <Trash2 size={18} strokeWidth={2.5} />
                 </button>
@@ -953,11 +948,7 @@
           <div
             class="text-center py-6 px-4 border border-dashed border-black/10 dark:border-white/10 rounded-[1.25rem] bg-black/5 dark:bg-white/5 mb-6"
           >
-            <p class="text-sm font-semibold text-text-muted">Aucun moyen de paiement enregistré.</p>
-            <p class="text-[0.7rem] font-medium text-text-muted/70 mt-1 max-w-sm mx-auto">
-              Ajoutez une carte bancaire pour pouvoir participer aux événements payants de
-              l'association.
-            </p>
+            <p class="text-sm font-semibold text-text-muted">{m.profile_payment_none_title()}</p>
           </div>
         {/if}
 
@@ -968,9 +959,9 @@
           class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
         >
           {#if paymentSetupLoading}
-            <Loader2 size={18} class="animate-spin" /> Redirection vers Stripe...
+            <Loader2 size={18} class="animate-spin" /> {m.profile_payment_redirect_stripe()}
           {:else}
-            <Plus size={18} strokeWidth={2.5} /> Ajouter une carte bancaire
+            <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card_mobile()}
           {/if}
         </button>
       {/if}
@@ -987,9 +978,9 @@
             <Tag size={22} strokeWidth={2.5} />
           </div>
           <div>
-            <h2 class="text-lg font-extrabold text-text-main">Cotisations et achats</h2>
+            <h2 class="text-lg font-extrabold text-text-main">{m.profile_subs_heading()}</h2>
             <p class="text-xs font-medium text-text-muted mt-0.5">
-              Statuts actifs et historique de paiements
+              {m.profile_subs_subtitle()}
             </p>
           </div>
         </div>
@@ -998,7 +989,7 @@
           class="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all"
         >
           <ShoppingBag size={16} />
-          Voir tout
+          {m.profile_subs_see_all()}
           <ChevronRight size={16} />
         </a>
       </div>
@@ -1006,10 +997,10 @@
       {#if purchasesLoading}
         <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-2">
           <Loader2 size={18} class="animate-spin" />
-          Chargement…
+          {m.common_loading_label()}
         </div>
       {:else if activeTags.length === 0}
-        <p class="text-sm text-text-muted mb-4">Aucune cotisation active pour le moment.</p>
+        <p class="text-sm text-text-muted mb-4">{m.profile_subs_empty()}</p>
       {:else}
         <ul class="space-y-2 mb-4">
           {#each activeTags as tag (tag.id)}
@@ -1020,16 +1011,16 @@
                 <p class="text-sm font-bold text-text-main">{tag.tagName}</p>
                 <p class="text-xs text-text-muted mt-0.5">
                   {#if tag.expiresAt}
-                    Expire le {new Date(tag.expiresAt).toLocaleDateString('fr-FR')}
+                    {m.profile_subs_expires_at({ date: new Date(tag.expiresAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}
                   {:else}
-                    Sans expiration
+                    {m.profile_subs_no_expiry()}
                   {/if}
                 </p>
               </div>
               <span
                 class="shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 text-xs font-bold"
               >
-                Actif
+                {m.profile_subs_active_badge()}
               </span>
             </li>
           {/each}
@@ -1041,7 +1032,7 @@
         class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all"
       >
         <ShoppingBag size={18} />
-        Mes achats et cotisations
+        {m.profile_subs_see_all_mobile()}
         <ChevronRight size={16} />
       </a>
     </div>
@@ -1056,10 +1047,10 @@
           <Trash2 size={22} strokeWidth={2.5} />
         </div>
         <div class="flex-1 min-w-0">
-          <h2 class="text-lg font-extrabold text-red-500 mb-1">Supprimer mon compte</h2>
+          <h2 class="text-lg font-extrabold text-red-500 mb-1">{m.profile_delete_heading()}</h2>
           <p class="text-sm text-text-muted mb-4 leading-relaxed">
-            Cette action est <strong>irréversible</strong>. Votre profil, vos messages, vos
-            publications, vos adhésions et toutes vos données seront définitivement supprimés.
+            Cette action est <strong>irreversible</strong>. Votre profil, vos messages, vos
+            publications, vos adhesions et toutes vos donnees seront definitivement supprimes.
           </p>
           {#if !deletionDialogOpen}
             <button
@@ -1071,14 +1062,12 @@
               class="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-500/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             >
               <Trash2 size={16} strokeWidth={2.5} />
-              Supprimer mon compte
+              {m.profile_delete_heading()}
             </button>
           {:else}
             <div transition:slide={{ duration: 200 }} class="space-y-4">
               <p class="text-sm font-semibold text-red-400">
-                Tapez <code class="font-mono bg-red-500/10 px-1.5 py-0.5 rounded-md"
-                  >{DELETION_CONFIRM_WORD}</code
-                > pour confirmer :
+                {m.profile_delete_type_prompt({ word: DELETION_CONFIRM_WORD })}
               </p>
               <input
                 type="text"
@@ -1105,7 +1094,7 @@
                   disabled={deleting}
                   class="rounded-xl px-4 py-2.5 text-sm font-bold text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
                 >
-                  Annuler
+                  {m.common_cancel_button()}
                 </button>
                 <button
                   onclick={handleDeleteAccount}
@@ -1113,9 +1102,9 @@
                   class="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-red-500/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
                 >
                   {#if deleting}
-                    <Loader2 size={16} class="animate-spin" /> Suppression en cours...
+                    <Loader2 size={16} class="animate-spin" /> {m.profile_delete_deleting()}
                   {:else}
-                    <Trash2 size={16} strokeWidth={2.5} /> Supprimer définitivement
+                    <Trash2 size={16} strokeWidth={2.5} /> {m.profile_delete_confirm_btn()}
                   {/if}
                 </button>
               </div>

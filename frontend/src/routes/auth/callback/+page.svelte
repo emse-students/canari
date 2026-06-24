@@ -2,23 +2,25 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { handleOidcCallback, getOidcReturnTo } from '$lib/stores/auth';
+  import { m } from '$lib/paraglide/messages';
 
   let error = $state('');
-  let status = $state('Authentification en cours…');
+  let status = $state('');
 
   onMount(async () => {
+    status = m.auth_callback_authenticating();
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const state = params.get('state');
     const authError = params.get('error');
 
     if (authError) {
-      error = `Authentik a refusé la connexion : ${params.get('error_description') || authError}`;
+      error = m.auth_callback_denied({ reason: params.get('error_description') || authError });
       return;
     }
 
     if (!code || !state) {
-      error = 'Paramètres manquants dans la redirection Authentik.';
+      error = m.auth_callback_missing_params();
       return;
     }
 
@@ -32,11 +34,11 @@
 
     try {
       console.debug('[callback] starting handleOidcCallback, code length:', code.length);
-      status = "Échange du code d'autorisation…";
+      status = m.auth_callback_exchanging_code();
       const user = await handleOidcCallback(code, state);
       console.debug('[callback] handleOidcCallback resolved, user:', user?.id);
 
-      status = 'Connexion réussie ! Redirection…';
+      status = m.auth_callback_success();
       const returnTo = await getOidcReturnTo();
       console.debug('[callback] goto ->', returnTo);
       await goto(returnTo, { replaceState: true });
@@ -58,13 +60,13 @@
         <div class="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto">
           <span class="text-red-600 text-2xl">✗</span>
         </div>
-        <h2 class="text-lg font-bold text-text-main">Échec de la connexion</h2>
+        <h2 class="text-lg font-bold text-text-main">{m.auth_callback_error_title()}</h2>
         <p class="text-sm text-red-600">{error}</p>
         <button
           onclick={() => goto('/login', { replaceState: true })}
           class="mt-4 px-6 py-3 bg-cn-yellow text-cn-ink rounded-2xl font-bold hover:bg-cn-yellow-hover transition-all"
         >
-          Réessayer
+          {m.auth_callback_retry()}
         </button>
       </div>
     {:else}
