@@ -45,6 +45,29 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 
 ## Auth flow
 
+### OIDC login (Authentik)
+
+```
+1. Frontend -> startOidcLogin()
+     -> redirect to Authentik /authorize (PKCE, anti-CSRF state)
+
+2. Authentik -> redirect to /auth/callback?code=...&state=...
+
+3. Frontend -> POST /api/auth/oidc/callback { code, redirect_uri }
+     -> core-service exchanges code for Authentik tokens (server-side)
+     -> upsert user in PostgreSQL
+     -> returns { access_token (JWT HS256, 15 min), refresh (HttpOnly cookie 7d) }
+
+4. Frontend stores access_token in memory + sets cookie canari_ws_token
+     (for WebSocket auth via cookie HTTP)
+
+5. Automatic refresh: POST /api/auth/refresh via HttpOnly cookie
+```
+
+Dev only: `POST /api/auth/dev-login` (disabled via `ENABLE_DEV_ROUTES=false` in prod).
+
+### Per-request auth (Nginx)
+
 1. Browser sends request to Nginx.
 2. Nginx calls `auth_request /internal/auth/verify` (internal only, never public).
 3. `core-service` validates the JWT (HS256, 15-min TTL) from the `Authorization: Bearer` header or the `canari_ws_token` cookie (WebSocket).
@@ -55,10 +78,135 @@ Access token lives in memory only (never localStorage). Refresh token is an Http
 
 ## Inter-service communication
 
-Services communicate through:
-- **Redis pub/sub**: `chat:messages`, `chat:channel_events` — chat-gateway subscribes, chat-delivery-service publishes.
-- **Kafka**: `post.created` topic — social-service publishes, chat-gateway consumes and broadcasts to all WebSocket clients.
-- **Direct HTTP** (internal Docker network, not through Nginx): e.g. chat-delivery-service calling core-service for user verification.
+### Synchronous HTTP (internal Docker network, bypasses Nginx)
+
+| Caller | Called | Purpose |
+|---|---|---|
+| chat-delivery-service | core-service | User verification |
+| social-service | core-service | Payment auth, membership checks |
+| media-service | - | Direct MinIO access via SDK |
+
+### Redis pub/sub (real-time)
+
+| Channel | Producer | Consumer | Payload |
+|---|---|---|---|
+| `chat:messages` | chat-delivery-service | chat-gateway | `{ recipientId, deviceId, proto (base64), groupId, senderId, … }` |
+| `chat:channel_events` | social-service | chat-gateway | `{ type, data, userIds[], timestamp }` |
+
+`chat:channel_events` types: `channel.member.joined`, `channel.member.kicked`, `channel.message.created`.
+
+### Kafka (async events)
+
+| Topic | Producer | Consumer | Payload type |
+|---|---|---|---|
+| `chat.messages` | chat-delivery-service | chat-delivery-service (push notif) | `MessageSentEvent` |
+| `post_created` | social-service | chat-gateway | `PostCreatedEvent` |
+
+## MLS message flow (online)
+
+```
+1. Sender (WASM): WasmMlsClient.send_message(groupId, plaintext)
+   -> MLS ciphertext (AES-128-GCM, current epoch)
+
+2. Frontend -> POST /api/mls/send
+   { proto: base64(ciphertext), groupId, recipientId, deviceId }
+
+3. chat-delivery-service:
+   - Stores in Redis Stream history:{groupId}
+   - Publishes N messages on Redis "chat:messages" (one per recipient device)
+
+4. chat-gateway (subscribed to Redis "chat:messages"):
+   - Lookup: connected_users["userId:deviceId"]
+   - Online -> sends WS frame to recipient
+   - Offline -> message stored, fetched on reconnect via GET /api/mls/messages/:userId/:deviceId
+
+5. Recipient (WASM): processIncomingMessage(groupId, bytes) -> plaintext AppMessage -> UI
+```
+
+## MLS group creation flow
+
+```
+1. GET /api/mls/devices/:userId         -> device list / KeyPackages
+2. POST /api/mls/groups { groupId, createdBy, members[], isGroup }
+3. mls.createGroup(groupId)             -> epoch 0 (initiator side)
+4. mls.addMembersBulk(devices)          -> { commit, welcome, ratchetTree }
+5. POST /api/mls/welcome                -> offline storage per device
+6. POST /api/mls/send (commit)          -> broadcast via Redis to online members
+7. If multi-device (own devices): repeat steps 4-6
+```
+
+## WebSocket protocol frames
+
+### Client -> gateway
+
+| Frame | Fields | Action |
+|---|---|---|
+| `welcome_request` | `groupId`, `payload`, `targetUserId`, `targetDeviceId` | Forward Welcome to a peer |
+| `reinvite_request` | same | Re-invite after stale epoch |
+| `read` | `messageId` | Read receipt (no-op at gateway level) |
+
+### Gateway -> client
+
+```json
+{
+  "proto": "<base64 MLS ciphertext>",
+  "senderId": "userId",
+  "senderDeviceId": "deviceId",
+  "groupId": "uuid",
+  "isWelcome": false,
+  "isCommit": false
+}
+```
+
+## PostgreSQL schema overview
+
+All tables share the `auth_db` database host. Full schemas are in the service wikis.
+
+### core-service
+
+| Table | Key columns |
+|---|---|
+| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin` |
+
+### chat-delivery-service
+
+| Table | Key columns |
+|---|---|
+| `key_packages` | `userId`, `deviceId` (UNIQUE), `packageBase64` |
+| `one_time_key_packages` | pool of pre-keys per `(userId, deviceId)` |
+| `queued_message` | `recipientId`, `deviceId`, `proto`, `isWelcome`, `isCommit`, `groupId`, `type`, `ratchetTree` |
+| `dm_groups` | `id`, `isGroup`, `keyVersion`, `activeEpoch`, `latestKeyRotationPayload` |
+| `dm_group_members` | `groupId`, `userId`, `role`, `leftAt` |
+| `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/welcome_sent/welcome_received/stale), `lastEpochSeen` |
+| `push_tokens` | `userId`, `deviceId`, `token`, `platform` (fcm/apns) |
+
+### social-service
+
+| Table | Key columns |
+|---|---|
+| `channel_workspaces` | `id`, `slug` (unique), `name`, `createdBy`, `imageMediaId` |
+| `channels` | `workspaceId`, `name`, `isPrivate`, `allowedRoles[]`, `keyVersion`, `masterSecret`, `archived` |
+| `channel_roles` | `workspaceId`, `name`, `priority`, `permissions[]` |
+| `channel_members` | `workspaceId`, `userId`, `roleIds[]`, `keys` (JSONB) |
+| `channel_messages` | `channelId`, `senderId`, `content` (ciphertext), `nonce`, `keyVersion`, `replyTo`, `attachments`, `reactions` |
+| `channel_key_distributions` | `channelId`, `userId`, `deviceId`, `status`, `attempts`, `sentAt`, `receivedAt`, `ackedAt` |
+
+## Production deployment
+
+```
+Internet
+  -> Cloudflare (TLS termination)
+       -> Cloudflare Tunnel -> http://localhost:8080
+            -> Nginx:80 (frontend container)
+                 |- /api/ws         -> chat-gateway:3000
+                 |- /api/mls/*      -> chat-delivery-service:3010
+                 |- /api/media/*    -> media-service:3011
+                 |- /api/auth/*     -> core-service:3012
+                 |- /api/channels/* -> social-service:3014
+                 `- /*              -> SvelteKit static (build/)
+```
+
+Backend services use `expose:` (not `ports:`) in production — only accessible within the Docker internal network.
 
 ## Key design decisions
 

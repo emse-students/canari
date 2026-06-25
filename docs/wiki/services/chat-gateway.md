@@ -25,6 +25,39 @@ It does **not** perform encryption, store messages, or make business logic decis
 
 Auth is enforced by Nginx `auth_request` before the request reaches the gateway.
 
+## Internal state (`AppState`)
+
+Shared across all handlers as `Arc<AppState>`:
+
+```rust
+pub struct AppState {
+    // "userId:deviceId" -> list of mpsc senders (multiple tabs = multiple senders)
+    pub connected_users: Arc<RwLock<HashMap<String, Vec<mpsc::Sender<String>>>>>,
+    pub redis: Client,
+    pub jwt_secret: String,
+}
+```
+
+A `ConnectionGuard` is created per WebSocket connection. Its `Drop` impl removes the sender from `connected_users` and deletes the Redis presence key.
+
+## WebSocket authentication
+
+Token is extracted in this priority order:
+
+1. Cookie `canari_ws_token`
+2. Query parameter `token=`
+
+If the JWT is invalid or absent, the connection is rejected with code `4401`.
+
+## Connection lifecycle
+
+1. HTTP upgrade to WebSocket.
+2. JWT validation -> extract `userId`.
+3. Register in `connected_users["userId:deviceId"]` (mpsc sender).
+4. Set Redis `user:online:{userId}:{deviceId}` (TTL 90s).
+5. Drain `pending_welcomes:{userId}` (Redis list of WS frames queued while offline).
+6. Spawn `ws_read_loop` (client frames) and `ws_write_loop` (mpsc -> WS).
+
 ## WebSocket message routing
 
 On each WebSocket connection, the gateway registers the user+device key (`userId:deviceId`) in the in-memory `connected_users` map (a `Mutex<HashMap<String, HashMap<String, Sender>>>`).
@@ -56,6 +89,14 @@ Published by `chat-delivery-service` when a message is queued for a specific dev
 **MLS frames**: the gateway relays the full JSON as-is to the client's WebSocket channel.
 
 If the target device is not connected, the message stays in the DB queue in `chat-delivery-service` and is fetched via `fetchPendingMessages` on reconnect — it is not lost.
+
+### Welcome forward (`welcome_request` / `reinvite_request`)
+
+When a client sends a `welcome_request` frame, the gateway:
+
+1. Reads group members from Redis `group:members:{groupId}`.
+2. For each target device found in `connected_users` -> sends via mpsc sender.
+3. If the target device is offline -> stores the frame in Redis `pending_welcomes:{userId}` (LPUSH). Drained at next connection (step 5 of the lifecycle above).
 
 ### `chat:channel_events`
 

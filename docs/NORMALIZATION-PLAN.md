@@ -93,8 +93,11 @@ Faits : `docs/wiki/index.md`, `docs/wiki/architecture.md`, `docs/wiki/services/c
 Applique au fil des fichiers frontend touches (passes 9b/9c dediees au chat). **Reste** : balayage
 systematique des backends NestJS/Rust + infra (voir taches C1-C4).
 
-### Chantier 4 - Nettoyage docs : NON DEMARRE
-Voir taches D1-D3 (consolidation puis suppression).
+### Chantier 4 - Nettoyage docs : EN COURS
+D1-D3 livres : ARCHITECTURE.md, CHAT_GATEWAY.md, MLS_REWRITE_PLAN.md + MLS.md consolides dans le wiki
+et supprimes. wiki/architecture.md enrichi (OIDC, Redis/Kafka details, MLS flows, WS protocol, schemas
+PostgreSQL, topologie prod). wiki/services/chat-gateway.md enrichi (AppState, lifecycle, pending_welcomes).
+wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints, scenarios, bug tables.
 
 ---
 
@@ -121,11 +124,11 @@ Voir taches D1-D3 (consolidation puis suppression).
 > Regle d'or : ne JAMAIS supprimer un `.md` ancien tant que son contenu unique n'est pas dans le wiki.
 > Chaque tache D = "lire l'ancien doc -> verser l'info manquante dans la page wiki cible -> supprimer l'ancien".
 
-- [ ] **D1** - `docs/ARCHITECTURE.md` (FR) : verifier que tout est couvert par `docs/wiki/architecture.md`
+- [x] **D1** - `docs/ARCHITECTURE.md` (FR) : verifier que tout est couvert par `docs/wiki/architecture.md`
   (topologie, routage, auth, Kafka/Redis). Verser le manquant, puis **supprimer** `docs/ARCHITECTURE.md`.
-- [ ] **D2** - `docs/CHAT_GATEWAY.md` : compare a `docs/wiki/services/chat-gateway.md`. Verser le
+- [x] **D2** - `docs/CHAT_GATEWAY.md` : compare a `docs/wiki/services/chat-gateway.md`. Verser le
   manquant, puis **supprimer** `docs/CHAT_GATEWAY.md`.
-- [ ] **D3** - `docs/MLS_REWRITE_PLAN.md` (plan termine du 2026-06-03) : migrer les **invariants**
+- [x] **D3** - `docs/MLS_REWRITE_PLAN.md` (plan termine du 2026-06-03) : migrer les **invariants**
   (5 invariants non-negociables) et la **table des bugs corriges** vers `docs/wiki/mls-protocol.md`
   (tache W6), puis **supprimer** `docs/MLS_REWRITE_PLAN.md`.
 
@@ -154,7 +157,7 @@ Voir taches D1-D3 (consolidation puis suppression).
   - [ ] Optionnel : `deployment.md` (EN) <- `docs/DEPLOIEMENT.md` (FR) + recoupage `infrastructure/MIGRATION.md`
         (garder MIGRATION.md). Puis supprimer `docs/DEPLOIEMENT.md`.
 - [ ] **W5 - API surface** : `docs/wiki/api-surface.md` <- tous les controllers NestJS + routes gateway.
-- [ ] **W6 - MLS protocol** : `docs/wiki/mls-protocol.md` <- `docs/MLS.md` + invariants de D3 +
+- [x] **W6 - MLS protocol** : `docs/wiki/mls-protocol.md` <- `docs/MLS.md` + invariants de D3 +
   liens vers les docs vivantes `MLS_DESYNC_PREVENTION.md` / `MLS_RECOVERY_LADDER.md` / `AUDIT-MLS-2026-06.md`.
   Puis **supprimer** `docs/MLS.md`.
 
