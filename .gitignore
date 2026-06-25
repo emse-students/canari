@@ -98,3 +98,7 @@ lcov-report/
 # Keep the frontend Bun lockfile committed so installs are reproducible (CI
 # builds with the exact resolved dependency tree, not floating ranges).
 !frontend/bun.lock
+
+# Apple artefacts
+._*
+*.xcuserdatad
