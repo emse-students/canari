@@ -144,9 +144,9 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
   - [x] `media-service.md` - 8 endpoints (upload, chunked upload, download, delete) + encryption model.
   - [x] `social-service.md` - posts, channels, forms, associations + channel encryption model + Redis events.
   Note: PUSH_NOTIFICATIONS.md, STORAGE.md, COMMUNITIES.md content was incorporated; those files not yet deleted (verify before D-pass).
-- [ ] **W2 - Frontend** (`docs/wiki/frontend/`)
-  - [ ] `architecture.md` <- structure `frontend/src/`, stores, routing, Paraglide. Verser `docs/FRONTEND.md`.
-  - [ ] `mls-wasm.md` <- `frontend/mls-core/`, `frontend/mls-wasm/`, `frontend/src/lib/mls-client/ARCHITECTURE.md`.
+- [x] **W2 - Frontend** (`docs/wiki/frontend/`)
+  - [x] `architecture.md` - SvelteKit structure, Svelte 5 runes, auth model, i18n, mobile keyboard, Tauri, env vars.
+  - [x] `mls-wasm.md` - WASM package layout, IMlsService, WasmMlsClient API, message queue, tab leadership, state persistence.
 - [ ] **W3 - Modules frontend** (`docs/wiki/frontend/modules/`) : `auth.md`, `chat.md`, `associations.md`,
   `forms.md`, `calendar.md`, `posts.md`, `payments.md`, `admin.md`. Source = les dossiers de composants
   correspondants sous `frontend/src/lib/components/` et `frontend/src/routes/`.
