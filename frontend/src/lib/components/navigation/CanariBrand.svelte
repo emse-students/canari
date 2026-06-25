@@ -1,12 +1,15 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
+
   interface Props {
     /** When true, hides the text on small screens. */
     compact?: boolean;
-    /** Optional tagline displayed below the brand name. */
+    /** Optional tagline displayed below the brand name. Defaults to the localized brand tagline. */
     subtitle?: string;
   }
 
-  let { compact = false, subtitle = 'Le réseau des Marteaux' }: Props = $props();
+  let { compact = false, subtitle: subtitleProp }: Props = $props();
+  const subtitle = $derived(subtitleProp ?? m.brand_subtitle());
 
   /** Every May 27th, a small tribute replaces the brand name. */
   const now = new Date();

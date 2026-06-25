@@ -165,7 +165,7 @@
           class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
         >
           <Save size={16} />
-          {saving ? 'Enregistrement…' : 'Enregistrer'}
+          {saving ? m.common_saving_label() : m.common_save_button()}
         </button>
         <button
           type="button"

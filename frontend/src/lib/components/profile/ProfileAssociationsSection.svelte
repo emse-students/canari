@@ -2,6 +2,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import type { UserMembershipRow } from '$lib/profile/api';
   import { Building2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     memberships: UserMembershipRow[];
@@ -12,27 +13,27 @@
   const props: Props = $props();
   const memberships = $derived(props.memberships);
   const loading = $derived(props.loading ?? false);
-  const emptyMessage = $derived(props.emptyMessage ?? 'Aucune association pour le moment.');
+  const emptyMessage = $derived(props.emptyMessage ?? m.profile_asso_empty());
 </script>
 
 <div class="space-y-3">
   {#if loading}
-    <p class="text-sm text-text-muted">Chargement…</p>
+    <p class="text-sm text-text-muted">{m.common_loading_label()}</p>
   {:else if memberships.length === 0}
     <p class="text-sm text-text-muted">{emptyMessage}</p>
   {:else}
     <ul class="space-y-2">
-      {#each memberships as m (m.associationId)}
+      {#each memberships as mb (mb.associationId)}
         <li>
           <a
-            href="/associations/{encodeURIComponent(m.slug)}"
+            href="/associations/{encodeURIComponent(mb.slug)}"
             class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3 hover:border-cn-yellow/30 transition-colors"
           >
-            <AssociationAvatar name={m.name} logoUrl={m.logoUrl} size="sm" />
+            <AssociationAvatar name={mb.name} logoUrl={mb.logoUrl} size="sm" />
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-bold text-text-main truncate">{m.name}</p>
+              <p class="text-sm font-bold text-text-main truncate">{mb.name}</p>
               <p class="text-xs text-text-muted mt-0.5">
-                {m.role}{#if m.isAdmin}
+                {mb.role}{#if mb.isAdmin}
                   · Admin{/if}
               </p>
             </div>

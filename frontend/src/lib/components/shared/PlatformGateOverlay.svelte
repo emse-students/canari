@@ -14,6 +14,7 @@
   } from '$lib/utils/appVersion';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { goto } from '$app/navigation';
+  import { m } from '$lib/paraglide/messages';
 
   const info = $derived(getAppVersionCheck());
   const isGlobalAdminUser = $derived(isGlobalAdmin());
@@ -49,22 +50,18 @@
 </script>
 
 {#if showMinVersion && info}
-  <Modal open={true} title="Mise à jour obligatoire" dismissible={false} maxWidth="max-w-lg" onClose={() => {}}>
+  <Modal open={true} title={m.update_required_title()} dismissible={false} maxWidth="max-w-lg" onClose={() => {}}>
     <div class="space-y-4 text-sm text-text-muted leading-relaxed">
       <p>
-        Cette version de Canari (<strong class="text-cn-dark">{info.clientVersion}</strong>) n'est
-        plus supportée. Installez au minimum la version
-        <strong class="text-cn-dark">{info.minClientVersion}</strong> pour continuer.
+        {m.platform_gate_version_prefix()}<strong class="text-cn-dark">{info.clientVersion}</strong>{m.platform_gate_version_middle()}
+        <strong class="text-cn-dark">{info.minClientVersion}</strong> {m.platform_gate_version_suffix()}
       </p>
       {#if isAndroid}
-        <p>
-          Le téléchargement de l'APK s'ouvrira dans votre navigateur ; installez-le ensuite pour
-          mettre à jour l'application.
-        </p>
+        <p>{m.update_android_instruction()}</p>
       {:else if isNative}
-        <p>Téléchargez et installez la dernière version depuis la page de release GitHub.</p>
+        <p>{m.update_native_instruction()}</p>
       {:else}
-        <p>Rechargez l'application pour utiliser la dernière version déployée.</p>
+        <p>{m.update_web_instruction()}</p>
       {/if}
     </div>
 
@@ -77,17 +74,17 @@
       >
         <Download size={16} />
         {updating
-          ? 'Ouverture…'
+          ? m.update_opening_label()
           : isNative
-            ? 'Télécharger la mise à jour'
-            : "Recharger l'application"}
+            ? m.update_download_button()
+            : m.update_reload_button()}
       </button>
     {/snippet}
   </Modal>
 {:else if showMaintenance && info}
   <Modal
     open={true}
-    title="Maintenance en cours"
+    title={m.platform_gate_maintenance_title()}
     dismissible={false}
     maxWidth="max-w-lg"
     onClose={() => {}}
@@ -99,8 +96,7 @@
         </span>
       </div>
       <p>
-        {info.maintenance.message ||
-          "Canari est temporairement indisponible pour maintenance. Réessayez plus tard."}
+        {info.maintenance.message || m.platform_gate_maintenance_default_msg()}
       </p>
     </div>
 
@@ -111,7 +107,7 @@
         disabled={loggingOut}
         onclick={() => void handleMaintenanceLogout()}
       >
-        {loggingOut ? 'Déconnexion…' : 'Retour à la connexion'}
+        {loggingOut ? m.platform_gate_logging_out() : m.platform_gate_logout_button()}
       </button>
     {/snippet}
   </Modal>

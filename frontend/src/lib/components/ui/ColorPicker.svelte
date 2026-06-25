@@ -1,5 +1,6 @@
 <script lang="ts">
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { m } from '$lib/paraglide/messages';
 
   /** Converts a 7-char hex string to HSV (h: 0-360, s: 0-1, v: 0-1). */
   function hexToHsv(hex: string): [number, number, number] {
@@ -189,7 +190,7 @@
     onclick={() => (open = !open)}
     class="h-7 w-12 rounded-lg border-2 border-cn-border shadow-sm transition-all hover:scale-105 active:scale-95 hover:border-cn-dark focus:outline-none focus:ring-2 focus:ring-cn-yellow/60"
     style="background:{value};"
-    aria-label={label ?? 'Choisir une couleur'}
+    aria-label={label ?? m.color_picker_default_aria()}
     title={label}
   ></button>
 

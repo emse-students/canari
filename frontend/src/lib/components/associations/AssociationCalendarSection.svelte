@@ -680,7 +680,7 @@
         <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.asso_calendar_event_description_label()}</p>
         <MarkdownComposerField
           bind:value={formDescription}
-          placeholder="Décrivez l'événement…"
+          placeholder={m.calendar_deposit_placeholder()}
           minHeight="100px"
         />
       </div>

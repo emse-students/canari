@@ -2,6 +2,7 @@
   import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from '@lucide/svelte';
   import type { PaymentMethod } from '$lib/stores/user';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** List of saved payment methods to display. */
@@ -85,14 +86,14 @@
           paying = false;
           return;
         } else {
-          error = result.error ?? 'Le paiement a échoué. Veuillez réessayer.';
+          error = result.error ?? m.payment_modal_error_default();
           paying = false;
           await notifyPaymentFailed();
         }
       }
       // If ok, caller handles redirect
     } catch {
-      error = 'Une erreur est survenue lors du paiement.';
+      error = m.payment_modal_error_generic();
       paying = false;
       await notifyPaymentFailed();
     }
@@ -109,7 +110,7 @@
     use:focusTrap
     role="dialog"
     aria-modal="true"
-    aria-label="Paiement"
+    aria-label={m.payment_modal_title()}
     class="keyboard-aware-modal-panel w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-white shadow-2xl max-h-[min(92dvh,var(--app-viewport-height,100dvh))] overflow-y-auto"
   >
     <!-- Header -->
@@ -119,8 +120,8 @@
           <CreditCard size={20} />
         </div>
         <div>
-          <h2 class="text-base font-extrabold text-text-main">Paiement</h2>
-          <p class="text-xs text-text-muted">Montant : {formatted}</p>
+          <h2 class="text-base font-extrabold text-text-main">{m.payment_modal_title()}</h2>
+          <p class="text-xs text-text-muted">{m.payment_modal_amount_label({ amount: formatted })}</p>
         </div>
       </div>
       <button
@@ -143,7 +144,7 @@
         </div>
       {/if}
 
-      <p class="text-sm font-semibold text-text-main">Carte enregistrée</p>
+      <p class="text-sm font-semibold text-text-main">{m.payment_modal_saved_card()}</p>
 
       <div class="space-y-2">
         {#each paymentMethods as pm (pm.id)}
@@ -166,7 +167,7 @@
                 <p class="text-sm font-bold text-text-main">
                   {brandLabel(pm.brand)} •••• {pm.last4}
                 </p>
-                <p class="text-xs text-text-muted">Expire {pm.expMonth}/{pm.expYear}</p>
+                <p class="text-xs text-text-muted">{m.payment_modal_expires({ month: pm.expMonth, year: pm.expYear })}</p>
               </div>
             </div>
             {#if selectedMethodId === pm.id}
@@ -183,9 +184,9 @@
       >
         {#if paying}
           <Loader2 size={16} class="animate-spin" />
-          Paiement en cours…
+          {m.payment_modal_paying()}
         {:else}
-          Payer {formatted}
+          {formatted}
           <ChevronRight size={16} />
         {/if}
       </button>
@@ -195,14 +196,14 @@
     <div class="px-6 pb-5">
       <div class="relative flex items-center gap-3 mb-3">
         <div class="flex-1 border-t border-cn-border"></div>
-        <span class="text-xs text-text-muted">ou</span>
+        <span class="text-xs text-text-muted">{m.payment_modal_or()}</span>
         <div class="flex-1 border-t border-cn-border"></div>
       </div>
       <button
         onclick={onPayWithNew}
         class="w-full rounded-xl border border-cn-border py-2.5 text-sm font-semibold text-text-muted hover:text-text-main hover:border-cn-yellow/50 transition-colors"
       >
-        Payer avec une autre carte
+        {m.payment_modal_pay_new_card()}
       </button>
     </div>
   </div>

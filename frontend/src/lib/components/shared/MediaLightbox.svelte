@@ -5,6 +5,7 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open?: boolean;
@@ -25,7 +26,7 @@
   let {
     open = false,
     onClose,
-    ariaLabel = 'Aperçu média',
+    ariaLabel = m.media_lightbox_default_aria(),
     title = '',
     onDownload,
     showPrev = false,
@@ -284,7 +285,7 @@
                 class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors text-sm font-semibold"
                 onclick={(e) => { e.stopPropagation(); onDownload!(); }}
               >
-                Télécharger
+                {m.common_download_label()}
               </button>
             {/if}
             <button
@@ -305,7 +306,7 @@
               type="button"
               class="absolute left-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
               onclick={(e) => { e.stopPropagation(); handlePrev(); }}
-              aria-label="Précédent"
+              aria-label={m.media_lightbox_prev_aria()}
             >
               <ChevronLeft size={26} strokeWidth={2.5} />
             </button>

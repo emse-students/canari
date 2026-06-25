@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
   import { TriangleAlert } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   const info = $derived(getAppVersionCheck());
   const message = $derived(info?.maintenance.message);
@@ -12,7 +13,7 @@
 >
   <TriangleAlert size={14} />
   <span>
-    Mode maintenance actif - seuls les administrateurs ont accès.
+    {m.admin_maintenance_banner_text()}
     {#if message}
       {message}
     {/if}

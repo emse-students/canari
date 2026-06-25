@@ -13,6 +13,7 @@
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { ArrowLeft, Building2, Users, AlertTriangle } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
@@ -79,7 +80,7 @@
     class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
   >
     <ArrowLeft size={16} />
-    Retour à la page publique
+    {m.list_edit_back_to_public()}
   </a>
 
   {#if loading}
@@ -104,7 +105,7 @@
     <nav
       data-swipe-nav-ignore
       class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
-      aria-label="Sections édition"
+      aria-label={m.list_edit_sections_aria()}
     >
       <div class="flex flex-wrap gap-2">
         <button

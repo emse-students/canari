@@ -792,7 +792,7 @@
           <button
             type="button"
             class="fixed inset-0 z-40 bg-black/30 xl:hidden"
-            aria-label="Fermer le panneau membres"
+            aria-label={m.chat_close_members_panel_aria()}
             onclick={convs.closeChannelMembersDrawer}
           ></button>
           <div

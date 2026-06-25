@@ -8,6 +8,7 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isAndroidTauriRuntime, openLatestAppUpdate } from '$lib/utils/appVersion';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { m } from '$lib/paraglide/messages';
 
   const show = $derived(isAppUpdateAvailable());
   const info = $derived(getAppVersionCheck());
@@ -28,31 +29,26 @@
 
 <Modal
   open={show && info !== null}
-  title="Mise à jour requise"
+  title={m.update_optional_title()}
   dismissible={false}
   maxWidth="max-w-lg"
   onClose={() => {}}
 >
   <div class="space-y-4 text-sm text-text-muted leading-relaxed">
     <p>
-      Une nouvelle version de Canari est disponible. Vous utilisez la version
+      {m.update_available_intro_prefix()}
       <strong class="text-cn-dark">{info?.clientVersion}</strong>
       {#if info?.serverVersion}
-        ; la version actuelle du serveur est
+        {m.update_server_version_prefix()}
         <strong class="text-cn-dark">{info.serverVersion}</strong>.
       {/if}
     </p>
     {#if isAndroid}
-      <p>
-        Le téléchargement de l'APK s'ouvrira dans votre navigateur ; installez-le ensuite pour
-        mettre à jour l'application.
-      </p>
+      <p>{m.update_android_instruction()}</p>
     {:else if isNative}
-      <p>
-        Téléchargez et installez la dernière version depuis la page de release GitHub.
-      </p>
+      <p>{m.update_native_instruction()}</p>
     {:else}
-      <p>Rechargez l'application pour utiliser la dernière version déployée.</p>
+      <p>{m.update_web_instruction()}</p>
     {/if}
   </div>
 
@@ -63,7 +59,7 @@
       disabled={updating}
       onclick={dismissAppUpdatePrompt}
     >
-      Plus tard
+      {m.update_later_button()}
     </button>
     <button
       type="button"
@@ -73,10 +69,10 @@
     >
       <Download size={16} />
       {updating
-        ? 'Ouverture…'
+        ? m.update_opening_label()
         : isNative
-          ? 'Télécharger la mise à jour'
-          : 'Recharger l\'application'}
+          ? m.update_download_button()
+          : m.update_reload_button()}
     </button>
   {/snippet}
 </Modal>

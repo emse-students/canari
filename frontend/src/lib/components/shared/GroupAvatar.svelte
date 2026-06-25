@@ -4,6 +4,7 @@
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { releaseRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Media-service ID of the avatar image. When absent, falls back to icon/initials. */
@@ -110,7 +111,7 @@
 {#if blobUrl && !loadFailed}
   <img
     src={blobUrl}
-    alt={name || 'Avatar du groupe'}
+    alt={name || m.group_avatar_fallback_alt()}
     class="{shapeClasses} object-cover shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
   />
 {:else}

@@ -5,6 +5,7 @@
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
   import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
   import { CalendarDays, ClipboardList, Pencil, Trash2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -46,7 +47,7 @@
   }
 </script>
 
-<Modal {open} title={event?.title ?? 'Événement'} maxWidth="max-w-lg" onClose={onClose}>
+<Modal {open} title={event?.title ?? m.calendar_event_fallback_title()} maxWidth="max-w-lg" onClose={onClose}>
   {#if event}
     <div class="space-y-4 text-sm">
       {#if !canEdit}
@@ -91,7 +92,7 @@
           class="inline-flex items-center gap-2 rounded-xl border border-cn-border bg-cn-bg/50 px-3 py-2 text-xs font-semibold text-text-main hover:border-cn-yellow/50 transition-colors"
         >
           <ClipboardList size={14} />
-          Formulaire lié
+          {m.calendar_event_linked_form()}
         </a>
       {/if}
 
@@ -107,7 +108,7 @@
             class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold text-text-main hover:bg-cn-bg transition-colors"
           >
             <Pencil size={14} />
-            Modifier
+            {m.common_edit_label()}
           </button>
         {/if}
         {#if canEdit && onDelete}
@@ -117,7 +118,7 @@
             class="inline-flex items-center gap-1.5 rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
           >
             <Trash2 size={14} />
-            Supprimer
+            {m.common_delete_button()}
           </button>
         {/if}
       </div>

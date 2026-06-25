@@ -9,6 +9,7 @@
   import SharedMediaThumb from './SharedMediaThumb.svelte';
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     open: boolean;
@@ -37,11 +38,15 @@
   let lightboxIndex = $state<number | null>(null);
   let lightboxUrl = $state<string | null>(null);
 
-  const dateFmt = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' });
+  const dateFmt = $derived(
+    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', { day: '2-digit', month: 'short', year: '2-digit' })
+  );
 
   function formatBytes(bytes: number): string {
-    if (!bytes || bytes < 1024) return `${bytes || 0} o`;
-    const units = ['Ko', 'Mo', 'Go'];
+    const locale = getLocale();
+    const baseUnit = locale === 'en' ? 'B' : 'o';
+    const units = locale === 'en' ? ['KB', 'MB', 'GB'] : ['Ko', 'Mo', 'Go'];
+    if (!bytes || bytes < 1024) return `${bytes || 0} ${baseUnit}`;
     let v = bytes / 1024;
     let i = 0;
     while (v >= 1024 && i < units.length - 1) {
@@ -306,7 +311,7 @@
       {:else}
         <img
           src={lightboxUrl}
-          alt={current.media.fileName ?? 'média'}
+          alt={current.media.fileName ?? m.conversation_media_fallback_alt()}
           class="max-h-full max-w-full object-contain select-none"
         />
       {/if}

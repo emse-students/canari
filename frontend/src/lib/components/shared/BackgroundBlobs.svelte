@@ -29,8 +29,8 @@
     mix-blend-mode: multiply;
   }
 
-  /* Les tailles ont été légèrement augmentées pour compenser le fait
-    que le blur() s'étalait à l'extérieur de l'élément initialement.
+  /* Sizes are slightly larger to compensate for blur() spreading outside
+    the element boundary when applied directly.
   */
   .blob-a {
     width: min(85vw, 1000px);

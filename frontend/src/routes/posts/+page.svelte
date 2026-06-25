@@ -22,6 +22,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, PenSquare, Inbox, Search, X } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
+  import { m } from '$lib/paraglide/messages';
 
   const LAST_SEEN_KEY = 'posts_last_seen_ts';
   const PAGE_SIZE = 10;
@@ -191,7 +192,7 @@
       postsOverride = await listPosts(buildListOptions(0));
       hasMore = (postsOverride?.length ?? 0) >= PAGE_SIZE;
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de charger les posts';
+      errorMessage = err instanceof Error ? err.message : m.posts_load_error_title();
     } finally {
       loading = false;
     }
@@ -273,13 +274,13 @@
     <div class="mx-auto max-w-xl animate-rise-in">
       <header class="mb-6 flex items-center justify-between gap-3">
         <div>
-          <h1 class="text-2xl font-brand font-bold text-text-main tracking-tight">Fil social</h1>
-          <p class="text-text-muted text-sm mt-0.5">Partage, sondages et évènements</p>
+          <h1 class="text-2xl font-brand font-bold text-text-main tracking-tight">{m.posts_page_title()}</h1>
+          <p class="text-text-muted text-sm mt-0.5">{m.posts_page_subtitle()}</p>
         </div>
         <div class="flex items-center gap-2">
           <Button onclick={() => (showCreateModal = true)} class="!py-2 !px-4 !text-sm !rounded-xl">
             <PenSquare size={16} class="mr-1" />
-            Publier
+            {m.posts_publish_button()}
           </Button>
         </div>
       </header>
@@ -294,7 +295,7 @@
           type="search"
           value={searchQuery}
           oninput={onSearchInput}
-          placeholder="Rechercher dans les posts…"
+          placeholder={m.posts_search_placeholder()}
           class="w-full rounded-2xl border border-cn-border bg-[var(--cn-surface)]/60 py-2.5 pl-10 pr-10 text-sm font-medium text-text-main placeholder:text-text-muted/70 outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20 transition-all"
         />
         {#if searchQuery}
@@ -302,7 +303,7 @@
             type="button"
             onclick={clearSearch}
             class="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main transition-colors"
-            aria-label="Effacer"
+            aria-label={m.common_clear_aria()}
           >
             <X size={16} />
           </button>
@@ -319,7 +320,7 @@
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
-          Associations
+          {m.posts_tab_associations()}
         </button>
         <button
           type="button"
@@ -329,7 +330,7 @@
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
-          Suivis
+          {m.posts_tab_followed()}
         </button>
         <button
           type="button"
@@ -339,7 +340,7 @@
             ? 'bg-amber-500/15 border-amber-500/40 text-text-main'
             : 'border-cn-border text-text-muted hover:text-text-main'}"
         >
-          Tout
+          {m.posts_tab_all()}
         </button>
       </div>
 
@@ -349,7 +350,7 @@
 
       <Modal
         open={showCreateModal}
-        title="Nouveau post"
+        title={m.posts_new_post_title()}
         maxWidth="max-w-xl"
         onClose={() => (showCreateModal = false)}
       >
@@ -387,7 +388,7 @@
           {:else if searchResults !== null}
             {#if searchResults.length === 0}
               <div class="text-center py-12 text-text-muted text-sm">
-                Aucun résultat pour " {searchQuery} "
+                {m.posts_no_results({ query: searchQuery })}
               </div>
             {:else}
               <div class="space-y-5">
@@ -412,7 +413,7 @@
             >
               <span>{errorMessage}</span>
               <button class="ml-auto font-bold underline text-xs" onclick={refreshPosts}
-                >Réessayer</button
+                >{m.common_retry_button()}</button
               >
             </div>
           {/if}
@@ -429,24 +430,23 @@
                   class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
                 >
                   <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
-                  <h3 class="text-lg font-bold text-text-main mb-1">Aucun post</h3>
+                  <h3 class="text-lg font-bold text-text-main mb-1">{m.posts_empty_title()}</h3>
                   {#if activeFeed === 'associations'}
                     <p class="text-text-muted text-sm">
-                      Aucune association n'a encore publié. Revenez bientôt !
+                      {m.posts_no_results_asso()}
                     </p>
                   {:else if activeFeed === 'followed'}
                     <p class="text-text-muted text-sm">
-                      Suivez des associations ou des personnes pour voir leurs publications ici, ou
-                      passez sur
+                      {m.posts_empty_followed()}
                       <button
                         type="button"
                         class="underline font-medium"
-                        onclick={() => navigateFeed('all')}>Tout</button
+                        onclick={() => navigateFeed('all')}>{m.posts_tab_all()}</button
                       >.
                     </p>
                   {:else}
                     <p class="text-text-muted text-sm">
-                      Soyez le premier à partager quelque chose !
+                      {m.posts_empty_cta()}
                     </p>
                   {/if}
                 </div>
@@ -457,7 +457,7 @@
                       <span
                         class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30"
                       >
-                        Nouveau
+                        {m.posts_badge_new()}
                       </span>
                     {/if}
                     <PostCard
@@ -481,7 +481,7 @@
                   </div>
                 {:else if !hasMore && resolvedPosts.length >= PAGE_SIZE}
                   <p class="text-center text-[0.75rem] text-text-muted opacity-50 py-4">
-                    Vous avez tout vu !
+                    {m.posts_all_loaded()}
                   </p>
                 {/if}
               {/if}
@@ -491,10 +491,10 @@
               >
                 <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
                 <h3 class="text-lg font-bold text-text-main mb-1">
-                  Impossible de charger les posts
+                  {m.posts_load_error_title()}
                 </h3>
                 <button class="text-text-muted text-sm underline mt-1" onclick={refreshPosts}
-                  >Réessayer</button
+                  >{m.common_retry_button()}</button
                 >
               </div>
             {/await}

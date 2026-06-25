@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { searchAssociationTagCatalog } from '$lib/associations/api';
   import { Search, Tag } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Association whose tag catalog is searched. */
@@ -255,7 +256,7 @@
                 : ''}"
               onmousedown={confirmCreate}
             >
-              <span class="text-text-main">Créer " <span class="font-mono">{trimmedQuery}</span> "</span>
+              <span class="text-text-main">{m.tag_autocomplete_create_prefix()}<span class="font-mono">{trimmedQuery}</span> "</span>
             </button>
           </li>
         {/if}
@@ -264,12 +265,12 @@
   </div>
 
   {#if !associationId}
-    <p class="text-xs text-text-muted ml-1">Sélectionnez d'abord l'association bénéficiaire.</p>
+    <p class="text-xs text-text-muted ml-1">{m.tag_autocomplete_select_asso_first()}</p>
   {:else if !allowCreate}
-    <p class="text-xs text-text-muted ml-1">Choisissez un tag existant dans la liste.</p>
+    <p class="text-xs text-text-muted ml-1">{m.tag_autocomplete_no_create_hint()}</p>
   {:else if suggestions.length === 0 && !isLoading && trimmedQuery}
     <p class="text-xs text-text-muted ml-1">
-      Aucun tag existant - vous pouvez en créer un nouveau (ex. cotisant:bde-2026-2027).
+      {m.tag_autocomplete_no_tag_hint()}
     </p>
   {/if}
 </div>

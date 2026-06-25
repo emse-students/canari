@@ -2,6 +2,7 @@
   import { X, Plus, Trash2, ChartColumn } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
+  import { m } from '$lib/paraglide/messages';
 
   /**
    * Modal that lets a member compose a community poll (question, 2+ options,
@@ -66,7 +67,7 @@
     if (!canSubmit || submitting) return;
     const ts = deadline ? new Date(deadline).getTime() : 0;
     if (deadline && (Number.isNaN(ts) || ts <= Date.now())) {
-      error = 'La date de fin doit être dans le futur.';
+      error = m.channel_poll_deadline_error();
       return;
     }
     submitting = true;
@@ -81,7 +82,7 @@
       reset();
       onClose();
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Échec de la création du sondage.';
+      error = e instanceof Error ? e.message : m.channel_poll_create_error();
     } finally {
       submitting = false;
     }
@@ -103,12 +104,12 @@
     >
       <div class="flex items-center gap-2 border-b border-cn-border p-4">
         <ChartColumn size={18} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
-        <h2 class="flex-1 text-base font-extrabold text-text-main">Nouveau sondage</h2>
+        <h2 class="flex-1 text-base font-extrabold text-text-main">{m.channel_poll_title()}</h2>
         <button
           type="button"
           onclick={close}
           class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
-          aria-label="Fermer"
+          aria-label={m.common_close_label()}
         >
           <X size={18} />
         </button>
@@ -123,19 +124,19 @@
             id="poll-question"
             bind:value={question}
             maxlength="300"
-            placeholder="Quelle est votre question ?"
+            placeholder={m.channel_poll_question_placeholder()}
             class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
           />
         </div>
 
         <div class="space-y-2">
-          <span class="block text-sm font-semibold text-text-main">Options</span>
+          <span class="block text-sm font-semibold text-text-main">{m.channel_poll_options_label()}</span>
           {#each options as option (option.id)}
             <div class="flex items-center gap-2">
               <input
                 bind:value={option.label}
                 maxlength="150"
-                placeholder="Une réponse…"
+                placeholder={m.channel_poll_option_placeholder()}
                 class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
               />
               <button
@@ -143,7 +144,7 @@
                 onclick={() => removeOption(option.id)}
                 disabled={options.length <= 2}
                 class="rounded-xl p-2 text-text-muted hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
-                aria-label="Retirer l'option"
+                aria-label={m.channel_poll_remove_option_aria()}
               >
                 <Trash2 size={16} />
               </button>
@@ -155,7 +156,7 @@
               onclick={addOption}
               class="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-semibold text-cn-yellow hover:bg-cn-yellow/10"
             >
-              <Plus size={16} /> Ajouter une option
+              <Plus size={16} /> {m.channel_poll_add_option()}
             </button>
           {/if}
         </div>
@@ -169,7 +170,7 @@
 
         <div>
           <label for="poll-deadline" class="mb-1.5 block text-sm font-semibold text-text-main">
-            Date de fin <span class="font-normal text-text-muted">(facultatif)</span>
+            {m.channel_poll_deadline_label()} <span class="font-normal text-text-muted">{m.channel_poll_deadline_optional()}</span>
           </label>
           <input
             id="poll-deadline"
@@ -190,7 +191,7 @@
           onclick={close}
           class="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
         >
-          Annuler
+          {m.common_cancel_button()}
         </button>
         <button
           type="button"
@@ -198,7 +199,7 @@
           disabled={!canSubmit || submitting}
           class="rounded-xl bg-cn-yellow px-5 py-2 text-sm font-extrabold text-cn-ink transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {submitting ? 'Envoi…' : 'Créer le sondage'}
+          {submitting ? m.common_sending_label() : m.channel_poll_submit_button()}
         </button>
       </div>
     </div>

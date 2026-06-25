@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ExternalLink, Images } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface ExternalPreviewPayload {
     url: string;
@@ -64,7 +65,7 @@
       <p
         class="text-sm font-bold text-text-main leading-snug line-clamp-2 group-hover:text-amber-700 dark:group-hover:text-amber-300 transition-colors duration-300"
       >
-        {preview?.title || 'Album photo'}
+        {preview?.title || m.migallery_album_fallback()}
       </p>
       {#if preview?.description}
         <p class="text-xs text-text-muted leading-snug line-clamp-1">

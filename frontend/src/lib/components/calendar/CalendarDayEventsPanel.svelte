@@ -3,6 +3,7 @@
   import { toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
   import { ChevronRight, CalendarDays } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     focusDate: Date;
@@ -69,18 +70,18 @@
     class="rounded-2xl border border-dashed border-cn-border bg-cn-bg/30 px-4 py-6 text-center text-sm text-text-muted"
   >
     <CalendarDays size={20} class="mx-auto mb-2 opacity-50" />
-    Sélectionnez un jour coloré dans le calendrier pour voir les événements.
+    {m.calendar_day_select_prompt()}
   </div>
 {:else if dayEvents.length === 0}
   <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 px-4 py-5 text-center text-sm text-text-muted">
-    Aucun événement ce jour-là.
+    {m.calendar_day_no_events()}
     {#if onClearSelection}
       <button
         type="button"
         class="mt-2 block mx-auto text-sm font-semibold text-cn-dark hover:underline"
         onclick={onClearSelection}
       >
-        Choisir un autre jour
+        {m.calendar_day_choose_another()}
       </button>
     {/if}
   </div>
@@ -92,7 +93,7 @@
       <p class="text-sm font-bold text-text-main capitalize">
         {formatDayLabel(selectedDay)}
         <span class="text-text-muted font-semibold ml-1">
-          · {dayEvents.length} événement{dayEvents.length > 1 ? 's' : ''}
+          · {m.calendar_day_event_count({ count: dayEvents.length })}
         </span>
       </p>
       {#if onClearSelection}
@@ -101,7 +102,7 @@
           class="text-xs font-semibold text-cn-dark hover:underline shrink-0"
           onclick={onClearSelection}
         >
-          Tout le mois
+          {m.calendar_day_all_month()}
         </button>
       {/if}
     </div>

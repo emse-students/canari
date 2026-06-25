@@ -151,7 +151,7 @@
                 {#if form.basePrice > 0 && !stripePaymentsReady}
                   <span
                     class="inline-flex items-center gap-1 text-amber-700 font-medium"
-                    title="Stripe Connect non configure - paiements en ligne inactifs"
+                    title="Stripe Connect not configured - online payments inactive"
                   >
                     <AlertTriangle size={11} />
                     {m.asso_forms_stripe_not_configured_badge()}

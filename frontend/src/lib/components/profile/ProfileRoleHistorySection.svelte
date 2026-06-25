@@ -10,6 +10,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { Plus, Trash2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     entries: UserRoleHistoryRow[];
@@ -57,7 +58,7 @@
   async function handleSubmit(e: Event) {
     e.preventDefault();
     if (!formAssociationId || !formRoleTitle.trim()) {
-      formError = 'Association et rôle requis.';
+      formError = m.profile_role_history_error_required();
       return;
     }
     saving = true;
@@ -80,9 +81,9 @@
 
   async function handleDelete(entry: UserRoleHistoryRow) {
     if (
-      !await showConfirm(`Supprimer " ${entry.roleTitle} " (${entry.associationName}) ?`, {
+      !await showConfirm(m.profile_role_history_confirm_delete({ title: entry.roleTitle, asso: entry.associationName }), {
         danger: true,
-        confirmLabel: 'Supprimer',
+        confirmLabel: m.common_delete_button(),
       })
     ) {
       return;
@@ -100,8 +101,8 @@
   {#if entries.length === 0 && !showForm}
     <p class="text-sm text-text-muted">
       {editable
-        ? 'Ajoutez vos anciens mandats (ex. Président BDE 2018-2019).'
-        : 'Aucun parcours renseigné.'}
+        ? m.profile_role_history_add_prompt()
+        : m.profile_role_history_empty()}
     </p>
   {:else}
     <ul class="space-y-2">
@@ -138,8 +139,8 @@
               type="button"
               onclick={() => void handleDelete(entry)}
               class="shrink-0 p-2 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-              title="Supprimer"
-              aria-label="Supprimer"
+              title={m.common_delete_button()}
+              aria-label={m.common_delete_button()}
             >
               <Trash2 size={16} />
             </button>
@@ -158,23 +159,23 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="sm:col-span-2">
             <label for="rh-asso" class="text-xs font-semibold text-text-muted block mb-1"
-              >Association</label
+              >{m.profile_role_history_asso_group()}</label
             >
             <select
               id="rh-asso"
               bind:value={formAssociationId}
               class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
             >
-              <option value="">Choisir…</option>
+              <option value="">{m.profile_role_history_choose_asso()}</option>
               {#if assoOptions.length > 0}
-                <optgroup label="Associations">
+                <optgroup label={m.profile_role_history_asso_group()}>
                   {#each assoOptions as a (a.id)}
                     <option value={a.id}>{a.name}</option>
                   {/each}
                 </optgroup>
               {/if}
               {#if listOptions.length > 0}
-                <optgroup label="Listes">
+                <optgroup label={m.profile_role_history_list_group()}>
                   {#each listOptions as a (a.id)}
                     <option value={a.id}>{listOptionLabel(a)}</option>
                   {/each}
@@ -184,19 +185,19 @@
           </div>
           <div class="sm:col-span-2">
             <label for="rh-role" class="text-xs font-semibold text-text-muted block mb-1"
-              >Rôle</label
+              >{m.profile_role_history_role_label()}</label
             >
             <input
               id="rh-role"
               type="text"
               bind:value={formRoleTitle}
-              placeholder="Président, Trésorier…"
+              placeholder={m.profile_role_history_role_placeholder()}
               class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
             />
           </div>
           <div>
             <label for="rh-start" class="text-xs font-semibold text-text-muted block mb-1"
-              >Année début</label
+              >{m.profile_role_history_start_year_label()}</label
             >
             <input
               id="rh-start"
@@ -210,7 +211,7 @@
           </div>
           <div>
             <label for="rh-end" class="text-xs font-semibold text-text-muted block mb-1"
-              >Année fin</label
+              >{m.profile_role_history_end_year_label()}</label
             >
             <input
               id="rh-end"
@@ -232,14 +233,14 @@
             onclick={() => (showForm = false)}
             class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold"
           >
-            Annuler
+            {m.common_cancel_button()}
           </button>
           <button
             type="submit"
             disabled={saving}
             class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark disabled:opacity-50"
           >
-            {saving ? 'Enregistrement…' : 'Ajouter'}
+            {saving ? m.common_saving_label() : m.common_add_button()}
           </button>
         </div>
       </form>
@@ -250,7 +251,7 @@
         class="inline-flex items-center gap-2 rounded-xl border border-dashed border-cn-border px-4 py-2.5 text-sm font-semibold text-text-muted hover:text-text-main hover:border-cn-yellow/50 transition-colors"
       >
         <Plus size={16} />
-        Ajouter un rôle passé
+        {m.profile_role_history_add_button()}
       </button>
     {/if}
   {/if}

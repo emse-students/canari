@@ -14,6 +14,7 @@
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import type { Conversation } from '$lib/types';
+  import { m } from '$lib/paraglide/messages';
 
   interface ChannelItem {
     id: string;
@@ -245,7 +246,7 @@
     const value = channelName.trim();
     if (!value) return;
     if (!selectedCommunityWorkspaceId) {
-      showToast("Veuillez sélectionner une communauté d'abord", 'warning');
+      showToast(m.sidebar_select_community_first(), 'warning');
       return;
     }
     onChannelInputChange?.(value);
@@ -269,7 +270,7 @@
     type="button"
     class="fixed inset-0 z-[42] bg-black/30 md:hidden"
     onclick={() => onCloseDrawer?.()}
-    aria-label="Fermer le volet des conversations"
+    aria-label={m.sidebar_close_panel_aria()}
   ></button>
 {/if}
 
@@ -316,7 +317,7 @@
           showNewCommunityModal = true;
         }}
         class="w-12 h-12 flex-shrink-0 rounded-2xl border border-dashed border-text-muted/50 text-text-muted flex items-center justify-center hover:text-text-main hover:border-text-main hover:bg-white/10 transition-all hover:rounded-[10px]"
-        title="Ajouter une communauté"
+        title={m.sidebar_add_community_title()}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -350,7 +351,7 @@
         class="px-4 py-3 border-b border-white/50 dark:border-white/10 bg-white/30 dark:bg-gray-900/40 backdrop-blur-sm sticky top-0 z-10 flex items-center justify-between"
       >
         <h2 class="font-black tracking-tight text-text-main text-lg truncate">
-          {selectedCommunityWorkspace?.name || 'Communautés'}
+          {selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()}
         </h2>
 
         <div class="flex items-center gap-1">
@@ -360,7 +361,7 @@
               onclick={() => {
                 showCommunityAdminModal = true;
               }}
-              title="Paramètres de la communauté"
+              title={m.sidebar_community_settings_title()}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -444,7 +445,7 @@
               <p class="text-sm font-medium">Aucune discussion correspondante.</p>
             {:else}
               <p class="text-sm font-bold text-text-main mb-1">Aucune discussion</p>
-              <p class="text-xs mb-4">Commencez à écrire à quelqu'un !</p>
+              <p class="text-xs mb-4">{m.sidebar_start_writing()}</p>
               <button
                 type="button"
                 onclick={() => (showNewChatModal = true)}
@@ -499,7 +500,7 @@
           </div>
         {:else}
           <div class="text-center py-8 px-4 text-text-muted text-sm">
-            Sélectionner ou créer une communauté.
+            {m.sidebar_select_or_create_community()}
           </div>
         {/if}
       {/if}
@@ -547,7 +548,7 @@
   onInviteCommunityMember={async (memberId, roleName) => {
     const workspace = selectedCommunityWorkspace;
     if (!workspace) {
-      throw new Error("Veuillez sélectionner une communauté d'abord");
+      throw new Error("No community selected");
     }
 
     const targetChannel =
@@ -555,7 +556,7 @@
       workspace.channels[0];
 
     if (!targetChannel) {
-      throw new Error("Aucun canal disponible dans cette communauté pour envoyer l'invitation");
+      throw new Error("No channel available in this community to send the invitation");
     }
 
     await onInviteChannelMember?.(targetChannel.id, memberId, roleName);

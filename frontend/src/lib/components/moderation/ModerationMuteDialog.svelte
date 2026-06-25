@@ -1,5 +1,6 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -13,24 +14,24 @@
 
   let reason = $state('');
 
-  const presets: { label: string; text: string }[] = [
+  const presets = $derived([
     {
-      label: 'Contenu inapproprié',
-      text: 'Votre compte a été restreint suite à un signalement pour contenu inapproprié.',
+      label: m.moderation_preset_inappropriate(),
+      text: m.moderation_preset_inappropriate_text(),
     },
     {
-      label: 'Harcèlement',
-      text: 'Votre compte a été restreint suite à un signalement pour harcèlement.',
+      label: m.moderation_preset_harassment(),
+      text: m.moderation_preset_harassment_text(),
     },
     {
-      label: 'Spam',
-      text: 'Votre compte a été restreint suite à un signalement pour spam.',
+      label: m.moderation_preset_spam(),
+      text: m.moderation_preset_spam_text(),
     },
     {
-      label: 'Modération générale',
-      text: 'Votre compte a été restreint par l\'équipe de modération. Contactez le BDE si vous pensez qu\'il s\'agit d\'une erreur.',
+      label: m.moderation_preset_general(),
+      text: m.moderation_preset_general_text(),
     },
-  ];
+  ]);
 
   $effect(() => {
     if (!open) resetOnClose();
@@ -55,14 +56,13 @@
 <Modal
   {open}
   {onClose}
-  title="Muter {targetLabel}"
+  title={m.moderation_mute_title({ targetLabel })}
   maxWidth="max-w-md"
   dismissible={!loading}
 >
   <div class="space-y-4 px-1 pb-2">
     <p class="text-sm text-text-muted leading-relaxed">
-      L'utilisateur pourra encore se connecter et lire, mais ne pourra plus publier, commenter ni
-      réagir. Le message ci-dessous lui sera affiché dans l'application.
+      {m.moderation_mute_desc()}
     </p>
 
     <div class="flex flex-wrap gap-2">
@@ -81,13 +81,13 @@
 
     <label class="block">
       <span class="text-xs font-semibold text-text-muted mb-1.5 block"
-        >Message visible par l'utilisateur</span
+        >{m.moderation_mute_message_label()}</span
       >
       <textarea
         bind:value={reason}
         rows="4"
         maxlength="500"
-        placeholder="Expliquez la restriction de façon claire et factuelle…"
+        placeholder={m.moderation_mute_placeholder()}
         class="w-full rounded-xl border border-cn-border bg-white/50 dark:bg-black/20 px-3 py-2.5 text-sm text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/20 outline-none resize-y min-h-[6rem]"
         disabled={loading}
       ></textarea>
@@ -100,7 +100,7 @@
         onclick={onClose}
         disabled={loading}
       >
-        Annuler
+        {m.common_cancel_button()}
       </button>
       <button
         type="button"
@@ -108,7 +108,7 @@
         onclick={submit}
         disabled={loading || !reason.trim()}
       >
-        {loading ? 'En cours…' : 'Confirmer le mute'}
+        {loading ? m.moderation_mute_in_progress() : m.moderation_mute_confirm_button()}
       </button>
     </div>
   </div>

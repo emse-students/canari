@@ -78,7 +78,7 @@
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
-      settingsError = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
+      settingsError = err instanceof Error ? err.message : m.common_save_error();
     } finally {
       saving = false;
     }
@@ -92,7 +92,7 @@
       onUpdated(await uploadAssociationLogo(asso.id, file));
       showCropper = false;
     } catch (err) {
-      settingsError = err instanceof Error ? err.message : 'Envoi du logo échoué';
+      settingsError = err instanceof Error ? err.message : m.asso_edit_logo_upload_error();
     } finally {
       logoBusy = false;
     }
@@ -197,7 +197,7 @@
     </div>
     <div class="flex items-center gap-2 ml-0.5">
       <span class="text-xs text-text-muted">{m.asso_edit_custom_color_label()}</span>
-      <ColorPicker bind:value={editColor} label="Couleur personnalisée" />
+      <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
 

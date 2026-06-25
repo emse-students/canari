@@ -2,6 +2,8 @@
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   let {
     focusDate,
@@ -15,13 +17,20 @@
     selectedDay?: number | null;
   }>();
 
-  const weekdayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const weekdayLabels = $derived(
+    Array.from({ length: 7 }, (_, i) =>
+      new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', { weekday: 'short' })
+        .format(new Date(2024, 0, 1 + ((i + 0) % 7)))
+        .replace(/\.$/, '')
+        .slice(0, 3)
+    )
+  );
 
   const calendarCells = $derived.by(() => {
     const y = focusDate.getFullYear();
-    const m = focusDate.getMonth();
-    const first = new Date(y, m, 1);
-    const lastDay = new Date(y, m + 1, 0).getDate();
+    const mo = focusDate.getMonth();
+    const first = new Date(y, mo, 1);
+    const lastDay = new Date(y, mo + 1, 0).getDate();
     const mondayIndex = (first.getDay() + 6) % 7;
     const cells: { day: number | null }[] = [];
     for (let i = 0; i < mondayIndex; i++) cells.push({ day: null });
@@ -139,7 +148,7 @@
             type="button"
             role="gridcell"
             aria-label="{cell.day}{dayEvents.length > 0
-              ? `, ${dayEvents.length} événement${dayEvents.length > 1 ? 's' : ''}`
+              ? `, ${m.calendar_day_event_count({ count: dayEvents.length })}`
               : ''}"
             aria-selected={selected}
             onclick={() => {

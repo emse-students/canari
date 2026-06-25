@@ -85,7 +85,7 @@
       }
     } catch (err: unknown) {
       showToast(
-        err instanceof Error ? err.message : "Impossible de démarrer l'enregistrement de carte"
+        err instanceof Error ? err.message : m.form_card_registration_error()
       );
     } finally {
       savingCard = false;

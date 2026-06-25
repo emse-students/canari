@@ -1,5 +1,6 @@
 <script lang="ts">
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   const error = $derived(globalSession.mlsFatalError);
 
@@ -7,24 +8,24 @@
     error === 'oom'
       ? {
           bg: 'bg-red-600',
-          text: "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
-          action: 'Recharger',
+          text: m.mls_error_oom_text(),
+          action: m.mls_error_reload_action(),
           onAction: () => window.location.reload(),
           dismissible: false,
         }
       : error === 'private_mode'
         ? {
             bg: 'bg-blue-600',
-            text: 'Mode navigation privée - les messages ne seront pas conservés après fermeture.',
-            action: 'Compris',
+            text: m.mls_error_private_mode_text(),
+            action: m.mls_error_dismiss_action(),
             onAction: () => globalSession.clearMlsFatalError(),
             dismissible: true,
           }
         : error === 'keystore_lost'
           ? {
               bg: 'bg-amber-600',
-              text: 'Notifications push dégradées - reconnectez-vous pour les réactiver.',
-              action: 'Compris',
+              text: m.mls_error_keystore_lost_text(),
+              action: m.mls_error_dismiss_action(),
               onAction: () => globalSession.clearMlsFatalError(),
               dismissible: true,
             }

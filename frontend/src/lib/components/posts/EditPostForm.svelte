@@ -32,6 +32,7 @@
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { m } from '$lib/paraglide/messages';
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import PostImage from './PostImage.svelte';
@@ -192,14 +193,14 @@
     errorMessage = '';
     try {
       if (!markdown.trim() && existingImages.length === 0 && newFiles.length === 0) {
-        throw new Error('Le contenu du post ou une image est requis.');
+        throw new Error('Post content or an image is required.');
       }
 
       if (newFiles.length > 0 && !currentAuthToken) {
         try {
           currentAuthToken = await getToken();
         } catch {
-          throw new Error("Impossible d'obtenir un jeton pour l'envoi d'images.");
+          throw new Error('Failed to obtain an auth token for image upload.');
         }
       }
 
@@ -234,7 +235,7 @@
           .filter(Boolean)
           .map((label) => ({ label }));
         if (!pollQuestion.trim() || options.length < 2) {
-          throw new Error('Un sondage nécessite une question et au moins deux options.');
+          throw new Error('A poll requires a question and at least two options.');
         }
         payload.polls = [
           {
@@ -254,7 +255,7 @@
       newFilePreviews.forEach((url) => URL.revokeObjectURL(url));
       onSaved(updated);
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : 'Impossible de modifier le post';
+      errorMessage = err instanceof Error ? err.message : m.post_edit_save_error();
     } finally {
       saving = false;
     }
@@ -271,7 +272,7 @@
     </p>
     <p class="text-sm font-semibold text-text-main opacity-90">
       {#if post.association}
-        Publiée au nom de <span class="text-amber-600 dark:text-amber-400"
+        {m.post_edit_published_as()} <span class="text-amber-600 dark:text-amber-400"
           >{post.association.name}</span
         >.
       {:else}
@@ -336,7 +337,7 @@
                 class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
               >
                 <option value="" class="bg-white dark:bg-zinc-900 font-medium"
-                  >Aucun compte lié</option
+                  >{m.post_edit_no_stripe_account()}</option
                 >
                 {#if postAssociation}
                   <option value={postAssociation.id} class="bg-white dark:bg-zinc-900 font-medium">
@@ -388,7 +389,7 @@
                   type="button"
                   onclick={() => removeExistingImage(i)}
                   class="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm backdrop-blur-md transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                  aria-label="Retirer cette image"
+                  aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
                 >
                   <X size={14} strokeWidth={2.5} />
@@ -423,7 +424,7 @@
                   type="button"
                   onclick={() => removeNewFile(i)}
                   class="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm backdrop-blur-md transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                  aria-label="Retirer cette image"
+                  aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
                 >
                   <X size={14} strokeWidth={2.5} />
@@ -432,7 +433,7 @@
               <input
                 type="text"
                 bind:value={newImageCaptions[i]}
-                placeholder="Légende (opt.)"
+                placeholder={m.post_edit_caption_placeholder()}
                 maxlength="120"
                 class="w-full rounded-lg border border-black/10 dark:border-white/10 bg-white/70 dark:bg-black/40 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-main placeholder:text-text-muted/60 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all shadow-inner"
               />
@@ -557,7 +558,7 @@
             type="datetime-local"
             bind:value={scheduledAt}
             min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
-            title="Programmer la publication"
+            title={m.post_edit_schedule_title()}
             class="bg-transparent pl-2 pr-1 text-[0.7rem] font-bold text-text-main outline-none cursor-pointer {scheduledAt
               ? 'w-36 text-amber-700 dark:text-amber-400'
               : 'w-5 sm:w-28 text-transparent sm:text-text-main'} transition-all"
@@ -567,7 +568,7 @@
               type="button"
               onclick={() => (scheduledAt = '')}
               class="rounded-full p-1 text-text-muted transition-colors hover:text-red-500 hover:bg-red-500/10 outline-none"
-              title="Annuler la programmation"
+              title={m.post_edit_cancel_schedule_title()}
             >
               <X size={14} strokeWidth={2.5} />
             </button>
@@ -582,7 +583,7 @@
           onclick={onCancel}
           class="px-4 py-2.5 text-sm font-bold text-text-muted hover:text-text-main rounded-xl transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
         >
-          Annuler
+          {m.common_cancel_button()}
         </button>
         <Button
           type="button"
@@ -591,7 +592,7 @@
           loading={saving}
           onclick={submitEdit}
         >
-          {saving ? 'Enregistrement…' : 'Enregistrer'}
+          {saving ? m.common_saving_label() : m.post_edit_save_button()}
         </Button>
       </div>
     </div>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { m } from '$lib/paraglide/messages';
+
   interface Props {
     /** Whether the WebSocket connection is currently active. */
     isConnected: boolean;
@@ -16,6 +18,6 @@
         ? 'bg-green-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
         : 'bg-gray-400'}"
     ></span>
-    {isConnected ? 'Connecté' : 'Hors-ligne'}
+    {isConnected ? m.status_pill_connected() : m.status_pill_offline()}
   </div>
 </div>

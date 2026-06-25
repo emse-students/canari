@@ -56,7 +56,7 @@
       <button
         role="switch"
         aria-checked={settings.soundsEnabled}
-        aria-label="Activer ou désactiver les bruitages"
+        aria-label={m.profile_pref_sounds_aria()}
         onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
         class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
           {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
@@ -89,7 +89,7 @@
         <button
           role="switch"
           aria-checked={settings.vibrationsEnabled}
-          aria-label="Activer ou désactiver les vibrations"
+          aria-label={m.profile_pref_vibrations_aria()}
           onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
           class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
             {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
@@ -121,7 +121,7 @@
 
       <div
         role="radiogroup"
-        aria-label="Thème de l'interface"
+        aria-label={m.profile_pref_theme_aria()}
         class="flex shrink-0 items-center gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
       >
         {#each [{ value: 'system', label: m.profile_system(), Icon: Monitor }, { value: 'light', label: m.profile_light(), Icon: Sun }, { value: 'dark', label: m.profile_dark(), Icon: Moon }] as opt (opt.value)}

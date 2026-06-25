@@ -9,6 +9,7 @@
   import { shopCheckoutCallbacks } from '$lib/utils/stripeCallbacks';
   import { showToast } from '$lib/stores/toast.svelte';
   import PaymentModal from '$lib/components/ui/PaymentModal.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     product: AssociationProduct;
@@ -40,10 +41,10 @@
   const buttonLabel = $derived(
     label ??
       (product.type === 'membership'
-        ? 'Cotiser'
+        ? m.shop_product_type_membership()
         : product.type === 'balance_topup'
-          ? 'Recharger'
-          : 'Acheter')
+          ? m.shop_product_type_topup()
+          : m.shop_product_type_buy())
   );
 
   const isDisabled = $derived(
@@ -76,7 +77,7 @@
     try {
       const customCents = resolveCustomCents();
       if (product.allowCustomAmount && product.amountCents === null && customCents === undefined) {
-        showToast('Indiquez un montant');
+        showToast(m.shop_indicate_amount());
         return;
       }
       const res = await createProductCheckout(
@@ -95,7 +96,7 @@
         await navigateExternal(res.checkoutUrl);
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Erreur lors du paiement');
+      showToast(err instanceof Error ? err.message : m.shop_payment_error());
     } finally {
       checkingOut = false;
     }
@@ -110,7 +111,7 @@
     );
     if (result.ok) {
       showPaymentModal = false;
-      showToast('Achat effectué avec succès !');
+      showToast(m.shop_purchase_success());
     }
     return result;
   }

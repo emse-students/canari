@@ -9,6 +9,7 @@
   import { openExternal } from '$lib/utils/openExternal';
   import { CalendarPlus, Download, ExternalLink } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   let { event }: { event: AgendaExportEvent } = $props();
 
@@ -45,13 +46,13 @@
   type="button"
   onclick={handleClick}
   class="shrink-0 p-1.5 rounded-lg text-text-muted hover:text-cn-dark hover:bg-cn-bg/60 transition-colors"
-  title="Ajouter à mon calendrier"
+  title={m.calendar_add_title()}
 >
   <CalendarPlus size={16} />
 </button>
 
 {#if !isMobile}
-  <Modal title="Ajouter à mon calendrier" open={showModal} onClose={() => (showModal = false)}>
+  <Modal title={m.calendar_add_title()} open={showModal} onClose={() => (showModal = false)}>
     <div class="flex flex-col gap-2">
       <button
         type="button"

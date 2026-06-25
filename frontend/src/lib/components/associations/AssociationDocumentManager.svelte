@@ -32,6 +32,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     associationId: string;
@@ -120,7 +121,7 @@
         `[Vault] ${stats.documents.length} documents, ${stats.usedBytes}/${stats.quotaBytes} bytes`
       );
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur de chargement';
+      error = e instanceof Error ? e.message : m.common_load_error();
     } finally {
       loading = false;
     }
@@ -311,15 +312,16 @@
       console.log(`[Vault] Document deleted: ${doc.id}`);
       stats = await listDocuments(associationId);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Erreur lors de la suppression';
+      error = e instanceof Error ? e.message : m.common_delete_error();
     }
   }
 
   function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} o`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
-    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} Go`;
+    const en = getLocale() === 'en';
+    if (bytes < 1024) return `${bytes} ${en ? 'B' : 'o'}`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} ${en ? 'KB' : 'Ko'}`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} ${en ? 'MB' : 'Mo'}`;
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} ${en ? 'GB' : 'Go'}`;
   }
 </script>
 

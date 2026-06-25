@@ -7,6 +7,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { ArrowLeft, FileX, Link, Check } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { m } from '$lib/paraglide/messages';
 
   let { data }: { data: { post: PostEntity | null } } = $props();
 
@@ -51,7 +52,7 @@
             : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
         >
           {#if copiedLink}
-            <Check size={13} />Lien copié !
+            <Check size={13} />{m.post_link_copied()}
           {:else}
             <Link size={13} />Partager
           {/if}
@@ -72,7 +73,7 @@
       >
         <FileX size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
         <h3 class="text-lg font-bold text-text-main mb-1">Publication introuvable</h3>
-        <p class="text-text-muted text-sm">Cette publication n'existe plus ou a été supprimée.</p>
+        <p class="text-text-muted text-sm">{m.post_not_found_desc()}</p>
       </div>
     {/if}
   </div>

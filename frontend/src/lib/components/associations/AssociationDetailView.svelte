@@ -121,7 +121,7 @@
         following = false;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Introuvable';
+      error = err instanceof Error ? err.message : m.common_not_found();
     } finally {
       loading = false;
     }
