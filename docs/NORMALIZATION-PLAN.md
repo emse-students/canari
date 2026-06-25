@@ -147,9 +147,8 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
 - [x] **W2 - Frontend** (`docs/wiki/frontend/`)
   - [x] `architecture.md` - SvelteKit structure, Svelte 5 runes, auth model, i18n, mobile keyboard, Tauri, env vars.
   - [x] `mls-wasm.md` - WASM package layout, IMlsService, WasmMlsClient API, message queue, tab leadership, state persistence.
-- [ ] **W3 - Modules frontend** (`docs/wiki/frontend/modules/`) : `auth.md`, `chat.md`, `associations.md`,
-  `forms.md`, `calendar.md`, `posts.md`, `payments.md`, `admin.md`. Source = les dossiers de composants
-  correspondants sous `frontend/src/lib/components/` et `frontend/src/routes/`.
+- [x] **W3 - Modules frontend** (`docs/wiki/frontend/modules/`) : `auth.md`, `chat.md`, `associations.md`,
+  `forms.md`, `calendar.md`, `posts.md`, `payments.md`, `admin.md`.
 - [ ] **W4 - Infrastructure** (`docs/wiki/infrastructure/`) : `docker.md`, `nginx.md`, `databases.md`,
   `kafka.md`, `backup.md`. Sources = `infrastructure/`, `docker-compose*.yml`,
   `infrastructure/local/Dockerfile.frontend`, `infrastructure/backup/`. Verser `docs/STORAGE.md` (restant).
