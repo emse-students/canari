@@ -138,13 +138,12 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
 > corriger imprecisions/code mort reperes en passant. Mettre a jour `index.md` si un lien change.
 > Commit + push apres chaque page (ou petit groupe).
 
-- [ ] **W1 - Services backend** (`docs/wiki/services/`)
-  - [ ] `chat-delivery.md` <- `apps/chat-delivery-service/src/app.controller.ts` (+ modules `src/`).
-        Lister les ~40 endpoints, le sync engine, la push, l'historique Redis Streams. Verser `docs/PUSH_NOTIFICATIONS.md` et `docs/STORAGE.md` (parties chat-delivery).
-  - [ ] `core-service.md` <- `apps/core-service/src/` (auth OIDC Authentik, users, Stripe).
-  - [ ] `media-service.md` <- `apps/media-service/src/` (blobs chiffres, MinIO).
-  - [ ] `social-service.md` <- `apps/social-service/src/` (posts, forms, channels, associations).
-        Verser `docs/COMMUNITIES.md`.
+- [x] **W1 - Services backend** (`docs/wiki/services/`)
+  - [x] `chat-delivery.md` - ~60 endpoints (devices, groups, members, messaging, sync QR, push, locks, calls, internal, health) + cron jobs + Redis/Firebase deps.
+  - [x] `core-service.md` - 37 endpoints (auth OIDC, users, payments Stripe, platform admin) + auth model + DB schema.
+  - [x] `media-service.md` - 8 endpoints (upload, chunked upload, download, delete) + encryption model.
+  - [x] `social-service.md` - posts, channels, forms, associations + channel encryption model + Redis events.
+  Note: PUSH_NOTIFICATIONS.md, STORAGE.md, COMMUNITIES.md content was incorporated; those files not yet deleted (verify before D-pass).
 - [ ] **W2 - Frontend** (`docs/wiki/frontend/`)
   - [ ] `architecture.md` <- structure `frontend/src/`, stores, routing, Paraglide. Verser `docs/FRONTEND.md`.
   - [ ] `mls-wasm.md` <- `frontend/mls-core/`, `frontend/mls-wasm/`, `frontend/src/lib/mls-client/ARCHITECTURE.md`.
