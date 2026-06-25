@@ -76,12 +76,14 @@ plus tard a la **doc utilisateur en francais** (utilisateurs, responsables assoc
 
 ## AVANCEMENT
 
-### Chantier 1 - i18n (frontend) : QUASI TERMINE
-Batches 1 a 9c livres : navigation/profil/chat/messages, posts, admin/moderation, associations (5a-5d),
+### Chantier 1 - i18n (frontend) : TERMINE
+Batches 1 a 10 livres : navigation/profil/chat/messages, posts, admin/moderation, associations (5a-5d),
 forms (5e), pages legales (6), modules .ts (7), error/auth/profile/purchases (8a), shop/calendar/events
 (8b), associations/directory/dashboard (8c), layout/notifications/lists/invites (8d), shared (8e),
-MainChatPage/composer/bubble (9a), dev strings & commentaires chat (9b/9c), consolidation des cles.
-**Reste** : balayage final des chaines FR residuelles + parite des cles (voir taches I1-I3).
+MainChatPage/composer/bubble (9a), dev strings & commentaires chat (9b/9c), consolidation des cles (9b
+followup), balayage final 40+ composants + parite cles + nettoyage cles mortes (batch 10/I1-I4).
+**Resultat** : 0 chaine FR visible codee en dur dans les templates Svelte ; parite FR/EN parfaite ;
+`bun run check` 0 erreur/warning ; 427 tests verts.
 
 ### Chantier 2 - Wiki technique : DEMARRE (gros reste)
 Faits : `docs/wiki/index.md`, `docs/wiki/architecture.md`, `docs/wiki/services/chat-gateway.md`.
@@ -103,16 +105,16 @@ Voir taches D1-D3 (consolidation puis suppression).
 
 ### Bloc I - Cloture i18n frontend
 
-- [ ] **I1** - Detecter les chaines FR residuelles dans le template/UI. Depuis `frontend/` :
+- [x] **I1** - Detecter les chaines FR residuelles dans le template/UI. Depuis `frontend/` :
   `git grep -nIE "(é|è|ê|à|ù|ç|î|ô|â)" -- "src/**/*.svelte"` puis trier : toute chaine
   **visible par l'utilisateur** encore en dur -> la passer en `m.key()` (creer la cle FR+EN).
   Ignorer les commentaires (chantier 3) et les valeurs BDD.
-- [ ] **I2** - Verifier la parite des cles entre les deux fichiers de messages. Script rapide :
+- [x] **I2** - Verifier la parite des cles entre les deux fichiers de messages. Script rapide :
   `node -e "const a=require('./frontend/messages/fr.json'),b=require('./frontend/messages/en.json');const ka=Object.keys(a),kb=Object.keys(b);console.log('FR only:',ka.filter(k=>!(k in b)));console.log('EN only:',kb.filter(k=>!(k in a)))"`.
   Toute cle presente d'un seul cote -> ajouter la trad manquante OU supprimer la cle morte.
-- [ ] **I3** - Detecter les cles definies mais jamais utilisees : pour un echantillon de cles,
+- [x] **I3** - Detecter les cles definies mais jamais utilisees : pour un echantillon de cles,
   `git grep -c "m\.<key>" frontend/src`. Supprimer les cles mortes des DEUX json. `bun run check` -> 0.
-- [ ] **I4** - `cd frontend && bun run check` (0/0) + `bun run test`. Commit + push (`rm -rf apps/*/dist` avant).
+- [x] **I4** - `cd frontend && bun run check` (0/0) + `bun run test`. Commit + push (`rm -rf apps/*/dist` avant).
 
 ### Bloc D - Consolidation docs (migrer le contenu unique vers le wiki AVANT toute suppression)
 
