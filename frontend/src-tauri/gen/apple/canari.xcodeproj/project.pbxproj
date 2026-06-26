@@ -12,8 +12,11 @@
 		26BD361B270C7E72379225D2 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 44BFD48935174534B0CCE9BF /* LaunchScreen.storyboard */; };
 		6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3416F9F4A8BD192DF6A921B4 /* QuartzCore.framework */; };
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
+		A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6012345678ABCD /* canari_ios.mm */; };
+		E5F6012345678ABCDEF02 /* canari_push.mm in Sources */ = {isa = PBXBuildFile; fileRef = F6012345678ABCDEF0123 /* canari_push.mm */; };
 		BDCC40B62FED454100576E30 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 43EC3C6D309DFBDAB0387C31 /* WebKit.framework */; };
 		BDCC40B92FED454500576E30 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
+		C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
 		C6F618DF1A6240CBD81B0AF0 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5EFC8F2ADC67F153A8506391 /* libapp.a */; };
 		D12281421027684D406D14E6 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 366E8C028B4E6CE070877F28 /* main.mm */; };
 		D58951ACC99D4C771311695B /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41BB032BCA6FE9823617B71A /* MetalKit.framework */; };
@@ -36,9 +39,15 @@
 		7680DD9A254CD689CF51F1F8 /* lib.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = lib.rs; sourceTree = "<group>"; };
 		885364C76C1FDA259C6F0313 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		890F35B30BCCC580EE21CE39 /* Canari.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Canari.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3B4C5D6E7F801234567890 /* canari_ios.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_ios.h; sourceTree = "<group>"; };
 		AC2F92519DA5B01BA25311C4 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
+		B2C3D4E5F6012345678ABCD /* canari_ios.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_ios.mm; sourceTree = "<group>"; };
 		BDF257BC19D5AF44226720EA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_rust_bridge.h; sourceTree = "<group>"; };
 		D20A7859E615805B7DF8C401 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		D4E5F6012345678ABCDEF01 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
+		E5F6012345678ABCDEF011 /* canari_push.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_push.h; sourceTree = "<group>"; };
+		F6012345678ABCDEF0123 /* canari_push.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_push.mm; sourceTree = "<group>"; };
 		FC45C8DC231D096C520FA226 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -54,6 +63,7 @@
 				D58951ACC99D4C771311695B /* MetalKit.framework in Frameworks */,
 				6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */,
 				BDCC40B92FED454500576E30 /* Security.framework in Frameworks */,
+				C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -72,6 +82,7 @@
 				2AB1B2DDE5693178C9DB93C9 /* Security.framework */,
 				4EC59A47AE2868D888412A67 /* UIKit.framework */,
 				43EC3C6D309DFBDAB0387C31 /* WebKit.framework */,
+				D4E5F6012345678ABCDEF01 /* UserNotifications.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -88,6 +99,11 @@
 			isa = PBXGroup;
 			children = (
 				366E8C028B4E6CE070877F28 /* main.mm */,
+				B2C3D4E5F6012345678ABCD /* canari_ios.mm */,
+				F6012345678ABCDEF0123 /* canari_push.mm */,
+				A3B4C5D6E7F801234567890 /* canari_ios.h */,
+				E5F6012345678ABCDEF011 /* canari_push.h */,
+				C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */,
 				21FD6DCCB10C1C75E94327C2 /* bindings */,
 			);
 			path = canari;
@@ -234,7 +250,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "bun tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+			shellScript = "bun tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -244,6 +260,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				D12281421027684D406D14E6 /* main.mm in Sources */,
+				A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */,
+				E5F6012345678ABCDEF02 /* canari_push.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -347,7 +365,7 @@
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari;
-				PRODUCT_NAME = Canari;
+				PRODUCT_NAME = "Canari";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = "arm64  x86_64";
@@ -458,7 +476,7 @@
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari;
-				PRODUCT_NAME = Canari;
+				PRODUCT_NAME = "Canari";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = "arm64  x86_64";

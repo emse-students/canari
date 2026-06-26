@@ -2,7 +2,8 @@
 
 target 'canari_iOS' do
 platform :ios, '14.0'
-  # Pods for canari_iOS
+  # Push FCM (optionnel : necessite GoogleService-Info.plist dans canari_iOS/)
+  pod 'Firebase/Messaging'
 end
 
 target 'canari_macOS' do

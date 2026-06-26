@@ -1,10 +1,13 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::Engine as _;
 use mls_core::{DecryptErrorKind, MlsManager};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::Manager;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+mod mobile;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use tauri::{
@@ -57,13 +60,13 @@ fn now_ms() -> i64 {
 }
 
 /// Rafraichit la garde foreground (heartbeat, resume, ou ecriture foreground).
-fn mark_foreground_active() {
+pub(crate) fn mark_foreground_active() {
     foreground_active_until().store(now_ms() + FOREGROUND_GRACE_MS, Ordering::SeqCst);
 }
 
 /// Vrai tant que la garde foreground n'a pas expire (le background doit alors s'abstenir d'ecrire).
-/// Android uniquement : les seuls ecrivains background (`background_write_mls_bin`) y vivent.
-#[cfg(target_os = "android")]
+/// Mobile uniquement : les ecrivains background (`background_write_mls_bin`) y vivent.
+#[cfg(any(target_os = "android", target_os = "ios"))]
 fn foreground_is_active() -> bool {
     now_ms() < foreground_active_until().load(Ordering::SeqCst)
 }
@@ -139,8 +142,8 @@ fn decrypt_messages_batch(
 /// Ecrit `mls.bin` cote background sous le verrou global, SAUF si le foreground est actif (auquel
 /// cas on abandonne : le foreground detient l'etat a jour en memoire et l'ecraserait - C1/FCM3).
 /// L'erreur "foreground actif" laisse le travail en attente, repris au prochain passage foreground.
-#[cfg(target_os = "android")]
-fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub(crate) fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
@@ -1061,7 +1064,7 @@ fn exporter_secret(
 /// Sur desktop/web, toujours OK (pas de Keystore Android).
 #[tauri::command]
 fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let data_dir = match app.path().app_data_dir() {
             Ok(d) => d,
@@ -1086,18 +1089,17 @@ fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
         );
         serde_json::json!({"ok": false, "reason": "no_secret"})
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = app;
         serde_json::json!({"ok": true})
     }
 }
 
-/// Sur Android, lit {app_data_dir}/fcm_token.txt (écrit par onNewToken).
-/// Sur desktop/iOS, retourne None (pas de FCM).
+/// Lit {app_data_dir}/fcm_token.txt (ecrit par le code natif Android/iOS).
 #[tauri::command]
 fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let data_dir = match app.path().app_data_dir() {
             Ok(d) => d,
@@ -1122,216 +1124,16 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
             }
         }
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = app;
         None
     }
 }
 
-// ─── Protobuf minimal helpers (pas de dépendance externe) ────────────────────
-
-/// Lit un varint protobuf depuis `bytes` à la position `pos`.
-/// Retourne (valeur, position_suivante) ou None si invalide.
-#[cfg(target_os = "android")]
-fn read_varint(bytes: &[u8], pos: usize) -> Option<(u64, usize)> {
-    let mut result: u64 = 0;
-    let mut shift = 0u32;
-    let mut cur = pos;
-    loop {
-        if cur >= bytes.len() || shift >= 64 {
-            return None;
-        }
-        let byte = bytes[cur] as u64;
-        result |= (byte & 0x7f) << shift;
-        cur += 1;
-        if byte & 0x80 == 0 {
-            break;
-        }
-        shift += 7;
-    }
-    Some((result, cur))
-}
-
-/// Cherche le premier champ `field_num` de wire type 2 (LEN) dans `bytes`.
-/// Retourne les octets du payload de ce champ, ou None si absent.
-#[cfg(target_os = "android")]
-fn find_length_delimited_field(bytes: &[u8], field_num: u32) -> Option<Vec<u8>> {
-    let mut pos = 0usize;
-    while pos < bytes.len() {
-        let (tag, after_tag) = read_varint(bytes, pos)?;
-        let wire_type = tag & 0x7;
-        let field = (tag >> 3) as u32;
-        pos = after_tag;
-        match wire_type {
-            0 => {
-                let (_, next) = read_varint(bytes, pos)?;
-                pos = next;
-            }
-            1 => {
-                if pos + 8 > bytes.len() {
-                    return None;
-                }
-                pos += 8;
-            }
-            2 => {
-                let (len, after_len) = read_varint(bytes, pos)?;
-                pos = after_len;
-                let end = pos + len as usize;
-                if end > bytes.len() {
-                    return None;
-                }
-                if field == field_num {
-                    return Some(bytes[pos..end].to_vec());
-                }
-                pos = end;
-            }
-            5 => {
-                if pos + 4 > bytes.len() {
-                    return None;
-                }
-                pos += 4;
-            }
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// Cherche le premier champ `field_num` de wire type 0 (varint) dans `bytes`.
-/// Utilisé pour extraire `sent_at` (int64, field 8) et les enums depuis un AppMessage.
-#[cfg(target_os = "android")]
-fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
-    let mut pos = 0usize;
-    while pos < bytes.len() {
-        let (tag, after_tag) = read_varint(bytes, pos)?;
-        let wire_type = tag & 0x7;
-        let field = (tag >> 3) as u32;
-        pos = after_tag;
-        match wire_type {
-            0 => {
-                let (value, next) = read_varint(bytes, pos)?;
-                if field == field_num {
-                    return Some(value);
-                }
-                pos = next;
-            }
-            1 => {
-                if pos + 8 > bytes.len() {
-                    return None;
-                }
-                pos += 8;
-            }
-            2 => {
-                let (len, after_len) = read_varint(bytes, pos)?;
-                pos = after_len;
-                let end = pos + len as usize;
-                if end > bytes.len() {
-                    return None;
-                }
-                pos = end;
-            }
-            5 => {
-                if pos + 4 > bytes.len() {
-                    return None;
-                }
-                pos += 4;
-            }
-            _ => return None,
-        }
-    }
-    None
-}
-
-/// Extrait les métadonnées complètes d'un `AppMessage` protobuf déchiffré.
-///
-/// Champs AppMessage parsés :
-///   field 1 = TextMsg  (content = field 1)
-///   field 2 = ReplyMsg (content = field 1, replyTo/ReplyRef = field 2)
-///   field 4 = MediaMsg (kind = field 1 enum, caption = field 8)
-///   field 6 = message_id (string)
-///   field 8 = sent_at (int64 varint, ms epoch)
-///
-/// Retourne {"ok":true,"text":"…","messageId":"…","sentAt":0,"type":"text|reply|media","replyTo":null,"mediaKind":null}
-/// ou {"ok":false} si le message n'est pas affichable (réaction, système, etc.).
-#[cfg(target_os = "android")]
-fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
-    let message_id = find_length_delimited_field(bytes, 6)
-        .and_then(|b| String::from_utf8(b).ok())
-        .unwrap_or_default();
-    let sent_at = find_varint_field(bytes, 8).map(|v| v as i64).unwrap_or(0);
-
-    // TextMsg : field 1
-    if let Some(text_msg) = find_length_delimited_field(bytes, 1) {
-        if let Some(content_bytes) = find_length_delimited_field(&text_msg, 1) {
-            if let Ok(text) = String::from_utf8(content_bytes) {
-                if !text.is_empty() {
-                    return serde_json::json!({
-                        "ok": true, "text": text, "messageId": message_id,
-                        "sentAt": sent_at, "type": "text", "replyTo": null, "mediaKind": null
-                    });
-                }
-            }
-        }
-    }
-
-    // ReplyMsg : field 2 (content = field 1, ReplyRef = field 2)
-    if let Some(reply_msg) = find_length_delimited_field(bytes, 2) {
-        let content = find_length_delimited_field(&reply_msg, 1)
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default();
-        if !content.is_empty() {
-            let reply_to = find_length_delimited_field(&reply_msg, 2).map(|ref_bytes| {
-                let id = find_length_delimited_field(&ref_bytes, 1)
-                    .and_then(|b| String::from_utf8(b).ok())
-                    .unwrap_or_default();
-                let sender_id = find_length_delimited_field(&ref_bytes, 2)
-                    .and_then(|b| String::from_utf8(b).ok())
-                    .unwrap_or_default();
-                let preview = find_length_delimited_field(&ref_bytes, 3)
-                    .and_then(|b| String::from_utf8(b).ok())
-                    .unwrap_or_default();
-                serde_json::json!({ "id": id, "senderId": sender_id, "preview": preview })
-            });
-            return serde_json::json!({
-                "ok": true, "text": content, "messageId": message_id,
-                "sentAt": sent_at, "type": "reply", "replyTo": reply_to, "mediaKind": null
-            });
-        }
-    }
-
-    // MediaMsg : field 4 (kind enum = field 1, caption = field 8)
-    if let Some(media_msg) = find_length_delimited_field(bytes, 4) {
-        let kind_str = match find_varint_field(&media_msg, 1) {
-            Some(1) => "image",
-            Some(2) => "video",
-            Some(3) => "audio",
-            _ => "file",
-        };
-        let caption = find_length_delimited_field(&media_msg, 8)
-            .and_then(|b| String::from_utf8(b).ok())
-            .filter(|s| !s.is_empty());
-        let display_text = caption.unwrap_or_else(|| match kind_str {
-            "image" => "📷 Photo".to_string(),
-            "video" => "🎥 Vidéo".to_string(),
-            "audio" => "🎤 Audio".to_string(),
-            _ => "📎 Pièce jointe".to_string(),
-        });
-        return serde_json::json!({
-            "ok": true, "text": display_text, "messageId": message_id,
-            "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": kind_str
-        });
-    }
-
-    serde_json::json!({ "ok": false })
-}
-
 // ─── Fonction JNI appelée par CanariFirebaseMessagingService ─────────────────
 
 /// Déchiffre un message MLS et retourne ses métadonnées complètes en JSON.
-/// Format retourné : {"ok":true,"text":"…","messageId":"…","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
-/// Sur échec : {"ok":false}
-/// Appelée directement depuis Kotlin via System.loadLibrary("mines_app_lib").
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage<
@@ -1346,40 +1148,42 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     group_id: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
 ) -> jni::objects::JString<'a> {
-    let result = (|| -> Option<serde_json::Value> {
-        let state_vec = env.convert_byte_array(&state_bytes).ok()?;
-        let pin_str: String = env.get_string(&pin).ok()?.into();
-        let user_id_str: String = env.get_string(&user_id).ok()?.into();
-        let device_id_str: String = env.get_string(&device_id).ok()?.into();
-        let group_id_str: String = env.get_string(&group_id).ok()?.into();
-        let cipher_vec = env.convert_byte_array(&ciphertext).ok()?;
-
-        // Manager temporaire : avance son propre ratchet, n'écrit rien sur disque.
-        // Le MlsManager principal peut traiter le même message normalement au boot.
-        let mut manager =
-            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
-                .ok()?;
-
-        let plaintext = match manager.process_incoming_message(&group_id_str, &cipher_vec) {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                log::warn!("[FCM] process_incoming_message: Ok(None) - message de contrôle MLS");
-                return None;
-            }
-            Err(e) => {
-                log::error!("[FCM] process_incoming_message: Err({e}) - group={group_id_str}");
-                return None;
-            }
+    let result = (|| -> serde_json::Value {
+        let state_vec = match env.convert_byte_array(&state_bytes) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let pin_str: String = match env.get_string(&pin) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let user_id_str: String = match env.get_string(&user_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let device_id_str: String = match env.get_string(&device_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let group_id_str: String = match env.get_string(&group_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let cipher_vec = match env.convert_byte_array(&ciphertext) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
         };
 
-        let info = extract_full_message_info(&plaintext);
-        if info["ok"].as_bool().unwrap_or(false) {
-            Some(info)
-        } else {
-            None
-        }
-    })()
-    .unwrap_or_else(|| serde_json::json!({ "ok": false }));
+        mobile::background::decrypt_push_message(
+            &state_vec,
+            &pin_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+            &cipher_vec,
+        )
+        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+    })();
 
     let json_str = result.to_string();
     env.new_string(&json_str)
@@ -1678,14 +1482,14 @@ fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
 /// le chiffre dans Android Keystore, puis supprime le fichier.
 #[tauri::command]
 fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
         std::fs::write(data_dir.join("pending_push_secret.txt"), &secret)
             .map_err(|e| e.to_string())?;
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = (secret, app);
     }
@@ -2082,75 +1886,15 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
         Err(_) => return 0,
     };
 
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(r) => r,
-        Err(_) => return 0,
-    };
-
-    let result = rt.block_on(async {
-        let db_path = std::path::Path::new(&files_dir_str).join("mls_pending.db");
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(
-                sqlx::sqlite::SqliteConnectOptions::new()
-                    .filename(&db_path)
-                    .create_if_missing(true)
-                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-                    // Attendre le verrou jusqu'a 5s au lieu d'echouer en SQLITE_BUSY (le drain
-                    // foreground peut tenir mls_pending.db pendant que ce worker background tourne).
-                    .busy_timeout(std::time::Duration::from_secs(5)),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // (B) Plus de drain ici : seul le nettoyage anti-fuite ci-dessous subsiste. Les gaps sont
-        // recuperes par le foreground (resync serveur). On ne charge donc plus le manager (plus
-        // d'Argon2), on n'avance plus le ratchet et on n'ecrit plus mls.bin depuis ce Worker.
-
-        // Nettoyer les messages exhausted (attempt_count >= 3) après 1 heure.
-        // Ces messages ont définitivement échoué ; les garder 1h permet un diagnostic
-        // sans bloquer la queue (ils sont déjà exclus du SELECT ci-dessus).
-        let cutoff_attempt_ns: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as i64
-            - 3_600_000_000_000i64; // 1 heure en nanosecondes
-        let deleted_attempt = sqlx::query(
-            "DELETE FROM pending_mls_messages WHERE attempt_count >= 3 AND created_at < ?",
-        )
-        .bind(cutoff_attempt_ns)
-        .execute(&pool)
-        .await;
-        log::debug!(
-            "Background Worker: nettoyage exhausted → {:?}",
-            deleted_attempt.map(|r| r.rows_affected())
-        );
-
-        // Nettoyer les messages périmés (> 7 jours) pour éviter la croissance unbounded.
-        // created_at est stocké en nanosecondes depuis l'epoch Unix.
-        let cutoff_ns: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as i64
-            - 7i64 * 24 * 60 * 60 * 1_000_000_000;
-        let deleted = sqlx::query("DELETE FROM pending_mls_messages WHERE created_at < ?")
-            .bind(cutoff_ns)
-            .execute(&pool)
-            .await;
-        log::debug!(
-            "Background Worker: nettoyage périmés → {:?}",
-            deleted.map(|r| r.rows_affected())
-        );
-
-        Ok::<(), String>(())
-    });
-
-    if result.is_ok() {
-        log::info!("Background Worker exécuté avec succès !");
-        1
-    } else {
-        log::error!("Background Worker échoué: {:?}", result.err());
-        0
+    match mobile::background::cleanup_pending_db(std::path::Path::new(&files_dir_str)) {
+        Ok(()) => {
+            log::info!("Background Worker execute avec succes !");
+            1
+        }
+        Err(e) => {
+            log::error!("Background Worker echoue: {e}");
+            0
+        }
     }
 }
 
@@ -2200,59 +1944,21 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             .map_err(|e| e.to_string())?
             .into();
 
-        let kp_bytes = STANDARD
-            .decode(&kp_b64)
-            .map_err(|e| format!("base64 decode key_package: {}", e))?;
-
-        let mut manager =
-            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
-                .map_err(|e| e.to_string())?;
-
-        // Epoch de base AVANT l'ajout (add_member merge le commit et avance l'epoch). Le backend
-        // valide ce baseEpoch contre activeEpoch (validateCommit) pour garder son compteur en phase
-        // avec l'epoch reel - sinon les commits foreground ulterieurs sont rejetes a tort (C6).
-        let base_epoch = manager
-            .get_epoch(&group_id_str)
-            .map_err(|e| e.to_string())?;
-
-        log::debug!(
-            "[BG_WELCOME] add_member group={} kp_len={} base_epoch={}",
-            group_id_str,
-            kp_bytes.len(),
-            base_epoch
-        );
-        let (commit, welcome_opt, ratchet_tree_opt) = manager
-            .add_member(&group_id_str, &kp_bytes)
-            .map_err(|e| e.to_string())?;
-
-        let welcome =
-            welcome_opt.ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
-
-        // Sauvegarde atomique de l'état MLS mis à jour.
-        let enc = manager
-            .save_encrypted(&pin_str)
-            .map_err(|e| e.to_string())?;
-        let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
-        log::info!(
-            "[BG_WELCOME] mls.bin mis à jour ({} octets) pour group={}",
-            enc.len(),
-            group_id_str
-        );
-
-        Ok(serde_json::json!({
-            "ok": true,
-            "welcome": STANDARD.encode(&welcome),
-            "ratchetTree": ratchet_tree_opt.as_deref().map(|rt| STANDARD.encode(rt)),
-            "commit": STANDARD.encode(&commit),
-            "baseEpoch": base_epoch,
-        }))
+        mobile::background::create_welcome_background(
+            std::path::Path::new(&files_dir_str),
+            &state_vec,
+            &pin_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+            &kp_b64,
+        )
     })();
 
     let json_str = match result {
         Ok(v) => v.to_string(),
         Err(e) => {
-            log::error!("[BG_WELCOME] nativeCreateWelcomeBackground failed: {}", e);
+            log::error!("[BG_WELCOME] nativeCreateWelcomeBackground failed: {e}");
             format!("{{\"ok\":false,\"error\":{:?}}}", e)
         }
     };
@@ -2307,46 +2013,21 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             .map_err(|e| e.to_string())?
             .into();
 
-        let welcome_bytes = STANDARD
-            .decode(welcome_b64_str.trim())
-            .map_err(|e| format!("base64 decode welcome: {}", e))?;
-
-        let rt_trimmed = rt_b64_str.trim();
-        let ratchet_tree_bytes = if rt_trimmed.is_empty() || rt_trimmed == "null" {
-            None
-        } else {
-            Some(
-                STANDARD
-                    .decode(rt_trimmed)
-                    .map_err(|e| format!("base64 decode ratchet tree: {}", e))?,
-            )
-        };
-
-        let mut manager =
-            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
-                .map_err(|e| e.to_string())?;
-
-        let group_id = manager
-            .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
-            .map_err(|e| format!("process_welcome: {:?}", e))?;
-
-        let enc = manager
-            .save_encrypted(&pin_str)
-            .map_err(|e| e.to_string())?;
-        let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
-        log::info!(
-            "[BG_JOIN] groupe rejoint via Welcome: {} (mls.bin {} octets)",
-            group_id,
-            enc.len()
-        );
-        Ok(())
+        mobile::background::process_welcome_background(
+            std::path::Path::new(&files_dir_str),
+            &state_vec,
+            &pin_str,
+            &user_id_str,
+            &device_id_str,
+            &welcome_b64_str,
+            &rt_b64_str,
+        )
     })();
 
     match result {
-        Ok(_) => 1,
+        Ok(()) => 1,
         Err(e) => {
-            log::error!("[BG_JOIN] nativeProcessWelcomeBackground failed: {}", e);
+            log::error!("[BG_JOIN] nativeProcessWelcomeBackground failed: {e}");
             0
         }
     }
@@ -2397,42 +2078,21 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             .map_err(|e| e.to_string())?
             .into();
 
-        let proto_bytes = STANDARD
-            .decode(proto_b64_str.trim())
-            .map_err(|e| format!("base64 decode proto: {}", e))?;
-
-        let mut manager =
-            MlsManager::load_encrypted(&user_id_str, &device_id_str, Some(state_vec), &pin_str)
-                .map_err(|e| e.to_string())?;
-
-        let ciphertext = manager
-            .send_message(&group_id_str, &proto_bytes)
-            .map_err(|e| format!("send_message: {:?}", e))?;
-
-        // send_message a fait avancer le ratchet : persister mls.bin sinon le message serait
-        // ré-envoyé avec un epoch obsolète au prochain réveil.
-        let enc = manager
-            .save_encrypted(&pin_str)
-            .map_err(|e| e.to_string())?;
-        let mls_path = std::path::Path::new(&files_dir_str).join("mls.bin");
-        background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {}", e))?;
-        log::info!(
-            "[BG_SEND] message chiffré group={} (ciphertext {} octets, mls.bin {} octets)",
-            group_id_str,
-            ciphertext.len(),
-            enc.len()
-        );
-
-        Ok(serde_json::json!({
-            "ok": true,
-            "ciphertext": STANDARD.encode(&ciphertext),
-        }))
+        mobile::background::send_message_background(
+            std::path::Path::new(&files_dir_str),
+            &state_vec,
+            &pin_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+            &proto_b64_str,
+        )
     })();
 
     let json_str = match result {
         Ok(v) => v.to_string(),
         Err(e) => {
-            log::error!("[BG_SEND] nativeSendMessageBackground failed: {}", e);
+            log::error!("[BG_SEND] nativeSendMessageBackground failed: {e}");
             format!("{{\"ok\":false,\"error\":{:?}}}", e)
         }
     };
