@@ -75,7 +75,7 @@
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "prettier": "^3.8.4",
-    "prettier-plugin-svelte": "^3.5.2",
+    "prettier-plugin-svelte": "^4.1.1",
     "protobufjs": "^8.6.4",
     "protobufjs-cli": "^2.5.5",
     "sharp": "^0.34.5",
