@@ -140,9 +140,8 @@ export class AssociationsController {
     @Headers('x-user-id') userId?: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    // includePending est opt-in (le PDF ne le passe pas → seulement les validés) et
-    // n'est honoré que pour les utilisateurs autorisés à proposer (n'importe quelle
-    // asso), les admins BDE ou les admins globaux.
+    // includePending is opt-in (the PDF export does not set it -> validated events only).
+    // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
     if ((includePending === 'true' || includePending === '1') && userId?.trim()) {
       include =
@@ -241,8 +240,8 @@ export class AssociationsController {
     @Headers('x-user-id') userId?: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    // Un membre autorisé à proposer (n'importe quelle asso), un admin BDE ou un admin
-    // global voit les événements en attente sur l'agenda de TOUTES les associations.
+    // A member allowed to propose (any asso), a BDE admin, or a global admin
+    // can see pending events on the calendar of ALL associations.
     const wantPending = includePending === 'true' || includePending === '1';
     const wantRejected = includeRejected === 'true' || includeRejected === '1';
     let include = false;
@@ -255,7 +254,7 @@ export class AssociationsController {
           (await this.service.canViewPendingCalendarEvents(uid)) ||
           (await this.service.isUserBdeAdmin(uid));
       }
-      // Les refusés (vue de gestion) ne sont visibles que pour les éditeurs de CETTE asso.
+      // Rejected events (management view) are only visible to editors of THIS asso.
       if (wantRejected) {
         includeRej = await this.service.canPostAs(uid, id, { isGlobalAdmin: ga === 'true' });
       }
@@ -707,7 +706,7 @@ export class AssociationsController {
   ) {
     const isGlobalAdmin = globalAdmin === 'true';
     if (!isGlobalAdmin && !(await this.service.isMember(userId, id))) {
-      throw new ForbiddenException("Accès réservé aux membres de l'association");
+      throw new ForbiddenException('Access restricted to association members.');
     }
     return this.service.searchTagCatalog(id, q);
   }

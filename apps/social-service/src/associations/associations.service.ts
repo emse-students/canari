@@ -548,9 +548,7 @@ export class AssociationsService {
   private async assertNotLastAdminDemotion(associationId: string): Promise<void> {
     const n = await this.manageMembersCount(associationId);
     if (n <= 1) {
-      throw new BadRequestException(
-        'Impossible de rétrograder le dernier administrateur de cette association'
-      );
+      throw new BadRequestException('Cannot demote the last administrator of this association.');
     }
   }
 
@@ -814,8 +812,8 @@ export class AssociationsService {
         { associationId }
       )
       .orderBy('e.startsAt', 'ASC');
-    // Validés toujours visibles ; en attente (grisés sur l'agenda) pour les proposeurs ;
-    // refusés uniquement pour la vue de gestion des éditeurs de l'asso.
+    // Validated events are always visible; pending ones (greyed on calendar) only for proposers;
+    // rejected ones only in the editor management view.
     const statuses: AssociationCalendarEventStatus[] = [AssociationCalendarEventStatus.Validated];
     if (opts?.includePending) statuses.push(AssociationCalendarEventStatus.Pending);
     if (opts?.includeRejected) statuses.push(AssociationCalendarEventStatus.Rejected);
@@ -1036,8 +1034,8 @@ export class AssociationsService {
       // Overlap condition: event starts before window end AND ends (or starts) within/after window.
       .where('e.startsAt <= :to AND COALESCE(e.endsAt, e.startsAt) >= :from', { from, to })
       .orderBy('e.startsAt', 'ASC');
-    // Par défaut : seulement les événements validés. Les membres autorisés à proposer
-    // peuvent aussi voir les événements en attente (grisés côté UI) ; jamais les refusés.
+    // Default: validated events only. Members allowed to propose can also see pending
+    // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {
       qb.andWhere('e.status IN (:...visibleStatuses)', {
         visibleStatuses: [
@@ -1140,15 +1138,15 @@ export class AssociationsService {
 
     const actionLabel =
       action === 'validated'
-        ? 'validé'
+        ? 'validated'
         : action === 'updated'
-          ? 'modifié'
+          ? 'updated'
           : action === 'rejected'
-            ? 'refusé'
-            : 'supprimé';
+            ? 'rejected'
+            : 'deleted';
     const reasonSuffix =
-      action === 'rejected' && rejectionReason ? ` Motif : ${rejectionReason}` : '';
-    const text = `L'événement "${eventTitle}" a été ${actionLabel} par le BDE.${reasonSuffix}`;
+      action === 'rejected' && rejectionReason ? ` Reason: ${rejectionReason}` : '';
+    const text = `Event "${eventTitle}" has been ${actionLabel} by the BDE.${reasonSuffix}`;
 
     const targets = proposers.filter((m) => m.userId !== actorId);
     if (targets.length === 0) return;
@@ -1170,7 +1168,7 @@ export class AssociationsService {
     void Promise.all(
       targets.map((m) =>
         this.push
-          .notify(m.userId, 'Événement association', text, {
+          .notify(m.userId, 'Association event', text, {
             type: 'event_action',
             associationId,
             action,
@@ -1664,11 +1662,11 @@ export class AssociationsService {
     }
     if (!asso.stripeOnboardingComplete) {
       throw new BadRequestException(
-        "Cette association n'a pas encore activé Stripe Connect pour recevoir des paiements"
+        'This association has not yet enabled Stripe Connect to receive payments.'
       );
     }
     if (!asso.stripeAccountId) {
-      throw new BadRequestException('Aucun compte Stripe Connect lié à cette association');
+      throw new BadRequestException('No Stripe Connect account linked to this association.');
     }
   }
 

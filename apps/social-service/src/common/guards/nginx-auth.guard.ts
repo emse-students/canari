@@ -20,7 +20,7 @@ export class NginxAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase();
 
-    // En production, vérifier l'authenticité de la requête nginx.
+    // In production, verify the authenticity of the nginx request.
     if (process.env.NODE_ENV === 'production') {
       const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
       if (internalSecret && userId) {
@@ -50,7 +50,7 @@ export class NginxAuthGuard implements CanActivate {
           const nginxSecret = request.headers['x-nginx-auth'] as string | undefined;
           if (!nginxSecret || nginxSecret !== expectedNginxSecret) {
             throw new UnauthorizedException(
-              'Requête non autorisée : header Nginx manquant ou invalide.'
+              'Unauthorized request: Nginx header missing or invalid.'
             );
           }
         }
@@ -63,7 +63,7 @@ export class NginxAuthGuard implements CanActivate {
       );
     }
 
-    // Dev fallback: nginx n'est pas présent, on extrait le userId du JWT
+    // Dev fallback: nginx is not present, extract userId from JWT.
     if (userId) {
       return true;
     }

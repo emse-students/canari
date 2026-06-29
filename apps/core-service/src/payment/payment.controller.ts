@@ -656,7 +656,7 @@ export class PaymentController {
       return {
         ok: false,
         error:
-          'Cette soumission a été annulée. Soumettez à nouveau le formulaire.',
+          'This submission has been cancelled. Please submit the form again.',
       };
     }
     if (submissionData.paymentStatus === 'free' || !submissionData.totalPaid) {

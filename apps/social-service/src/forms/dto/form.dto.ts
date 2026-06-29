@@ -55,7 +55,7 @@ function IsValidAnswers(options?: ValidationOptions) {
           return true;
         },
         defaultMessage() {
-          return `answers doit contenir au plus ${ANSWERS_MAX_KEYS} clés ; chaque valeur doit être une chaîne (max ${ANSWERS_MAX_STRING_LEN} car.), un tableau de chaînes (max ${ANSWERS_MAX_ARRAY_LEN} éléments) ou un nombre`;
+          return `answers must contain at most ${ANSWERS_MAX_KEYS} keys; each value must be a string (max ${ANSWERS_MAX_STRING_LEN} chars), an array of strings (max ${ANSWERS_MAX_ARRAY_LEN} items), or a number`;
         },
       },
     });

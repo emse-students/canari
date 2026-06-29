@@ -68,7 +68,7 @@ export class FormsService {
     if (input.associationId && !isGlobalAdmin) {
       const member = await this.associationsService.isMember(input.ownerId!, input.associationId);
       if (!member) {
-        throw new ForbiddenException('Vous n\'êtes pas membre de cette association');
+        throw new ForbiddenException('You are not a member of this association.');
       }
     }
     await this.assertPaidFormAssociationReady(input);
@@ -296,11 +296,11 @@ export class FormsService {
     if (!form) throw new NotFoundException('Form not found');
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
-      throw new BadRequestException("Le formulaire n'est pas encore ouvert");
+      throw new BadRequestException('The form is not open yet.');
     }
 
     if (form.closedAt && new Date(form.closedAt) < new Date()) {
-      throw new BadRequestException('Le formulaire est fermé');
+      throw new BadRequestException('The form is closed.');
     }
 
     // Validate answer sizes to prevent oversized payloads.
@@ -422,7 +422,7 @@ export class FormsService {
     const STRIPE_MIN_CENTS = 50;
     if (totalCents > 0 && totalCents < STRIPE_MIN_CENTS) {
       throw new BadRequestException(
-        `Le montant total (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) est inférieur au minimum Stripe de 0,50 ${currency.toUpperCase()}. Ajustez le prix du formulaire.`,
+        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the Stripe minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`,
       );
     }
 
@@ -810,11 +810,11 @@ export class FormsService {
     const sheet = workbook.addWorksheet(sheetName);
 
     const headers: any[] = [
-      { header: 'Horodatage', key: 'date', width: 22, style: { numFmt: 'dd/mm/yyyy hh:mm:ss' } },
-      { header: 'Prénom', key: 'firstName', width: 20 },
-      { header: 'Nom', key: 'lastName', width: 20 },
-      { header: 'Montant payé', key: 'total', width: 14 },
-      { header: 'Statut', key: 'status', width: 14 },
+      { header: 'Timestamp', key: 'date', width: 22, style: { numFmt: 'dd/mm/yyyy hh:mm:ss' } },
+      { header: 'First name', key: 'firstName', width: 20 },
+      { header: 'Last name', key: 'lastName', width: 20 },
+      { header: 'Amount paid', key: 'total', width: 14 },
+      { header: 'Status', key: 'status', width: 14 },
     ];
 
     form.items.forEach((item: any) => {

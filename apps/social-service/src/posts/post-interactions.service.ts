@@ -71,8 +71,8 @@ export class PostInteractionsService {
           });
           await this.push.notify(
             post.authorId,
-            'Nouvelle réaction',
-            `${actorName} a réagi à votre publication ${reactionType}`,
+            'New reaction',
+            `${actorName} reacted to your post ${reactionType}`,
             { type: 'social', postId }
           );
         } catch (e) {
@@ -182,8 +182,8 @@ export class PostInteractionsService {
           });
           await this.push.notify(
             post.authorId,
-            `${actorName} a commenté`,
-            preview || 'Nouveau commentaire',
+            `${actorName} commented`,
+            preview || 'New comment',
             { type: 'social', postId }
           );
         } catch (e) {
@@ -206,12 +206,10 @@ export class PostInteractionsService {
               actorId: data.userId,
               text: preview,
             });
-            await this.push.notify(
-              parent.userId,
-              `${actorName} a répondu`,
-              preview || 'Nouvelle réponse',
-              { type: 'social', postId }
-            );
+            await this.push.notify(parent.userId, `${actorName} replied`, preview || 'New reply', {
+              type: 'social',
+              postId,
+            });
           } catch (e) {
             this.logger.warn(
               `[NOTIFY] reply notification failed for parent.userId=${parent.userId}`,
@@ -237,8 +235,8 @@ export class PostInteractionsService {
             });
             await this.push.notify(
               recipientId,
-              `${actorName} vous a mentionné`,
-              preview || 'Vous avez été mentionné dans un commentaire',
+              `${actorName} mentioned you`,
+              preview || 'You were mentioned in a comment',
               { type: 'social', postId }
             );
           } catch (e) {
@@ -361,6 +359,6 @@ export class PostInteractionsService {
       post.attachedFormId === formId ||
       (post.forms ?? []).some((f: { id?: string }) => f.id === formId);
     if (!hasForm) throw new NotFoundException('Form not attached to this post');
-    return { ok: true, requiresPayment: false, message: 'Formulaire envoyé.' };
+    return { ok: true, requiresPayment: false, message: 'Form submitted.' };
   }
 }

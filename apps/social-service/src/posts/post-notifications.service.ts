@@ -22,20 +22,18 @@ export class PostNotificationsService {
   ): { title: string; body: string } {
     switch (type) {
       case 'mention':
-        return { title: `${actorName} vous a mentionné`, body: 'Vous avez été mentionné' };
+        return { title: `${actorName} mentioned you`, body: 'You were mentioned' };
       case 'reply':
-        return { title: actorName, body: 'a répondu à votre commentaire' };
+        return { title: actorName, body: 'replied to your comment' };
       case 'reaction':
-        return { title: actorName, body: 'a réagi à votre publication' };
+        return { title: actorName, body: 'reacted to your post' };
       case 'comment':
         return {
           title: actorName,
-          body: text.trim()
-            ? `a commenté : ${text.trim().slice(0, 120)}`
-            : 'a commenté votre publication',
+          body: text.trim() ? `commented: ${text.trim().slice(0, 120)}` : 'commented on your post',
         };
       default:
-        return { title: actorName, body: 'Nouvelle notification' };
+        return { title: actorName, body: 'New notification' };
     }
   }
 
@@ -89,8 +87,7 @@ export class PostNotificationsService {
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
 
-    // Push FCM (data-only) pour que toute notification visible dans l'onglet " Notifications "
-    // déclenche aussi une notif système, même appli fermée. Fire-and-forget.
+    // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
     const { title, body } = this.pushContent(data.type, actorName, data.text);
     void this.push.notify(data.recipientId, title, body, { type: 'social', postId: data.postId });
   }

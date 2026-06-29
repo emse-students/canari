@@ -205,7 +205,7 @@ export class UsersService implements OnModuleInit {
       !!query.associationId;
     if (!hasFilter) {
       throw new BadRequestException(
-        'Indiquez au moins un critère (nom ≥ 2 caractères, promo, cursus ou association)',
+        'Provide at least one filter (name >= 2 chars, promo, cursus, or association)',
       );
     }
 

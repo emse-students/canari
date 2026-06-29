@@ -59,8 +59,8 @@ export class AuthController {
   }
 
   private isDevEnvironment(req: Request): boolean {
-    // En production, on doit TOUJOURS utiliser les cookies sécurisés (SameSite=none, Secure=true)
-    // car l'application mobile (tauri.localhost) effectue des requêtes cross-origin vers le serveur.
+    // In production, secure cookies (SameSite=none, Secure=true) are required because the
+    // mobile app (tauri.localhost) makes cross-origin requests to the server.
     if (this.isProduction) {
       return false;
     }
@@ -211,7 +211,7 @@ export class AuthController {
         code: 'MAINTENANCE',
         message:
           platformConfig.maintenanceMessage ||
-          'Canari est en maintenance. Réessayez plus tard.',
+          'Canari is under maintenance. Please try again later.',
       });
     }
 
@@ -290,7 +290,7 @@ export class AuthController {
         code: 'MAINTENANCE',
         message:
           platformConfig.maintenanceMessage ||
-          'Canari est en maintenance. Réessayez plus tard.',
+          'Canari is under maintenance. Please try again later.',
       });
     }
 
@@ -377,7 +377,7 @@ export class AuthController {
           code: 'MAINTENANCE',
           message:
             platformConfig.maintenanceMessage ||
-            'Canari est en maintenance. Réessayez plus tard.',
+            'Canari is under maintenance. Please try again later.',
         });
       }
 

@@ -7,7 +7,7 @@ import { PushService } from '../push/push.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 
-/** Durées de rétention pour les données à croissance illimitée. */
+/** Retention durations for unbounded-growth data tables. */
 const GC_NOTIFICATION_DAYS = 90;
 const GC_REMINDER_DAYS = 30;
 const GC_USER_TAG_GRACE_DAYS = 30;
@@ -39,15 +39,15 @@ export class FormReminderScheduler {
       },
     });
     for (const r of toNotify5min) {
-      const title = '⏰ Formulaire bientôt disponible';
-      const body = 'Un formulaire que vous suivez ouvre dans 5 minutes !';
+      const title = 'Form opening soon';
+      const body = 'A form you are watching opens in 5 minutes!';
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications if the process
         // crashes between the push and the flag update.  Worst case: the notification is
         // silently lost; acceptable vs spamming the user on every cron tick.
         await this.reminderRepo.update(r.id, { notified5min: true });
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
-        // Notification in-app dans la cloche : postId contient le formId pour le deep link
+        // In-app bell notification: postId holds the formId for deep linking.
         await this.notifications.createNotification({
           recipientId: r.userId,
           type: 'form_reminder',
@@ -57,7 +57,7 @@ export class FormReminderScheduler {
           text: body,
         });
         this.logger.log(
-          `[REMINDER] 5min notifié: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
+          `[REMINDER] 5min sent: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
         );
       } catch (e: unknown) {
         this.logger.warn(`[REMINDER] 5min notify failed for ${r.id}`, e);
@@ -72,13 +72,13 @@ export class FormReminderScheduler {
       },
     });
     for (const r of toNotifyOpen) {
-      const title = '🟢 Formulaire maintenant ouvert !';
-      const body = 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !';
+      const title = 'Form now open!';
+      const body = 'The form is available - hurry, spots are limited!';
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications (same rationale as above).
         await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
-        // Notification in-app dans la cloche
+        // In-app bell notification.
         await this.notifications.createNotification({
           recipientId: r.userId,
           type: 'form_reminder',
@@ -88,7 +88,7 @@ export class FormReminderScheduler {
           text: body,
         });
         this.logger.log(
-          `[REMINDER] ouverture notifiée: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
+          `[REMINDER] open sent: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
         );
       } catch (e: unknown) {
         this.logger.warn(`[REMINDER] open notify failed for ${r.id}`, e);
@@ -113,10 +113,7 @@ export class FormReminderScheduler {
     }
   }
 
-  /**
-   * Daily at 03:00 - supprime les notifications de posts de plus de 90 jours.
-   * Rétention choisie par analogie avec les réseaux sociaux grand public (Instagram, Twitter).
-   */
+  /** Daily at 03:00 - deletes post notifications older than 90 days. */
   @Cron('0 3 * * *')
   async purgeOldPostNotifications() {
     try {
@@ -126,17 +123,14 @@ export class FormReminderScheduler {
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
         this.logger.log(
-          `[GC] post_notifications: ${deleted} supprimée(s) > ${GC_NOTIFICATION_DAYS}j`
+          `[GC] post_notifications: ${deleted} deleted (older than ${GC_NOTIFICATION_DAYS} days)`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeOldPostNotifications failed', e);
     }
   }
 
-  /**
-   * Daily at 03:15 - supprime les rappels de formulaires dont les deux notifications
-   * ont été envoyées et dont l'ouverture remonte à plus de 30 jours.
-   */
+  /** Daily at 03:15 - deletes form reminders where both notifications were sent and the opening was more than 30 days ago. */
   @Cron('15 3 * * *')
   async purgeDeliveredFormReminders() {
     try {
@@ -147,15 +141,17 @@ export class FormReminderScheduler {
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
-        this.logger.log(`[GC] form_reminders: ${deleted} supprimée(s) > ${GC_REMINDER_DAYS}j`);
+        this.logger.log(
+          `[GC] form_reminders: ${deleted} deleted (older than ${GC_REMINDER_DAYS} days)`
+        );
     } catch (e) {
       this.logger.warn('[GC] purgeDeliveredFormReminders failed', e);
     }
   }
 
   /**
-   * Daily at 03:30 - supprime les tags d'adhérent expirés depuis plus de 30 jours.
-   * La grâce de 30 jours permet de traiter les litiges de renouvellement.
+   * Daily at 03:30 - deletes expired member tags older than 30 days.
+   * The 30-day grace period allows handling renewal disputes.
    */
   @Cron('30 3 * * *')
   async purgeExpiredUserTags() {
@@ -168,7 +164,7 @@ export class FormReminderScheduler {
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
         this.logger.log(
-          `[GC] user_tags: ${deleted} supprimée(s) (expirés > ${GC_USER_TAG_GRACE_DAYS}j)`
+          `[GC] user_tags: ${deleted} deleted (expired > ${GC_USER_TAG_GRACE_DAYS} days ago)`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeExpiredUserTags failed', e);
@@ -176,8 +172,8 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Weekly (Sunday 04:00) - supprime les webhook deliveries livrées avec succès
-   * après 30 jours. Les échouées sont conservées pour retry manuel.
+   * Weekly (Sunday 04:00) - deletes successfully delivered webhooks after 30 days.
+   * Failed deliveries are kept for manual retry.
    */
   @Cron('0 4 * * 0')
   async purgeDeliveredWebhooks() {
@@ -190,7 +186,7 @@ export class FormReminderScheduler {
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
         this.logger.log(
-          `[GC] webhook_deliveries: ${deleted} supprimée(s) > ${GC_WEBHOOK_DELIVERY_DAYS}j`
+          `[GC] webhook_deliveries: ${deleted} deleted (older than ${GC_WEBHOOK_DELIVERY_DAYS} days)`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeDeliveredWebhooks failed', e);
@@ -198,8 +194,8 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Weekly (Sunday 04:30) - archive les signalements traités (reviewed/dismissed)
-   * de plus d'un an. Les signalements "pending" sont conservés indéfiniment.
+   * Weekly (Sunday 04:30) - deletes resolved content reports (reviewed/dismissed)
+   * older than one year. Pending reports are kept indefinitely.
    */
   @Cron('30 4 * * 0')
   async purgeResolvedContentReports() {
@@ -212,7 +208,7 @@ export class FormReminderScheduler {
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
         this.logger.log(
-          `[GC] content_reports: ${deleted} supprimée(s) > ${GC_CONTENT_REPORT_DAYS}j`
+          `[GC] content_reports: ${deleted} deleted (older than ${GC_CONTENT_REPORT_DAYS} days)`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeResolvedContentReports failed', e);

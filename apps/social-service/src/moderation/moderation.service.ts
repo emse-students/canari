@@ -95,7 +95,7 @@ export class ModerationService {
       );
     } catch (e) {
       this.logger.warn(
-        `Purge des signalements traités échouée: ${e instanceof Error ? e.message : 'erreur inconnue'}`
+        `Purge of handled reports failed: ${e instanceof Error ? e.message : 'unknown error'}`
       );
     }
   }

@@ -296,7 +296,7 @@ export class AddReactionDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(20)
-  reactionType: string; // J'aime, J'adore, Triste, Joyeux, Enervé, Canari, Marteau
+  reactionType: string; // e.g. like, love, sad, laugh, angry, canari, hammer
 }
 
 export class EditCommentDto {

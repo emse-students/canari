@@ -225,7 +225,7 @@ export class ChannelService {
   ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
     const invite = await this.inviteRepo.findOne({ where: { token } });
     if (!invite || !this.inviteIsValid(invite)) {
-      throw new NotFoundException('Invitation invalide ou expirée');
+      throw new NotFoundException('Invalid or expired invitation.');
     }
     const ws = await this.workspaceRepo.findOne({ where: { id: invite.workspaceId } });
     if (!ws) throw new NotFoundException('Workspace not found');
@@ -1015,7 +1015,7 @@ export class ChannelService {
     const hasDevices = await this.userHasMlsDevices(input.targetUserId);
     if (!hasDevices) {
       throw new BadRequestException(
-        `L'utilisateur ${input.targetUserId} n'a pas encore configuré Canari sur un appareil.`
+        `User ${input.targetUserId} has not yet set up Canari on any device.`
       );
     }
 
