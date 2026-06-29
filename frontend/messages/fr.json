@@ -86,6 +86,7 @@
   "auth_biometric_no_fingerprint_android": "Aucune empreinte n'est configurée. Ajoutez-en une dans les paramètres Android.",
   "auth_pin_step_verifying": "Vérification du PIN…",
   "auth_pin_step_loading_mls": "Chargement MLS…",
+  "auth_pin_timeout": "Le déverrouillage prend plus de temps que prévu. Veuillez réessayer.",
   "auth_pin_step_resetting": "Réinitialisation du PIN…",
   "nav_my_profile_title": "Mon profil",
   "nav_my_profile_label": "Accéder au profil",

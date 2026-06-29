@@ -781,26 +781,57 @@
     canRecoverPin = false;
     globalSession.pin = submittedPin;
     _loginInProgress = true;
+    // An explicit PIN submit takes priority over any background login that may have set
+    // this flag (onMount/afterNavigate race); loginImpl bails silently if it is still set.
+    globalSession.isLoginInProgress = false;
 
     // Transition to the MLS loading step after PIN derivation (~800 ms)
     const stepTimer = setTimeout(() => {
       if (pinLoading) pinStep = m.auth_pin_step_loading_mls();
     }, 800);
 
-    void globalSession.login(
-      sessionCb({
-        onMlsReady: () => {
-          clearTimeout(stepTimer);
-        },
-        onLoginFailed: (msg: string) => {
-          clearTimeout(stepTimer);
-          pinError = msg;
-          pinLoading = false;
-          pinStep = '';
-          void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
-        },
-      })
-    );
+    // Temporal safety net: if neither onMlsReady nor onLoginFailed fires within 10 s
+    // (e.g. an unexpected early return or a hung network call), unblock the spinner so
+    // the user can retry instead of staring at an infinite loader.
+    const watchdog = setTimeout(() => {
+      if (!pinLoading) return;
+      clearTimeout(stepTimer);
+      pinError = m.auth_pin_timeout();
+      pinLoading = false;
+      pinStep = '';
+      _loginInProgress = false;
+      appendLog('[PIN] Login watchdog fired after 10s - unblocking PIN modal.');
+    }, 10_000);
+
+    void globalSession
+      .login(
+        sessionCb({
+          onMlsReady: () => {
+            clearTimeout(stepTimer);
+            clearTimeout(watchdog);
+          },
+          onLoginFailed: (msg: string) => {
+            clearTimeout(stepTimer);
+            clearTimeout(watchdog);
+            pinError = msg;
+            pinLoading = false;
+            pinStep = '';
+            void evaluateRecoverable(globalSession.userId || currentUserId() || '', msg);
+          },
+        })
+      )
+      .catch((e: unknown) => {
+        // login() routes errors through onLoginFailed; this guards against a rejection
+        // that escapes that path (e.g. before the internal try) leaving the spinner stuck.
+        clearTimeout(stepTimer);
+        clearTimeout(watchdog);
+        const msg = e instanceof Error ? e.message : String(e);
+        pinError = msg;
+        pinLoading = false;
+        pinStep = '';
+        _loginInProgress = false;
+        appendLog(`[PIN] login() rejected: ${msg}`);
+      });
   }
 
   /**

@@ -86,6 +86,7 @@
   "auth_biometric_no_fingerprint_android": "No fingerprint enrolled. Add one in Android settings.",
   "auth_pin_step_verifying": "Verifying PIN…",
   "auth_pin_step_loading_mls": "Loading MLS…",
+  "auth_pin_timeout": "Unlocking is taking longer than expected. Please try again.",
   "auth_pin_step_resetting": "Resetting PIN…",
   "nav_my_profile_title": "My profile",
   "nav_my_profile_label": "Go to profile",

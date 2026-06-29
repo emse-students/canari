@@ -224,11 +224,17 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   const pin = ctx.getPin();
 
   if (!userId.trim() || !pin.trim()) {
-    ctx.setLoginError('Please fill in all fields.');
+    const msg = 'Please fill in all fields.';
+    ctx.setLoginError(msg);
+    // Notify the caller so a PIN-modal spinner does not hang forever.
+    cb.onLoginFailed?.(msg);
     return;
   }
 
   // Guard against concurrent calls (e.g. onMount + afterNavigate firing together).
+  // Returning silently here is intentional: the in-flight login owns the flow and will
+  // resolve the caller's UI. An explicit PIN submit must clear this flag before calling
+  // (see handlePinSubmit) so a user action is never swallowed by a background login.
   if (ctx.isLoggedIn() || ctx.isReconnecting() || ctx.getIsLoginInProgress()) return;
   ctx.setIsLoginInProgress(true);
 
@@ -273,8 +279,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     try {
       accessToken = await getToken();
     } catch {
-      ctx.setLoginError('Session expired. Please sign in again.');
+      const msg = 'Session expired. Please sign in again.';
+      ctx.setLoginError(msg);
       ctx.setIsLoginInProgress(false);
+      // Notify the caller so a PIN-modal spinner does not hang forever.
+      cb.onLoginFailed?.(msg);
       return;
     }
 
