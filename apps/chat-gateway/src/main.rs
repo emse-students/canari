@@ -80,18 +80,18 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("=== Chat Gateway démarrage ===");
+    tracing::info!("=== Chat Gateway starting ===");
 
     // Redis connection
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-    tracing::info!("Connexion Redis: {}", redis_url);
+    tracing::info!("Redis connection: {}", redis_url);
     let redis_client = match redis::Client::open(redis_url.clone()) {
         Ok(c) => {
-            tracing::info!("Client Redis créé");
+            tracing::info!("Redis client created");
             c
         }
         Err(e) => {
-            tracing::error!("URL Redis invalide '{}': {}", redis_url, e);
+            tracing::error!("Invalid Redis URL '{}': {}", redis_url, e);
             std::process::exit(1);
         }
     };
@@ -99,15 +99,15 @@ async fn main() {
     // JWT Secret
     let jwt_secret = match std::env::var("JWT_SECRET") {
         Ok(s) if !s.is_empty() => {
-            tracing::info!("JWT_SECRET configuré ({} chars)", s.len());
+            tracing::info!("JWT_SECRET configured ({} chars)", s.len());
             s
         }
         Ok(_) => {
-            tracing::error!("JWT_SECRET est vide");
+            tracing::error!("JWT_SECRET is empty");
             std::process::exit(1);
         }
         Err(_) => {
-            tracing::error!("JWT_SECRET manquant. Générer avec: openssl rand -hex 32");
+            tracing::error!("JWT_SECRET missing. Generate with: openssl rand -hex 32");
             std::process::exit(1);
         }
     };
@@ -125,31 +125,31 @@ async fn main() {
         let connected_users = app_state.connected_users.clone();
         tokio::spawn(async move {
             loop {
-                tracing::info!("Tentative de connexion au pub/sub Redis…");
+                tracing::info!("Attempting Redis pub/sub connection...");
                 let pubsub_result = redis_client.get_async_pubsub().await;
                 let mut pubsub = match pubsub_result {
                     Ok(p) => p,
                     Err(e) => {
-                        tracing::warn!("Echec connexion pub/sub Redis: {}. Retry dans 5s…", e);
+                        tracing::warn!("Redis pub/sub connection failed: {}. Retry in 5s...", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
                 };
 
                 match pubsub.subscribe("chat:messages").await {
-                    Ok(_) => tracing::info!("Abonné au canal Redis 'chat:messages'"),
+                    Ok(_) => tracing::info!("Subscribed to Redis channel 'chat:messages'"),
                     Err(e) => {
-                        tracing::warn!("Echec abonnement Redis: {}. Retry dans 5s…", e);
+                        tracing::warn!("Redis subscribe failed: {}. Retry in 5s...", e);
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                         continue;
                     }
                 }
 
                 match pubsub.subscribe("chat:channel_events").await {
-                    Ok(_) => tracing::info!("Abonné au canal Redis 'chat:channel_events'"),
+                    Ok(_) => tracing::info!("Subscribed to Redis channel 'chat:channel_events'"),
                     Err(e) => {
                         tracing::warn!(
-                            "Echec abonnement Redis channel_events: {}. Retry dans 5s…",
+                            "Redis subscribe to channel_events failed: {}. Retry in 5s...",
                             e
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -432,7 +432,7 @@ async fn main() {
                     }
                 }
                 // Stream ended (Redis disconnected) - retry with back-off.
-                tracing::warn!("Stream Redis pub/sub terminé, reconnexion dans 5s…");
+                tracing::warn!("Redis pub/sub stream ended, reconnecting in 5s...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
         });
@@ -560,14 +560,14 @@ async fn main() {
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!("Écoute sur {}", addr);
+    tracing::info!("Listening on {}", addr);
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => {
-            tracing::info!("=== Chat Gateway démarré et prêt sur {} ===", addr);
+            tracing::info!("=== Chat Gateway started and ready on {} ===", addr);
             l
         }
         Err(e) => {
-            tracing::error!("Impossible de bind sur {}: {}", addr, e);
+            tracing::error!("Failed to bind on {}: {}", addr, e);
             std::process::exit(1);
         }
     };

@@ -188,9 +188,9 @@ pub async fn ws_handler(
                 return (StatusCode::SERVICE_UNAVAILABLE, "Too many connections").into_response();
             }
 
-            // Utiliser le device_id fourni par le client pour conserver la même clé de
-            // routage entre les reconnexions (sinon group:members devient périmé).
-            // La sécurité repose sur le JWT : seul l'userId du token peut accéder aux messages.
+            // Use the device_id provided by the client to keep the same routing key
+            // across reconnections (otherwise group:members becomes stale).
+            // Security relies on the JWT: only the userId from the token can access messages.
             let device_id = params
                 .device_id
                 .as_deref()
@@ -291,10 +291,10 @@ async fn handle_socket(
             }
 
             // ── Drain pending welcome_request signals ─────────────────
-            // Quand aucun peer n'était en ligne pour une welcome_request, le
-            // delivery service stocke le signal dans pending_welcome_notify:{userId}
-            // pour chaque membre du groupe. Le premier membre qui se reconnecte
-            // reçoit ces signaux et peut déclencher les Welcomes manquants.
+            // When no peer was online for a welcome_request, the delivery service
+            // stores the signal in pending_welcome_notify:{userId} for each group member.
+            // The first member to reconnect receives these signals and can trigger the
+            // missing Welcomes.
             let notify_key = format!("pending_welcome_notify:{}", user_id);
             match redis::cmd("LRANGE")
                 .arg(&notify_key)
@@ -320,8 +320,8 @@ async fn handle_socket(
                             break;
                         }
                     }
-                    // Supprimer la clé même en cas d'échec partiel : le delivery
-                    // service réémettra via FCM si la welcome_request reste en attente.
+                    // Delete the key even on partial failure: the delivery service
+                    // will resend via FCM if the welcome_request is still pending.
                     if send_ok {
                         if let Err(e) = redis::cmd("DEL")
                             .arg(&notify_key)

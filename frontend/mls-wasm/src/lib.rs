@@ -55,16 +55,16 @@ pub fn encrypt_mls_state_blob(plain_state: &[u8], pin: &str) -> Result<Vec<u8>, 
 
 // ----------------------------------------------------
 
-// On crée une structure "Wrapper" exposée à JavaScript
+// Wrapper structure exposed to JavaScript.
 #[wasm_bindgen]
 pub struct WasmMlsClient {
-    // Le manager vit à l'intérieur de l'instance WASM
+    // The manager lives inside the WASM instance.
     manager: MlsManager,
 }
 
 #[wasm_bindgen]
 impl WasmMlsClient {
-    // Constructeur appelé depuis JavaScript (ex: new WasmMlsClient(…))
+    // Constructor called from JavaScript (e.g. new WasmMlsClient(...))
     #[wasm_bindgen(constructor)]
     pub fn new(
         user_id: &str,
@@ -72,7 +72,7 @@ impl WasmMlsClient {
         state_bytes: Option<Vec<u8>>,
         pin: Option<String>,
     ) -> Result<WasmMlsClient, JsValue> {
-        // Rediriger les erreurs panics Rust vers la console du navigateur
+        // Redirect Rust panics to the browser console.
         console_error_panic_hook::set_once();
 
         // We assume init_logger() was called, but we can log here too.
@@ -95,7 +95,7 @@ impl WasmMlsClient {
         Ok(WasmMlsClient { manager })
     }
 
-    // Créer un groupe
+    // Create a group
     #[wasm_bindgen]
     pub fn create_group(&mut self, group_id: String) -> Result<(), JsValue> {
         log::info!("create_group: {}", group_id);
@@ -126,14 +126,14 @@ impl WasmMlsClient {
 
     #[wasm_bindgen]
     pub fn forget_group(&mut self, group_id: String, min_epoch: f64) {
-        // f64 cote frontiere JS (wasm-bindgen n'a pas de u64 -> number ; f64 est exact pour tout
-        // epoch realiste, <= 2^53). On reconvertit en u64 (la largeur source). [[S4]]
+        // f64 at the JS boundary (wasm-bindgen has no u64 -> number; f64 is exact for any
+        // realistic epoch, <= 2^53). Convert back to u64 (source width). [[S4]]
         log::info!("forget_group: {}, min_epoch={}", group_id, min_epoch);
         self.manager.forget_group(&group_id, min_epoch as u64);
     }
 
-    /// Purge définitive d'un groupe (Poison Pill) : mémoire, stockage OpenMLS et
-    /// verrou d'epoch à MAX. Aucun Welcome ne sera jamais accepté pour ce groupId.
+    /// Permanent purge of a group (Poison Pill): memory, OpenMLS storage, and epoch lock
+    /// set to MAX. No Welcome will ever be accepted for this groupId.
     #[wasm_bindgen]
     pub fn drop_group(&mut self, group_id: String) {
         log::info!("drop_group (poison pill): {}", group_id);
@@ -152,7 +152,7 @@ impl WasmMlsClient {
         Ok(epoch as f64)
     }
 
-    // Sauvegarder l'état (renvoie un Uint8Array en JS)
+    // Save state (returns a Uint8Array in JS)
     #[wasm_bindgen]
     pub fn save_state(&self, pin: Option<String>) -> Result<Vec<u8>, JsValue> {
         // If PIN is provided, encrypt. Otherwise save plain (legacy/dev).

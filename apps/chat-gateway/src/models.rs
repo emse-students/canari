@@ -11,15 +11,15 @@ pub struct Claims {
 
 /// Query parameters accepted by the WebSocket upgrade endpoint.
 ///
-/// `device_id` : identifiant stable du device MLS, fourni par le client.
-/// Utiliser cet ID (plutôt qu'un UUID généré serveur) garantit que la clé de
-/// routage `group:members:{groupId}` reste valide d'une connexion à l'autre.
-/// La sécurité est assurée par le JWT : un client ne peut accéder qu'aux
-/// messages de l'userId extrait du token, quelle que soit la valeur de device_id.
+/// `device_id`: stable MLS device identifier provided by the client.
+/// Using this ID (rather than a server-generated UUID) guarantees that the
+/// routing key `group:members:{groupId}` stays valid across reconnections.
+/// Security is ensured by the JWT: a client can only access messages for the
+/// userId extracted from the token, regardless of the device_id value.
 ///
-/// `token` : JWT d'accès en fallback pour Tauri Android/mobile, où le plugin
-/// WebSocket natif (hors WebView) ne peut pas envoyer les cookies du WebView.
-/// Utilisé UNIQUEMENT si le cookie `canari_ws_token` est absent.
+/// `token`: JWT access token fallback for Tauri Android/mobile, where the
+/// native WebSocket plugin (outside the WebView) cannot send WebView cookies.
+/// Used ONLY when the `canari_ws_token` cookie is absent.
 #[derive(Deserialize)]
 pub struct AuthParams {
     pub device_id: Option<String>,

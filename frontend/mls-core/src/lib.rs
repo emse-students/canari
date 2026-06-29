@@ -20,22 +20,21 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 pub enum MlsError {
     #[error("Erreur Crypto/OpenMLS: {0}")]
     OpenMls(String),
-    #[error("Erreur de Sérialisation CBOR: {0}")]
+    #[error("CBOR serialization error: {0}")]
     Serialization(String),
-    #[error("Groupe introuvable: {0}")]
+    #[error("Group not found: {0}")]
     GroupNotFound(String),
-    #[error("Données invalides")]
+    #[error("Invalid data")]
     InvalidData,
-    /// État MLS irrécupérable : corruption de stockage, état inconsistant ou
-    /// échec persistant après plusieurs tentatives de rattrapage.
-    /// Le frontend doit déclencher un re-bootstrap complet du groupe.
+    /// Unrecoverable MLS state: storage corruption, inconsistent state, or
+    /// persistent failure after several recovery attempts.
+    /// The frontend must trigger a full re-bootstrap of the group.
     #[error("UNRECOVERABLE: {0}")]
     Unrecoverable(String),
-    /// Toutes les KeyPackages fournies à `add_members_bulk` correspondent à des identités déjà
-    /// présentes dans l'arbre du groupe (membre "fantôme" : ajouté localement lors d'une tentative
-    /// précédente dont la livraison du Welcome a échoué). Distinct des erreurs de validation pour
-    /// permettre au frontend de déclencher une auto-réparation (retrait puis ré-ajout) plutôt que
-    /// d'afficher une erreur brute à l'utilisateur.
+    /// All KeyPackages passed to `add_members_bulk` match identities already present in the
+    /// group tree ("ghost" member: added locally during a previous attempt whose Welcome
+    /// delivery failed). Distinct from validation errors to let the frontend trigger
+    /// self-repair (remove then re-add) rather than surfacing a raw error to the user.
     #[error("ALREADY_MEMBER: {0}")]
     AlreadyMember(String),
 }
@@ -118,8 +117,8 @@ pub struct PersistedState {
     pub identity_bundle: Vec<u8>,
     pub storage_values: HashMap<Vec<u8>, Vec<u8>>,
     pub group_ids: Vec<Vec<u8>>,
-    /// Epoch minimale à accepter par groupe après un forget_group().
-    /// #[serde(default)] assure la compatibilité avec les états sauvegardés avant ce champ.
+    /// Minimum epoch to accept per group after a forget_group() call.
+    /// #[serde(default)] ensures compatibility with states saved before this field was added.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
 }
@@ -206,9 +205,9 @@ pub struct MlsManager {
 
     groups: HashMap<String, MlsGroup>,
 
-    /// Epoch minimum attendu pour accepter un Welcome (par groupId).
-    /// Défini par forget_group pour éviter qu'un Welcome périmé (d'un appareil
-    /// lui-même en retard d'epoch) ne remette ce device sur la mauvaise branche.
+    /// Minimum epoch required to accept a Welcome (per groupId).
+    /// Set by forget_group to prevent a stale Welcome (from a device itself behind on epoch)
+    /// from putting this device back on the wrong branch.
     forgotten_group_min_epochs: HashMap<String, u64>,
 
     state_snapshot: RefCell<StateSnapshotCache>,
@@ -231,7 +230,7 @@ impl MlsManager {
     pub fn invalidate_persisted_snapshot(&self) {
         self.mark_state_dirty();
     }
-    // --- A. INITIALISATION (Chargement ou Création) ---
+    // --- A. INITIALIZATION (Load or Create) ---
 
     pub fn load_or_create(
         user_id: &str,
@@ -258,8 +257,8 @@ impl MlsManager {
             let credential =
                 BasicCredential::try_from(credential_enum).map_err(|_| MlsError::InvalidData)?;
 
-            // Vérifier que l'identité du credential correspond à l'identité attendue.
-            // Un état corrompu ou modifié pourrait contenir un credential pour un autre user/device.
+            // Verify that the credential identity matches the expected identity.
+            // A corrupted or tampered state could contain a credential for a different user/device.
             let expected_identity = format!("{}:{}", user_id, device_id);
             let loaded_identity = String::from_utf8_lossy(credential.identity()).to_string();
             if loaded_identity != expected_identity {
@@ -274,7 +273,7 @@ impl MlsManager {
                 )));
             }
 
-            // 2. Restaurer le stockage mémoire
+            // 2. Restore in-memory storage
             {
                 let storage = provider.storage();
                 let mut lock = storage.values.write().unwrap();
@@ -304,7 +303,7 @@ impl MlsManager {
                 state_snapshot: RefCell::new(StateSnapshotCache::from_loaded(state_bytes)),
             })
         } else {
-            // CAS 2 : Première création
+            // Case 2: First creation
             let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
             let keypair = SignatureKeyPair::new(ciphersuite.signature_algorithm())
                 .map_err(|e| MlsError::OpenMls(format!("{:?}", e)))?;
@@ -451,34 +450,32 @@ impl MlsManager {
         Some(protocol_message.epoch().as_u64())
     }
 
-    /// Supprime l'état OpenMLS persistant d'un groupe du storage provider (best-effort).
+    /// Deletes the persistent OpenMLS state for a group from the storage provider (best-effort).
     ///
-    /// Indispensable avant tout re-Welcome sur le MÊME group_id : sans ça,
-    /// `StagedWelcome::new_from_welcome` lit le storage provider et refuse d'écraser un
-    /// groupe déjà présent (`GroupAlreadyExists`), bloquant définitivement la recovery
-    /// "forget + re-Welcome". Ne touche pas à l'identité ni aux KeyPackages du device.
+    /// Required before any re-Welcome on the SAME group_id: without this,
+    /// `StagedWelcome::new_from_welcome` reads the storage provider and refuses to overwrite
+    /// an already-present group (`GroupAlreadyExists`), permanently blocking the
+    /// "forget + re-Welcome" recovery. Does not touch the device's identity or KeyPackages.
     fn delete_group_from_storage(&self, group_id: &str) {
         let group_id_key = GroupId::from_slice(group_id.as_bytes());
         if let Ok(Some(mut orphan)) = MlsGroup::load(self.provider.storage(), &group_id_key)
             && let Err(e) = orphan.delete(self.provider.storage())
         {
             log::warn!(
-                "delete_group_from_storage: suppression {} échouée: {:?}",
+                "delete_group_from_storage: deletion of {} failed: {:?}",
                 group_id,
                 e
             );
         }
     }
 
-    /// Oublie l'état MLS local d'un groupe : mémoire vive ET stockage OpenMLS persistant.
-    /// `min_epoch` : epoch minimale qu'un Welcome doit atteindre pour être accepté
-    /// (protège contre un re-Welcome stale sur une branche divergée). Passer 0 pour ne
-    /// pas imposer de minimum.
+    /// Forgets the local MLS state of a group: in-memory AND persistent OpenMLS storage.
+    /// `min_epoch`: minimum epoch a Welcome must reach to be accepted (protects against a
+    /// stale re-Welcome on a diverged branch). Pass 0 to impose no minimum.
     ///
-    /// Le stockage est purgé (et pas seulement la HashMap mémoire) car OpenMLS rejette
-    /// un re-Welcome sur un group_id encore présent dans le storage provider
-    /// (`GroupAlreadyExists`). Sans cette purge, la recovery "forget + re-Welcome" ne
-    /// converge jamais.
+    /// Storage is purged (not just the in-memory HashMap) because OpenMLS rejects a
+    /// re-Welcome on a group_id still present in the storage provider (`GroupAlreadyExists`).
+    /// Without this purge, the "forget + re-Welcome" recovery never converges.
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
         if min_epoch > 0 {
@@ -487,27 +484,24 @@ impl MlsManager {
         }
         self.delete_group_from_storage(group_id);
         log::info!(
-            "forget_group: groupe {} oublié (mémoire + storage, min_epoch={}, re-Welcome attendu)",
+            "forget_group: group {} forgotten (memory + storage, min_epoch={}, re-Welcome expected)",
             group_id,
             min_epoch
         );
         self.mark_state_dirty();
     }
 
-    /// Purge définitive de tout état local d'un groupe : mémoire vive, stockage OpenMLS,
-    /// et verrou d'epoch mis à `u64::MAX` pour rejeter tout Welcome futur.
-    /// Contrairement à `forget_group`, aucun retour n'est possible après cet appel.
-    /// Réserver à la politique "Poison Pill" (groupe irrécupérable).
+    /// Permanent purge of all local state for a group: in-memory, OpenMLS storage,
+    /// and epoch lock set to `u64::MAX` to reject all future Welcomes.
+    /// Unlike `forget_group`, there is no way back after this call.
+    /// Reserve for the "Poison Pill" policy (unrecoverable group).
     pub fn drop_group(&mut self, group_id: &str) {
         self.groups.remove(group_id);
-        // u64::MAX : aucun Welcome ne sera jamais accepté pour ce groupId.
+        // u64::MAX: no Welcome will ever be accepted for this groupId.
         self.forgotten_group_min_epochs
             .insert(group_id.to_string(), u64::MAX);
         self.delete_group_from_storage(group_id);
-        log::info!(
-            "[POISON_PILL] drop_group: {} purgé définitivement",
-            group_id
-        );
+        log::info!("[POISON_PILL] drop_group: {} permanently purged", group_id);
         self.mark_state_dirty();
     }
 
@@ -543,7 +537,7 @@ impl MlsManager {
 
         if leaf_indices.is_empty() {
             return Err(MlsError::OpenMls(format!(
-                "Aucun membre trouvé pour les identités : {:?}",
+                "No member found for identities: {:?}",
                 user_ids
             )));
         }
@@ -591,7 +585,7 @@ impl MlsManager {
 
         if leaf_indices.is_empty() {
             return Err(MlsError::OpenMls(format!(
-                "Aucun membre trouvé pour les identités : {:?}",
+                "No member found for identities: {:?}",
                 device_identities
             )));
         }
@@ -822,43 +816,43 @@ impl MlsManager {
             ))
         })?;
 
-        // group_id et epoch sont lisibles depuis le contexte du StagedWelcome SANS rien
-        // écrire dans le storage. `into_group` (qui persiste via .store()) est volontairement
-        // différé jusqu'APRÈS les guards : un Welcome rejeté (parallèle ou stale) ne doit jamais
-        // laisser un groupe orphelin dans le storage provider - groupe que `self.groups` ne
-        // référence pas, qui fuit indéfiniment et bloque tout futur re-Welcome légitime avec
-        // `GroupAlreadyExists`. Avant ce correctif, into_group tournait avant les guards.
+        // group_id and epoch are readable from the StagedWelcome context WITHOUT writing
+        // anything to storage. `into_group` (which persists via .store()) is intentionally
+        // deferred until AFTER the guards: a rejected Welcome (parallel or stale) must never
+        // leave an orphan group in the storage provider - a group that `self.groups` does not
+        // reference, that leaks indefinitely and blocks every future legitimate re-Welcome with
+        // `GroupAlreadyExists`. Before this fix, into_group ran before the guards.
         let group_id =
             String::from_utf8_lossy(staged_welcome.group_context().group_id().as_slice())
                 .to_string();
         let welcome_epoch = staged_welcome.group_context().epoch().as_u64();
 
-        // ── Guard 1 : groupe déjà actif en mémoire ────────────────────────────
+        // ── Guard 1: group already active in memory ────────────────────────────
         //
-        // Un Welcome "parallèle" (deux devices commitent simultanément au même
-        // epoch) ne doit PAS écraser l'état en mémoire : cela corromprait le key
-        // schedule et produirait des AeadError sur tous les messages suivants.
+        // A "parallel" Welcome (two devices commit simultaneously at the same epoch)
+        // must NOT overwrite the in-memory state: that would corrupt the key schedule
+        // and produce AeadErrors on all subsequent messages.
         //
-        // Exception : si le Welcome est à l'epoch 0, il provient forcément d'un
-        // re-bootstrap complet (forceCreateGroup). Dans ce cas l'arbre précédent
-        // est abandonné et le nouvel arbre fait autorité. On remplace l'état.
+        // Exception: if the Welcome is at epoch 0, it necessarily comes from a full
+        // re-bootstrap (forceCreateGroup). In that case the previous tree is discarded
+        // and the new tree is authoritative - replace the state.
         if let Some(existing) = self.groups.get(&group_id) {
             let existing_epoch = existing.epoch().as_u64();
             if welcome_epoch == 0 && existing_epoch > 0 {
-                // Re-bootstrap légitime - on écrase l'ancien état.
-                // Le guard min_epoch éventuel est aussi effacé : un reset à 0
-                // annule toute contrainte d'epoch issue d'une récupération antérieure.
+                // Legitimate re-bootstrap - overwrite the old state.
+                // The min_epoch guard is also cleared: a reset to 0 removes any
+                // epoch constraint from a previous recovery.
                 log::info!(
-                    "process_welcome: re-bootstrap détecté pour {} (epoch {} → 0) - remplacement de l'état",
+                    "process_welcome: re-bootstrap detected for {} (epoch {} -> 0) - replacing state",
                     group_id,
                     existing_epoch
                 );
                 self.forgotten_group_min_epochs.remove(&group_id);
                 // On laisse tomber vers self.groups.insert() ci-dessous.
             } else {
-                // Welcome parallèle ou dupliqué - on conserve l'état en mémoire.
+                // Parallel or duplicate Welcome - keep the in-memory state.
                 log::info!(
-                    "process_welcome: groupe {} déjà actif (epoch={}) - Welcome ignoré (new epoch={})",
+                    "process_welcome: group {} already active (epoch={}) - Welcome ignored (new epoch={})",
                     group_id,
                     existing_epoch,
                     welcome_epoch
@@ -867,23 +861,23 @@ impl MlsManager {
             }
         }
 
-        // ── Guard 2 : contrainte min_epoch après un forget_group ─────────────
+        // ── Guard 2: min_epoch constraint after a forget_group ─────────────
         //
-        // Si forgetGroup(groupId, N) a été appelé lors d'une récupération d'epoch,
-        // on rejette les Welcomes à epoch < N (branche divergée).
-        // Exception identique : epoch 0 = re-bootstrap → on lève la contrainte.
+        // If forgetGroup(groupId, N) was called during an epoch recovery,
+        // reject Welcomes with epoch < N (diverged branch).
+        // Same exception: epoch 0 = re-bootstrap -> lift the constraint.
         if let Some(&min_ep) = self.forgotten_group_min_epochs.get(&group_id) {
             if welcome_epoch == 0 {
-                // Re-bootstrap : la contrainte min_epoch est levée.
+                // Re-bootstrap: the min_epoch constraint is lifted.
                 log::info!(
-                    "process_welcome: epoch-0 Welcome pour {} - suppression du guard min_epoch={}",
+                    "process_welcome: epoch-0 Welcome for {} - clearing min_epoch={} guard",
                     group_id,
                     min_ep
                 );
                 self.forgotten_group_min_epochs.remove(&group_id);
             } else if welcome_epoch < min_ep {
                 log::warn!(
-                    "process_welcome: Welcome rejeté pour {} - epoch {} < minimum attendu {}",
+                    "process_welcome: Welcome rejected for {} - epoch {} < minimum expected {}",
                     group_id,
                     welcome_epoch,
                     min_ep
@@ -897,8 +891,8 @@ impl MlsManager {
             }
         }
 
-        // Guards passés - on persiste enfin le groupe (into_group → store) puis on l'enregistre
-        // en mémoire. C'est le seul point où le storage provider est écrit pour ce Welcome.
+        // Guards passed - now persist the group (into_group -> store) and register it in memory.
+        // This is the only point where the storage provider is written for this Welcome.
         let group = staged_welcome
             .into_group(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Join error (into_group): {:?}", e)))?;
@@ -997,8 +991,8 @@ impl MlsManager {
         // lets the caller queue the message for gap recovery.
         if msg_epoch.as_u64() > group_epoch.as_u64() {
             log::warn!(
-                "Gap détecté : msg_epoch={} > group_epoch={} pour group={}. \
-                 Mise en attente et déclenchement de la resync.",
+                "Gap detected: msg_epoch={} > group_epoch={} for group={}. \
+                 Queuing message and triggering resync.",
                 msg_epoch,
                 group_epoch,
                 group_id
@@ -1089,7 +1083,7 @@ impl MlsManager {
         }
     }
 
-    // --- E. SAUVEGARDE (Sérialisation CBOR) ---
+    // --- E. SAVE (CBOR serialization) ---
 
     pub fn save_state(&self) -> Result<Vec<u8>, MlsError> {
         let mut cache = self.state_snapshot.borrow_mut();
@@ -1097,7 +1091,7 @@ impl MlsManager {
     }
 
     fn serialize_state(&self) -> Result<Vec<u8>, MlsError> {
-        // 1. Sérialiser l'identité (using Ref wrapper to avoid cloning keypair)
+        // 1. Serialize the identity (using Ref wrapper to avoid cloning keypair)
         let keypair_bytes = self
             .keypair
             .tls_serialize_detached()
@@ -1122,8 +1116,8 @@ impl MlsManager {
         let storage = self.provider.storage();
         let storage_lock = storage.values.read().unwrap();
 
-        // 3. Collecter les IDs des groupes actifs (triés pour un ordre stable ; note :
-        //    storage_values reste un HashMap non trié, le CBOR global n'est donc pas déterministe)
+        // 3. Collect active group IDs (sorted for stable order; note: storage_values is
+        //    an unordered HashMap, so the overall CBOR is not deterministic)
         let mut group_ids: Vec<Vec<u8>> = self
             .groups
             .keys()
@@ -1131,7 +1125,7 @@ impl MlsManager {
             .collect();
         group_ids.sort();
 
-        // 4. Encoder l'état global sans copier storage_values
+        // 4. Encode the global state without copying storage_values
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
@@ -1165,7 +1159,7 @@ impl MlsManager {
             )
             .map_err(|e| MlsError::OpenMls(format!("KeyPackage creation error: {:?}", e)))?;
 
-        // 2. IMPORTANT: Persister le bundle (clé privée) dans le stockage du provider
+        // 2. IMPORTANT: Persist the bundle (private key) in the provider's storage
         let key_package = key_package_bundle.key_package();
         let hash_ref = key_package
             .hash_ref(self.provider.crypto())
@@ -1182,7 +1176,7 @@ impl MlsManager {
 
         self.mark_state_dirty();
 
-        // 3. Retourner le KeyPackage public sérialisé
+        // 3. Return the serialized public KeyPackage
         key_package
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(format!("Serialization error: {:?}", e)))
@@ -1192,14 +1186,13 @@ impl MlsManager {
         (0..count).map(|_| self.generate_key_package()).collect()
     }
 
-    /// Vérifie qu'on possède toujours la clé privée du KeyPackage public fourni.
+    /// Checks whether the private key for the provided public KeyPackage is still held locally.
     ///
-    /// Recalcule le `hash_ref` du KeyPackage (la clé sous laquelle son bundle privé
-    /// est stocké lors de la génération) puis interroge le keystore. Permet au client
-    /// de détecter les KeyPackages publiés sur le serveur dont la clé privée locale a
-    /// été perdue (état réinitialisé ou restauré depuis une sauvegarde antérieure) -
-    /// racine de la boucle `NoMatchingKeyPackage`. Ces KeyPackages orphelins peuvent
-    /// alors être purgés du serveur avant qu'un pair ne les consomme.
+    /// Recomputes the `hash_ref` of the KeyPackage (the key under which its private bundle
+    /// was stored at generation time) then queries the keystore. Lets the client detect
+    /// KeyPackages published to the server whose local private key has been lost (state reset
+    /// or restored from an older backup) - the root cause of `NoMatchingKeyPackage` loops.
+    /// These orphan KeyPackages can then be pruned from the server before a peer consumes them.
     pub fn key_package_has_private(&self, kp_bytes: &[u8]) -> Result<bool, MlsError> {
         let kp_in = KeyPackageIn::tls_deserialize(&mut &kp_bytes[..])
             .map_err(|e| MlsError::OpenMls(format!("KeyPackage deserialize error: {:?}", e)))?;
