@@ -89,15 +89,18 @@ followup), balayage final 40+ composants + parite cles + nettoyage cles mortes (
 Faits : `docs/wiki/index.md`, `docs/wiki/architecture.md`, `docs/wiki/services/chat-gateway.md`.
 **Reste** : toutes les autres pages listees dans `index.md` (voir taches W1-W6).
 
-### Chantier 3 - Commentaires anglais : EN COURS
-Applique au fil des fichiers frontend touches (passes 9b/9c dediees au chat). **Reste** : balayage
-systematique des backends NestJS/Rust + infra (voir taches C1-C4).
+### Chantier 3 - Commentaires anglais : TERMINE
+Applique au fil des fichiers frontend touches (passes 9b/9c dediees au chat). C1-C4 termines : balayage
+systematique des backends NestJS (core-service, social-service, media-service, chat-delivery-service)
+et Rust (chat-gateway, mls-core, mls-wasm). Commit e2ef9e8c (C4).
 
-### Chantier 4 - Nettoyage docs : EN COURS
+### Chantier 4 - Nettoyage docs : TERMINE
 D1-D3 livres : ARCHITECTURE.md, CHAT_GATEWAY.md, MLS_REWRITE_PLAN.md + MLS.md consolides dans le wiki
 et supprimes. wiki/architecture.md enrichi (OIDC, Redis/Kafka details, MLS flows, WS protocol, schemas
 PostgreSQL, topologie prod). wiki/services/chat-gateway.md enrichi (AppState, lifecycle, pending_welcomes).
 wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints, scenarios, bug tables.
+D-pass final : BACKEND.md, FRONTEND.md, COMMUNITIES.md, STORAGE.md, PUSH_NOTIFICATIONS.md, DEPLOIEMENT.md
+supprimes (contenu verifie dans le wiki).
 
 ---
 
@@ -157,10 +160,10 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
   liens vers les docs vivantes `MLS_DESYNC_PREVENTION.md` / `MLS_RECOVERY_LADDER.md` / `AUDIT-MLS-2026-06.md`.
   Puis **supprimer** `docs/MLS.md`.
 
-> Suppressions finales (apres migration confirmee dans le wiki) : `docs/ARCHITECTURE.md`,
-> `docs/CHAT_GATEWAY.md`, `docs/BACKEND.md`, `docs/FRONTEND.md`, `docs/COMMUNITIES.md`,
-> `docs/STORAGE.md`, `docs/MLS.md`, `docs/PUSH_NOTIFICATIONS.md`, `docs/MLS_REWRITE_PLAN.md`,
-> `docs/DEPLOIEMENT.md`. **A GARDER** : `docs/AUDIT-MLS-2026-06.md`, `docs/MLS_DESYNC_PREVENTION.md`,
+> Suppressions finales - TOUTES FAITES : `docs/ARCHITECTURE.md`, `docs/CHAT_GATEWAY.md`,
+> `docs/BACKEND.md`, `docs/FRONTEND.md`, `docs/COMMUNITIES.md`, `docs/STORAGE.md`,
+> `docs/MLS.md`, `docs/PUSH_NOTIFICATIONS.md`, `docs/MLS_REWRITE_PLAN.md`, `docs/DEPLOIEMENT.md`.
+> **Gardes** : `docs/AUDIT-MLS-2026-06.md`, `docs/MLS_DESYNC_PREVENTION.md`,
 > `docs/MLS_RECOVERY_LADDER.md`, `docs/TESTS-DEVICE-PENDING.md`, `docs/NORMALIZATION-PLAN.md`,
 > tout `docs/wiki/`.
 
@@ -170,13 +173,13 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
 > internes) en anglais, ajouter JSDoc/doc-comment sur les exports manquants. **Mettre a jour les tests**
 > qui asserte sur ces strings. Lancer les tests du service avant commit.
 
-- [ ] **C1** - `apps/core-service/` : commentaires/logs FR -> EN, JSDoc exports. `npm test`. Normaliser
+- [x] **C1** - `apps/core-service/` : commentaires/logs FR -> EN, JSDoc exports. `npm test`. Normaliser
   aussi `apps/core-service/README.md` en anglais (le reduire a un court pointeur vers `wiki/services/core-service.md`).
-- [ ] **C2** - `apps/social-service/` : idem. `npm test`. Normaliser `apps/social-service/README.md`
+- [x] **C2** - `apps/social-service/` : idem. `npm test`. Normaliser `apps/social-service/README.md`
   (-> pointeur vers `wiki/services/social-service.md`).
-- [ ] **C3** - `apps/media-service/` + `apps/chat-delivery-service/` : idem. `npm test` chacun.
-- [ ] **C4** - `apps/chat-gateway/` (Rust) + `frontend/mls-core/` (Rust) : commentaires/`log`/`eprintln`
-  FR -> EN, doc-comments `///`. `cargo test` + `cargo clippy`.
+- [x] **C3** - `apps/media-service/` + `apps/chat-delivery-service/` : idem. `npm test` chacun.
+- [x] **C4** - `apps/chat-gateway/` (Rust) + `frontend/mls-core/` (Rust) + `frontend/mls-wasm/` :
+  commentaires/`log`/`eprintln` FR -> EN, doc-comments `///`. `cargo test` + `cargo clippy`.
 
 ### Bloc U - Notes pour la future doc utilisateur (FR) - au fil de l'eau
 - [ ] **U1** - Tenir un fichier `docs/USER-DOC-NOTES.md` (FR, scratch) : pour chaque feature documentee
