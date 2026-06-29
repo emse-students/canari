@@ -8,11 +8,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { Post as PostEntity } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
+import { Association } from '../associations/entities/association.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
 import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
 import { UserFollow } from '../follows/entities/user-follow.entity';
@@ -39,6 +40,8 @@ export class InternalController {
     private readonly channelMemberRepo: Repository<ChannelMember>,
     @InjectRepository(ChannelMessage)
     private readonly channelMessageRepo: Repository<ChannelMessage>,
+    @InjectRepository(Association)
+    private readonly assocRepo: Repository<Association>,
     @InjectRepository(AssociationMember)
     private readonly assocMemberRepo: Repository<AssociationMember>,
     @InjectRepository(AssociationRoleHistory)
@@ -57,12 +60,8 @@ export class InternalController {
     private readonly reportRepo: Repository<ContentReport>
   ) {}
 
-  /** Returns member user IDs for an association (core-service directory filter). */
-  @Get('associations/:associationId/member-user-ids')
-  async listMemberUserIds(
-    @Param('associationId') associationId: string,
-    @Headers('x-internal-secret') headerSecret: string
-  ) {
+  /** Throws ForbiddenException unless the header matches INTERNAL_SECRET (timing-safe). */
+  private assertInternal(headerSecret: string): void {
     const expected = Buffer.from(this.secret);
     const received = Buffer.from(headerSecret ?? '');
     if (
@@ -72,11 +71,81 @@ export class InternalController {
     ) {
       throw new ForbiddenException();
     }
+  }
+
+  /** Returns member user IDs for an association (core-service directory filter). */
+  @Get('associations/:associationId/member-user-ids')
+  async listMemberUserIds(
+    @Param('associationId') associationId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ) {
+    this.assertInternal(headerSecret);
     const rows = await this.assocMemberRepo.find({
       where: { associationId },
       select: { userId: true },
     });
     return { userIds: rows.map((r) => r.userId) };
+  }
+
+  /**
+   * Associations of a user for external profile display (e.g. Sky parrainage app):
+   * `current` = memberships in active associations, `former` = memberships in
+   * archived associations plus past role-history entries (CV). Read-only projection.
+   */
+  @Get('users/:userId/associations')
+  async listUserAssociations(
+    @Param('userId') userId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ) {
+    this.assertInternal(headerSecret);
+
+    const members = await this.assocMemberRepo.find({ where: { userId } });
+    const history = await this.roleHistoryRepo.find({
+      where: { userId },
+      order: { sortOrder: 'ASC' },
+    });
+
+    // Resolve association names/logos for both memberships and history in one query.
+    const ids = Array.from(
+      new Set([...members.map((m) => m.associationId), ...history.map((h) => h.associationId)])
+    );
+    const assocs = ids.length ? await this.assocRepo.find({ where: { id: In(ids) } }) : [];
+    const byId = new Map(assocs.map((a) => [a.id, a]));
+
+    const current: {
+      name: string;
+      slug: string;
+      role: string;
+      logoUrl: string | null;
+    }[] = [];
+    const former: {
+      name: string;
+      role: string;
+      startYear: number | null;
+      endYear: number | null;
+    }[] = [];
+
+    for (const m of members) {
+      const a = byId.get(m.associationId);
+      if (!a) continue;
+      if (a.archived) {
+        former.push({ name: a.name, role: m.role, startYear: null, endYear: null });
+      } else {
+        current.push({ name: a.name, slug: a.slug, role: m.role, logoUrl: a.logoUrl });
+      }
+    }
+
+    for (const h of history) {
+      const a = byId.get(h.associationId);
+      former.push({
+        name: a?.name ?? 'Association',
+        role: h.roleTitle,
+        startYear: h.startYear,
+        endYear: h.endYear,
+      });
+    }
+
+    return { current, former };
   }
 
   /**
@@ -90,15 +159,7 @@ export class InternalController {
     @Param('userId') userId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
-    const expected = Buffer.from(this.secret);
-    const received = Buffer.from(headerSecret ?? '');
-    if (
-      expected.length === 0 ||
-      received.length !== expected.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
-      throw new ForbiddenException();
-    }
+    this.assertInternal(headerSecret);
 
     this.logger.log(`[INTERNAL_DELETE] starting social data for user=${userId}`);
 

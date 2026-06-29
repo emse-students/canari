@@ -9,6 +9,7 @@ import { User } from './users/entities/user.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
+import { ExternalModule } from './external/external.module';
 
 /** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
@@ -32,6 +33,7 @@ import { VersionModule } from './version/version.module';
     AuthModule,
     PaymentModule,
     VersionModule,
+    ExternalModule,
   ],
   controllers: [AppController],
   providers: [AppService],

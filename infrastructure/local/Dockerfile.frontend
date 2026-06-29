@@ -356,6 +356,18 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
+    # External profile API (x-api-key, no session) - consumed by Sky\n\
+    location /api/external {\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "";\n\
+    set $upstream_external core-service:3012;\n\
+    proxy_pass http://$upstream_external;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
     location /api/channels {\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\

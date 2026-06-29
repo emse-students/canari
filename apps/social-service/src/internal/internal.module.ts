@@ -8,6 +8,7 @@ import { AssociationsModule } from '../associations/associations.module';
 import { Post } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
+import { Association } from '../associations/entities/association.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
 import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
 import { UserFollow } from '../follows/entities/user-follow.entity';
@@ -26,6 +27,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
       Post,
       ChannelMember,
       ChannelMessage,
+      Association,
       AssociationMember,
       AssociationRoleHistory,
       UserFollow,

@@ -43,6 +43,11 @@ export function internalProductChargeContextPath(): string {
   return '/api/internal/products/charge-context';
 }
 
+/** Internal route listing a user's associations (current + former) for profile display. */
+export function internalUserAssociationsPath(userId: string): string {
+  return `/api/internal/users/${encodeURIComponent(userId)}/associations`;
+}
+
 /** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */
 export function productPurchaseCompletedPath(productId: string): string {
   return `/api/associations/products/${encodeURIComponent(productId)}/purchase-completed`;

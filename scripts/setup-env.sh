@@ -56,6 +56,20 @@ else
     ok "INTERNAL_SECRET déjà configuré dans infrastructure/.env"
 fi
 
+# Générer EXTERNAL_API_KEY si manquant (clé de l'API profil publique consommée par Sky)
+CURRENT_EXTERNAL=$(grep -E '^EXTERNAL_API_KEY=' "$INFRA_ENV" | cut -d= -f2 || true)
+if [[ -z "$CURRENT_EXTERNAL" ]]; then
+    EXTERNAL_API_KEY_GEN=$(openssl rand -hex 32)
+    if grep -q '^EXTERNAL_API_KEY=' "$INFRA_ENV"; then
+        sed -i.bak "s|^EXTERNAL_API_KEY=.*|EXTERNAL_API_KEY=${EXTERNAL_API_KEY_GEN}|" "$INFRA_ENV" && rm -f "${INFRA_ENV}.bak"
+    else
+        echo "EXTERNAL_API_KEY=${EXTERNAL_API_KEY_GEN}" >> "$INFRA_ENV"
+    fi
+    ok "EXTERNAL_API_KEY généré dans infrastructure/.env"
+else
+    ok "EXTERNAL_API_KEY déjà configuré dans infrastructure/.env"
+fi
+
 # ── frontend/.env (dev uniquement) ────────────────────────────────────────────
 if [[ "$PROD" == "false" ]]; then
     if [[ ! -f "$FRONTEND_ENV" ]]; then
