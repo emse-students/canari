@@ -182,26 +182,29 @@ supprimes (contenu verifie dans le wiki).
   commentaires/`log`/`eprintln` FR -> EN, doc-comments `///`. `cargo test` + `cargo clippy`.
 
 ### Bloc U - Notes pour la future doc utilisateur (FR) - au fil de l'eau
-- [ ] **U1** - Tenir un fichier `docs/USER-DOC-NOTES.md` (FR, scratch) : pour chaque feature documentee
+- [x] **U1** - Tenir un fichier `docs/USER-DOC-NOTES.md` (FR, scratch) : pour chaque feature documentee
   cote wiki, noter les points a expliquer aux utilisateurs/responsables assos (parcours, ecrans cles,
   permissions). Servira plus tard a rediger la vraie doc utilisateur en francais.
 
 ### Bloc R - Reecriture du README (a faire sur Opus, en fin de chantier)
-- [ ] **R1** - Reecrire `README.md` pour integrer tous les changements : nouveau quick start,
+- [x] **R1** - Reecrire `README.md` pour integrer tous les changements : nouveau quick start,
   stack a jour, lien vers le wiki (`docs/wiki/index.md`) et vers ce plan, suppression des sections
   perimees. Le README doit etre la porte d'entree qui renvoie vers le wiki pour le detail.
 
-### Bloc DOC-UTILISATEUR - Documentations utilisateurs FR (a faire sur Opus, plus tard)
-> Gros chantier separe, lance une fois le wiki technique stable. Une doc par role, en francais,
-> orientee "comment faire", a partir des notes du Bloc U.
-- [ ] **DU1** - Utilisateur standard (membre) : ICM et non-ICM (parcours d'inscription/connexion differents).
-- [ ] **DU2** - Responsables d'association : secretaire, tresorier, president (gestion membres, calendrier,
+### Bloc DOC-UTILISATEUR - Documentations utilisateurs FR
+> Wiki technique stable. Format retenu (DU4) : `docs/user-guide/` Markdown FR.
+- [x] **DU1** - Utilisateur standard (membre) : ICM et non-ICM (parcours d'inscription/connexion differents).
+  -> `docs/user-guide/membre.md`
+- [x] **DU2** - Responsables d'association : secretaire, tresorier, president (gestion membres, calendrier,
   boutique/Stripe, formulaires, documents, finances).
-- [ ] **DU3** - Administrateurs plateforme (dashboard admin, moderation, configuration).
-- [ ] **DU4** - Decider du format/emplacement (wiki FR dedie, PDF, pages dans l'app ?) avant de rediger.
+  -> `docs/user-guide/responsable-association.md`
+- [x] **DU3** - Administrateurs plateforme (dashboard admin, moderation, configuration).
+  -> `docs/user-guide/administrateur.md`
+- [x] **DU4** - Format retenu : `docs/user-guide/` Markdown FR (un fichier par role + index).
 
 ---
 
 ## Reutilisation (rappel final - a faire sur Opus)
 - [ ] **REUSE1** - Une fois Canari termine, **rejouer toute cette methodologie** (i18n + wiki + commentaires
   + nettoyage docs) sur **Sky**, puis **MiGallery**. Cf. memoire `project_normalization_methodology`.
+  -> Hors scope de cette session (Canari n'est pas encore "termine" au sens deploi stable).
