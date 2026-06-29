@@ -152,7 +152,7 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
 - [x] **W4 - Infrastructure** (`docs/wiki/infrastructure/`) : `docker.md`, `nginx.md`, `databases.md`,
   `kafka.md`, `backup.md`. Sources = docker-compose.dev.yml + Dockerfile.frontend + backup.sh.
   Note: deployment.md optionnel non fait; DEPLOIEMENT.md et STORAGE.md restent (pas encore supprimes).
-- [ ] **W5 - API surface** : `docs/wiki/api-surface.md` <- tous les controllers NestJS + routes gateway.
+- [x] **W5 - API surface** : `docs/wiki/api-surface.md` - tous les endpoints de tous les services (gateway, chat-delivery, media, core, social).
 - [x] **W6 - MLS protocol** : `docs/wiki/mls-protocol.md` <- `docs/MLS.md` + invariants de D3 +
   liens vers les docs vivantes `MLS_DESYNC_PREVENTION.md` / `MLS_RECOVERY_LADDER.md` / `AUDIT-MLS-2026-06.md`.
   Puis **supprimer** `docs/MLS.md`.
