@@ -94,9 +94,9 @@ export class InternalController {
 
     for (const pt of tokens) {
       try {
-        // Data-only → onMessageReceived() fires même en arrière-plan.
-        // Le code Kotlin lit data["type"] pour choisir le canal (canari_social / canari_forms)
-        // et construire le deepLink (deepLink, postId ou formId selon le type).
+        // Data-only -> onMessageReceived() fires even in the background.
+        // Kotlin reads data["type"] to pick the channel (canari_social / canari_forms)
+        // and build the deepLink (deepLink, postId, or formId depending on type).
         await getMessaging().send({
           token: pt.token,
           data: { ...data, title, body: notifBody },

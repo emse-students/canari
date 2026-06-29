@@ -300,7 +300,7 @@ export class SecurityController {
       while (redirectsCount <= MAX_REDIRECTS) {
         response = await fetch(currentUrl.toString(), {
           method: 'GET',
-          redirect: 'manual', // 🔒 Empêcher les redirections automatiques
+          redirect: 'manual', // prevent automatic redirects
           signal: abortController.signal,
           headers: {
             'user-agent': 'CanariLinkPreview/1.0',
@@ -308,7 +308,7 @@ export class SecurityController {
           },
         });
 
-        // Gérer manuellement les redirections
+        // Manually handle redirects.
         if (response.status >= 300 && response.status <= 399) {
           const location = response.headers.get('location');
           if (!location) break;

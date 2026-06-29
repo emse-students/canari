@@ -238,17 +238,17 @@ export class GroupsController {
 
     const successorId = body.successorId;
 
-    // Propager les membres (user-level) vers le successeur pour que getUserGroups
-    // résolve la lignée correctement.
+    // Propagate user-level members to the successor so getUserGroups resolves the
+    // lineage correctly.
     //
-    // On NE supprime PAS les GroupMember de la source : le device qui reboote doit
-    // pouvoir lire " qui appartient au groupe mort " via getGroupUserMembers(deadGroup)
-    // pour les inviter dans le successeur (inviteMembers/reboot). Si on les effaçait ici,
-    // inviteMembers ne trouverait personne et le successeur resterait vide (split-brain :
-    // le créateur seul dans le nouveau groupe, les autres bloqués sur l'ancien).
-    // Le tombstone soft-deleted et ses GroupMember sont purgés par le cron
-    // cleanupSoftDeletedGroups (90 j) ; getUserGroups/registerDevice ignorent déjà les
-    // groupes avec deletedAt, donc aucune résurrection possible entre-temps.
+    // Do NOT delete GroupMembers from the source: the rebooting device must be able to
+    // read "who belongs to the dead group" via getGroupUserMembers(deadGroup) in order
+    // to invite them into the successor (inviteMembers/reboot). Deleting them here
+    // would leave inviteMembers with no one to invite, leaving the successor empty
+    // (split-brain: creator alone in the new group, others stuck on the old one).
+    // The soft-deleted tombstone and its GroupMembers are purged by the
+    // cleanupSoftDeletedGroups cron (90 days); getUserGroups/registerDevice already
+    // ignore groups with deletedAt, so no resurrection is possible in between.
     const members = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
     });

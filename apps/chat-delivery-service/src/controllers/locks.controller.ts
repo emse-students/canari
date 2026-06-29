@@ -37,7 +37,7 @@ export class LocksController {
       1,
       Math.min(60, Math.round((body.ttlMs ?? 30_000) / 1000)),
     );
-    // Redis SET NX EX : acquiert le verrou seulement si la clé n'existe pas encore
+    // Redis SET NX EX: acquires the lock only if the key does not yet exist.
     const lockKey = `mls:addlock:${groupId}`;
     const result = await this.redis.set(lockKey, deviceId, 'EX', ttlSec, 'NX');
     this.logger.log(
@@ -52,8 +52,8 @@ export class LocksController {
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const lockKey = `mls:addlock:${groupId}`;
-    // Script Lua atomique : libère le verrou seulement si c'est bien ce device qui le détient.
-    // GET + DEL séparés seraient une race condition (un autre device peut s'intercaler).
+    // Atomic Lua script: releases the lock only if this device still holds it.
+    // Separate GET + DEL would be a race condition (another device could interleave).
     const released = await this.redis.eval(
       `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
       1,
@@ -68,11 +68,11 @@ export class LocksController {
 
   @Post('mls/reboot-lock')
   /** Acquires a distributed Redis lock for a dead group's reboot pipeline (fork resolution).
-   *  Mutual exclusion CROSS-device : sans ce verrou, deux appareils détectant le même groupe
-   *  desynchronises creent chacun un candidat successeur avant que le CAS ne tranche, polluant
-   *  le serveur de groupes orphelins. Le perdant s'abstient et rejoint le successeur via les
-   *  mecanismes de retry (watchdog / checkGroupSuccessors). TTL plus long que add-lock :
-   *  un reboot enchaine creation du candidat + CAS + invitation des membres. */
+   *  CROSS-device mutual exclusion: without this lock, two devices detecting the same
+   *  desynchronised group would each create a successor candidate before the CAS resolves,
+   *  polluting the server with orphan groups. The loser backs off and joins the successor
+   *  via retry mechanisms (watchdog / checkGroupSuccessors). TTL is longer than add-lock
+   *  because a reboot chains: candidate creation + CAS + member invitation. */
   async acquireRebootLock(
     @Body()
     body: {

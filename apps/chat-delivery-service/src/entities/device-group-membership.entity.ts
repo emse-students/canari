@@ -11,8 +11,8 @@ import {
 /**
  * Lifecycle state of a single device's membership in an MLS group.
  *
- * - `pending` : le device n'a pas encore traité de Welcome pour ce groupe.
- * - `active`  : le device a traité son Welcome et est en sync.
+ * - `pending` : the device has not yet processed a Welcome for this group.
+ * - `active`  : the device has processed its Welcome and is in sync.
  */
 export type DeviceGroupStatus = 'pending' | 'active';
 

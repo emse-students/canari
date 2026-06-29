@@ -117,9 +117,9 @@ export class PushController {
     const platform: 'android' | 'ios' =
       body.platform === 'ios' ? 'ios' : 'android';
 
-    // Génère un secret opaque long-lived pour ce device.
-    // Retourné UNE SEULE FOIS dans la réponse ; le client l'encrypte dans
-    // Android Keystore et l'utilise pour GET /mls/push/fetch-proto.
+    // Generate an opaque long-lived secret for this device.
+    // Returned ONCE in the response; the client encrypts it in Android Keystore
+    // and uses it for GET /mls/push/fetch-proto.
     const pushSecret = crypto.randomUUID().replace(/-/g, '');
 
     // Atomic upsert - avoids a race condition where two concurrent requests
@@ -132,15 +132,15 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
     );
-    // pushSecret retourné UNE SEULE FOIS - le client doit le persister.
+    // pushSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret };
   }
 
   /**
-   * Endpoint pour le service FCM Android en arrière-plan (app tuée).
-   * Auth : Authorization: PushSecret {secret} - pas de JWT (token expiré).
-   * Retourne le proto MLS chiffré quand il était trop volumineux pour être
-   * inclu inline dans le payload FCM (> 3.5 KB).
+   * Endpoint for the Android FCM background service (app killed).
+   * Auth: Authorization: PushSecret {secret} - no JWT (token expired).
+   * Returns the encrypted MLS proto when it was too large to include inline
+   * in the FCM payload (> 3.5 KB).
    */
   @Get('mls/push/fetch-proto')
   async fetchProtoForPush(
@@ -159,7 +159,7 @@ export class PushController {
       where: { id: messageId, recipientId: userId, deviceId },
     });
     if (!queued) {
-      // Message déjà ACKé ou inexistant - retourner vide (pas d'erreur pour éviter retry loops)
+      // Already ACKed or non-existent - return empty (no error to avoid retry loops).
       return { proto: '', ratchetTree: '' };
     }
     // ratchetTree is only set on Welcome rows; the background receiver needs it to
@@ -171,10 +171,10 @@ export class PushController {
   }
 
   /**
-   * Proxy d'avatar pour le background service Android (PushSecret auth, pas de JWT).
-   * Appelé par CanariFirebaseMessagingService.fetchAvatar() pour afficher la photo
-   * de l'expéditeur dans la large icon de la notification.
-   * Auth : Authorization: PushSecret {secret} + ?requesterId=&deviceId= (ownership check)
+   * Avatar proxy for the Android background service (PushSecret auth, no JWT).
+   * Called by CanariFirebaseMessagingService.fetchAvatar() to display the sender's
+   * photo in the notification large icon.
+   * Auth: Authorization: PushSecret {secret} + ?requesterId=&deviceId= (ownership check)
    */
   @Get('mls/push/avatar/:targetUserId')
   async getAvatarForPush(

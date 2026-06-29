@@ -398,9 +398,9 @@ export class DevicesController {
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId/:deviceId/prekeys/list')
   /**
-   * Liste les one-time prekeys publiés d'un device (id + payload base64) afin que le
-   * client valide localement, KeyPackage par KeyPackage, lesquels il possède encore en
-   * clé privée - puis purge les orphelins via {@link pruneDevicePrekeys}.
+   * Lists published one-time prekeys for a device (id + base64 payload) so the client
+   * can locally validate, KeyPackage by KeyPackage, which ones it still holds the
+   * private key for - then prune orphans via {@link pruneDevicePrekeys}.
    */
   async listDevicePrekeys(
     @Param('userId') userId: string,
@@ -418,9 +418,9 @@ export class DevicesController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/devices/:userId/:deviceId/prekeys/prune')
   /**
-   * Supprime des one-time prekeys ciblés par id (les orphelins dont le client n'a plus
-   * la clé privée locale). Borné au couple (userId, deviceId) pour empêcher toute
-   * suppression croisée entre devices.
+   * Deletes targeted one-time prekeys by id (orphans for which the client no longer holds
+   * the local private key). Scoped to the (userId, deviceId) pair to prevent cross-device
+   * deletion.
    */
   async pruneDevicePrekeys(
     @Param('userId') userId: string,
@@ -461,14 +461,14 @@ export class DevicesController {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
 
-    // 1. Purge toute l'empreinte per-device (helper partagé avec le GC des devices stale).
+    // 1. Purge the full per-device footprint (shared helper with the stale-device GC).
     const purge = await this.messagingService.purgeDeviceFootprint(
       safeUserId,
       safeDeviceId,
     );
 
-    // 2. Denylister le device pour empêcher une ré-registration immédiate (spécifique
-    //    à la suppression explicite ; le GC ne denyliste pas).
+    // 2. Denylist the device to prevent immediate re-registration (explicit deletion only;
+    //    the GC does not denylist).
     const existingRevoked = await this.revokedDeviceRepo.findOne({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });

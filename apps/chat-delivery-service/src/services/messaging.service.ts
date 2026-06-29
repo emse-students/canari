@@ -138,14 +138,14 @@ export class MessagingService {
   ) {}
 
   /**
-   * Supprime l'intégralité de l'empreinte serveur d'un device (état per-device) :
-   * memberships device↔groupe, KeyPackage statique, prekeys one-time, push tokens,
-   * messages en file non délivrés, et l'appartenance Redis aux sets de routage.
+   * Deletes the entire server footprint of a device (per-device state):
+   * device<->group memberships, static KeyPackage, one-time prekeys, push tokens,
+   * undelivered queued messages, and Redis routing set membership.
    *
-   * Ne touche PAS `dm_group_members` (appartenance au niveau user, partagée entre les
-   * devices du même user) ni la denylist `RevokedDevice` (spécifique à la suppression
-   * explicite, hors GC). Partagé entre la suppression manuelle d'appareil et le GC des
-   * devices stale pour éviter toute logique de purge dupliquée.
+   * Does NOT touch `dm_group_members` (user-level membership shared across the user's
+   * devices) nor the `RevokedDevice` denylist (specific to explicit deletion, outside GC).
+   * Shared between manual device deletion and the stale-device GC to avoid duplicated
+   * purge logic.
    */
   async purgeDeviceFootprint(
     userId: string,
@@ -784,7 +784,7 @@ export class MessagingService {
 
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
-      // Libération atomique via Lua : évite la race GET→DEL
+      // Atomic release via Lua: avoids the GET->DEL race.
       const released = await this.redis.eval(
         `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
         1,
@@ -825,8 +825,8 @@ export class MessagingService {
       sanitizeOptionalQueryValue(body.senderUserId, 'senderUserId') || 'system';
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
 
-    // Vérifier que l'expéditeur authentifié est membre du groupe.
-    // authUserIdRaw provient du header x-user-id positionné par le proxy après validation JWT.
+    // Verify that the authenticated sender is a member of the group.
+    // authUserIdRaw comes from the x-user-id header injected by the proxy after JWT validation.
     const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
     if (authUserId) {
       const membership = await this.groupMemberRepo.findOne({
@@ -896,10 +896,10 @@ export class MessagingService {
         isWelcome: true,
         ratchetTree: body.ratchetTreePayload,
         proto: ciphertext.toString('base64'),
-        // Sans cet id, un Welcome traité en realtime ne peut pas être ACKé côté client :
-        // la ligne durable survit et le prochain pull (ex. restart) le redélivre, ce qui
-        // provoque un retraitement NoMatchingKeyPackage destructeur. Le propager permet
-        // l'ACK immédiat → suppression de la queue → pas de redélivraison.
+        // Without this id, a Welcome processed in realtime cannot be ACKed by the client:
+        // the durable row survives and the next pull (e.g. restart) redelivers it, causing
+        // a destructive NoMatchingKeyPackage reprocessing. Propagating it enables immediate
+        // ACK -> queue deletion -> no redelivery.
         queuedMessageId: queuedWelcome.id,
       });
       this.logger.log(
@@ -930,10 +930,10 @@ export class MessagingService {
     }
 
     // Upsert DeviceGroupMembership to active.
-    // INSERT … ON CONFLICT DO UPDATE garantit la création du record même si aucune
-    // invitation préalable n'existait (cas reboot : groupe tout neuf, aucun record pending).
-    // Un plain UPDATE WHERE status='pending' touchait 0 lignes dans ce cas, laissant
-    // le device sans record → processPendingInvitations le kickait par erreur.
+    // INSERT ... ON CONFLICT DO UPDATE guarantees record creation even when no prior
+    // invitation existed (reboot case: brand-new group, no pending record).
+    // A plain UPDATE WHERE status='pending' would touch 0 rows in that case, leaving the
+    // device without a record -> processPendingInvitations would incorrectly kick it.
     await this.deviceGroupRepo.upsert(
       {
         deviceId: targetDeviceId,
@@ -1106,8 +1106,8 @@ export class MessagingService {
       'requesterDeviceId',
     );
 
-    // Si ce groupe a un successeur, rediriger vers le groupe terminal (évite les dead-ends
-    // où les membres actifs ont migré vers le successeur et ne répondent plus à l'ancien).
+    // If this group has a successor, redirect to the terminal group (avoids dead-ends where
+    // active members have migrated to the successor and no longer respond on the old one).
     if (_depth < 10) {
       const groupMeta = await this.groupRepo.findOne({
         where: { id: groupId },
@@ -1246,10 +1246,9 @@ export class MessagingService {
     pipeline.expire(pendingSetKey, 86400); // 24 h TTL
     await pipeline.exec();
 
-    // Stocker également par membre dans pending_welcome_notify:{userId} pour que le
-    // Gateway puisse drainer les signaux dès qu'un membre se reconnecte, sans attendre
-    // une prochaine welcome_request. Le format est le JSON que le Gateway enverra
-    // directement au client WebSocket.
+    // Also store per-member in pending_welcome_notify:{userId} so the Gateway can drain
+    // signals as soon as a member reconnects, without waiting for the next welcome_request.
+    // The format is the JSON that the Gateway will send directly to the WebSocket client.
     const notificationFrame = JSON.stringify({
       type: 'welcome_request',
       groupId,
@@ -1269,7 +1268,7 @@ export class MessagingService {
       for (const memberUserId of uniqueMemberUserIds) {
         const notifyKey = `pending_welcome_notify:${memberUserId}`;
         notifyPipeline.rpush(notifyKey, notificationFrame);
-        notifyPipeline.expire(notifyKey, 86400); // même TTL 24 h
+        notifyPipeline.expire(notifyKey, 86400); // same 24 h TTL
       }
       await notifyPipeline.exec();
     }
@@ -1307,18 +1306,17 @@ export class MessagingService {
   }
 
   /**
-   * Identifie parmi `groupIds` ceux qui n'ont plus aucune ligne dans `dm_groups`
-   * (ni active, ni tombstone soft-delete) et purge l'intégralité de leur résidu
-   * serveur : messages en file, lignes de membership et d'appartenance device,
-   * plus les clés Redis `history:`, `group:members:` et `pending_welcome:`.
+   * Among `groupIds`, identifies those with no remaining row in `dm_groups`
+   * (neither active nor soft-delete tombstone) and purges their entire server residue:
+   * queued messages, membership rows, device membership rows, and the Redis keys
+   * `history:`, `group:members:`, and `pending_welcome:`.
    *
-   * Ces groupes proviennent d'une suppression incomplète : leur ligne a disparu
-   * mais leurs données survivantes provoquent côté client une boucle de recovery
-   * (welcome_request/reboot sans cible) et un historique fantôme indéchiffrable.
-   * Un groupe soft-deleted garde sa ligne (tombstone) et n'est donc jamais purgé :
-   * sa chaîne de successeurs reste pilotée par le client.
+   * These groups result from an incomplete deletion: the row is gone but surviving data
+   * causes a client-side recovery loop (welcome_request/reboot with no target) and an
+   * undecipherable ghost history. Soft-deleted groups keep their tombstone row and are
+   * therefore never purged: their successor chain remains client-driven.
    *
-   * @returns l'ensemble des `groupId` encore présents dans `dm_groups` (livrables).
+   * @returns the set of `groupId`s still present in `dm_groups` (deliverable).
    */
   async purgeOrphanGroups(groupIds: string[]): Promise<Set<string>> {
     if (groupIds.length === 0) return new Set();
@@ -1586,10 +1584,10 @@ export class MessagingService {
 
     const messages = await qb.getMany();
 
-    // Écarte les messages adressés à un groupe disparu de dm_groups : orphelins
-    // jamais déchiffrables ni ACK par le client, ils provoqueraient sinon une
-    // boucle de recovery infinie. purgeOrphanGroups en purge aussi le résidu
-    // serveur (file, memberships, clés Redis) - voir sa doc.
+    // Drop messages addressed to a group absent from dm_groups: orphans that can never
+    // be decrypted or ACKed by the client would otherwise trigger an infinite recovery
+    // loop. purgeOrphanGroups also purges the server residue (queue, memberships, Redis
+    // keys) - see its doc.
     const groupIds = [
       ...new Set(
         messages.map((m) => m.groupId).filter((id): id is string => !!id),
@@ -1643,11 +1641,11 @@ export class MessagingService {
       return { status: 'ignored', count: 0 };
     }
 
-    // On supprime uniquement les messages que le client a confirmés
+    // Delete only the messages the client has confirmed.
     const result = await this.queuedMessageRepo.delete({
       id: In(safeMessageIds),
       recipientId: safeUserId,
-      deviceId: safeDeviceId, // Sécurité pour éviter qu'un device supprime les messages d'un autre
+      deviceId: safeDeviceId, // Security: prevents a device from deleting another device's messages.
     });
 
     this.logger.log(
@@ -1752,8 +1750,8 @@ export class MessagingService {
     let failed = 0;
     for (const pt of pushTokens) {
       try {
-        // Data-only → onMessageReceived() fires même en arrière-plan.
-        // Le code Kotlin lit data["type"] pour choisir le canal et construire le deepLink.
+        // Data-only -> onMessageReceived() fires even in the background.
+        // Kotlin reads data["type"] to pick the channel and build the deepLink.
         await getMessaging().send({
           token: pt.token,
           data: { ...data, title, body },

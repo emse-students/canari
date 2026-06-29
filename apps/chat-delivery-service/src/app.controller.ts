@@ -117,9 +117,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
-    // GC complet des devices stale : purge l'empreinte entière (KeyPackages, prekeys,
-    // push tokens, messages en file, memberships, Redis) des devices hors fenêtre de
-    // rétention et sans membership active. Borne la croissance des tables per-device.
+    // Full GC of stale devices: purges the entire footprint (KeyPackages, prekeys,
+    // push tokens, queued messages, memberships, Redis) of devices outside the retention
+    // window with no active membership. Bounds growth of per-device tables.
     this.cleanupStaleDevicesInterval = setInterval(() => {
       void this.cleanupStaleDevices().catch((e) =>
         this.logger.error('[CRON] cleanupStaleDevices failed', e),
@@ -140,7 +140,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
-    // Purge push tokens not renewed in 90 days (device désinstallé / abandonné)
+    // Purge push tokens not renewed in 90 days (uninstalled / abandoned device)
     this.cleanupStalePushTokensInterval = setInterval(() => {
       void this.cleanupStalePushTokens().catch((e) =>
         this.logger.error('[CRON] cleanupStalePushTokens failed', e),
@@ -156,10 +156,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
-    // Purge les invitations (memberships `pending`) coincees au-dela de
-    // STALE_PENDING_INVITATION_MS : sinon elles sont re-listees a chaque sync (boucle
-    // d'invitations qui ne se remplit jamais). Supprimer la ligne ne bloque pas la reprise
-    // d'un device vivant (Welcome en file / welcome_request, cf. doc de la methode).
+    // Purge pending memberships stuck past STALE_PENDING_INVITATION_MS: otherwise they
+    // are re-listed on every sync (invitation loop that never drains). Deleting the row
+    // does not block recovery for a live device (Welcome in queue / welcome_request).
     this.cleanupStalePendingInvitationsInterval = setInterval(() => {
       void this.cleanupStalePendingInvitations().catch((e) =>
         this.logger.error('[CRON] cleanupStalePendingInvitations failed', e),
@@ -297,13 +296,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * GC complet des devices stale : un device dont le KeyPackage statique date d'avant
-   * la fenêtre de rétention ET qui n'a aucune membership active est considéré
-   * définitivement hors-ligne. On purge alors TOUTE son empreinte serveur (KeyPackage,
-   * prekeys one-time, push tokens, messages en file, memberships device↔groupe, sets
-   * Redis) via le helper partagé {@link MessagingService.purgeDeviceFootprint}, le même
-   * que la suppression manuelle d'appareil. Aligné sur la fenêtre de rétention pour
-   * qu'un device encore récupérable (donc visible dans la liste) ne soit jamais purgé.
+   * Full GC of stale devices: a device whose static KeyPackage predates the retention
+   * window AND has no active membership is considered permanently offline. Its entire
+   * server footprint (KeyPackage, one-time prekeys, push tokens, queued messages,
+   * device<->group memberships, Redis sets) is purged via the shared
+   * {@link MessagingService.purgeDeviceFootprint} helper - the same one used by manual
+   * device deletion. Aligned with the retention window so a recoverable device
+   * (visible in the list) is never purged prematurely.
    */
   private async cleanupStaleDevices() {
     const expiry = new Date(Date.now() - RETENTION_WINDOW_MS);
@@ -314,7 +313,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (expiredPackages.length === 0) return;
 
-    // Conserver les devices qui ont encore une membership active.
+    // Keep devices that still have an active membership.
     const deviceIds = [...new Set(expiredPackages.map((kp) => kp.deviceId))];
     const activeDevices = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
@@ -325,8 +324,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     const activeDeviceIds = new Set(activeDevices.map((d) => d.deviceId));
 
-    // Dédupe par (userId, deviceId) : un même device n'a qu'un KeyPackage statique,
-    // mais on se protège de doublons éventuels.
+    // Deduplicate by (userId, deviceId): a device has only one static KeyPackage,
+    // but guard against accidental duplicates.
     const staleDevices = new Map<
       string,
       { userId: string; deviceId: string }
@@ -430,8 +429,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Purge push tokens whose updatedAt is older than 90 days.
-   * Un token non renouvelé depuis 90 jours correspond à un device désinstallé
-   * ou abandonné ; continuer à l'envoyer provoque des erreurs FCM/APNs évitables.
+   * A token not renewed for 90 days indicates an uninstalled or abandoned device;
+   * continuing to send to it causes avoidable FCM/APNs errors.
    */
   private async cleanupStalePushTokens() {
     const PUSH_TOKEN_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -489,15 +488,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Purge les groupes "fantômes" : des lignes de membership (dm_group_members /
-   * dm_device_group_memberships) référençant un groupe absent de dm_groups.
+   * Purge "ghost" groups: membership rows (dm_group_members / dm_device_group_memberships)
+   * referencing a group absent from dm_groups.
    *
-   * Le cycle normal (soft-delete → tombstone → cleanupSoftDeletedGroups) supprime
-   * ces lignes avec le groupe. Mais un groupe disparu par un chemin anormal/legacy
-   * (hard-delete partiel) laisse ses memberships orphelins, qu'aucun autre cron ne
-   * rattrape : ils s'accumuleraient indéfiniment. On délègue la purge complète
-   * (lignes DB + clés Redis history:/group:members:/pending_welcome:) au helper
-   * partagé MessagingService.purgeOrphanGroups pour ne pas dupliquer la logique.
+   * The normal lifecycle (soft-delete -> tombstone -> cleanupSoftDeletedGroups) removes
+   * these rows together with the group. But a group deleted via an abnormal/legacy path
+   * (partial hard-delete) leaves orphaned memberships that no other cron catches and that
+   * would accumulate indefinitely. Full purge (DB rows + Redis history:/group:members:/
+   * pending_welcome: keys) is delegated to MessagingService.purgeOrphanGroups to avoid
+   * duplicating the logic.
    */
   private async cleanupOrphanedMemberRows() {
     const orphanRows: { groupId: string }[] = await this.groupRepo.query(

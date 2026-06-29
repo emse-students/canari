@@ -238,16 +238,16 @@ export class MembersController {
       `[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`,
     );
 
-    // Upsert atomique : INSERT … ON CONFLICT DO UPDATE évite la race findOne+save.
-    // Fenêtre alignée sur la rétention : un device encore récupérable (vu < 90 j) doit
-    // recevoir un membership pending, même s'il dort depuis > 30 j.
+    // Atomic upsert: INSERT ... ON CONFLICT DO UPDATE avoids the findOne+save race.
+    // Window aligned with retention: a still-recoverable device (last seen < 90 days)
+    // must receive a pending membership even if idle for > 30 days.
     const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);
     const userDevices = await this.keyPackageRepo.find({
       where: { userId: safeUserId, createdAt: MoreThanOrEqual(cutoff) },
     });
 
     await this.dataSource.transaction(async (manager) => {
-      // Upsert GroupMember : met à jour joinedAt si déjà présent
+      // Upsert GroupMember: updates joinedAt if the row already exists.
       await manager
         .createQueryBuilder()
         .insert()
@@ -260,7 +260,7 @@ export class MembersController {
         .orUpdate(['joinedAt'], ['groupId', 'userId'])
         .execute();
 
-      // Upsert DeviceGroupMembership pour chaque appareil actif : ignore si déjà présent
+      // Upsert DeviceGroupMembership for each active device: no-op if already present.
       for (const device of userDevices) {
         await manager
           .createQueryBuilder()

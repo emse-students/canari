@@ -210,7 +210,7 @@ export class CallsService {
         `[ICE] Monthly TURN budget reached (${usedMb.toFixed(0)}/${budgetMb} MB) - refusing credentials`,
       );
       throw new ServiceUnavailableException(
-        'Quota mensuel des appels atteint sur ce serveur. Réessayez le mois prochain.',
+        'Monthly call quota reached on this server. Try again next month.',
       );
     }
 

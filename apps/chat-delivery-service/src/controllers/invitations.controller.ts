@@ -152,7 +152,7 @@ export class InvitationsController {
     const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
     const invite = await this.groupInviteRepo.findOne({ where: { token } });
     if (!invite || !this.groupInviteIsValid(invite)) {
-      throw new NotFoundException('Invitation invalide ou expirée');
+      throw new NotFoundException('Invalid or expired invitation.');
     }
     const group = await this.groupRepo.findOne({
       where: { id: invite.groupId, deletedAt: IsNull() },
@@ -184,7 +184,7 @@ export class InvitationsController {
     ];
     if (deviceIds.length === 0) {
       throw new BadRequestException(
-        'Aucun appareil actif - ouvrez Canari sur un appareil puis réessayez',
+        'No active device - open Canari on a device and try again.',
       );
     }
 
@@ -283,8 +283,8 @@ export class InvitationsController {
     }
 
     // 2. Find all pending memberships in those groups.
-    // Utilise In() pour générer un seul prédicat WHERE groupId IN (…) AND status = 'pending'
-    // au lieu de N clauses OR (une par groupe), ce qui est nettement plus efficace avec PostgreSQL.
+    // Uses In() to generate a single WHERE groupId IN (...) AND status = 'pending' predicate
+    // instead of N OR clauses (one per group), which is far more efficient in PostgreSQL.
     const pending = await this.deviceGroupRepo.find({
       where: { groupId: In(myGroupIds), status: 'pending' as const },
     });
@@ -540,9 +540,9 @@ export class InvitationsController {
   }
 
   /**
-   * Force la sortie d'un device d'un groupe (état MLS irrécupérable ou reboot demandé).
-   * Supprime le DeviceGroupMembership et retire le device du set Redis de routage
-   * afin que le serveur cesse de lui envoyer des messages pour ce groupe.
+   * Forces a device out of a group (unrecoverable MLS state or reboot requested).
+   * Deletes the DeviceGroupMembership and removes the device from the Redis routing set
+   * so the server stops sending messages for this group to it.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups/:groupId/force_leave')
