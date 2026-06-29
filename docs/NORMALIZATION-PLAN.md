@@ -149,11 +149,9 @@ wiki/mls-protocol.md cree (W6 fait en meme temps que D3) : invariants, endpoints
   - [x] `mls-wasm.md` - WASM package layout, IMlsService, WasmMlsClient API, message queue, tab leadership, state persistence.
 - [x] **W3 - Modules frontend** (`docs/wiki/frontend/modules/`) : `auth.md`, `chat.md`, `associations.md`,
   `forms.md`, `calendar.md`, `posts.md`, `payments.md`, `admin.md`.
-- [ ] **W4 - Infrastructure** (`docs/wiki/infrastructure/`) : `docker.md`, `nginx.md`, `databases.md`,
-  `kafka.md`, `backup.md`. Sources = `infrastructure/`, `docker-compose*.yml`,
-  `infrastructure/local/Dockerfile.frontend`, `infrastructure/backup/`. Verser `docs/STORAGE.md` (restant).
-  - [ ] Optionnel : `deployment.md` (EN) <- `docs/DEPLOIEMENT.md` (FR) + recoupage `infrastructure/MIGRATION.md`
-        (garder MIGRATION.md). Puis supprimer `docs/DEPLOIEMENT.md`.
+- [x] **W4 - Infrastructure** (`docs/wiki/infrastructure/`) : `docker.md`, `nginx.md`, `databases.md`,
+  `kafka.md`, `backup.md`. Sources = docker-compose.dev.yml + Dockerfile.frontend + backup.sh.
+  Note: deployment.md optionnel non fait; DEPLOIEMENT.md et STORAGE.md restent (pas encore supprimes).
 - [ ] **W5 - API surface** : `docs/wiki/api-surface.md` <- tous les controllers NestJS + routes gateway.
 - [x] **W6 - MLS protocol** : `docs/wiki/mls-protocol.md` <- `docs/MLS.md` + invariants de D3 +
   liens vers les docs vivantes `MLS_DESYNC_PREVENTION.md` / `MLS_RECOVERY_LADDER.md` / `AUDIT-MLS-2026-06.md`.
