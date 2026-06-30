@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard, Bell, Calendar, ShoppingBag, ClipboardList } from '@lucide/svelte';
+  import {
+    MessageCircle,
+    Newspaper,
+    Users,
+    LayoutDashboard,
+    Bell,
+    Calendar,
+    ShoppingBag,
+    ClipboardList,
+    SlidersHorizontal,
+  } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
   import { afterNavigate } from '$app/navigation';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -145,4 +156,49 @@
       </a>
     {/each}
   </nav>
+
+  <!-- Settings, pinned at the bottom (desktop entry point to /settings). -->
+  {#if globalSession.isLoggedIn}
+    {@const settingsActive = pathname.startsWith('/settings')}
+    <div class="p-3 border-t border-black/5 dark:border-white/10">
+      <a
+        href="/settings"
+        data-sveltekit-preload-code="viewport"
+        title={isExpanded ? undefined : m.settings_page_title()}
+        aria-current={settingsActive ? 'page' : undefined}
+        class="group relative flex items-center gap-4 h-12 rounded-2xl px-3 text-left transition-all duration-200 w-full overflow-hidden
+          {settingsActive
+          ? 'bg-amber-500/15 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:hover:bg-amber-400/20 text-amber-700 dark:text-amber-400 shadow-sm shadow-amber-500/5'
+          : 'text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main'}"
+      >
+        {#if settingsActive}
+          <div
+            class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+          ></div>
+        {/if}
+
+        <span
+          class="relative flex-shrink-0 w-7 flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+        >
+          <SlidersHorizontal size={22} strokeWidth={settingsActive ? 2.5 : 2} />
+        </span>
+
+        <span
+          class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
+            {isExpanded
+            ? 'opacity-100 translate-x-0 delay-75'
+            : 'opacity-0 -translate-x-4 delay-0'}"
+        >
+          <span class="block text-[0.9rem] font-bold leading-tight truncate whitespace-nowrap">
+            {m.settings_page_title()}
+          </span>
+          <span
+            class="block text-xs font-medium opacity-70 leading-snug mt-0.5 truncate whitespace-nowrap"
+          >
+            {m.settings_page_subtitle()}
+          </span>
+        </span>
+      </a>
+    </div>
+  {/if}
 </aside>

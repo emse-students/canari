@@ -6,7 +6,6 @@
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
-  import { SlidersHorizontal } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   async function handleLogout() {
@@ -27,17 +26,6 @@
     <!-- Right: Status + Theme + actions -->
     <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
       <StatusPill isConnected={globalSession.isWsConnected} />
-      {#if globalSession.isLoggedIn}
-        <button
-          type="button"
-          onclick={() => goto('/settings')}
-          title={m.nav_settings_title()}
-          aria-label={m.nav_settings_label()}
-          class="p-2 rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
-        >
-          <SlidersHorizontal size={20} />
-        </button>
-      {/if}
       <SessionActionButtons onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button

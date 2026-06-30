@@ -27,6 +27,7 @@
     UserRound,
     History,
     Info,
+    SlidersHorizontal,
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -197,6 +198,14 @@
           </div>
         {/if}
       </div>
+      <a
+        href="/settings"
+        title={m.settings_page_title()}
+        class="self-start inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-text-muted hover:text-cn-dark hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-95"
+      >
+        <SlidersHorizontal size={15} strokeWidth={2.5} />
+        <span class="hidden sm:inline">{m.settings_page_title()}</span>
+      </a>
     </div>
 
     <!-- Bio -->
