@@ -18,11 +18,14 @@
   import {
     fetchUserMemberships,
     fetchUserRoleHistory,
+    fetchUserParrainage,
     type UserMembershipRow,
     type UserRoleHistoryRow,
+    type SkyEntourage,
   } from '$lib/profile/api';
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
+  import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfilePreferencesSection from '$lib/components/profile/ProfilePreferencesSection.svelte';
   import {
     CreditCard,
@@ -262,6 +265,8 @@
   let membershipsLoading = $state(false);
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
   let roleHistoryLoading = $state(false);
+  let parrainage = $state<SkyEntourage | null>(null);
+  let parrainageLoading = $state(false);
 
   // Auto-clear success message
   $effect(() => {
@@ -318,6 +323,14 @@
       roleHistory = [];
     } finally {
       roleHistoryLoading = false;
+    }
+    parrainageLoading = true;
+    try {
+      parrainage = await fetchUserParrainage(userId);
+    } catch {
+      parrainage = null;
+    } finally {
+      parrainageLoading = false;
     }
   }
 
@@ -604,6 +617,30 @@
         onChanged={reloadRoleHistory}
       />
     </div>
+
+    <!-- Section Parrainage (arbre proche, depuis Sky) -->
+    {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || parrainageLoading}
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
+      >
+        <div class="flex items-center gap-3 mb-5">
+          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+            <Users size={22} strokeWidth={2.5} />
+          </div>
+          <h2 class="text-lg font-extrabold text-text-main">
+            {m.profile_public_sponsorship_heading()}
+          </h2>
+          {#if parrainageLoading}
+            <Loader2 size={16} class="animate-spin text-cn-yellow" />
+          {/if}
+        </div>
+        <ProfileParrainageSection
+          parrains={parrainage?.parrains ?? []}
+          fillots={parrainage?.fillots ?? []}
+          loading={parrainageLoading}
+        />
+      </div>
+    {/if}
 
     <!-- Section Informations -->
     <div

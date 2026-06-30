@@ -121,6 +121,7 @@ export class InternalController {
     const former: {
       name: string;
       role: string;
+      logoUrl: string | null;
       startYear: number | null;
       endYear: number | null;
     }[] = [];
@@ -129,7 +130,13 @@ export class InternalController {
       const a = byId.get(m.associationId);
       if (!a) continue;
       if (a.archived) {
-        former.push({ name: a.name, role: m.role, startYear: null, endYear: null });
+        former.push({
+          name: a.name,
+          role: m.role,
+          logoUrl: a.logoUrl,
+          startYear: null,
+          endYear: null,
+        });
       } else {
         current.push({ name: a.name, slug: a.slug, role: m.role, logoUrl: a.logoUrl });
       }
@@ -140,6 +147,7 @@ export class InternalController {
       former.push({
         name: a?.name ?? 'Association',
         role: h.roleTitle,
+        logoUrl: a?.logoUrl ?? null,
         startYear: h.startYear,
         endYear: h.endYear,
       });

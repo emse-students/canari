@@ -29,6 +29,7 @@ interface SocialAssociations {
   former: {
     name: string;
     role: string;
+    logoUrl: string | null;
     startYear: number | null;
     endYear: number | null;
   }[];
