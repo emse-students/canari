@@ -1,19 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import {
-    fetchMyProfile,
-    updateMyProfile,
-    fetchMyNotes,
-    saveMyNotes,
-    setupPaymentMethod,
-    listPaymentMethods,
-    deletePaymentMethod,
-    deleteMyAccount,
-    type UserProfile,
-    type PaymentMethod,
-  } from '$lib/stores/user';
-  import { clearAuth } from '$lib/stores/auth';
+  import { fetchMyProfile, updateMyProfile, type UserProfile } from '$lib/stores/user';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import {
     fetchUserMemberships,
@@ -26,240 +14,39 @@
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
-  import ProfilePreferencesSection from '$lib/components/profile/ProfilePreferencesSection.svelte';
   import {
-    CreditCard,
-    Trash2,
     Edit3,
     Check,
     GraduationCap,
     CalendarDays,
-    Plus,
     Loader2,
     AlertCircle,
-    CheckCircle2,
     Camera,
-    Tag,
-    ShoppingBag,
-    ChevronRight,
     Building2,
     Users,
-    Shield,
-    KeyRound,
-    Smartphone,
-    Monitor,
-    Upload,
-    Download,
-    ScanLine,
-    RefreshCw,
     UserRound,
     History,
     Info,
-    NotebookPen,
   } from '@lucide/svelte';
-
-  async function changeProfilePhoto() {
-    const { navigateExternal } = await import('$lib/utils/openExternal');
-    await navigateExternal('https://gallery.mitv.fr/mes-photos');
-  }
-  import { showConfirm } from '$lib/stores/confirm.svelte';
-  import {
-    globalSession as session,
-    globalConvs as convs,
-    appendLog,
-  } from '$lib/stores/globalChatSingleton.svelte';
-  import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
-  import SyncSessionModal from '$lib/components/chat/SyncSessionModal.svelte';
-  import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
-  import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
-  import { performPinChange, type PinOperationProgress } from '$lib/utils/chat/pinChange';
-  import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
-  import { apiFetch } from '$lib/utils/apiFetch';
-  import { socialUrl } from '$lib/utils/apiUrl';
-  import type { UserTag } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
   let error = $state('');
-  let isTouchDevice = $state(false);
 
-  // ── Sécurité & appareils + Synchronisation ────────────────────────────────
-  const sync = useSyncSession();
-  let showDevicePanel = $state(false);
-  let showChangePinModal = $state(false);
-  let changePinError = $state('');
-  let changePinLoading = $state(false);
-  let changePinProgress = $state<PinOperationProgress | null>(null);
-  let changePinSuccess = $state('');
-  let pendingInvitationCount = $state(0);
-  let fileInput: HTMLInputElement | undefined = $state();
-
-  function syncCtx() {
-    return {
-      historyBaseUrl: session.historyBaseUrl,
-      userId: session.userId,
-      myDeviceId: session.myDeviceId,
-      pin: session.pin,
-      storage: session.storage,
-      log: appendLog,
-      loadExistingConversations: async () => {},
-      processDeviceInvitationsLocally: async () => {},
-    };
+  async function changeProfilePhoto() {
+    const { navigateExternal } = await import('$lib/utils/openExternal');
+    await navigateExternal('https://gallery.mitv.fr/mes-photos');
   }
-
-  function triggerImport() {
-    fileInput?.click();
-  }
-
-  function handleFileChange(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (file) {
-      session.handleImport(
-        file,
-        appendLog,
-        () => convs.conversations.clear(),
-        async () => {}
-      );
-      input.value = '';
-    }
-  }
-
-  async function handleChangePin(currentPin: string, newPin: string) {
-    changePinError = '';
-    changePinLoading = true;
-    changePinProgress = { percent: 0, stage: 'server' };
-    try {
-      await performPinChange(
-        {
-          userId: session.userId,
-          mlsService: session.ensureMls(),
-          setPin: (p: string) => (session.pin = p),
-          log: appendLog,
-          onProgress: (progress) => {
-            changePinProgress = progress;
-          },
-        },
-        currentPin,
-        newPin
-      );
-      showChangePinModal = false;
-      changePinSuccess = m.profile_pin_changed();
-    } catch (e) {
-      changePinError = e instanceof Error ? e.message : String(e);
-    } finally {
-      changePinLoading = false;
-      changePinProgress = null;
-    }
-  }
-
-  // Pending-invitation badge for the device panel (polls the current device's memberships).
-  $effect(() => {
-    if (!session.isLoggedIn || !session.myDeviceId) return;
-    const userId = session.userId;
-    const deviceId = session.myDeviceId;
-    let cancelled = false;
-    async function poll() {
-      if (cancelled) return;
-      try {
-        const memberships = await session.ensureMls().getDeviceMemberships(userId, deviceId);
-        if (!cancelled) {
-          pendingInvitationCount = memberships.filter((mem) => mem.status === 'pending').length;
-        }
-      } catch {
-        // MLS not ready yet
-      }
-    }
-    const cleanup = createPausableInterval(() => void poll(), 30_000);
-    return () => {
-      cancelled = true;
-      cleanup();
-    };
-  });
-
-  // Auto-clear the PIN-change success banner.
-  $effect(() => {
-    if (changePinSuccess) {
-      const t = setTimeout(() => (changePinSuccess = ''), 6000);
-      return () => clearTimeout(t);
-    }
-  });
 
   // Bio state
   let editingBio = $state(false);
   let bioInput = $state('');
   let saving = $state(false);
-
-  // Personal notepad state (private, plaintext server-side).
-  let noteInput = $state('');
-  let noteLoading = $state(true);
-  let noteSaving = $state(false);
-  let noteSaved = $state(false);
-  let noteError = $state('');
-
-  async function loadMyNotes() {
-    noteLoading = true;
-    try {
-      noteInput = await fetchMyNotes();
-    } catch {
-      noteError = m.profile_notepad_load_error();
-    } finally {
-      noteLoading = false;
-    }
-  }
-
-  async function saveNote() {
-    noteSaving = true;
-    noteError = '';
-    noteSaved = false;
-    try {
-      await saveMyNotes(noteInput);
-      noteSaved = true;
-      setTimeout(() => (noteSaved = false), 2000);
-    } catch {
-      noteError = m.profile_notepad_save_error();
-    } finally {
-      noteSaving = false;
-    }
-  }
-
-  // Account deletion state
-  let deletionDialogOpen = $state(false);
-  let deletionConfirmText = $state('');
-  let deleting = $state(false);
-  let deletionError = $state('');
-
-  const DELETION_CONFIRM_WORD = 'SUPPRIMER';
-
-  async function handleDeleteAccount() {
-    if (deletionConfirmText !== DELETION_CONFIRM_WORD) return;
-    deleting = true;
-    deletionError = '';
-    try {
-      await deleteMyAccount();
-      await clearAuth();
-      await goto('/login', { replaceState: true });
-    } catch (err) {
-      deletionError = err instanceof Error ? err.message : m.profile_delete_error_fallback();
-      deleting = false;
-    }
-  }
-
-  // Payment methods state
-  let paymentMethods = $state<PaymentMethod[]>([]);
-  let paymentLoading = $state(false);
-  let paymentSetupLoading = $state(false);
-  let paymentError = $state('');
-  let paymentSuccess = $state('');
-
-  // Cotisations / achats
-  let activeTags = $state<UserTag[]>([]);
-  let purchasesLoading = $state(false);
 
   let memberships = $state<UserMembershipRow[]>([]);
   let membershipsLoading = $state(false);
@@ -268,25 +55,13 @@
   let parrainage = $state<SkyEntourage | null>(null);
   let parrainageLoading = $state(false);
 
-  // Auto-clear success message
-  $effect(() => {
-    if (paymentSuccess) {
-      const timer = setTimeout(() => {
-        paymentSuccess = '';
-      }, 4000);
-      return () => clearTimeout(timer);
-    }
-  });
-
   onMount(async () => {
-    isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
     try {
       profile = await fetchMyProfile();
       bioInput = profile.bio || '';
       void loadProfileExtras(profile.id);
-      void loadMyNotes();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Impossible de charger le profil';
+      const msg = err instanceof Error ? err.message : m.profile_load_error_fallback();
       if (msg.toLowerCase().includes('session') || msg.includes('401')) {
         await goto('/login?returnTo=/profile', { replaceState: true });
         return;
@@ -295,16 +70,6 @@
     } finally {
       loading = false;
     }
-
-    // Check for payment setup redirect result
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('payment_setup') === 'success') {
-      paymentSuccess = m.profile_payment_setup_success();
-      history.replaceState(null, '', '/profile');
-    }
-
-    loadPaymentMethods();
-    void loadPurchasesSummary();
   });
 
   async function loadProfileExtras(userId: string) {
@@ -344,79 +109,13 @@
     }
   }
 
-  async function loadPurchasesSummary() {
-    purchasesLoading = true;
-    try {
-      const res = await apiFetch(`${socialUrl()}/api/forms/me/purchases`);
-      if (!res.ok) return;
-      const data = (await res.json()) as { activeTags?: UserTag[] };
-      activeTags = data.activeTags ?? [];
-    } catch {
-      // Non-blocking - section stays empty
-    } finally {
-      purchasesLoading = false;
-    }
-  }
-
-  async function loadPaymentMethods() {
-    paymentLoading = true;
-    try {
-      paymentMethods = await listPaymentMethods();
-    } catch {
-      // Ignore - Stripe may not be configured
-    } finally {
-      paymentLoading = false;
-    }
-  }
-
-  async function handleSetupPayment() {
-    paymentSetupLoading = true;
-    paymentError = '';
-    try {
-      const { profileSetupCallbacks } = await import('$lib/utils/stripeCallbacks');
-      const result = await setupPaymentMethod(profileSetupCallbacks());
-      if (result.url) {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(result.url);
-      }
-    } catch (err) {
-      paymentError = err instanceof Error ? err.message : m.profile_payment_setup_error();
-      paymentSetupLoading = false;
-    }
-  }
-
-  async function handleDeletePaymentMethod(id: string) {
-    if (
-      !(await showConfirm(m.profile_payment_delete_confirm(), {
-        danger: true,
-        confirmLabel: m.common_delete_button(),
-      }))
-    )
-      return;
-    try {
-      await deletePaymentMethod(id);
-      paymentMethods = paymentMethods.filter((pm) => pm.id !== id);
-    } catch (err) {
-      paymentError = err instanceof Error ? err.message : 'Erreur lors de la suppression';
-    }
-  }
-
-  function brandLabel(brand: string): string {
-    const labels: Record<string, string> = {
-      visa: 'Visa',
-      mastercard: 'Mastercard',
-      amex: 'American Express',
-    };
-    return labels[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
-  }
-
   async function saveBio() {
     saving = true;
     try {
       profile = await updateMyProfile({ bio: bioInput.trim() });
       editingBio = false;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
+      error = err instanceof Error ? err.message : m.profile_bio_save_error_fallback();
     } finally {
       saving = false;
     }
@@ -437,7 +136,7 @@
     return m.profile_promo_value({ year });
   }
 
-  // Utilitaire pour afficher un nom par défaut si displayName est vide
+  // Fallback display name when displayName is empty.
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
     return m.profile_default_name();
@@ -462,7 +161,7 @@
       </div>
     </div>
   {:else if profile}
-    <!-- En-tête du profil -->
+    <!-- Profile header -->
     <div
       class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
     >
@@ -500,7 +199,7 @@
       </div>
     </div>
 
-    <!-- Section Bio -->
+    <!-- Bio -->
     <div
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
       style="animation-fill-mode: backwards;"
@@ -517,7 +216,8 @@
             onclick={startEditBio}
             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold text-text-muted hover:text-cn-dark hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-95"
           >
-            <Edit3 size={16} strokeWidth={2.5} /> {m.common_edit_label()}
+            <Edit3 size={16} strokeWidth={2.5} />
+            {m.common_edit_label()}
           </button>
         {/if}
       </div>
@@ -553,7 +253,8 @@
                 class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-cn-yellow/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
               >
                 {#if saving}
-                  <Loader2 size={16} class="animate-spin" strokeWidth={3} /> {m.common_saving_label()}
+                  <Loader2 size={16} class="animate-spin" strokeWidth={3} />
+                  {m.common_saving_label()}
                 {:else}
                   <Check size={16} strokeWidth={3} /> {m.common_save_button()}
                 {/if}
@@ -574,7 +275,7 @@
       {/if}
     </div>
 
-    <!-- Section Associations -->
+    <!-- Associations -->
     <div
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
       style="animation-fill-mode: backwards;"
@@ -597,7 +298,7 @@
       <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
     </div>
 
-    <!-- Section Parcours associatif -->
+    <!-- Associative career -->
     <div
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
       style="animation-fill-mode: backwards;"
@@ -618,11 +319,9 @@
       />
     </div>
 
-    <!-- Section Parrainage (arbre proche, depuis Sky) -->
+    <!-- Sponsorship (close tree, from Sky) -->
     {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || parrainageLoading}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
-      >
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
         <div class="flex items-center gap-3 mb-5">
           <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
             <Users size={22} strokeWidth={2.5} />
@@ -642,7 +341,7 @@
       </div>
     {/if}
 
-    <!-- Section Informations -->
+    <!-- Information -->
     <div
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
       style="animation-fill-mode: backwards;"
@@ -680,524 +379,18 @@
               {m.profile_member_since_label()}
             </p>
             <p class="text-sm font-bold text-text-main capitalize">
-              {new Date(profile.createdAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
+              {new Date(profile.createdAt).toLocaleDateString(
+                getLocale() === 'en' ? 'en-US' : 'fr-FR',
+                {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                }
+              )}
             </p>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Section Bloc-notes personnel -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500"
-      style="animation-fill-mode: backwards;"
-    >
-      <div class="flex items-center justify-between gap-2 mb-4">
-        <h2 class="text-lg font-bold text-text-main flex items-center gap-2">
-          <NotebookPen size={20} class="text-cn-dark" />
-          {m.profile_notepad_heading()}
-        </h2>
-        <span class="text-xs text-text-muted">{m.profile_notepad_private()}</span>
-      </div>
-      {#if noteLoading}
-        <p class="text-sm text-text-muted py-3">{m.common_loading_label()}</p>
-      {:else}
-        <MarkdownComposerField
-          bind:value={noteInput}
-          placeholder={m.profile_notepad_placeholder()}
-          minHeight="140px"
-        />
-        <div class="flex items-center justify-end gap-3 pt-3">
-          {#if noteError}
-            <span class="text-xs text-red-600 mr-auto">{noteError}</span>
-          {:else if noteSaved}
-            <span class="text-xs text-green-600 mr-auto">{m.profile_notepad_saved()}</span>
-          {/if}
-          <button
-            type="button"
-            onclick={saveNote}
-            disabled={noteSaving}
-            class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
-          >
-            {noteSaving ? m.common_saving_label() : m.common_save_button()}
-          </button>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Section Préférences -->
-    <ProfilePreferencesSection {isTouchDevice} />
-
-    <!-- Section Sécurité & appareils -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
-      style="animation-fill-mode: backwards;"
-    >
-      <div class="flex items-center gap-3 mb-6">
-        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
-          <Shield size={22} strokeWidth={2.5} />
-        </div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.profile_security_heading()}</h2>
-      </div>
-
-      {#if changePinSuccess}
-        <div
-          transition:slide={{ duration: 200 }}
-          class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-5 shadow-inner"
-        >
-          <CheckCircle2 size={20} class="shrink-0" />
-          {changePinSuccess}
-        </div>
-      {/if}
-
-      {#if session.isLoggedIn}
-        <div class="space-y-4">
-          <div
-            class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
-          >
-            <div class="flex items-center gap-3.5 min-w-0">
-              <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
-                <KeyRound size={20} strokeWidth={2.5} />
-              </div>
-              <div class="min-w-0">
-                <p class="text-sm font-bold text-text-main">{m.profile_pin_heading()}</p>
-                <p class="text-xs font-medium text-text-muted mt-0.5">
-                  Modifiez le PIN qui protege vos messages chiffres de bout en bout
-                </p>
-              </div>
-            </div>
-            <button
-              onclick={() => {
-                changePinError = '';
-                showChangePinModal = true;
-              }}
-              class="shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
-            >
-              <KeyRound size={16} strokeWidth={2.5} />
-              <span class="hidden sm:inline">{m.profile_pin_change_btn()}</span>
-            </button>
-          </div>
-
-          <div
-            class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
-          >
-            <div class="flex items-center gap-3.5 min-w-0">
-              <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
-                <Monitor size={20} strokeWidth={2.5} />
-              </div>
-              <div class="min-w-0">
-                <p class="text-sm font-bold text-text-main">{m.profile_devices_heading()}</p>
-                <p class="text-xs font-medium text-text-muted mt-0.5">
-                  Renommez ou revoquez les appareils lies a votre compte
-                </p>
-              </div>
-            </div>
-            <button
-              onclick={() => (showDevicePanel = true)}
-              class="relative shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
-            >
-              <Monitor size={16} strokeWidth={2.5} />
-              <span class="hidden sm:inline">{m.profile_devices_manage_btn()}</span>
-              {#if pendingInvitationCount > 0}
-                <span
-                  class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center px-1 shadow"
-                >
-                  {pendingInvitationCount > 99 ? '99+' : pendingInvitationCount}
-                </span>
-              {/if}
-            </button>
-          </div>
-        </div>
-      {:else}
-        <p class="text-sm text-text-muted leading-relaxed">
-          {m.profile_security_locked()}
-        </p>
-      {/if}
-    </div>
-
-    <!-- Section Sauvegarde & synchronisation -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
-      style="animation-fill-mode: backwards;"
-    >
-      <div class="flex items-center gap-3 mb-2">
-        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
-          <RefreshCw size={22} strokeWidth={2.5} />
-        </div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.profile_sync_heading()}</h2>
-      </div>
-      <p class="text-xs font-medium text-text-muted mb-6 sm:pl-[3.75rem] leading-relaxed">
-        Transferez vos conversations vers un autre appareil (QR) ou sauvegardez-les dans un fichier
-        chiffre <code class="font-mono">.canari</code>.
-      </p>
-
-      {#if session.isLoggedIn}
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <button
-            type="button"
-            onclick={() => sync.handleStartSyncSession(syncCtx())}
-            disabled={sync.isSyncSessionBusy}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-          >
-            <ScanLine size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">{m.profile_sync_transfer_label()}</span>
-            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_transfer_sub()}</span>
-          </button>
-
-          <button
-            type="button"
-            onclick={() => sync.openJoinSyncModal()}
-            disabled={sync.isSyncSessionBusy}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-          >
-            <Smartphone size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">{m.profile_sync_scan_label()}</span>
-            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_scan_sub()}</span>
-          </button>
-
-          <button
-            type="button"
-            onclick={triggerImport}
-            disabled={session.isImporting}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-          >
-            <Upload size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">{m.profile_sync_import_label()}</span>
-            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_import_sub()}</span>
-          </button>
-
-          <button
-            type="button"
-            onclick={() => session.handleExport(appendLog)}
-            disabled={session.isExporting}
-            class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
-          >
-            <Download size={22} class="text-text-muted" />
-            <span class="text-sm font-bold text-text-main">{m.profile_sync_export_label()}</span>
-            <span class="text-[0.7rem] text-text-muted">{m.profile_sync_export_sub()}</span>
-          </button>
-        </div>
-      {:else}
-        <p class="text-sm text-text-muted leading-relaxed">
-          {m.profile_sync_locked()}
-        </p>
-      {/if}
-    </div>
-
-    <!-- Section Paiements -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
-      style="animation-fill-mode: backwards;"
-    >
-      <div class="flex items-center justify-between mb-6">
-        <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
-            <CreditCard size={22} strokeWidth={2.5} />
-          </div>
-          <h2 class="text-lg font-extrabold text-text-main">{m.profile_payment_heading()}</h2>
-        </div>
-
-        <button
-          onclick={handleSetupPayment}
-          disabled={paymentSetupLoading}
-          class="hidden sm:inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all disabled:opacity-50 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
-        >
-          {#if paymentSetupLoading}
-            <Loader2 size={16} class="animate-spin" /> {m.profile_payment_redirecting()}
-          {:else}
-            <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card()}
-          {/if}
-        </button>
-      </div>
-
-      {#if paymentSuccess}
-        <div
-          transition:slide={{ duration: 200 }}
-          class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-6 shadow-inner"
-        >
-          <CheckCircle2 size={20} class="shrink-0" />
-          {paymentSuccess}
-        </div>
-      {/if}
-
-      {#if paymentError}
-        <div
-          transition:slide={{ duration: 200 }}
-          class="flex items-center gap-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-4 text-sm font-bold mb-6 shadow-inner"
-        >
-          <AlertCircle size={20} class="shrink-0" />
-          {paymentError}
-        </div>
-      {/if}
-
-      {#if paymentLoading}
-        <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-4">
-          <Loader2 size={18} class="animate-spin" /> {m.profile_payment_loading()}
-        </div>
-      {:else}
-        {#if paymentMethods.length > 0}
-          <div class="space-y-3 mb-6">
-            {#each paymentMethods as pm (pm.id)}
-              <!-- Carte bancaire stylisée -->
-              <div
-                transition:slide={{ duration: 200 }}
-                class="flex items-center justify-between rounded-[1.25rem] bg-gradient-to-r from-black/5 to-transparent dark:from-white/5 dark:to-transparent border border-black/5 dark:border-white/5 px-5 py-4 group hover:border-black/10 dark:hover:border-white/10 transition-colors shadow-sm"
-              >
-                <div class="flex items-center gap-4">
-                  <!-- Petite puce visuelle -->
-                  <div
-                    class="w-8 h-6 rounded bg-cn-yellow/20 border border-cn-yellow/30 flex items-center justify-center opacity-80"
-                  >
-                    <div class="w-4 h-3 border border-cn-yellow/40 rounded-sm"></div>
-                  </div>
-
-                  <div class="flex flex-col">
-                    <span class="text-[0.95rem] font-bold text-text-main tracking-wider font-mono">
-                      •••• •••• •••• {pm.last4}
-                    </span>
-                    <span
-                      class="text-[0.65rem] font-extrabold text-text-muted uppercase tracking-wider mt-0.5"
-                    >
-                      {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(
-                        2,
-                        '0'
-                      )}/{pm.expYear}
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  onclick={() => handleDeletePaymentMethod(pm.id)}
-                  class="p-2.5 rounded-xl text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-all opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
-                  title={m.profile_payment_delete_label()}
-                  aria-label={m.common_delete_button()}
-                >
-                  <Trash2 size={18} strokeWidth={2.5} />
-                </button>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div
-            class="text-center py-6 px-4 border border-dashed border-black/10 dark:border-white/10 rounded-[1.25rem] bg-black/5 dark:bg-white/5 mb-6"
-          >
-            <p class="text-sm font-semibold text-text-muted">{m.profile_payment_none_title()}</p>
-          </div>
-        {/if}
-
-        <!-- Bouton mobile (car le bouton du header peut être masqué sur petit écran) -->
-        <button
-          onclick={handleSetupPayment}
-          disabled={paymentSetupLoading}
-          class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
-        >
-          {#if paymentSetupLoading}
-            <Loader2 size={18} class="animate-spin" /> {m.profile_payment_redirect_stripe()}
-          {:else}
-            <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card_mobile()}
-          {/if}
-        </button>
-      {/if}
-    </div>
-
-    <!-- Section Cotisations et achats -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-250"
-      style="animation-fill-mode: backwards;"
-    >
-      <div class="flex items-center justify-between mb-6">
-        <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-            <Tag size={22} strokeWidth={2.5} />
-          </div>
-          <div>
-            <h2 class="text-lg font-extrabold text-text-main">{m.profile_subs_heading()}</h2>
-            <p class="text-xs font-medium text-text-muted mt-0.5">
-              {m.profile_subs_subtitle()}
-            </p>
-          </div>
-        </div>
-        <a
-          href="/account/purchases"
-          class="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all"
-        >
-          <ShoppingBag size={16} />
-          {m.profile_subs_see_all()}
-          <ChevronRight size={16} />
-        </a>
-      </div>
-
-      {#if purchasesLoading}
-        <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-2">
-          <Loader2 size={18} class="animate-spin" />
-          {m.common_loading_label()}
-        </div>
-      {:else if activeTags.length === 0}
-        <p class="text-sm text-text-muted mb-4">{m.profile_subs_empty()}</p>
-      {:else}
-        <ul class="space-y-2 mb-4">
-          {#each activeTags as tag (tag.id)}
-            <li
-              class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3"
-            >
-              <div class="min-w-0 flex-1">
-                <p class="text-sm font-bold text-text-main">{tag.tagName}</p>
-                <p class="text-xs text-text-muted mt-0.5">
-                  {#if tag.expiresAt}
-                    {m.profile_subs_expires_at({ date: new Date(tag.expiresAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}
-                  {:else}
-                    {m.profile_subs_no_expiry()}
-                  {/if}
-                </p>
-              </div>
-              <span
-                class="shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 text-xs font-bold"
-              >
-                {m.profile_subs_active_badge()}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      <a
-        href="/account/purchases"
-        class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all"
-      >
-        <ShoppingBag size={18} />
-        {m.profile_subs_see_all_mobile()}
-        <ChevronRight size={16} />
-      </a>
-    </div>
-
-    <!-- Section Suppression de compte -->
-    <div
-      class="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300"
-      style="animation-fill-mode: backwards;"
-    >
-      <div class="flex items-start gap-4">
-        <div class="p-2.5 rounded-xl bg-red-500/10 text-red-500 shrink-0 mt-0.5">
-          <Trash2 size={22} strokeWidth={2.5} />
-        </div>
-        <div class="flex-1 min-w-0">
-          <h2 class="text-lg font-extrabold text-red-500 mb-1">{m.profile_delete_heading()}</h2>
-          <p class="text-sm text-text-muted mb-4 leading-relaxed">
-            Cette action est <strong>irreversible</strong>. Votre profil, vos messages, vos
-            publications, vos adhesions et toutes vos donnees seront definitivement supprimes.
-          </p>
-          {#if !deletionDialogOpen}
-            <button
-              onclick={() => {
-                deletionDialogOpen = true;
-                deletionConfirmText = '';
-                deletionError = '';
-              }}
-              class="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-500/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-            >
-              <Trash2 size={16} strokeWidth={2.5} />
-              {m.profile_delete_heading()}
-            </button>
-          {:else}
-            <div transition:slide={{ duration: 200 }} class="space-y-4">
-              <p class="text-sm font-semibold text-red-400">
-                {m.profile_delete_type_prompt({ word: DELETION_CONFIRM_WORD })}
-              </p>
-              <input
-                type="text"
-                bind:value={deletionConfirmText}
-                placeholder={DELETION_CONFIRM_WORD}
-                disabled={deleting}
-                class="w-full max-w-xs rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-2.5 text-sm font-mono font-bold text-red-400 placeholder-red-500/30 outline-none focus:border-red-500/60 focus:ring-2 focus:ring-red-500/20 disabled:opacity-50 transition-all"
-              />
-              {#if deletionError}
-                <p
-                  transition:slide={{ duration: 150 }}
-                  class="text-sm font-semibold text-red-500 flex items-center gap-2"
-                >
-                  <AlertCircle size={16} />
-                  {deletionError}
-                </p>
-              {/if}
-              <div class="flex gap-3">
-                <button
-                  onclick={() => {
-                    deletionDialogOpen = false;
-                    deletionConfirmText = '';
-                  }}
-                  disabled={deleting}
-                  class="rounded-xl px-4 py-2.5 text-sm font-bold text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
-                >
-                  {m.common_cancel_button()}
-                </button>
-                <button
-                  onclick={handleDeleteAccount}
-                  disabled={deleting || deletionConfirmText !== DELETION_CONFIRM_WORD}
-                  class="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-red-500/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
-                >
-                  {#if deleting}
-                    <Loader2 size={16} class="animate-spin" /> {m.profile_delete_deleting()}
-                  {:else}
-                    <Trash2 size={16} strokeWidth={2.5} /> {m.profile_delete_confirm_btn()}
-                  {/if}
-                </button>
-              </div>
-            </div>
-          {/if}
-        </div>
-      </div>
-    </div>
-
-    <!-- Identifiant d'appareil (diagnostic discret, utile pour tracer les reboots MLS) -->
-    {#if session.myDeviceId}
-      <p class="text-center text-[0.65rem] font-mono text-text-muted/40 select-all pt-2">
-        device: {session.myDeviceId}
-      </p>
-    {/if}
   {/if}
 </div>
-
-<!-- Outillage sécurité / synchronisation (hors du flux conditionnel pour rester monté) -->
-<input
-  bind:this={fileInput}
-  type="file"
-  accept=".canari"
-  class="hidden"
-  onchange={handleFileChange}
-/>
-
-<ChangePinModal
-  open={showChangePinModal}
-  onSubmit={handleChangePin}
-  onClose={() => (showChangePinModal = false)}
-  externalError={changePinError}
-  isLoading={changePinLoading}
-  loadingProgress={changePinProgress}
-/>
-
-<SyncSessionModal
-  isOpen={sync.isSyncSessionOpen}
-  mode={sync.syncMode}
-  qrPayload={sync.syncQrPayloadText}
-  qrDataUrl={sync.syncQrDataUrl}
-  joinPayload={sync.syncJoinPayload}
-  statusText={sync.syncStatusText}
-  isBusy={sync.isSyncSessionBusy}
-  onJoinPayloadChange={(value: string) => (sync.syncJoinPayload = value)}
-  onConfirmJoin={() => sync.handleConfirmJoinSync(syncCtx())}
-  onCopyPayload={sync.copySyncPayload}
-  onClose={sync.closeModal}
-/>
-
-{#if session.isLoggedIn}
-  <DeviceManagementPanel
-    open={showDevicePanel}
-    userId={session.userId}
-    myDeviceId={session.myDeviceId}
-    mlsService={session.ensureMls()}
-    onClose={() => (showDevicePanel = false)}
-  />
-{/if}

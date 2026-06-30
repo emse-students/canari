@@ -9,6 +9,7 @@
     ShoppingBag,
     FileText,
     User,
+    SlidersHorizontal,
     Moon,
     Sun,
     LogOut,
@@ -130,8 +131,10 @@
 
   <!-- Compte (mobile uniquement) -->
   <section class="mb-8 md:hidden">
-    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">{m.dashboard_account_heading()}</h2>
-    <div class="grid grid-cols-3 gap-3">
+    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+      {m.dashboard_account_heading()}
+    </h2>
+    <div class="grid grid-cols-2 gap-3">
       <button
         type="button"
         onclick={() => goto('/profile')}
@@ -140,6 +143,16 @@
       >
         <User size={22} class="text-text-muted" />
         <span class="text-sm font-medium text-text-main">{m.dashboard_profile_btn()}</span>
+      </button>
+
+      <button
+        type="button"
+        onclick={() => goto('/settings')}
+        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        title={m.dashboard_settings_title()}
+      >
+        <SlidersHorizontal size={22} class="text-text-muted" />
+        <span class="text-sm font-medium text-text-main">{m.dashboard_settings_btn()}</span>
       </button>
 
       <button
@@ -170,7 +183,9 @@
 
   <!-- Explorer (Agenda, Boutique, Associations, Formulaires) -->
   <section class="mb-8">
-    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">{m.dashboard_explore_heading()}</h2>
+    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+      {m.dashboard_explore_heading()}
+    </h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       {#each exploreItems as s (s.href)}
         {@render card(s)}
@@ -192,8 +207,12 @@
             title={m.dashboard_admin_generic_label()}
           >
             <Shield size={22} class="text-text-muted" />
-            <span class="text-sm font-medium text-text-main">{m.dashboard_admin_generic_label()}</span>
-            <span class="text-xs text-text-muted text-center">{m.dashboard_admin_generic_desc()}</span>
+            <span class="text-sm font-medium text-text-main"
+              >{m.dashboard_admin_generic_label()}</span
+            >
+            <span class="text-xs text-text-muted text-center"
+              >{m.dashboard_admin_generic_desc()}</span
+            >
           </a>
         {/if}
 
@@ -204,8 +223,12 @@
             title={m.dashboard_admin_moderation_label()}
           >
             <ShieldAlert size={22} class="text-red-500" />
-            <span class="text-sm font-medium text-text-main">{m.dashboard_admin_moderation_label()}</span>
-            <span class="text-xs text-text-muted text-center">{m.dashboard_admin_moderation_desc()}</span>
+            <span class="text-sm font-medium text-text-main"
+              >{m.dashboard_admin_moderation_label()}</span
+            >
+            <span class="text-xs text-text-muted text-center"
+              >{m.dashboard_admin_moderation_desc()}</span
+            >
           </a>
           <a
             href="/admin/status"
@@ -213,8 +236,12 @@
             title={m.dashboard_admin_status_label()}
           >
             <Activity size={22} class="text-text-muted" />
-            <span class="text-sm font-medium text-text-main">{m.dashboard_admin_status_label()}</span>
-            <span class="text-xs text-text-muted text-center">{m.dashboard_admin_status_desc()}</span>
+            <span class="text-sm font-medium text-text-main"
+              >{m.dashboard_admin_status_label()}</span
+            >
+            <span class="text-xs text-text-muted text-center"
+              >{m.dashboard_admin_status_desc()}</span
+            >
           </a>
           <a
             href="/admin/users"
@@ -222,8 +249,10 @@
             title={m.dashboard_admin_users_label()}
           >
             <UserCog size={22} class="text-amber-500" />
-            <span class="text-sm font-medium text-text-main">{m.dashboard_admin_users_label()}</span>
-            <span class="text-xs text-text-muted text-center">{m.dashboard_admin_users_desc()}</span>
+            <span class="text-sm font-medium text-text-main">{m.dashboard_admin_users_label()}</span
+            >
+            <span class="text-xs text-text-muted text-center">{m.dashboard_admin_users_desc()}</span
+            >
           </a>
         {/if}
       </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import {
@@ -15,13 +16,12 @@
   import { m } from '$lib/paraglide/messages';
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
 
-  interface Props {
-    /** Whether the device is touch-capable (shows the vibration toggle). */
-    isTouchDevice: boolean;
-  }
-
-  let { isTouchDevice }: Props = $props();
-
+  // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
+  // section needs no props and stays drop-in.
+  let isTouchDevice = $state(false);
+  onMount(() => {
+    isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+  });
 </script>
 
 <div

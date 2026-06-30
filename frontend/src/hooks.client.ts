@@ -147,7 +147,7 @@ if (isTauriRuntime()) {
                 } else if (sessionId) {
                   navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {
-                  navigate(`/profile?payment_setup=${encodeURIComponent(paymentSetup)}`);
+                  navigate(`/settings?payment_setup=${encodeURIComponent(paymentSetup)}`);
                 } else if (registered) {
                   const q = new URLSearchParams({ registered });
                   if (postId) q.set('post_id', postId);
@@ -161,7 +161,7 @@ if (isTauriRuntime()) {
                 } else if (sessionId) {
                   navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (paymentSetup) {
-                  navigate(`/profile?payment_setup=${encodeURIComponent(paymentSetup)}`);
+                  navigate(`/settings?payment_setup=${encodeURIComponent(paymentSetup)}`);
                 } else {
                   navigate('/forms');
                 }

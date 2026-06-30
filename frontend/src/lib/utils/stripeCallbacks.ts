@@ -48,8 +48,8 @@ export function shopCheckoutCallbacks(productId: string): {
   };
 }
 
-/** Stripe Setup Checkout callbacks for saving a card on the profile page. */
-export function profileSetupCallbacks(): { successUrl: string; cancelUrl: string } {
+/** Stripe Setup Checkout callbacks for saving a card on the settings page. */
+export function settingsSetupCallbacks(): { successUrl: string; cancelUrl: string } {
   if (isMobileTauri()) {
     return {
       successUrl: stripeDeepLink('success', 'payment_setup=success'),
@@ -57,7 +57,7 @@ export function profileSetupCallbacks(): { successUrl: string; cancelUrl: string
     };
   }
   return {
-    successUrl: webUrl('/profile?payment_setup=success'),
-    cancelUrl: webUrl('/profile?payment_setup=cancel'),
+    successUrl: webUrl('/settings?payment_setup=success'),
+    cancelUrl: webUrl('/settings?payment_setup=cancel'),
   };
 }
