@@ -13,16 +13,20 @@
     MessageCircle,
     UserPlus,
     UserCheck,
+    Users,
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
+  import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import {
     fetchUserMemberships,
     fetchUserRoleHistory,
+    fetchUserParrainage,
     type UserMembershipRow,
     type UserRoleHistoryRow,
+    type SkyEntourage,
   } from '$lib/profile/api';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Building2 } from '@lucide/svelte';
@@ -36,6 +40,7 @@
   let followLoading = $state(false);
   let memberships = $state<UserMembershipRow[]>([]);
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
+  let parrainage = $state<SkyEntourage | null>(null);
   let extrasLoading = $state(false);
 
   onMount(async () => {
@@ -70,6 +75,11 @@
         roleHistory = await fetchUserRoleHistory(userId);
       } catch {
         roleHistory = [];
+      }
+      try {
+        parrainage = await fetchUserParrainage(userId);
+      } catch {
+        parrainage = null;
       } finally {
         extrasLoading = false;
       }
@@ -213,6 +223,22 @@
       >
         <h2 class="text-lg font-extrabold text-text-main mb-5">{m.profile_public_career_heading()}</h2>
         <ProfileRoleHistorySection entries={roleHistory} />
+      </div>
+    {/if}
+
+    {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || extrasLoading}
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
+      >
+        <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
+          <Users size={20} />
+          {m.profile_public_sponsorship_heading()}
+        </h2>
+        <ProfileParrainageSection
+          parrains={parrainage?.parrains ?? []}
+          fillots={parrainage?.fillots ?? []}
+          loading={extrasLoading}
+        />
       </div>
     {/if}
 

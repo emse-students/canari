@@ -10,6 +10,7 @@ import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
 import { ExternalModule } from './external/external.module';
+import { SkyModule } from './sky/sky.module';
 
 /** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
@@ -34,6 +35,7 @@ import { ExternalModule } from './external/external.module';
     PaymentModule,
     VersionModule,
     ExternalModule,
+    SkyModule,
   ],
   controllers: [AppController],
   providers: [AppService],

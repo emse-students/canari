@@ -633,7 +633,7 @@
         </div>
 
         <div
-          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm md:col-span-2"
+          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
         >
           <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
             <CalendarDays size={20} strokeWidth={2.5} />

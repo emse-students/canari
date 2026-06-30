@@ -59,6 +59,32 @@ export async function fetchUserRoleHistory(userId: string): Promise<UserRoleHist
   return (await res.json()) as UserRoleHistoryRow[];
 }
 
+/** A parrainage relative from the Sky app, keyed by Authentik sub. */
+export interface SkyEntourageMember {
+  prenom: string;
+  nom: string;
+  level: number | null;
+  kind: string; // 'parrainage' (officiel) | 'adoption'
+  sub: string | null;
+}
+
+/** Parrainage entourage (sponsors / godchildren) of a user, from Sky. */
+export interface SkyEntourage {
+  found: boolean;
+  parrains: SkyEntourageMember[];
+  fillots: SkyEntourageMember[];
+}
+
+/**
+ * Loads a user's parrainage entourage from the Sky app (via the core-service
+ * proxy). Read-only; returns an empty tree if Sky is unreachable or unlinked.
+ */
+export async function fetchUserParrainage(userId: string): Promise<SkyEntourage> {
+  const res = await apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}/parrainage`);
+  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  return (await res.json()) as SkyEntourage;
+}
+
 /** Adds a role history entry to the caller's profile. */
 export async function createMyRoleHistory(payload: {
   associationId: string;

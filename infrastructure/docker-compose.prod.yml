@@ -261,6 +261,8 @@ services:
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
+      SKY_API_URL: ${SKY_API_URL:-https://sky.mitv.fr}
+      SKY_API_KEY: ${SKY_API_KEY:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
     depends_on:

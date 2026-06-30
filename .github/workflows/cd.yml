@@ -464,6 +464,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           INTERNAL_SECRET: ${{ secrets.INTERNAL_SECRET }}
           EXTERNAL_API_KEY: ${{ secrets.EXTERNAL_API_KEY }}
+          SKY_API_KEY: ${{ secrets.SKY_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
@@ -534,6 +535,12 @@ jobs:
             upsert_env_var "EXTERNAL_API_KEY" "$EXTERNAL_API_KEY"
           else
             echo "::warning::EXTERNAL_API_KEY is not set - external profile API (Sky) will reject all requests"
+          fi
+
+          if [ -n "$SKY_API_KEY" ]; then
+            upsert_env_var "SKY_API_KEY" "$SKY_API_KEY"
+          else
+            echo "::warning::SKY_API_KEY is not set - Sky parrainage tree on profiles will be empty"
           fi
 
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
