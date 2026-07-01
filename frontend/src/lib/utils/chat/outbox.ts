@@ -7,6 +7,7 @@ import { encodeAppMessage, mkText, mkReply, mkMedia, mediaKindToType } from '$li
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
+import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
@@ -223,6 +224,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) return 'skip';
+
+    // The MLS outbox is for DMs/groups only. A channel entry (server-authoritative, no MLS group)
+    // can only have leaked in through a bug: it would loop forever on resolveTerminalGroup and
+    // requestReAdd 500s. Drop it so a stale entry cannot storm the delivery service.
+    if (isChannelConversationId(entry.conversationId)) {
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… channel entry - dropped (channels do not use MLS)`);
+      await storage?.deleteOutboxEntry(entry.id).catch(() => {});
+      return 'error';
+    }
 
     const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(
       mlsService,

@@ -234,6 +234,23 @@ describe('outbox flusher', () => {
     expect(storage._map.has('c1')).toBe(false);
   });
 
+  it('drops a channel entry without any MLS call (channels are server-authoritative)', async () => {
+    const storage = makeStorage([textEntry('m1', 'channel_ee943652', 100)]);
+    const mlsService = makeMls();
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, requestReAdd, isGroupHealthy: () => true })
+    );
+
+    await outbox.flush();
+
+    // No welcome-request / group resolution loop: the channel entry is simply purged.
+    expect(mlsService.getGroupMeta).not.toHaveBeenCalled();
+    expect(requestReAdd).not.toHaveBeenCalled();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(false);
+  });
+
   it('does not send into an unhealthy group; emits welcome_request and keeps the entry pending', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls();

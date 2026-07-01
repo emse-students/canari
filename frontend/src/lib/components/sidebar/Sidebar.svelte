@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { Hash, Lock, MessageSquarePlus, Plus } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -81,6 +82,8 @@
     onSelectConversation: (name: string) => void;
     /** Callback fired when the user selects a channel conversation. */
     onSelectChannelConversation?: (channelId: string) => void;
+    /** Callback fired when the user switches to a different community (deselects the open channel). */
+    onSelectCommunity?: (workspaceId: string) => void;
     /** ID of the currently active channel. */
     selectedChannelId?: string;
     /** When true, the sidebar is hidden on mobile (shown only on desktop). */
@@ -115,6 +118,7 @@
     onLeaveWorkspace,
     onSelectConversation,
     onSelectChannelConversation,
+    onSelectCommunity,
     selectedChannelId = '',
     isHidden = false,
     drawerMode = false,
@@ -143,11 +147,14 @@
   );
 
   // When a channel is selected externally (e.g. "Rejoindre" button after invite),
-  // auto-reveal the workspace that contains it.
+  // auto-reveal the workspace that contains it. selectedCommunityWorkspaceId is read via
+  // untrack so this effect depends only on the selected channel: without it, a manual
+  // community switch (which changes selectedCommunityWorkspaceId while a channel of another
+  // community is still open) would re-run this effect and snap the selection right back.
   $effect(() => {
     if (!selectedChannelId || viewMode !== 'communities') return;
     const ws = channelWorkspaces.find((w) => w.channels.some((ch) => ch.id === selectedChannelId));
-    if (ws && selectedCommunityWorkspaceId !== ws.id) {
+    if (ws && untrack(() => selectedCommunityWorkspaceId) !== ws.id) {
       selectedCommunityWorkspaceId = ws.id;
     }
   });
@@ -296,7 +303,11 @@
             ? 'ring-2 ring-cn-yellow ring-offset-2 ring-offset-cn-bg'
             : 'opacity-70 hover:opacity-100 hover:rounded-xl'}"
           onclick={() => {
+            if (selectedCommunityWorkspaceId === workspace.id) return;
             selectedCommunityWorkspaceId = workspace.id;
+            // Deselect the currently open channel so nothing is shown until the user
+            // explicitly picks a channel in the newly selected community.
+            onSelectCommunity?.(workspace.id);
           }}
           title={workspace.name}
           aria-label={workspace.name}

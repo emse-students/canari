@@ -317,6 +317,12 @@
         convs.selectConversation(channelId);
         void convs.loadHistoryForConversation(channelId, channelId, convCtx());
       },
+      onSelectCommunity: () => {
+        // Switching community must not keep the previous channel open: clear the selection
+        // so the chat area shows nothing until a channel of the new community is picked.
+        channels.selectedChannelConversationId = '';
+        convs.selectedContact = null;
+      },
       onRefresh: async () => {
         // If disconnected, give the auto-reconnect mechanism a moment to kick in.
         // The actual reconnect is triggered by the visibility-change watchdog in
@@ -344,6 +350,10 @@
   $effect(() => {
     if (!convs.selectedContact || !session.isLoggedIn) return;
     if (!isWindowFocused || !isTabVisible) return;
+    // Channels are server-authoritative and have no MLS group: their read receipts must never
+    // go through the MLS outbox (sendReadReceipt -> enqueueControlEvent), otherwise the flusher
+    // loops forever on resolveTerminalGroup/welcome-request 500s for a channel_ conversation id.
+    if (isSelectedChannel) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
@@ -482,6 +492,7 @@
       }
       pendingReadReceipts = [];
       convs.selectedContact = null;
+      channels.selectedChannelConversationId = '';
       convs.isChannelSettingsModalOpen = false;
       convs.isChannelMembersDrawerOpen = false;
       convs.sendError = '';
