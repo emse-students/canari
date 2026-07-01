@@ -16,6 +16,7 @@ import {
   DirectoryQueryDto,
   DirectoryUserRow,
 } from './dto/user.dto';
+import { applyFuzzyNameSearch } from './userSearch';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -155,8 +156,8 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
-   * Search users by displayName - case-insensitive, accent-insensitive, and
-   * word-order-insensitive. All whitespace-delimited terms must match.
+   * Search users by displayName - case-insensitive, accent-insensitive, word-order-insensitive,
+   * and typo-tolerant (trigram fuzzy matching). Results are ordered by closeness to the query.
    * Returns up to 10 results, excluding the current user if specified.
    */
   async search(
@@ -167,20 +168,13 @@ export class UsersService implements OnModuleInit {
     if (query.length > 200)
       throw new BadRequestException('Search query too long (max 200 chars)');
 
-    const terms = query.trim().split(/\s+/).filter(Boolean);
-    this.logger.debug(`search terms: ${JSON.stringify(terms)}`);
-
     const qb = this.userRepository
       .createQueryBuilder('user')
       .select(['user.id', 'user.displayName']);
 
-    // Each term must appear somewhere in the name (AND logic across terms)
-    terms.forEach((term, i) => {
-      qb.andWhere(
-        `unaccent(LOWER(user.displayName)) LIKE unaccent(LOWER(:term${i}))`,
-        { [`term${i}`]: `%${term}%` },
-      );
-    });
+    // Accent-insensitive, word-order-insensitive, typo-tolerant name matching + relevance ordering.
+    const applied = applyFuzzyNameSearch(qb, query);
+    if (!applied) return [];
 
     if (excludeUserId) {
       qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
