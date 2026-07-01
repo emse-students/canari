@@ -1,6 +1,8 @@
 import { getAssociationBySlug, associationLogoSrc } from '$lib/associations/api';
 import { getForm } from '$lib/forms/api';
 import { getPost } from '$lib/posts/api';
+import { getGroupInvitePreview } from '$lib/mls/groupInvites';
+import { channelService } from '$lib/services/ChannelService';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import {
   formatPriceCents,
@@ -92,6 +94,27 @@ async function fetchProfilePreview(userId: string): Promise<CanariLinkPreview> {
   };
 }
 
+async function fetchCommunityInvitePreview(token: string): Promise<CanariLinkPreview> {
+  const preview = await channelService.getInvitePreview(token);
+  return {
+    kind: 'route',
+    categoryLabel: 'Invitation communauté',
+    title: preview.workspaceName?.trim() || 'Communauté',
+    subtitle: preview.valid ? 'Rejoindre la communauté' : 'Invitation invalide ou expirée',
+    imageUrl: preview.imageMediaId ? `/api/media/public/${preview.imageMediaId}` : null,
+  };
+}
+
+async function fetchGroupInvitePreview(token: string): Promise<CanariLinkPreview> {
+  const preview = await getGroupInvitePreview(token);
+  return {
+    kind: 'route',
+    categoryLabel: 'Invitation discussion',
+    title: preview.groupName?.trim() || 'Discussion',
+    subtitle: preview.valid ? 'Rejoindre la discussion' : 'Invitation invalide ou expirée',
+  };
+}
+
 /**
  * Loads title, subtitle, and optional image for a Canari in-app URL.
  * Results are cached per href string.
@@ -117,6 +140,12 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
         break;
       case 'profile':
         preview = await fetchProfilePreview(target.userId);
+        break;
+      case 'community-invite':
+        preview = await fetchCommunityInvitePreview(target.token);
+        break;
+      case 'group-invite':
+        preview = await fetchGroupInvitePreview(target.token);
         break;
       case 'route':
         preview = {

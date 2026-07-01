@@ -17,6 +17,8 @@ export type CanariLinkTarget =
   | { kind: 'form'; formId: string }
   | { kind: 'association'; slug: string }
   | { kind: 'profile'; userId: string }
+  | { kind: 'community-invite'; token: string }
+  | { kind: 'group-invite'; token: string }
   | { kind: 'route'; categoryLabel: string };
 
 /**
@@ -38,6 +40,12 @@ export function parseCanariLinkTarget(href: string): CanariLinkTarget | null {
 
   const profile = pathname.match(/^\/profile\/([^/]+)$/);
   if (profile) return { kind: 'profile', userId: profile[1] };
+
+  const communityInvite = pathname.match(/^\/c\/join\/([^/]+)$/);
+  if (communityInvite) return { kind: 'community-invite', token: communityInvite[1] };
+
+  const groupInvite = pathname.match(/^\/g\/join\/([^/]+)$/);
+  if (groupInvite) return { kind: 'group-invite', token: groupInvite[1] };
 
   const label = publicAppLinkLabel(href);
   if (label) return { kind: 'route', categoryLabel: label };

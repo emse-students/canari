@@ -33,6 +33,8 @@ describe('publicAppUrl', () => {
     expect(inAppPathFromHref('/forms/xyz')).toBe('/forms/xyz');
     expect(inAppPathFromHref('/dashboard')).toBe('/dashboard');
     expect(inAppPathFromHref('/admin/platform')).toBe('/admin/platform');
+    expect(inAppPathFromHref('/c/join/abc-token')).toBe('/c/join/abc-token');
+    expect(inAppPathFromHref('/g/join/xyz-token')).toBe('/g/join/xyz-token');
     expect(inAppPathFromHref('/unknown')).toBeNull();
   });
 
@@ -45,6 +47,12 @@ describe('publicAppUrl', () => {
 
   it('labels in-app links for the chat UI', () => {
     expect(publicAppLinkLabel('https://canari-emse.fr/posts/abc')).toBe('Publication');
+    expect(publicAppLinkLabel('https://canari-emse.fr/c/join/tok123')).toBe(
+      'Invitation communauté'
+    );
+    expect(publicAppLinkLabel('https://canari-emse.fr/g/join/tok456')).toBe(
+      'Invitation discussion'
+    );
     expect(publicAppLinkLabel('https://example.com/x')).toBeNull();
   });
 });

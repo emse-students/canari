@@ -22,6 +22,8 @@ export const MOBILE_UNIVERSAL_LINK_PATHS = [
   '/chat/*',
   '/communities',
   '/communities/*',
+  '/c/join/*',
+  '/g/join/*',
   '/notifications',
   '/notifications/*',
   '/calendar',
