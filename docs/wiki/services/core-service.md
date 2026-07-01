@@ -55,6 +55,23 @@ Dev only (disabled in production via `ENABLE_DEV_ROUTES=false`):
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
 | PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
 
+#### Name search (search + directory)
+
+Both `/users/search` (autocomplete, top 10) and the name query of `/users/directory` share one
+matcher (`applyFuzzyNameSearch` in `users/userSearch.ts`), so they behave identically:
+
+- **Accent- and case-insensitive** via the `unaccent` extension.
+- **Word-order-insensitive**: the query is split into whitespace terms AND-ed together, each matching
+  anywhere in the display name (so "dupont jean" finds "Jean Dupont").
+- **Typo-tolerant**: a term of >= 3 chars matches either as a substring OR by trigram
+  `word_similarity` (>= 0.4) via the `pg_trgm` extension, so a single-character typo still finds the
+  person. Terms of 1-2 chars match by substring only (too few trigrams to be meaningful).
+- **Relevance-ranked**: results are ordered by a `search_score` (exact whole-query substring boost +
+  trigram `similarity` of the whole name), closest first, then alphabetically. The directory keeps
+  its alphabetical order when browsing by filters only (no name query).
+
+Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`.
+
 ### Platform admin
 
 | Method | Path | Auth | Description |
