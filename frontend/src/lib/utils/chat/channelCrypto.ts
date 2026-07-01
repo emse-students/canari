@@ -5,6 +5,7 @@ import {
   type ChannelPollInput,
 } from '$lib/services/ChannelService';
 import { encodeAppMessage, mkPoll } from '$lib/proto/codec';
+import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 
 const channelService = new ChannelService();
 
@@ -64,7 +65,7 @@ export async function hydrateChannelBootstrap(
   const rawKeyMat = Uint8Array.from(atob(resolvedBootstrap.newEpochBaseKey), (char) =>
     char.charCodeAt(0)
   );
-  await channelKeyManager.getVault(rawChannelId).rotateKey(resolvedBootstrap.keyVersion, rawKeyMat);
+  await importChannelEpochKey(rawChannelId, resolvedBootstrap.keyVersion, rawKeyMat);
 
   return resolvedBootstrap;
 }
@@ -80,7 +81,8 @@ export async function sendEncryptedChannelMessage(
   channelId: string,
   payloadBytes: Uint8Array,
   messageId?: string,
-  poll?: ChannelPollInput
+  poll?: ChannelPollInput,
+  mentionedUserIds?: string[]
 ): Promise<void> {
   const rawChannelId = normalizeChannelId(channelId);
 
@@ -92,6 +94,7 @@ export async function sendEncryptedChannelMessage(
       keyVersion: encrypted.keyVersion,
       ...(messageId ? { messageId } : {}),
       ...(poll ? { poll } : {}),
+      ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
     });
   };
 

@@ -39,6 +39,53 @@ pub fn decrypt_push_message(
     }
 }
 
+/// Decrypts a channel-message push (AES-256-GCM) and returns the message metadata JSON.
+///
+/// Channel messages are NOT MLS: they are AES-256-GCM encrypted with a per-epoch key the client
+/// already holds (mirrored to `channel_keys.json` by the foreground). The push carries the inline
+/// ciphertext (`ciphertext||tag`) and 12-byte nonce; the raw 32-byte epoch key is looked up natively
+/// so the plaintext never transits Google/FCM. The decrypted bytes are the same encoded AppMessage
+/// proto as MLS, so `extract_full_message_info` parses them identically.
+pub fn decrypt_channel_message(
+    raw_key: &[u8],
+    nonce: &[u8],
+    ciphertext: &[u8],
+) -> Option<serde_json::Value> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+    if raw_key.len() != 32 {
+        log::error!(
+            "[ChannelBG] invalid key length: {} (want 32)",
+            raw_key.len()
+        );
+        return None;
+    }
+    if nonce.len() != 12 {
+        log::error!(
+            "[ChannelBG] invalid nonce length: {} (want 12)",
+            nonce.len()
+        );
+        return None;
+    }
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(raw_key));
+    let plaintext = match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("[ChannelBG] AES-GCM decrypt failed: {e}");
+            return None;
+        }
+    };
+
+    let info = extract_full_message_info(&plaintext);
+    if info["ok"].as_bool().unwrap_or(false) {
+        Some(info)
+    } else {
+        None
+    }
+}
+
 /// Cree un Welcome MLS pour un nouveau device (background, app tuee).
 pub fn create_welcome_background(
     files_dir: &Path,

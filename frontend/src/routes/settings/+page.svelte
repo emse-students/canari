@@ -4,7 +4,6 @@
   import { SlidersHorizontal } from '@lucide/svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
-  import SettingsNotepadSection from '$lib/components/settings/SettingsNotepadSection.svelte';
   import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
   import SettingsSyncSection from '$lib/components/settings/SettingsSyncSection.svelte';
   import SettingsPaymentsSection from '$lib/components/settings/SettingsPaymentsSection.svelte';
@@ -36,7 +35,6 @@
   </div>
 
   <SettingsPreferencesSection />
-  <SettingsNotepadSection />
   <SettingsSecuritySection />
   <SettingsSyncSection />
   <SettingsPaymentsSection />

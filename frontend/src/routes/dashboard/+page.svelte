@@ -129,12 +129,13 @@
     </a>
   {/snippet}
 
-  <!-- Compte (mobile uniquement) -->
-  <section class="mb-8 md:hidden">
+  <!-- Account quick actions. Shown on every viewport: desktop also has the sidebar gear, but the
+       dashboard is a discoverable hub where users expect profile / settings / theme / logout too. -->
+  <section class="mb-8">
     <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
       {m.dashboard_account_heading()}
     </h2>
-    <div class="grid grid-cols-2 gap-3">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <button
         type="button"
         onclick={() => goto('/profile')}

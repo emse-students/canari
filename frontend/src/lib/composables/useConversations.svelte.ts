@@ -316,6 +316,7 @@ export function useConversations() {
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
     const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
+    const { importChannelEpochKey } = await import('$lib/utils/chat/channelKeyMirror');
     const { decodeAppMessage } = await import('$lib/proto/codec');
     const { appMsgToEnvelope } = await import('$lib/utils/chat/messageUtils');
     const { parseServerTimestampMs } = await import('$lib/mls-client/incomingDelivery');
@@ -345,14 +346,13 @@ export function useConversations() {
       // Hydrate all known epochs before decrypting history.
       try {
         const historyKeys = await channelService.getChannelHistoryKeys(rawId);
-        const vault = channelKeyManager.getVault(rawId);
         for (const keyEntry of historyKeys.epochKeys || []) {
           if (!Number.isFinite(keyEntry.keyVersion) || keyEntry.keyVersion <= 0) continue;
           if (!keyEntry.encryptedChannelKey) continue;
           const rawKeyMat = Uint8Array.from(atob(keyEntry.encryptedChannelKey), (c) =>
             c.charCodeAt(0)
           );
-          await vault.rotateKey(keyEntry.keyVersion, rawKeyMat);
+          await importChannelEpochKey(rawId, keyEntry.keyVersion, rawKeyMat);
         }
       } catch (e) {
         ctx.log(

@@ -12,6 +12,7 @@
     deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     type AssociationCalendarEvent,
+    type AssociationCalendarEventKind,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
   } from '$lib/associations/api';
@@ -93,6 +94,8 @@
   });
   let editingId = $state<string | null>(null);
   let formTitle = $state('');
+  /** `event` (a card) or `break` (a full-day background band for vacations / no-course days). */
+  let formKind = $state<AssociationCalendarEventKind>('event');
   let formDescription = $state('');
   /** datetime-local strings */
   let formStart = $state('');
@@ -287,6 +290,7 @@
   async function openCreate() {
     editingId = null;
     formTitle = '';
+    formKind = 'event';
     formDescription = '';
     formLinkedFormId = '';
     formCoOwnerIds = [];
@@ -303,6 +307,7 @@
   async function openEdit(ev: AssociationCalendarEvent) {
     editingId = ev.id;
     formTitle = ev.title;
+    formKind = ev.kind ?? 'event';
     formDescription = ev.description ?? '';
     formStart = toDatetimeLocalValue(ev.startsAt);
     formEnd = ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '';
@@ -378,6 +383,7 @@
       if (editingId) {
         await updateAssociationCalendarEvent(associationId, editingId, {
           title: formTitle.trim(),
+          kind: formKind,
           description: formDescription.trim() || undefined,
           startsAt: startIso,
           endsAt: endIso,
@@ -387,6 +393,7 @@
       } else {
         await createAssociationCalendarEvent(associationId, {
           title: formTitle.trim(),
+          kind: formKind,
           description: formDescription.trim() || undefined,
           startsAt: startIso,
           endsAt: endIso,
@@ -652,6 +659,39 @@
         </p>
       {/if}
       <Input label={m.asso_calendar_event_title_label()} bind:value={formTitle} />
+
+      <!-- Entry kind: normal event card vs full-day background band (break / vacation). -->
+      <div>
+        <span class="block text-sm font-bold text-text-main mb-1 ml-1"
+          >{m.asso_calendar_event_kind_label()}</span
+        >
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onclick={() => (formKind = 'event')}
+            class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
+            'event'
+              ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+              : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
+          >
+            {m.asso_calendar_event_kind_event()}
+          </button>
+          <button
+            type="button"
+            onclick={() => (formKind = 'break')}
+            class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
+            'break'
+              ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+              : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
+          >
+            {m.asso_calendar_event_kind_break()}
+          </button>
+        </div>
+        {#if formKind === 'break'}
+          <p class="text-xs text-text-muted mt-1 ml-1">{m.asso_calendar_event_kind_break_hint()}</p>
+        {/if}
+      </div>
+
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-start"

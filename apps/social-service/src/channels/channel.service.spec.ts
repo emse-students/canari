@@ -333,4 +333,92 @@ describe('ChannelService security hardening', () => {
     );
     expect(distribution.status).toBe('key_acked');
   });
+
+  it('getNotificationLevel defaults to all and returns the stored value', async () => {
+    const { service, channelRepo, memberRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+
+    memberRepo.findOne.mockResolvedValueOnce({ workspaceId: 'ws1', userId: 'u1', notifLevels: {} });
+    await expect(service.getNotificationLevel('ch1', 'u1')).resolves.toEqual({
+      channelId: 'ch1',
+      level: 'all',
+    });
+
+    memberRepo.findOne.mockResolvedValueOnce({
+      workspaceId: 'ws1',
+      userId: 'u1',
+      notifLevels: { ch1: 'mentions' },
+    });
+    await expect(service.getNotificationLevel('ch1', 'u1')).resolves.toEqual({
+      channelId: 'ch1',
+      level: 'mentions',
+    });
+  });
+
+  it('setNotificationLevel persists the level and rejects non-members', async () => {
+    const { service, channelRepo, memberRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+
+    const member = { workspaceId: 'ws1', userId: 'u1', notifLevels: {} as Record<string, string> };
+    memberRepo.findOne.mockResolvedValueOnce(member);
+    await expect(service.setNotificationLevel('ch1', 'u1', 'none')).resolves.toEqual({
+      channelId: 'ch1',
+      level: 'none',
+    });
+    expect(member.notifLevels).toEqual({ ch1: 'none' });
+    expect(memberRepo.save).toHaveBeenCalledWith(member);
+
+    memberRepo.findOne.mockResolvedValueOnce(null);
+    await expect(service.setNotificationLevel('ch1', 'uX', 'all')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+  });
+
+  it('notifyChannelRecipients honours per-channel level and mentions, skipping the sender', async () => {
+    const prevSecret = process.env.INTERNAL_SECRET;
+    const prevFetch = global.fetch;
+    process.env.INTERNAL_SECRET = 'test-secret';
+    const fetchMock = jest.fn((_url: string, _init: { body: string }) =>
+      Promise.resolve({ ok: true } as Response)
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      // The service caches INTERNAL_SECRET at construction time, so build it after setting the env.
+      const { service, memberRepo } = makeService();
+      const channel = {
+        id: 'ch1',
+        workspaceId: 'ws1',
+        name: 'general',
+        isPrivate: false,
+        allowedRoles: [] as string[],
+        allowedUsers: [] as string[],
+        keyVersion: 1,
+      };
+      memberRepo.find.mockResolvedValue([
+        { userId: 'u1', roleIds: [], notifLevels: {} }, // sender - skipped
+        { userId: 'u2', roleIds: [], notifLevels: {} }, // all (default) -> push
+        { userId: 'u3', roleIds: [], notifLevels: { ch1: 'none' } }, // none -> skip
+        { userId: 'u4', roleIds: [], notifLevels: { ch1: 'mentions' } }, // mentions, not mentioned -> skip
+        { userId: 'u5', roleIds: [], notifLevels: { ch1: 'mentions' } }, // mentions, mentioned -> push
+      ]);
+
+      await (
+        service as unknown as {
+          notifyChannelRecipients: (c: unknown, m: unknown, i: unknown) => Promise<void>;
+        }
+      ).notifyChannelRecipients(
+        channel,
+        { id: 'm1', keyVersion: 1, createdAt: new Date() },
+        { senderId: 'u1', ciphertext: 'c', nonce: 'n', mentionedUserIds: ['u5'] }
+      );
+
+      const notifiedUsers = fetchMock.mock.calls
+        .map((call) => JSON.parse(call[1].body).userId as string)
+        .sort();
+      expect(notifiedUsers).toEqual(['u2', 'u5']);
+    } finally {
+      process.env.INTERNAL_SECRET = prevSecret;
+      global.fetch = prevFetch;
+    }
+  });
 });

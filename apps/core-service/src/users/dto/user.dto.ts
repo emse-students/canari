@@ -21,6 +21,25 @@ const NormalizeText = () =>
       : value,
   );
 
+/**
+ * Like {@link NormalizeText} but preserves newlines and tabs, for multi-line fields (e.g. bio).
+ * A newline (U+000A) is a control char (`\p{Cc}`), so the plain NormalizeText strips it - which
+ * silently deleted every line break on save. Here we keep `\n` and `\t` while still removing the
+ * dangerous control/format chars (zero-width, bidi overrides, other C0/C1); a stray `\r` is dropped,
+ * turning CRLF into LF.
+ */
+const NormalizeMultilineText = () =>
+  Transform(({ value }: { value: unknown }): unknown =>
+    typeof value === 'string'
+      ? value
+          .normalize('NFKC')
+          .replace(/[\p{Cc}\p{Cf}]/gu, (ch) =>
+            ch === '\n' || ch === '\t' ? ch : '',
+          )
+          .trim()
+      : value,
+  );
+
 /** Payload for provisioning a new user record after OIDC sign-in. */
 export class CreateUserDto {
   /** OIDC subject - used as the primary key. */
@@ -66,8 +85,8 @@ export class CreateUserDto {
 
 /** Payload for updating mutable user profile fields. */
 export class UpdateUserDto {
-  /** Short user biography (max 500 chars). */
-  @NormalizeText()
+  /** Short user biography (max 500 chars). Multi-line: line breaks are preserved. */
+  @NormalizeMultilineText()
   @IsString()
   @MaxLength(500)
   @IsOptional()

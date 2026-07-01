@@ -6,6 +6,18 @@ export enum AssociationCalendarEventStatus {
   Rejected = 'rejected',
 }
 
+/**
+ * Visual kind of a calendar entry.
+ * - `event`: a normal event, shown as a card occupying an event slot.
+ * - `break`: a no-course / vacation / holiday period, shown as a full-day background band behind
+ *   events and NOT occupying an event slot. Purely graphical; other associations' events still run
+ *   on those days.
+ */
+export enum AssociationCalendarEventKind {
+  Event = 'event',
+  Break = 'break',
+}
+
 /** Scheduled event displayed on an association public page (meetings, deadlines, etc.). */
 @Entity('association_calendar_events')
 export class AssociationCalendarEvent {
@@ -30,6 +42,10 @@ export class AssociationCalendarEvent {
 
   @Column({ type: 'varchar', length: 255 })
   createdBy: string;
+
+  /** Visual kind: normal `event` (card) or `break` (full-day background band). */
+  @Column({ type: 'varchar', length: 16, default: AssociationCalendarEventKind.Event })
+  kind: AssociationCalendarEventKind;
 
   @Column({
     type: 'varchar',

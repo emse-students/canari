@@ -128,6 +128,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ciphertext: ByteArray
     ): String
 
+    // Decrypts a channel-message push (AES-256-GCM). All args base64: raw 32-byte epoch key,
+    // 12-byte nonce, ciphertext||tag. Returns the same JSON shape as nativeDecryptMessage,
+    // or {"ok":false} on failure. Channel messages are NOT MLS (no state file involved).
+    external fun nativeDecryptChannelMessage(
+        keyB64: String,
+        nonceB64: String,
+        ciphertextB64: String
+    ): String
+
     /**
      * Crée un paquet Welcome MLS pour [keyPackageB64] dans le groupe [groupId].
      * Sauvegarde l'état MLS mis à jour dans {filesDir}/mls.bin.
@@ -283,6 +292,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val channel = if (msgType == "form_reminder") CHANNEL_FORMS else CHANNEL_SOCIAL
             Log.d(TAG, "showSimpleNotification: type=$msgType channel=$channel title=$title deepLink=$deepLink")
             showSimpleNotification(title, body, deepLink, channel)
+            return
+        }
+
+        // Community (channel) encrypted message: AES-256-GCM, key looked up in channel_keys.json.
+        // Not MLS: no mls.bin, no MlsStateLock - decryption is stateless and read-only.
+        if (msgType == "channel") {
+            Log.d(TAG, "type=channel → groupId=${data["channelId"]} - background channel notification")
+            runWithWakeLock("fcm_channel") {
+                handleChannelMessage(data)
+            }
             return
         }
 
@@ -1583,6 +1602,83 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .build()
         manager.notify(notifId, notification)
     }
+
+    // ── Channel (community) message push ──────────────────────────────────────
+
+    /**
+     * Decrypts a channel-message push and shows a notification. The epoch key is read from the
+     * app-private `channel_keys.json` mirror (written by the foreground); the inline ciphertext is
+     * AES-256-GCM-decrypted natively so the plaintext never transits FCM. Falls back to a generic
+     * body when the key is missing (channel not yet hydrated) or the ciphertext was too large to
+     * inline (omitted server-side).
+     */
+    private fun handleChannelMessage(data: Map<String, String>) {
+        val channelId   = data["channelId"] ?: ""
+        val channelName = data["channelName"]?.takeIf { it.isNotEmpty() } ?: "Salon"
+        val keyVersion  = data["keyVersion"] ?: ""
+        val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
+        val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
+        val senderId    = data["senderId"] ?: ""
+        if (channelId.isEmpty()) {
+            Log.e(TAG, "handleChannelMessage: channelId manquant → abandon")
+            return
+        }
+        // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
+        val conversationId = "channel_$channelId"
+
+        val keyB64 = if (ciphertext != null && nonce != null) lookupChannelKey(channelId, keyVersion) else null
+        val body: String = if (keyB64 != null && ciphertext != null && nonce != null) {
+            try {
+                val json = JSONObject(nativeDecryptChannelMessage(keyB64, nonce, ciphertext))
+                if (json.optBoolean("ok", false)) {
+                    json.optString("text").takeIf { it.isNotEmpty() }?.take(200)
+                        ?: buildChannelFallbackText(channelName)
+                } else {
+                    Log.w(TAG, "handleChannelMessage: decrypt ok=false channel=$channelId")
+                    buildChannelFallbackText(channelName)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.message}")
+                buildChannelFallbackText(channelName)
+            }
+        } else {
+            Log.d(TAG, "handleChannelMessage: no key/ciphertext → generic notification channel=$channelId")
+            buildChannelFallbackText(channelName)
+        }
+
+        val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
+        Log.d(TAG, "handleChannelMessage: showNotification channel=#$channelName body=${body.take(60)}")
+        showNotification(
+            senderName = "#$channelName",
+            groupName  = "",
+            body       = body,
+            largeIcon  = largeIcon,
+            groupId    = conversationId,
+        )
+    }
+
+    /** Looks up the raw epoch key (base64) for a channel/keyVersion in `channel_keys.json`, or null. */
+    private fun lookupChannelKey(channelId: String, keyVersion: String): String? {
+        return try {
+            val file = File(MlsContextLoader.tauriDataDir(this), "channel_keys.json")
+            if (!file.exists()) {
+                Log.w(TAG, "lookupChannelKey: channel_keys.json absent")
+                return null
+            }
+            JSONObject(file.readText())
+                .optJSONObject(channelId)
+                ?.optString(keyVersion)
+                ?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.e(TAG, "lookupChannelKey: ${e.message}")
+            null
+        }
+    }
+
+    /** Generic channel notification body used when the message cannot be decrypted. */
+    private fun buildChannelFallbackText(channelName: String): String =
+        "Nouveau message dans #$channelName"
 
     /** Texte de repli quand le déchiffrement MLS échoue (groupe non encore initialisé). */
     private fun buildFallbackText(senderName: String): String =

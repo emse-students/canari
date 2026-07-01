@@ -62,6 +62,18 @@ Channels use server-assisted symmetric encryption (not MLS):
 | POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
 | POST | `/api/channels/:channelId/members/leave` | Leave channel |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |
+| GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
+| PATCH | `/api/channels/:channelId/notification-level` | Set push level (`all` \| `mentions` \| `none`) |
+
+#### Channel push notifications
+
+Sending a channel message fans out FCM pushes to workspace members (background + app killed), via
+chat-delivery's `/internal/push/notify`. Each member has a per-channel level stored on
+`channel_members.notifLevels` (`all` default, `mentions`, `none`); `mentions` is routed from a
+cleartext `mentionedUserIds` list the sender attaches (metadata-only; content stays encrypted). The
+push carries the ciphertext inline; the Android native layer decrypts it locally with the epoch key
+mirrored to `channel_keys.json` (so plaintext never transits FCM). See the frontend chat module for
+the vault mirror and the per-channel level selector.
 
 ### Forms (`/api/forms`)
 

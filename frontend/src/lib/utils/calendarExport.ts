@@ -41,8 +41,15 @@ export interface CalendarExportOptions {
   gridOuterBorder?: string;
   /** Day number color on event-free cells (hex). Default: '#b8c4d0'. */
   emptyDayColor?: string;
-  /** Add a drop-shadow to the month title and weekday labels. Default: false. */
+  /**
+   * Add a Canva-style block shadow (a hard-offset duplicate of the text, no blur) behind the month
+   * title and weekday labels. The duplicate's color and offset are configurable below. Default: false.
+   */
   enableTextShadow?: boolean;
+  /** Block-shadow color (hex) - the color of the offset text duplicate. Default: '#f5c518'. */
+  textShadowColor?: string;
+  /** Block-shadow offset in pixels (applied on both x and y for a diagonal translation). Default: 2. */
+  textShadowOffset?: number;
 }
 
 /** Default values matching the original hardcoded design. */
@@ -62,6 +69,8 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   gridOuterBorder: '#151B2C',
   emptyDayColor: '#b8c4d0',
   enableTextShadow: false,
+  textShadowColor: '#f5c518',
+  textShadowOffset: 2,
 };
 
 type ResolvedOpts = Required<CalendarExportOptions>;
@@ -107,7 +116,7 @@ function buildCalendarCells(year: number, month: number): (number | null)[] {
   return cells;
 }
 
-function eventsOnDay(
+function entriesOnDay(
   events: AssociationCalendarFeedEvent[],
   year: number,
   month: number,
@@ -126,8 +135,46 @@ function eventsOnDay(
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
 }
 
+/** Normal event cards for a day (breaks excluded - they render as a background band). */
+function eventsOnDay(
+  events: AssociationCalendarFeedEvent[],
+  year: number,
+  month: number,
+  day: number
+): AssociationCalendarFeedEvent[] {
+  return entriesOnDay(events, year, month, day).filter((ev) => ev.kind !== 'break');
+}
+
+/** Break (no-course / vacation) entries overlapping a day, drawn as a full-day background band. */
+function breaksOnDay(
+  events: AssociationCalendarFeedEvent[],
+  year: number,
+  month: number,
+  day: number
+): AssociationCalendarFeedEvent[] {
+  return entriesOnDay(events, year, month, day).filter((ev) => ev.kind === 'break');
+}
+
 function safe(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Line-height shared by the event-title fit computation and the rendered spans (must match). */
+const EVENT_TITLE_LINE_HEIGHT = 1.25;
+
+/**
+ * Picks a font size, line clamp and horizontal padding so an event title fills the available cell
+ * height `availH` (px) with as many lines as fit, minimising truncation. The clamp is the physical
+ * last-resort cap (a cell has a fixed height); the lower font floor and the matched line-height let
+ * far more text show fully than a single ellipsised line would.
+ */
+function fitEventText(availH: number): { fontSize: number; clampCss: string; ph: number } {
+  const fontSize =
+    availH >= 56 ? 13 : availH >= 42 ? 12 : availH >= 30 ? 11 : availH >= 22 ? 10 : 9;
+  const maxLines = Math.max(1, Math.floor(availH / (fontSize * EVENT_TITLE_LINE_HEIGHT)));
+  const ph = availH >= 40 ? 8 : 5;
+  const clampCss = `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+  return { fontSize, clampCss, ph };
 }
 
 /** Reads a File and resolves to its base64 data: URL (no CORS, fully client-side). */
@@ -183,7 +230,12 @@ function buildCalendarHtml(
     Math.floor((CALENDAR_CONTAINER_HEIGHT - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows)
   );
 
-  const labelShadow = opts.enableTextShadow ? 'text-shadow:0 1px 5px rgba(0,0,0,0.4);' : '';
+  // Canva-style block shadow: a hard-offset duplicate of the text (0 blur radius), not a diffuse
+  // drop-shadow. The offset is applied on both axes for a diagonal translation, in the chosen color.
+  const blockShadow = opts.enableTextShadow
+    ? `text-shadow:${opts.textShadowOffset}px ${opts.textShadowOffset}px 0 ${opts.textShadowColor};`
+    : '';
+  const labelShadow = blockShadow;
   const headerRow = WEEKDAYS.map(
     (w, i) =>
       `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
@@ -207,10 +259,23 @@ function buildCalendarHtml(
       }
 
       const dayEvents = eventsOnDay(events, year, month, day);
+      const dayBreaks = breaksOnDay(events, year, month, day);
+      const breakColor = dayBreaks.length > 0 ? eventHexColors(dayBreaks[0])[0] : null;
+      // A 3px colored strip along the bottom edge, continuous across a break period.
+      const breakBand = breakColor
+        ? `<div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:${breakColor};"></div>`
+        : '';
+      // A faint full-cell tint so a break reads across days behind events.
+      const breakTint = breakColor
+        ? `<div style="position:absolute;inset:0;background:${breakColor};opacity:0.14;pointer-events:none;"></div>`
+        : '';
 
       if (dayEvents.length === 0) {
         const bg = isWeekend ? cellBgWeekend : cellBgNormal;
-        return `<div style="height:${CELL_H}px;background:${bg};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;padding:6px 7px;"><span style="font-size:12px;font-weight:700;color:${opts.emptyDayColor};">${day}</span></div>`;
+        const breakLabel = breakColor
+          ? `<div style="position:absolute;left:4px;right:4px;bottom:6px;text-align:center;font-size:9px;font-weight:800;color:${breakColor};line-height:1.15;overflow:hidden;">${safe(dayBreaks[0].title)}</div>`
+          : '';
+        return `<div style="position:relative;height:${CELL_H}px;background:${bg};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;padding:6px 7px;">${breakTint}<span style="position:relative;font-size:12px;font-weight:700;color:${opts.emptyDayColor};">${day}</span>${breakLabel}${breakBand}</div>`;
       }
 
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
@@ -254,31 +319,18 @@ function buildCalendarHtml(
             // explicit heights and doesn't collapse the text area (fixes bottom:0 rendering bug).
             const DAY_NUM_H = 20;
             const availH = slotH - DAY_NUM_H;
-            const fontSize = availH >= 52 ? 13 : availH >= 38 ? 12 : availH >= 28 ? 11 : 10;
-            const maxLines = Math.max(1, Math.floor(availH / (fontSize * 1.5)));
-            const ph = availH >= 40 ? 8 : 5;
-            const clampCss =
-              maxLines === 1
-                ? 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
-                : `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+            const { fontSize, clampCss, ph } = fitEventText(availH);
             return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;flex-direction:column;box-sizing:border-box;">
               ${watermark}
               <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:5px 0 0 6px;position:relative;"><span style="font-size:11px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
-              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.3;text-align:center;${clampCss}">${safe(ev.title)}</span></div>
+              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${clampCss}">${safe(ev.title)}</span></div>
             </div>`;
           } else {
             // Subsequent slots: no day number, title fully centred.
-            const availH = slotH;
-            const fontSize = availH >= 52 ? 13 : availH >= 38 ? 12 : availH >= 28 ? 11 : 10;
-            const maxLines = Math.max(1, Math.floor(availH / (fontSize * 1.5)));
-            const ph = availH >= 40 ? 8 : 5;
-            const clampCss =
-              maxLines === 1
-                ? 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
-                : `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
+            const { fontSize, clampCss, ph } = fitEventText(slotH);
             return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;align-items:center;justify-content:center;padding:0 ${ph}px;box-sizing:border-box;">
               ${watermark}
-              <span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:1.3;text-align:center;position:relative;${clampCss}">${safe(ev.title)}</span>
+              <span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${clampCss}">${safe(ev.title)}</span>
             </div>`;
           }
         }),
@@ -291,7 +343,7 @@ function buildCalendarHtml(
           : []),
       ];
 
-      return `<div style="height:${CELL_H}px;overflow:hidden;border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;">${rows.join('')}</div>`;
+      return `<div style="position:relative;height:${CELL_H}px;overflow:hidden;border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;">${breakTint}${rows.join('')}${breakBand}</div>`;
     })
     .join('');
 
@@ -311,7 +363,7 @@ function buildCalendarHtml(
     <div style="position:relative;">
       <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
         ${faviconHtml}
-        <h1 style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${opts.enableTextShadow ? 'text-shadow:0 2px 10px rgba(0,0,0,0.18);' : ''}">${safe(monthLabel)}</h1>
+        <h1 style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${blockShadow}">${safe(monthLabel)}</h1>
       </div>
       <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
@@ -321,12 +373,18 @@ function buildCalendarHtml(
     </div>`;
 }
 
+/** The 1080px logical width of the rendered calendar, shared by the preview and the export. */
+export const CALENDAR_CONTAINER_WIDTH = 1080;
+
 /**
- * Builds a complete standalone HTML document for use as an `<iframe srcdoc>` live preview.
- * Uses direct logo URLs (same-origin iframe - no CORS issue) and loads Google Fonts so the
- * preview fonts match the exported PDF.
+ * Builds the live-preview inner HTML, rendered *in the app document* (not an iframe) so it inherits
+ * the application's actual fonts ('Fredoka Variable' / 'Nunito Variable'). This is the key to a
+ * preview that matches the export pixel-for-pixel: the export rasterises the same markup with the
+ * same fonts and the same wrapper (width, background, font-family) via html2canvas. Logos use direct
+ * same-origin URLs (no CORS issue in-document); the export swaps them for pre-fetched data URLs only
+ * because html2canvas runs with `useCORS:false`.
  */
-export function buildPreviewDocument(
+export function buildPreviewInnerHtml(
   events: AssociationCalendarFeedEvent[],
   year: number,
   month: number,
@@ -334,12 +392,9 @@ export function buildPreviewDocument(
 ): string {
   const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
   const body = buildCalendarHtml(events, year, month, opts, 'direct', '/favicon.png');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&family=Nunito:wght@700;800&display=swap" rel="stylesheet">
-<style>*{box-sizing:border-box;margin:0;padding:0;}body{background:#f0f4f8;font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;}</style>
-</head><body><div style="position:relative;width:1080px;background:#f0f4f8;border-radius:12px;overflow:hidden;">${body}</div></body></html>`;
+  // Wrapper mirrors the export container exactly (width, background, font-family) so the two render
+  // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;background:#f0f4f8;font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;border-radius:12px;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -433,7 +488,8 @@ export async function exportCalendarMonth(
     const canvas = await html2canvas(container, {
       scale: 2,
       useCORS: false,
-      backgroundColor: '#f5f7fa',
+      // Match the preview wrapper background exactly so preview and export render identically.
+      backgroundColor: '#f0f4f8',
       logging: false,
     });
 

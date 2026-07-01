@@ -33,6 +33,7 @@ import {
   type ChannelBootstrapDto,
   type ChannelHistoryKeysDto,
   type ChannelKeyDistributionPayloadDto,
+  type ChannelNotificationLevel,
   type ChannelPollMeta,
 } from './dto/channel.dto';
 
@@ -1461,7 +1462,150 @@ export class ChannelService {
       )
       .catch((err) => this.logger.error(`Failed to publish channel message event: ${err}`));
 
+    // Fan out push notifications to offline/background members, honouring each member's
+    // per-channel level. Fire-and-forget: never block the HTTP response on FCM.
+    this.notifyChannelRecipients(channel, savedMsg, input).catch((err) =>
+      this.logger.error(`[CHANNEL_PUSH] fan-out failed channel=${channelId}: ${err}`)
+    );
+
     return savedMsg;
+  }
+
+  /**
+   * Sends a push notification for a new channel message to every workspace member who should
+   * receive one, according to their per-channel notification level:
+   *  - `none`  -> never;
+   *  - `mentions` -> only if the member is in `input.mentionedUserIds`;
+   *  - `all` (default) -> always.
+   * The sender is always skipped, as are members who cannot access the channel. The server holds
+   * the channel key but never decrypts here: the ciphertext travels inline so the device decrypts
+   * it locally (Google/FCM never sees the plaintext), mirroring the MLS DM push path.
+   */
+  private async notifyChannelRecipients(
+    channel: Channel,
+    message: ChannelMessage,
+    input: SendChannelMessageDto
+  ): Promise<void> {
+    if (!this.internalSecret) {
+      this.logger.warn('[CHANNEL_PUSH] INTERNAL_SECRET not set - channel push disabled');
+      return;
+    }
+
+    const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const mentioned = new Set((input.mentionedUserIds ?? []).map((id) => id.trim().toLowerCase()));
+
+    // FCM caps a data payload at ~4 KB; inline the ciphertext only when it comfortably fits,
+    // otherwise the device fetches the message by id (Phase 2). nonce stays inline (small).
+    const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : '';
+
+    const recipients = members.filter((member) => {
+      if (member.userId === input.senderId) return false;
+      if (!this.canAccessChannel(channel, member, member.userId)) return false;
+      const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
+      if (level === 'none') return false;
+      if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) return false;
+      return true;
+    });
+
+    if (recipients.length === 0) return;
+    this.logger.log(
+      `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`
+    );
+
+    const data: Record<string, string> = {
+      type: 'channel',
+      channelId: channel.id,
+      workspaceId: channel.workspaceId,
+      channelName: channel.name,
+      keyVersion: String(message.keyVersion ?? channel.keyVersion),
+      ciphertext: inlineCiphertext,
+      nonce: input.nonce,
+      senderId: input.senderId,
+      messageId: message.id,
+      createdAt: message.createdAt.toISOString(),
+    };
+
+    await Promise.all(
+      recipients.map((member) =>
+        this.sendInternalPush(member.userId, channel.name, {
+          ...data,
+          mentioned: mentioned.has(member.userId.trim().toLowerCase()) ? 'true' : 'false',
+        })
+      )
+    );
+  }
+
+  /**
+   * Posts a single user's push to chat-delivery's internal endpoint (where Firebase Admin lives).
+   * Best-effort: a failed push must never surface to the message sender.
+   */
+  private async sendInternalPush(
+    userId: string,
+    title: string,
+    data: Record<string, string>
+  ): Promise<void> {
+    try {
+      const res = await fetch(`${this.deliveryUrl}/internal/push/notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Internal-Secret': this.internalSecret,
+        },
+        // body left empty: the device composes the visible text after decrypting the ciphertext.
+        body: JSON.stringify({ userId, title, body: '', data }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) {
+        this.logger.warn(`[CHANNEL_PUSH] notify HTTP ${res.status} for user=${userId}`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'unknown error';
+      this.logger.warn(`[CHANNEL_PUSH] notify failed for user=${userId}: ${msg}`);
+    }
+  }
+
+  /**
+   * Sets the calling member's notification level for one channel. Validates that the user is a
+   * workspace member and can access the channel. Storing `all` keeps the map explicit (it is the
+   * default when absent, but an explicit entry lets the client show the chosen value).
+   */
+  async setNotificationLevel(
+    channelId: string,
+    userId: string,
+    level: ChannelNotificationLevel
+  ): Promise<{ channelId: string; level: ChannelNotificationLevel }> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+    if (!this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    member.notifLevels = { ...(member.notifLevels ?? {}), [channelId]: level };
+    await this.memberRepo.save(member);
+    this.logger.log(`[CHANNEL_PUSH] level set channel=${channelId} user=${userId} level=${level}`);
+    return { channelId, level };
+  }
+
+  /** Returns the calling member's notification level for one channel (`all` when never set). */
+  async getNotificationLevel(
+    channelId: string,
+    userId: string
+  ): Promise<{ channelId: string; level: ChannelNotificationLevel }> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+
+    const level: ChannelNotificationLevel = member.notifLevels?.[channelId] ?? 'all';
+    return { channelId, level };
   }
 
   /**

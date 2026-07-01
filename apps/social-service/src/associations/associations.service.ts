@@ -19,6 +19,7 @@ import { AssociationDocument } from './entities/association-document.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import {
   AssociationCalendarEvent,
+  AssociationCalendarEventKind,
   AssociationCalendarEventStatus,
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
@@ -663,6 +664,7 @@ export class AssociationsService {
       endsAt: endsAt ? endsAt.toISOString() : null,
       createdBy: e.createdBy,
       createdAt: createdAt.toISOString(),
+      kind: e.kind ?? AssociationCalendarEventKind.Event,
       linkedFormId: e.linkedFormId ?? null,
       status: e.status ?? AssociationCalendarEventStatus.Pending,
       validatedAt: e.validatedAt
@@ -955,6 +957,7 @@ export class AssociationsService {
       .addSelect('e.endsAt', 'endsAt')
       .addSelect('e.createdBy', 'createdBy')
       .addSelect('e.createdAt', 'createdAt')
+      .addSelect('e.kind', 'kind')
       .addSelect('e.linkedFormId', 'linkedFormId')
       .addSelect('e.status', 'status')
       .addSelect('e.validatedAt', 'validatedAt')
@@ -980,6 +983,7 @@ export class AssociationsService {
         endsAt: (r.endsAt as Date | null) ?? null,
         createdBy: r.createdBy as string,
         createdAt: r.createdAt as Date,
+        kind: (r.kind as AssociationCalendarEventKind) ?? AssociationCalendarEventKind.Event,
         linkedFormId: (r.linkedFormId as string | null) ?? null,
         status:
           (r.status as AssociationCalendarEventStatus) ?? AssociationCalendarEventStatus.Pending,
@@ -1065,6 +1069,7 @@ export class AssociationsService {
       .addSelect('e.endsAt', 'endsAt')
       .addSelect('e.createdBy', 'createdBy')
       .addSelect('e.createdAt', 'createdAt')
+      .addSelect('e.kind', 'kind')
       .addSelect('e.linkedFormId', 'linkedFormId')
       .addSelect('e.status', 'status')
       .addSelect('e.validatedAt', 'validatedAt')
@@ -1092,6 +1097,7 @@ export class AssociationsService {
           endsAt: (r.endsAt as Date | null) ?? null,
           createdBy: r.createdBy as string,
           createdAt: r.createdAt as Date,
+          kind: (r.kind as AssociationCalendarEventKind) ?? AssociationCalendarEventKind.Event,
           linkedFormId: (r.linkedFormId as string | null) ?? null,
           status:
             (r.status as AssociationCalendarEventStatus) ??
@@ -1216,6 +1222,7 @@ export class AssociationsService {
       startsAt,
       endsAt,
       createdBy: userId,
+      kind: dto.kind ?? AssociationCalendarEventKind.Event,
       linkedFormId,
       status: canValidate
         ? AssociationCalendarEventStatus.Validated
@@ -1251,6 +1258,7 @@ export class AssociationsService {
     if (!ev) throw new NotFoundException('Event not found');
 
     if (dto.title !== undefined) ev.title = dto.title.trim();
+    if (dto.kind !== undefined) ev.kind = dto.kind;
     if (dto.description !== undefined) {
       ev.description = dto.description?.trim() ? dto.description.trim() : null;
     }

@@ -55,7 +55,8 @@
     return cellIndex % 7 >= 5;
   }
 
-  function eventsOnDay(day: number): AssociationCalendarFeedEvent[] {
+  /** All calendar entries (events + breaks) overlapping `day`, sorted by start. */
+  function entriesOnDay(day: number): AssociationCalendarFeedEvent[] {
     const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
     return (events as AssociationCalendarFeedEvent[])
       .filter((ev: AssociationCalendarFeedEvent) => {
@@ -70,6 +71,16 @@
         (a: AssociationCalendarFeedEvent, b: AssociationCalendarFeedEvent) =>
           new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
       );
+  }
+
+  /** Normal event cards for `day` (breaks excluded - they render as a background band). */
+  function eventsOnDay(day: number): AssociationCalendarFeedEvent[] {
+    return entriesOnDay(day).filter((ev) => ev.kind !== 'break');
+  }
+
+  /** Break entries (no-course / vacation) overlapping `day`, drawn as a full-day background band. */
+  function breaksOnDay(day: number): AssociationCalendarFeedEvent[] {
+    return entriesOnDay(day).filter((ev) => ev.kind === 'break');
   }
 
   /** Returns all hex colors for the event: primary first, then co-owners. */
@@ -139,6 +150,7 @@
           ></div>
         {:else}
           {@const dayEvents = eventsOnDay(cell.day)}
+          {@const dayBreaks = breaksOnDay(cell.day)}
           {@const nVisible = dayEvents.length > MAX_VISIBLE ? MAX_VISIBLE - 1 : dayEvents.length}
           {@const visible = dayEvents.slice(0, nVisible)}
           {@const overflowCount = dayEvents.length - nVisible}
@@ -158,12 +170,28 @@
               {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/60'}
               {selected ? '' : 'hover:brightness-95'}"
           >
+            <!-- Break (vacation / no-course) background tint - behind everything so a period reads
+                 across days; the title shows as a bottom band and on empty days below. -->
+            {#if dayBreaks.length > 0}
+              <div
+                class="absolute inset-0 z-0 pointer-events-none"
+                style="background:{eventColors(dayBreaks[0])[0]};opacity:0.14;"
+              ></div>
+            {/if}
+
             {#if dayEvents.length === 0}
-              <!-- Empty cell: day number only -->
+              <!-- Empty cell: day number, plus the break title when this is a vacation day. -->
               <span
-                class="absolute top-1.5 left-2 text-xs font-bold leading-none
+                class="absolute top-1.5 left-2 text-xs font-bold leading-none z-10
                   {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
               >
+              {#if dayBreaks.length > 0}
+                <span
+                  class="absolute inset-x-1 bottom-1 z-10 text-center text-[9px] font-bold leading-tight line-clamp-2"
+                  style="color:{eventColors(dayBreaks[0])[0]};"
+                  title={dayBreaks[0].title}>{dayBreaks[0].title}</span
+                >
+              {/if}
             {:else}
               <!-- Events fill the entire cell, split equally -->
               <div class="absolute inset-0 flex flex-col">
@@ -249,6 +277,14 @@
                   </div>
                 {/if}
               </div>
+            {/if}
+
+            <!-- Break band: a colored strip along the bottom edge, continuous across a period. -->
+            {#if dayBreaks.length > 0}
+              <div
+                class="absolute bottom-0 inset-x-0 h-1 z-20 pointer-events-none"
+                style="background:{eventColors(dayBreaks[0])[0]};"
+              ></div>
             {/if}
 
             <!-- Selected ring overlay (always on top) -->

@@ -60,6 +60,8 @@
       bind:value={noteInput}
       placeholder={m.profile_notepad_placeholder()}
       minHeight="140px"
+      class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-cn-yellow/50 focus-within:ring-2 focus-within:ring-cn-yellow/30 transition-all overflow-hidden"
+      editorClass="min-h-[140px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
     />
     <div class="flex items-center justify-end gap-3 pt-3">
       {#if noteError}

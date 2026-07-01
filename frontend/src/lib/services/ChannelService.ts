@@ -102,7 +102,15 @@ export interface SendChannelMessageDto {
   messageId?: string;
   /** When set, the message is a poll: auto-pinned server-side and votable. */
   poll?: ChannelPollInput;
+  /**
+   * Cleartext list of mentioned user ids, attached so the server can route the `mentions`
+   * notification level without decrypting. Exposes WHO is mentioned (never the content).
+   */
+  mentionedUserIds?: string[];
 }
+
+/** Per-channel push notification level a member can set for themselves. */
+export type ChannelNotificationLevel = 'all' | 'mentions' | 'none';
 
 /** Server-visible poll state (no labels) carried on a channel message. */
 export interface ChannelPollMeta {
@@ -424,6 +432,30 @@ export class ChannelService {
     } catch {
       // Non-critical - ignore.
     }
+  }
+
+  /** Returns the caller's push notification level for a channel (`all` when never set). */
+  async getNotificationLevel(channelId: string): Promise<ChannelNotificationLevel> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/notification-level`);
+    await this.handleError(res);
+    const body = (await res.json()) as { level: ChannelNotificationLevel };
+    return body.level;
+  }
+
+  /** Sets the caller's push notification level for a channel (`all` | `mentions` | `none`). */
+  async setNotificationLevel(
+    channelId: string,
+    level: ChannelNotificationLevel
+  ): Promise<ChannelNotificationLevel> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/notification-level`, {
+      method: 'PATCH',
+      body: JSON.stringify({ level }),
+    });
+    await this.handleError(res);
+    const body = (await res.json()) as { level: ChannelNotificationLevel };
+    return body.level;
   }
 
   /** Pins or unpins a channel message (broadcasts a channel.pin event server-side). */

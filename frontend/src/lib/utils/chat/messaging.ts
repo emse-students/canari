@@ -9,6 +9,7 @@ import {
   sendEncryptedChannelMessage,
   isChannelConversationId,
 } from '$lib/utils/chat/channelCrypto';
+import { extractMentionUserIds } from '$lib/utils/mentions';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -95,7 +96,15 @@ export async function sendChatMessage(
       : encodeAppMessage({ ...mkText(text), messageId, sentAt });
     try {
       const rawChannelId = contactName.replace(/^channel_/, '');
-      await sendEncryptedChannelMessage(rawChannelId, payload, messageId);
+      // Cleartext mention targets let the server route the `mentions` notification level.
+      const mentionedUserIds = extractMentionUserIds(text);
+      await sendEncryptedChannelMessage(
+        rawChannelId,
+        payload,
+        messageId,
+        undefined,
+        mentionedUserIds
+      );
       return { success: true };
     } catch (error: any) {
       return { success: false, error: `Échec de l'envoi : ${error.message || String(error)}` };

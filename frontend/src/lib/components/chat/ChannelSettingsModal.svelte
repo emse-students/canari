@@ -12,6 +12,9 @@
     Loader,
     Lock,
     Globe,
+    Bell,
+    AtSign,
+    BellOff,
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -21,7 +24,7 @@
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
-  import { channelService } from '$lib/services/ChannelService';
+  import { channelService, type ChannelNotificationLevel } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
   interface ChannelSidebarItem {
@@ -282,6 +285,47 @@
     }
   }
 
+  // Personal per-channel push notification level (all | mentions | none).
+  let notifLevel = $state<ChannelNotificationLevel>('all');
+  let notifLoading = $state(false);
+  let notifSaving = $state(false);
+  let notifLoadedFor = $state('');
+
+  // (Re)load the notification level whenever the modal opens on a different channel.
+  $effect(() => {
+    if (open && selectedChannelId && notifLoadedFor !== selectedChannelId) {
+      notifLoadedFor = selectedChannelId;
+      void loadNotifLevel();
+    }
+    if (!open) notifLoadedFor = '';
+  });
+
+  async function loadNotifLevel() {
+    notifLoading = true;
+    try {
+      notifLevel = await channelService.getNotificationLevel(selectedChannelId);
+    } catch {
+      notifLevel = 'all';
+    } finally {
+      notifLoading = false;
+    }
+  }
+
+  /** Persists the chosen level optimistically, reverting on failure. */
+  async function setNotifLevel(level: ChannelNotificationLevel) {
+    if (level === notifLevel || notifSaving) return;
+    const previous = notifLevel;
+    notifLevel = level;
+    notifSaving = true;
+    try {
+      await channelService.setNotificationLevel(selectedChannelId, level);
+    } catch {
+      notifLevel = previous;
+    } finally {
+      notifSaving = false;
+    }
+  }
+
   function handleRenameChannel() {
     const trimmed = channelNameInput.trim().toLowerCase();
     if (trimmed && trimmed !== selectedChannel?.name) {
@@ -435,6 +479,53 @@
                 class="rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-amber-500/20 disabled:shadow-none"
               >
                 {m.chat_rename_channel_button()}
+              </button>
+            </div>
+          </div>
+
+          <!-- Notifications (personal per-channel level) -->
+          <div class="space-y-3 pt-2">
+            <div class="flex items-center gap-2">
+              <Bell size={16} class="text-amber-500" strokeWidth={2.5} />
+              <h3 class="text-sm font-bold text-text-main">{m.chat_channel_notifications_label()}</h3>
+            </div>
+            <p class="text-xs text-text-muted">{m.chat_channel_notifications_description()}</p>
+            <div class="grid grid-cols-3 gap-2" aria-busy={notifLoading || notifSaving}>
+              <button
+                type="button"
+                onclick={() => setNotifLevel('all')}
+                disabled={notifLoading}
+                class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
+                'all'
+                  ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                  : 'border-black/10 dark:border-white/10 text-text-muted hover:bg-black/5 dark:hover:bg-white/5'}"
+              >
+                <Bell size={18} strokeWidth={2.5} />
+                {m.chat_channel_notif_all_label()}
+              </button>
+              <button
+                type="button"
+                onclick={() => setNotifLevel('mentions')}
+                disabled={notifLoading}
+                class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
+                'mentions'
+                  ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                  : 'border-black/10 dark:border-white/10 text-text-muted hover:bg-black/5 dark:hover:bg-white/5'}"
+              >
+                <AtSign size={18} strokeWidth={2.5} />
+                {m.chat_channel_notif_mentions_label()}
+              </button>
+              <button
+                type="button"
+                onclick={() => setNotifLevel('none')}
+                disabled={notifLoading}
+                class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
+                'none'
+                  ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                  : 'border-black/10 dark:border-white/10 text-text-muted hover:bg-black/5 dark:hover:bg-white/5'}"
+              >
+                <BellOff size={18} strokeWidth={2.5} />
+                {m.chat_channel_notif_none_label()}
               </button>
             </div>
           </div>

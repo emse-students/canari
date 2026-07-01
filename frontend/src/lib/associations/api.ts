@@ -132,6 +132,14 @@ export interface UpdateAssociationPayload {
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected';
 
+/**
+ * Visual kind of a calendar entry.
+ * - `event`: a normal event card occupying an event slot.
+ * - `break`: a no-course / vacation / holiday period, drawn as a full-day background band behind
+ *   events and not occupying an event slot (purely graphical).
+ */
+export type AssociationCalendarEventKind = 'event' | 'break';
+
 /** Lean summary of an association co-owning a calendar event. */
 export interface CalendarEventCoOwner {
   associationId: string;
@@ -151,6 +159,8 @@ export interface AssociationCalendarEvent {
   endsAt: string | null;
   createdBy: string;
   createdAt: string;
+  /** Visual kind: `event` (card) or `break` (full-day background band). */
+  kind: AssociationCalendarEventKind;
   status: AssociationCalendarEventStatus;
   validatedAt: string | null;
   validatedBy: string | null;
@@ -185,6 +195,8 @@ export interface CreateAssociationCalendarEventPayload {
   description?: string;
   startsAt: string;
   endsAt?: string;
+  /** `event` (default) or `break` (a full-day background band). */
+  kind?: AssociationCalendarEventKind;
   linkedFormId?: string;
   /** BDE / global admin only: create on behalf of another association. */
   targetAssocId?: string;
@@ -197,6 +209,8 @@ export interface UpdateAssociationCalendarEventPayload {
   description?: string;
   startsAt?: string;
   endsAt?: string;
+  /** `event` or `break` (a full-day background band). */
+  kind?: AssociationCalendarEventKind;
   linkedFormId?: string | null;
   /** Replaces the full co-owner list. Omit to leave unchanged. */
   coOwnerIds?: string[];

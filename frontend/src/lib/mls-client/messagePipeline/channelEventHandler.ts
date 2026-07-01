@@ -1,4 +1,5 @@
 import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
@@ -156,7 +157,6 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         ) {
           throw new Error('Invalid base64 format for epoch key');
         }
-        const vault = channelKeyManager.getVault(channelId);
         const rawKeyMat = new Uint8Array(
           atob(newEpochBaseKey)
             .split('')
@@ -165,7 +165,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         if (rawKeyMat.length < 32) {
           throw new Error(`Key material too short: ${rawKeyMat.length} bytes`);
         }
-        await vault.rotateKey(keyVersion, rawKeyMat);
+        await importChannelEpochKey(channelId, keyVersion, rawKeyMat);
         log(`[Key Rotation] Epoch ${keyVersion} stored for Channel ${channelId}`);
       } catch (e) {
         log(`[ERROR] Key rotation failed for channel ${channelId}: ${e}`);

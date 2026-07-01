@@ -26,6 +26,14 @@ export class ChannelMember {
   @Column('jsonb', { default: {} })
   keys: Record<string, string>;
 
+  /**
+   * Per-channel push notification level keyed by channelId (`all` | `mentions` | `none`).
+   * A channel absent from the map defaults to `all`. Scoped to this member (per workspace),
+   * so it covers every channel the member can access in that workspace.
+   */
+  @Column('jsonb', { default: {} })
+  notifLevels: Record<string, 'all' | 'mentions' | 'none'>;
+
   @CreateDateColumn()
   createdAt: Date;
 

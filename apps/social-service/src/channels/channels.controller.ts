@@ -27,7 +27,9 @@ import {
   type MarkDistributionReceivedDto,
   type RenameChannelDto,
   type SendChannelMessageDto,
+  type SetChannelNotificationLevelDto,
   type UpdateChannelImageDto,
+  CHANNEL_NOTIFICATION_LEVELS,
 } from './dto/channel.dto';
 
 /** Manages workspace and channel resources including membership, keys, and messages. */
@@ -383,6 +385,33 @@ export class ChannelsController {
       body?.typing !== false
     );
     return { ok: true };
+  }
+
+  /** Returns the calling user's push notification level for a channel (all | mentions | none). */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/notification-level')
+  getNotificationLevel(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.getNotificationLevel(channelId, xUserId.trim().toLowerCase());
+  }
+
+  /** Sets the calling user's push notification level for a channel (all | mentions | none). */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':channelId/notification-level')
+  setNotificationLevel(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: SetChannelNotificationLevelDto
+  ) {
+    if (!CHANNEL_NOTIFICATION_LEVELS.includes(body?.level)) {
+      throw new HttpException(
+        { statusCode: HttpStatus.BAD_REQUEST, message: 'Invalid notification level' },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+    return this.service.setNotificationLevel(channelId, xUserId.trim().toLowerCase(), body.level);
   }
 
   /** Pins or unpins a message in a channel (broadcasts a channel.pin event). */

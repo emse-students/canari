@@ -1190,6 +1190,48 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
 
+/// Decrypts a channel-message push (AES-256-GCM) and returns its metadata JSON.
+/// Inputs are base64: the raw 32-byte epoch key (looked up by Kotlin in `channel_keys.json`),
+/// the 12-byte nonce, and the `ciphertext||tag`. Returns `{"ok":false}` on any failure.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptChannelMessage<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    key_b64: jni::objects::JString<'a>,
+    nonce_b64: jni::objects::JString<'a>,
+    ciphertext_b64: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let result = (|| -> serde_json::Value {
+        let decode = |s: jni::objects::JString<'a>, env: &mut jni::JNIEnv<'a>| -> Option<Vec<u8>> {
+            let raw: String = env.get_string(&s).ok()?.into();
+            STANDARD.decode(raw.trim()).ok()
+        };
+        let key = match decode(key_b64, &mut env) {
+            Some(v) => v,
+            None => return serde_json::json!({ "ok": false }),
+        };
+        let nonce = match decode(nonce_b64, &mut env) {
+            Some(v) => v,
+            None => return serde_json::json!({ "ok": false }),
+        };
+        let ciphertext = match decode(ciphertext_b64, &mut env) {
+            Some(v) => v,
+            None => return serde_json::json!({ "ok": false }),
+        };
+        mobile::background::decrypt_channel_message(&key, &nonce, &ciphertext)
+            .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+    })();
+
+    let json_str = result.to_string();
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
 // ─── Commande Tauri : cache FCM ───────────────────────────────────────────────
 
 /// Lit {app_data_dir}/fcm_message_cache.ndjson, efface le fichier et retourne les entrées.
@@ -1256,6 +1298,42 @@ fn store_outbox_mirror(
         .join("\n");
     std::fs::write(&path, body + "\n").map_err(|e| e.to_string())?;
     log::debug!("[OUTBOX_MIRROR] {} entrée(s) écrite(s)", entries.len());
+    Ok(())
+}
+
+/// Merges one channel epoch key into {app_data_dir}/channel_keys.json so the Android background
+/// service can AES-256-GCM-decrypt channel-message pushes (app killed). The file is a JSON map
+/// `channelId -> { keyVersion -> base64(rawKey) }`; the raw 32-byte epoch key never leaves the
+/// device. App-private plaintext storage, consistent with push_context.json / mls.bin.
+#[tauri::command]
+fn store_channel_key(
+    app: tauri::AppHandle,
+    channel_id: String,
+    key_version: u32,
+    key_b64: String,
+) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join("channel_keys.json");
+
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(format!("read channel_keys.json: {e}")),
+    };
+
+    let map = root
+        .as_object_mut()
+        .ok_or("channel_keys.json is not an object")?;
+    let channel_entry = map
+        .entry(channel_id)
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(versions) = channel_entry.as_object_mut() {
+        versions.insert(key_version.to_string(), serde_json::Value::String(key_b64));
+    }
+
+    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
+    log::debug!("[CHANNEL_KEYS] stored epoch key (version {key_version})");
     Ok(())
 }
 
@@ -1852,7 +1930,8 @@ pub fn run() {
             get_native_flags,
             read_and_clear_fcm_cache,
             store_outbox_mirror,
-            read_and_clear_outbox_sent
+            read_and_clear_outbox_sent,
+            store_channel_key
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

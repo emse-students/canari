@@ -110,6 +110,22 @@ export interface ChannelPollMeta {
   votesByUser: Record<string, string[]>;
 }
 
+/**
+ * Per-channel push notification level a member can set for themselves.
+ * - `all`: notify on every message (default when unset).
+ * - `mentions`: notify only when the member is in a message's `mentionedUserIds`.
+ * - `none`: never notify.
+ */
+export type ChannelNotificationLevel = 'all' | 'mentions' | 'none';
+
+/** The three valid notification levels, for runtime validation. */
+export const CHANNEL_NOTIFICATION_LEVELS: ChannelNotificationLevel[] = ['all', 'mentions', 'none'];
+
+/** Body of the set-notification-level endpoint (the user is taken from the auth header). */
+export interface SetChannelNotificationLevelDto {
+  level: ChannelNotificationLevel;
+}
+
 export interface SendChannelMessageDto {
   senderId: string;
   ciphertext: string;
@@ -119,6 +135,12 @@ export interface SendChannelMessageDto {
   messageId?: string;
   /** When present, this message is a poll: it is auto-pinned and accepts votes. */
   poll?: ChannelPollInputDto;
+  /**
+   * Cleartext list of mentioned user ids, attached by the sender so the server can route
+   * the `mentions` notification level without decrypting the message. This intentionally
+   * exposes WHO is mentioned (never the content) to the server.
+   */
+  mentionedUserIds?: string[];
 }
 
 export interface GetChannelMessagesQuery {

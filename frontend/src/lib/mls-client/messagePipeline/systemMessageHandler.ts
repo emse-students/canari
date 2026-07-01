@@ -1,7 +1,7 @@
 import type { Conversation } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
 import { serializeEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
@@ -89,10 +89,9 @@ export async function handleSystemEvent(
     }
 
     try {
-      const vault = channelKeyManager.getVault(channelId);
       for (const item of keysToImport) {
         const rawKeyMat = Uint8Array.from(atob(item.encryptedChannelKey), (c) => c.charCodeAt(0));
-        await vault.rotateKey(item.keyVersion, rawKeyMat);
+        await importChannelEpochKey(channelId, item.keyVersion, rawKeyMat);
       }
 
       const channelSvc = new ChannelService();

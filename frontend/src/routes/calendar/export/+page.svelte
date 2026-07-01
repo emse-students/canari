@@ -6,10 +6,11 @@
     type AssociationCalendarFeedEvent,
   } from '$lib/associations/api';
   import {
-    buildPreviewDocument,
+    buildPreviewInnerHtml,
     exportCalendarMonth,
     DEFAULT_EXPORT_OPTIONS,
     CALENDAR_CONTAINER_HEIGHT,
+    CALENDAR_CONTAINER_WIDTH,
     fileToDataUrl,
     type CalendarExportOptions,
   } from '$lib/utils/calendarExport';
@@ -83,9 +84,12 @@
   }
 
   // ── Live preview ─────────────────────────────────────────────────
-  let previewHtml = $derived(buildPreviewDocument(events, year, month, opts));
+  // Rendered in-document (not an iframe) so it uses the app's real fonts and matches the export.
+  let previewHtml = $derived(buildPreviewInnerHtml(events, year, month, opts));
   let previewContainerWidth = $state(0);
-  let previewScale = $derived(previewContainerWidth > 0 ? previewContainerWidth / 1080 : 0);
+  let previewScale = $derived(
+    previewContainerWidth > 0 ? previewContainerWidth / CALENDAR_CONTAINER_WIDTH : 0
+  );
 
   // ── PDF export ───────────────────────────────────────────────────
   let exporting = $state(false);
@@ -121,7 +125,7 @@
     ← {m.calendar_export_back()}
   </a>
 
-  <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Export PDF</h1>
+  <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.calendar_export_title()}</h1>
 
   <div class="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6 items-start">
     <!-- ── Settings panel ── -->
@@ -207,6 +211,16 @@
             <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.enableTextShadow ? 'translate-x-4' : 'translate-x-0'}"></span>
           </button>
         </div>
+        {#if opts.enableTextShadow}
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-text-muted">{m.calendar_export_shadow_color()}</span>
+            <ColorPicker bind:value={opts.textShadowColor} label={m.calendar_export_shadow_color()} />
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-text-muted">{m.calendar_export_shadow_offset({ value: opts.textShadowOffset })}</span>
+            <input type="range" min="1" max="8" bind:value={opts.textShadowOffset} class="w-28 accent-cn-dark" />
+          </div>
+        {/if}
       </div>
 
       <hr class="border-cn-border/60" />
@@ -304,13 +318,13 @@
           </div>
         {:else if previewScale > 0}
           <div style="height: {CALENDAR_CONTAINER_HEIGHT * previewScale}px; overflow: hidden;">
-            <iframe
-              srcdoc={previewHtml}
-              width="1080"
-              height={CALENDAR_CONTAINER_HEIGHT}
-              style="transform: scale({previewScale}); transform-origin: top left; border: none; display: block;"
-              title={m.calendar_export_preview_title()}
-            ></iframe>
+            <div
+              style="width: {CALENDAR_CONTAINER_WIDTH}px; transform: scale({previewScale}); transform-origin: top left;"
+              aria-label={m.calendar_export_preview_title()}
+            >
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -- titles are HTML-escaped in buildCalendarHtml -->
+              {@html previewHtml}
+            </div>
           </div>
         {/if}
       </div>

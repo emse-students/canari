@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -16,6 +17,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
 
 export class ReorderMembersDto {
   /** Ordered list of member user IDs - position in the array becomes the new sortOrder. */
@@ -232,6 +234,11 @@ export class CreateAssociationCalendarEventDto {
   @IsOptional()
   endsAt?: string;
 
+  /** Visual kind: `event` (default, a card) or `break` (a full-day background band). */
+  @IsOptional()
+  @IsEnum(AssociationCalendarEventKind)
+  kind?: AssociationCalendarEventKind;
+
   /** Optional form (same association). */
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
@@ -272,6 +279,11 @@ export class UpdateAssociationCalendarEventDto {
   @IsDateString()
   @IsOptional()
   endsAt?: string;
+
+  /** Visual kind: `event` (a card) or `break` (a full-day background band). */
+  @IsOptional()
+  @IsEnum(AssociationCalendarEventKind)
+  kind?: AssociationCalendarEventKind;
 
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)

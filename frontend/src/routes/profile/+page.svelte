@@ -12,6 +12,7 @@
     type SkyEntourage,
   } from '$lib/profile/api';
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
+  import ProfileNotepadSection from '$lib/components/profile/ProfileNotepadSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import {
@@ -327,6 +328,9 @@
         onChanged={reloadRoleHistory}
       />
     </div>
+
+    <!-- Personal notepad (private, plaintext server-side) -->
+    <ProfileNotepadSection />
 
     <!-- Sponsorship (close tree, from Sky) -->
     {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || parrainageLoading}
