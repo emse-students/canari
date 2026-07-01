@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyComposerLines,
   hasFormattedMarkdownPreview,
   markdownStructureKey,
   parseHeadingLine,
@@ -223,5 +224,41 @@ describe('parseHeadingLine', () => {
     expect(hasFormattedMarkdownPreview('## **bold**')).toBe(true);
     expect(markdownStructureKey('## Title')).toBe(markdownStructureKey('## Titles'));
     expect(markdownStructureKey('## Title')).not.toBe(markdownStructureKey('### Title'));
+  });
+});
+
+describe('fenced code blocks', () => {
+  it('classifies open, code, and close lines', () => {
+    const text = '```js\nconst x = 1;\n*bold*\n```';
+    expect(classifyComposerLines(text)).toEqual([
+      { kind: 'fence-open', line: '```js' },
+      { kind: 'code', line: 'const x = 1;' },
+      { kind: 'code', line: '*bold*' },
+      { kind: 'fence-close', line: '```' },
+    ]);
+  });
+
+  it('treats unclosed fences as code until the end', () => {
+    expect(classifyComposerLines('```\nline')).toEqual([
+      { kind: 'fence-open', line: '```' },
+      { kind: 'code', line: 'line' },
+    ]);
+  });
+
+  it('does not treat mid-line triple backticks as fences', () => {
+    expect(classifyComposerLines('text ``` here')).toEqual([
+      { kind: 'normal', line: 'text ``` here' },
+    ]);
+  });
+
+  it('enables preview for fenced blocks without inline formatting', () => {
+    expect(hasFormattedMarkdownPreview('```\nplain\n```')).toBe(true);
+    expect(hasFormattedMarkdownPreview('```\nopen')).toBe(true);
+  });
+
+  it('keeps structure key stable when editing inside a code block', () => {
+    const before = '```\n*a*\n```';
+    const after = '```\n*ab*\n```';
+    expect(markdownStructureKey(before)).toBe(markdownStructureKey(after));
   });
 });

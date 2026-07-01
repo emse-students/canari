@@ -6,9 +6,12 @@ vi.mock('$lib/utils/users/displayName', () => ({
 }));
 
 import {
+  getPlainTextSelection,
   needsMentionChipRender,
+  insertPlainTextNewline,
   renderPlainTextToMentionEditor,
   serializeMentionEditor,
+  setPlainTextSelection,
 } from './mentionEditor';
 
 import { EXAMPLE_MENTION_USER_ID } from '../mentions';
@@ -45,5 +48,28 @@ describe('mentionEditor', () => {
     expect(needsMentionChipRender(root, `Salut @[${EXAMPLE_MENTION_USER_ID}]!`)).toBe(true);
     renderPlainTextToMentionEditor(root, `Salut @[${EXAMPLE_MENTION_USER_ID}]!`);
     expect(needsMentionChipRender(root, `Salut @[${EXAMPLE_MENTION_USER_ID}]!`)).toBe(false);
+  });
+
+  it('round-trips plain-text caret offsets across newlines', () => {
+    for (const text of ['hello\n', 'hello\nworld', '\n', 'a\nb', 'line1\nline2\n']) {
+      renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
+      for (let pos = 0; pos <= text.length; pos++) {
+        setPlainTextSelection(root, pos, pos);
+        expect(getPlainTextSelection(root).start, `text=${JSON.stringify(text)} pos=${pos}`).toBe(
+          pos
+        );
+      }
+    }
+  });
+
+  it('places the caret on the new line after Enter', () => {
+    renderPlainTextToMentionEditor(root, 'hello', { markdownPreview: true });
+    setPlainTextSelection(root, 5, 5);
+    const { text, cursor } = insertPlainTextNewline(root);
+    expect(text).toBe('hello\n');
+    expect(cursor).toBe(6);
+    renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
+    setPlainTextSelection(root, cursor, cursor);
+    expect(getPlainTextSelection(root).start).toBe(6);
   });
 });

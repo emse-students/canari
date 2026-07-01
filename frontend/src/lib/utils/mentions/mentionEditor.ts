@@ -1,6 +1,7 @@
 import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
+  classifyComposerLines,
   hasFormattedMarkdownPreview,
   markdownStructureKey,
   parseHeadingLine,
@@ -20,6 +21,7 @@ export const MD_BOLD_CLASS = 'md-composer-bold';
 export const MD_BOLD_ITALIC_CLASS = 'md-composer-bold-italic';
 export const MD_STRIKE_CLASS = 'md-composer-strike';
 export const MD_CODE_CLASS = 'md-composer-code';
+export const MD_FENCED_CODE_CLASS = 'md-composer-fenced-code';
 export const MD_H1_CLASS = 'md-composer-h1';
 export const MD_H2_CLASS = 'md-composer-h2';
 export const MD_H3_CLASS = 'md-composer-h3';
@@ -199,6 +201,13 @@ function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegme
   }
 }
 
+function appendFencedCodeLine(parent: HTMLElement, line: string): void {
+  const block = document.createElement('span');
+  block.className = MD_FENCED_CODE_CLASS;
+  appendTextWithBreaks(block, line);
+  parent.appendChild(block);
+}
+
 function appendComposerLine(parent: HTMLElement, line: string): void {
   const heading = parseHeadingLine(line);
   if (heading) {
@@ -221,10 +230,22 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
     appendTextWithBreaks(parent, text);
     return;
   }
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
+  const classified = classifyComposerLines(text);
+  for (let i = 0; i < classified.length; i++) {
     if (i > 0) parent.appendChild(document.createElement('br'));
-    appendComposerLine(parent, lines[i]);
+    const { kind, line } = classified[i];
+    switch (kind) {
+      case 'fence-open':
+      case 'fence-close':
+        appendMutedSpan(parent, line);
+        break;
+      case 'code':
+        appendFencedCodeLine(parent, line);
+        break;
+      case 'normal':
+        appendComposerLine(parent, line);
+        break;
+    }
   }
 }
 
@@ -345,11 +366,11 @@ function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node;
       const parent = el.parentNode ?? root;
       const index = Array.from(parent.childNodes).indexOf(el);
       if (remaining <= 0) {
-        found = { node: parent, offset: index + 1 };
+        found = { node: parent, offset: index };
         return true;
       }
       if (remaining === 1) {
-        found = { node: parent, offset: index };
+        found = { node: parent, offset: index + 1 };
         return true;
       }
       remaining -= 1;

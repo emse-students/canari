@@ -177,6 +177,14 @@ describe('simulateComposerKeystrokes (markdown preview)', () => {
     expect(results.every((r) => !r.domRerendered)).toBe(true);
     expect(results.at(-1)?.value).toBe('*x*');
   });
+
+  it('does not format inline markdown inside fenced code blocks', () => {
+    const text = '```\n**not bold**\n```';
+    renderPlainTextToMentionEditor(root, text, MD);
+    expect(serializeMentionEditor(root)).toBe(text);
+    expect(root.querySelector('.md-composer-bold')).toBeNull();
+    expect(root.querySelector('.md-composer-fenced-code')).not.toBeNull();
+  });
 });
 
 describe('applyPlainKeystroke', () => {

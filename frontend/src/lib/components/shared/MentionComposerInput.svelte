@@ -316,6 +316,7 @@
         .md-composer-bold-italic,
         .md-composer-strike,
         .md-composer-code,
+        .md-composer-fenced-code,
         .md-composer-h1,
         .md-composer-h2,
         .md-composer-h3,
@@ -388,6 +389,21 @@
   }
 
   :global(:is(.dark) .md-composer-code) {
+    background: rgb(255 255 255 / 0.08);
+  }
+
+  :global(.md-composer-fenced-code) {
+    display: block;
+    width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.92em;
+    background: rgb(0 0 0 / 0.06);
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.35rem;
+    white-space: pre-wrap;
+  }
+
+  :global(:is(.dark) .md-composer-fenced-code) {
     background: rgb(255 255 255 / 0.08);
   }
 

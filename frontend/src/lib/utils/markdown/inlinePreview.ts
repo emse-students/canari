@@ -172,6 +172,49 @@ export function parseInlineMarkdownPreview(
 
 const HEADING_LINE_RE = /^(#{1,3})(\s+)(.*)$/;
 
+/** Opening fence: line starts with triple backticks (optional language tag). */
+export const FENCE_OPEN_LINE_RE = /^```/;
+
+/** Closing fence: line is only triple backticks with optional trailing spaces. */
+export const FENCE_CLOSE_LINE_RE = /^```\s*$/;
+
+export type ComposerLineKind = 'normal' | 'fence-open' | 'fence-close' | 'code';
+
+export type ClassifiedComposerLine = {
+  kind: ComposerLineKind;
+  line: string;
+};
+
+/**
+ * Classifies each line for composer preview, tracking fenced ``` code blocks.
+ * Inside a block, inline markdown and headings are not parsed.
+ */
+export function classifyComposerLines(text: string): ClassifiedComposerLine[] {
+  const lines = text.split('\n');
+  const result: ClassifiedComposerLine[] = [];
+  let inBlock = false;
+
+  for (const line of lines) {
+    if (!inBlock && FENCE_OPEN_LINE_RE.test(line)) {
+      result.push({ kind: 'fence-open', line });
+      inBlock = true;
+      continue;
+    }
+    if (inBlock && FENCE_CLOSE_LINE_RE.test(line)) {
+      result.push({ kind: 'fence-close', line });
+      inBlock = false;
+      continue;
+    }
+    if (inBlock) {
+      result.push({ kind: 'code', line });
+      continue;
+    }
+    result.push({ kind: 'normal', line });
+  }
+
+  return result;
+}
+
 /**
  * ATX heading at line start: `# title`, `## title`, `### title`.
  * Also matches incomplete lines `##` or `## ` while typing.
@@ -215,10 +258,11 @@ function inlineStructureKey(line: string): string {
     .join('|');
 }
 
-/** True when the text contains headings and/or closed inline markdown spans. */
+/** True when the text contains headings, fenced code blocks, and/or closed inline markdown spans. */
 export function hasFormattedMarkdownPreview(text: string): boolean {
   if (!text) return false;
-  for (const line of text.split('\n')) {
+  for (const { kind, line } of classifyComposerLines(text)) {
+    if (kind === 'fence-open' || kind === 'fence-close' || kind === 'code') return true;
     if (parseHeadingLine(line)) return true;
     if (parseInlineMarkdownPreview(line).some((s) => s.kind !== 'text')) return true;
   }
@@ -229,10 +273,23 @@ export function hasFormattedMarkdownPreview(text: string): boolean {
  * Stable key for markdown preview *structure* (delimiters / span kinds), not inner text.
  * Used to avoid re-rendering the composer DOM on every keystroke inside `*italic*`.
  */
+function fencedLineStructureKey(kind: ComposerLineKind): string {
+  switch (kind) {
+    case 'fence-open':
+      return 'fence:open';
+    case 'fence-close':
+      return 'fence:close';
+    case 'code':
+      return 'fence:line';
+    case 'normal':
+      return '';
+  }
+}
+
 export function markdownStructureKey(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => {
+  return classifyComposerLines(text)
+    .map(({ kind, line }) => {
+      if (kind !== 'normal') return fencedLineStructureKey(kind);
       const heading = parseHeadingLine(line);
       if (heading) return `h${heading.level}|${inlineStructureKey(heading.content)}`;
       return inlineStructureKey(line);
