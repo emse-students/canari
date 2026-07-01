@@ -272,11 +272,16 @@ export async function processPendingInvitations(params: {
             break;
           }
 
-          // Device already a member: invitation fulfilled (device will join via queued Welcome).
-          // Do not kick - silent skip to stop the retry loop.
+          // Device already a member: invitation fulfilled (its leaf is already in our MLS tree).
+          // Promote the invitation to active so the server stops re-serving this stale pending
+          // row on every sync (root cause of the repeated "already a member" reprocessing every
+          // login). Best-effort; on failure it is simply retried next cycle. Do not kick.
           if (errStr.includes('ALREADY_MEMBER')) {
+            void mlsService
+              .updateInvitationStatus(inv.deviceId, inv.userId, inv.groupId, 'active')
+              .catch(() => {});
             log(
-              `[PENDING] ${inv.deviceId} already a member of ${groupId.slice(0, 8)}... - invitation fulfilled, skip`
+              `[PENDING] ${inv.deviceId} already a member of ${groupId.slice(0, 8)}... - invitation fulfilled, marked active`
             );
             continue;
           }

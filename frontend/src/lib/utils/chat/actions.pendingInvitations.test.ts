@@ -30,6 +30,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     kickStaleDevice: vi.fn().mockResolvedValue(undefined),
     addMember: vi.fn(),
+    updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
     registerMember: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     sendCommit: vi.fn().mockResolvedValue(undefined),
@@ -239,5 +240,12 @@ describe('processPendingInvitations - local state forked behind server', () => {
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('invitation fulfilled'));
+    // The fulfilled invitation is promoted to active so the server stops re-serving it.
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'peer-dev-1',
+      'peer',
+      'g1',
+      'active'
+    );
   });
 });

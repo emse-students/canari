@@ -375,12 +375,21 @@ export class InvitationsController {
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot update invitation status for another user',
-    );
+    // Authorization: a device marks ITSELF active (owns userId), OR any active member of the
+    // group vouches that another user's device is already in the shared MLS tree - the same
+    // trust model as kick-stale-device. Group members can already invite/kick devices, so
+    // confirming a fulfilled invitation adds no new authority; it only stops
+    // getPendingInvitations from re-serving a device provably already in the tree every sync.
+    const caller = headerUserId
+      ? sanitizeQueryValue(headerUserId, 'x-user-id')
+      : undefined;
+    if (headerGlobalAdmin !== 'true' && caller && caller !== safeUserId) {
+      await this.assertCallerIsGroupMember(
+        caller,
+        safeGroupId,
+        headerGlobalAdmin,
+      );
+    }
 
     const validStatuses = ['pending', 'active'];
     if (!validStatuses.includes(body.status)) {
