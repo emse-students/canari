@@ -449,6 +449,17 @@ export class ChannelsController {
     );
   }
 
+  /** Closes a poll now (author or moderator only): forces the deadline and unpins it. */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':channelId/messages/:messageId/poll/close')
+  closePoll(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.service.closePoll(channelId, messageId, xUserId.trim().toLowerCase());
+  }
+
   /** Returns the IDs of the pinned messages in a channel. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/pins')

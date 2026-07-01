@@ -176,6 +176,89 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  it('closePoll by the author forces the deadline and unpins the message', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = {
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      pinned: true,
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    };
+    lockMessage(messageRepo, msg);
+
+    const result = await service.closePoll('ch1', 'm1', 'u1');
+    expect(typeof result.endsAt).toBe('string');
+    expect(new Date(result.endsAt).getTime()).toBeLessThanOrEqual(Date.now());
+    expect(msg.pinned).toBe(false);
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.poll.vote',
+      expect.objectContaining({ channelId: 'ch1', messageId: 'm1' }),
+      expect.any(Array)
+    );
+  });
+
+  it('closePoll rejects a non-author without a moderation permission', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    lockMessage(messageRepo, {
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'someone-else',
+      pinned: true,
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    });
+
+    await expect(service.closePoll('ch1', 'm1', 'u1')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('closePoll lets a moderator close another member poll', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['MODERATE_MESSAGES'] }]);
+    const msg = {
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'someone-else',
+      pinned: true,
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    };
+    lockMessage(messageRepo, msg);
+
+    const result = await service.closePoll('ch1', 'm1', 'u1');
+    expect(typeof result.endsAt).toBe('string');
+    expect(msg.pinned).toBe(false);
+  });
+
+  it('closePoll rejects an already-closed poll', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    lockMessage(messageRepo, {
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      pinned: false,
+      metadata: {
+        poll: {
+          optionIds: ['a', 'b'],
+          multipleChoice: false,
+          endsAt: new Date(Date.now() - 1000).toISOString(),
+          votesByUser: {},
+        },
+      },
+    });
+
+    await expect(service.closePoll('ch1', 'm1', 'u1')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('rejects listMessages for private channel without allowed role', async () => {
     const { service, channelRepo, memberRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({

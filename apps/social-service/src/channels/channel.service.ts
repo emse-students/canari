@@ -1740,6 +1740,79 @@ export class ChannelService {
     return poll;
   }
 
+  /**
+   * Closes a poll immediately by forcing its deadline to now, then unpins it.
+   * The poll author can always close their own poll; any other member needs a
+   * moderation/management permission. Rejects a non-poll message or an already-closed poll.
+   */
+  async closePoll(channelId: string, messageId: string, userId: string): Promise<ChannelPollMeta> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    let poll!: ChannelPollMeta;
+    await this.messageRepo.manager.transaction(async (manager) => {
+      const msg = await manager
+        .createQueryBuilder(ChannelMessage, 'm')
+        .where('m.id = :messageId AND m.channelId = :channelId', { messageId, channelId })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!msg) throw new NotFoundException('Message not found');
+
+      const meta = (msg.metadata as { poll?: ChannelPollMeta } | null)?.poll;
+      if (!meta) throw new BadRequestException('This message is not a poll');
+
+      // Non-authors must hold a moderation permission to close someone else's poll.
+      if (msg.authorId !== userId) {
+        const roles = member.roleIds?.length
+          ? await this.roleRepo.find({ where: { id: In(member.roleIds) } })
+          : [];
+        const canModerate = roles.some(
+          (r) =>
+            r.permissions.includes('MODERATE_MESSAGES') ||
+            r.permissions.includes('MANAGE_CHANNELS') ||
+            r.permissions.includes('MANAGE_WORKSPACE')
+        );
+        if (!canModerate) {
+          throw new ForbiddenException('Only the poll author or a moderator can close this poll');
+        }
+      }
+
+      if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
+        throw new BadRequestException('This poll is already closed');
+      }
+
+      meta.endsAt = new Date().toISOString();
+      msg.metadata = { ...(msg.metadata ?? {}), poll: meta };
+      msg.pinned = false;
+      await manager.save(msg);
+      poll = meta;
+    });
+
+    this.logger.log(`[POLL] closed channel=${channelId} message=${messageId} by=${userId}`);
+
+    // Refresh every member's card (now shows as closed) and clear the pinned banner.
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.poll.vote',
+      { channelId, messageId, poll },
+      workspaceMemberIds
+    );
+    await this.redis.publishChannelEvent(
+      'channel.pin',
+      { channelId, messageId, pinned: false },
+      workspaceMemberIds
+    );
+
+    return poll;
+  }
+
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
   async listPinnedMessageIds(channelId: string, userId: string): Promise<string[]> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });

@@ -2,6 +2,7 @@
   import PostPolls from '$lib/components/posts/PostPolls.svelte';
   import type { Poll } from '$lib/posts/api';
   import type { ChannelPollMeta, ChannelPollSpec } from '$lib/services/ChannelService';
+  import { m } from '$lib/paraglide/messages';
 
   /**
    * Renders a community poll inline as a rich card by reusing the post poll
@@ -19,9 +20,13 @@
     currentUserId: string;
     /** Called with the full selection when the user votes (empty = retract). */
     onVote?: (optionIds: string[]) => void | Promise<void>;
+    /** When true, shows a "close now" action (poll author or a channel moderator). */
+    canClose?: boolean;
+    /** Called when the user closes the poll early. */
+    onClose?: () => void | Promise<void>;
   }
 
-  let { spec, meta, currentUserId, onVote }: Props = $props();
+  let { spec, meta, currentUserId, onVote, canClose = false, onClose }: Props = $props();
 
   // Per-option voter lists derived from votesByUser, so PostPolls can show counts.
   const votersByOption = $derived.by(() => {
@@ -72,6 +77,20 @@
     if (isClosed) return;
     void onVote?.(selectedOptions);
   }
+
+  let closing = $state(false);
+
+  /** Closes the poll early after a confirmation, guarding against double taps. */
+  async function handleClose() {
+    if (isClosed || closing) return;
+    if (typeof window !== 'undefined' && !window.confirm(m.channel_poll_close_confirm())) return;
+    closing = true;
+    try {
+      await onClose?.();
+    } finally {
+      closing = false;
+    }
+  }
 </script>
 
 <PostPolls
@@ -80,3 +99,14 @@
   onVoteClick={handleVoteClick}
   onSubmitVote={submitVote}
 />
+
+{#if canClose && !isClosed}
+  <button
+    type="button"
+    onclick={handleClose}
+    disabled={closing}
+    class="mt-1.5 text-xs font-semibold text-text-muted underline underline-offset-2 hover:text-red-500 disabled:opacity-50"
+  >
+    {closing ? m.common_sending_label() : m.channel_poll_close_button()}
+  </button>
+{/if}

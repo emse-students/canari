@@ -12,6 +12,8 @@ import {
   logCallAudioTrackSettings,
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -230,6 +232,21 @@ export class CallService {
     this.cleanup();
   }
 
+  /**
+   * Terminates a call that hit a non-recoverable transport failure (ICE/connection
+   * `failed`, or the SFU socket dropping mid-call). Without this, a dead media path
+   * left the UI stuck "in call" on a frozen stream. No-op once the call is already
+   * idle, so overlapping failure events (ICE + connection both fire `failed`) only
+   * tear down once. Ends only this leg without broadcasting an MLS hangup: in a group
+   * call one peer's failed relay must not end everyone else's call.
+   */
+  private failCall(reason: string): void {
+    if (get(this.callState) === 'idle') return;
+    appendLog(`[Call] terminal failure: ${reason} - ending call`);
+    showToast(m.call_connection_lost(), 'error');
+    this.endCall(false);
+  }
+
   /** Publishes Redis-backed call presence so sibling devices can detect an active call. */
   private syncCallPresence(active: boolean): void {
     const deviceId = this.mlsService.getDeviceId();
@@ -405,7 +422,14 @@ export class CallService {
       return;
     }
 
-    if (sdp.type === 'answer' && pc.signalingState === 'have-local-offer') {
+    if (sdp.type === 'answer') {
+      if (pc.signalingState !== 'have-local-offer') {
+        // No outstanding local offer to answer: a stale/duplicate Answer (e.g. after a
+        // glare rollback). Applying it would throw InvalidStateError; log so a stalled
+        // renegotiation is diagnosable instead of failing silently.
+        appendLog(`[Call] ignoring SFU Answer in signalingState=${pc.signalingState}`);
+        return;
+      }
       await pc.setRemoteDescription(sdp);
       await this.flushPendingRemoteIceCandidates();
       await configureCallAudioSenders(pc, this.callHasVideo);
@@ -523,7 +547,9 @@ export class CallService {
         if (!settled) {
           fail(new Error(`SFU WebSocket closed before ready (code=${ev.code})`));
         } else if (get(this.callState) !== 'idle') {
-          appendLog(`[Call] SFU WebSocket closed code=${ev.code}`);
+          // Unexpected drop mid-call (SFU restart, network): cleanup() closes the socket
+          // only after setting state to idle, so reaching here means the media path died.
+          this.failCall(`SFU WebSocket closed code=${ev.code}`);
         }
       };
 
@@ -732,8 +758,12 @@ export class CallService {
       if (state === 'connected' && get(this.callState) !== 'idle') {
         this.callState.set('incall');
       }
-      if (state === 'failed' || state === 'disconnected') {
-        appendLog(`[Call] WebRTC peer connection ${state}`);
+      if (state === 'disconnected') {
+        // 'disconnected' is often transient (WebRTC may recover); log but do not tear down.
+        appendLog('[Call] WebRTC peer connection disconnected (may recover)');
+      }
+      if (state === 'failed') {
+        this.failCall('connectionState=failed');
       }
     };
 
@@ -747,8 +777,9 @@ export class CallService {
       }
       if (iceState === 'failed') {
         appendLog(
-          '[Call] ICE failed - vérifier Cloudflare TURN sur chat-delivery et call-service (mêmes secrets)'
+          '[Call] ICE failed - check Cloudflare TURN on chat-delivery and call-service (same secrets)'
         );
+        this.failCall('iceConnectionState=failed');
       }
     };
 

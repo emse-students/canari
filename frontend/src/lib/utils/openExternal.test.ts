@@ -32,6 +32,19 @@ describe('handleAppLinkClick', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
+  it('navigates in-app for public Canari URLs outside the rich-label allowlist', () => {
+    document.body.innerHTML =
+      '<a id="settings" href="https://canari-emse.fr/settings" target="_blank">Reglages</a>';
+    const anchor = document.getElementById('settings') as HTMLAnchorElement;
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    vi.spyOn(event, 'preventDefault');
+
+    Object.defineProperty(event, 'target', { value: anchor });
+    expect(handleAppLinkClick(event)).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(navigateInAppFromHref).toHaveBeenCalledWith('https://canari-emse.fr/settings');
+  });
+
   it('navigates in-app for admin dashboard links', () => {
     document.body.innerHTML = '<a id="admin" href="/admin/platform">Plateforme</a>';
     const anchor = document.getElementById('admin') as HTMLAnchorElement;

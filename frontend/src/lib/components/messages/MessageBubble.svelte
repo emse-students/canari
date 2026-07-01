@@ -92,6 +92,8 @@
     onReact?: (messageId: string, emoji: string) => void;
     /** Called when the user votes on a poll message (channels only). */
     onVotePoll?: (messageId: string, optionIds: string[]) => void;
+    /** Called when the poll author closes their poll early (channels only). */
+    onClosePoll?: (messageId: string) => void;
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
     /** Whether this message is currently pinned in the conversation. */
@@ -138,6 +140,7 @@
     onNavigateToMessage,
     onReact,
     onVotePoll,
+    onClosePoll,
     onDelete,
     onEdit,
     pinned = false,
@@ -620,6 +623,8 @@
             meta={pollMeta}
             {currentUserId}
             onVote={(optionIds) => onVotePoll?.(messageId, optionIds)}
+            canClose={isOwn && !!onClosePoll}
+            onClose={() => onClosePoll?.(messageId)}
           />
         {:else}
           <MessageMediaRenderer

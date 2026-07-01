@@ -483,6 +483,17 @@ export class ChannelService {
     return res.json() as Promise<ChannelPollMeta>;
   }
 
+  /** Closes a poll now (author or moderator only). Returns the poll tally with its forced deadline. */
+  async closePoll(channelId: string, messageId: string): Promise<ChannelPollMeta> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/messages/${encodeURIComponent(messageId)}/poll/close`,
+      { method: 'PATCH' }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<ChannelPollMeta>;
+  }
+
   /** Returns the IDs of the pinned messages in a channel. */
   async listPinnedMessageIds(channelId: string): Promise<string[]> {
     const cid = this.normalizeChannelId(channelId);

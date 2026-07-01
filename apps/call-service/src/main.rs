@@ -93,13 +93,28 @@ struct PublishedTrack {
     /// SSRC of the publisher's remote track, used as the PLI media ssrc.
     media_ssrc: u32,
     is_video: bool,
+    /// Last time a keyframe (PLI) was requested for this track. Shared by the on-demand
+    /// forwarders and the periodic recovery net so they coalesce instead of both nudging.
+    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
+}
+
+/// Records that a keyframe was just requested, so the periodic recovery net can stay
+/// quiet while on-demand PLIs are already flowing.
+fn mark_pli_sent(last_pli: &Arc<std::sync::Mutex<std::time::Instant>>) {
+    if let Ok(mut ts) = last_pli.lock() {
+        *ts = std::time::Instant::now();
+    }
 }
 
 /// Asks a publisher for a video keyframe a few times over ~1.5 s. Needed when a new
 /// subscriber attaches to an already-running video track (it joined after the last
 /// keyframe and would otherwise only get undecodable delta frames). No-op once the
 /// publisher's PeerConnection is gone.
-fn request_keyframe_burst(publisher_pc: std::sync::Weak<RTCPeerConnection>, media_ssrc: u32) {
+fn request_keyframe_burst(
+    publisher_pc: std::sync::Weak<RTCPeerConnection>,
+    media_ssrc: u32,
+    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
+) {
     tokio::spawn(async move {
         for delay_ms in [0u64, 300, 800, 1500] {
             if delay_ms > 0 {
@@ -113,6 +128,7 @@ fn request_keyframe_burst(publisher_pc: std::sync::Weak<RTCPeerConnection>, medi
                             media_ssrc,
                         })])
                         .await;
+                    mark_pli_sent(&last_pli);
                 }
                 None => break,
             }
@@ -130,6 +146,7 @@ fn forward_pli_from_subscriber(
     sender: Arc<RTCRtpSender>,
     publisher_pc: std::sync::Weak<RTCPeerConnection>,
     media_ssrc: u32,
+    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
 ) {
     tokio::spawn(async move {
         while let Ok((packets, _)) = sender.read_rtcp().await {
@@ -143,13 +160,17 @@ fn forward_pli_from_subscriber(
             }
             match publisher_pc.upgrade() {
                 Some(pc) => {
-                    info!("[keyframe] relaying subscriber PLI to publisher ssrc={}", media_ssrc);
+                    info!(
+                        "[keyframe] relaying subscriber PLI to publisher ssrc={}",
+                        media_ssrc
+                    );
                     let _ = pc
                         .write_rtcp(&[Box::new(PictureLossIndication {
                             sender_ssrc: 0,
                             media_ssrc,
                         })])
                         .await;
+                    mark_pli_sent(&last_pli);
                 }
                 None => break,
             }
@@ -165,13 +186,28 @@ fn forward_pli_from_subscriber(
 /// constrained mobile uplink). A low-frequency timer bounds any freeze to a few seconds
 /// without the bandwidth cost or starvation of a fast periodic PLI. Spawned once per
 /// published video track; stops when the publisher's PeerConnection is gone.
-fn periodic_keyframe_recovery(publisher_pc: std::sync::Weak<RTCPeerConnection>, media_ssrc: u32) {
+fn periodic_keyframe_recovery(
+    publisher_pc: std::sync::Weak<RTCPeerConnection>,
+    media_ssrc: u32,
+    last_pli: Arc<std::sync::Mutex<std::time::Instant>>,
+) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
+        let period = std::time::Duration::from_secs(3);
+        let mut interval = tokio::time::interval(period);
         // First tick fires immediately; skip it (the initial keyframe burst already covers t=0).
         interval.tick().await;
         loop {
             interval.tick().await;
+            // Skip when an on-demand PLI (subscriber request / new-subscriber burst) was
+            // relayed within the last period: it already refreshed the keyframe, so nudging
+            // again would just waste relay bandwidth. Only fire when the channel went quiet.
+            let recent = last_pli
+                .lock()
+                .map(|ts| ts.elapsed() < period)
+                .unwrap_or(false);
+            if recent {
+                continue;
+            }
             match publisher_pc.upgrade() {
                 Some(pc) => {
                     let _ = pc
@@ -180,6 +216,7 @@ fn periodic_keyframe_recovery(publisher_pc: std::sync::Weak<RTCPeerConnection>, 
                             media_ssrc,
                         })])
                         .await;
+                    mark_pli_sent(&last_pli);
                 }
                 None => break,
             }
@@ -191,12 +228,23 @@ fn periodic_keyframe_recovery(publisher_pc: std::sync::Weak<RTCPeerConnection>, 
 #[serde(tag = "type")]
 enum SignalMessage {
     /// Client must supply a `room_token` issued by chat-delivery-service to prove group membership.
-    Join { room_id: String, room_token: Option<String> },
+    Join {
+        room_id: String,
+        room_token: Option<String>,
+    },
     /// Sent when the peer is registered and ready to receive Offer/Answer signaling.
-    Joined { room_id: String },
-    Offer { sdp: String },
-    Answer { sdp: String },
-    IceCandidate { candidate: String },
+    Joined {
+        room_id: String,
+    },
+    Offer {
+        sdp: String,
+    },
+    Answer {
+        sdp: String,
+    },
+    IceCandidate {
+        candidate: String,
+    },
 }
 
 #[tokio::main]
@@ -364,13 +412,19 @@ async fn handle_signal(
     notify_tx: mpsc::Sender<SignalMessage>,
 ) {
     match signal {
-        SignalMessage::Join { room_id, room_token } => {
+        SignalMessage::Join {
+            room_id,
+            room_token,
+        } => {
             // Validate room access token when CALL_ROOM_SECRET is configured.
             if !state.call_room_secret.is_empty() {
                 let token = match room_token {
                     Some(ref t) => t.as_str(),
                     None => {
-                        warn!("[auth] Peer {} attempted Join without room_token - rejected", peer_id);
+                        warn!(
+                            "[auth] Peer {} attempted Join without room_token - rejected",
+                            peer_id
+                        );
                         return;
                     }
                 };
@@ -379,11 +433,17 @@ async fn handle_signal(
                 match decode::<RoomClaims>(token, &key, &validation) {
                     Ok(data) => {
                         if data.claims.room_id != room_id {
-                            warn!("[auth] Peer {} room_id mismatch: token={} requested={}", peer_id, data.claims.room_id, room_id);
+                            warn!(
+                                "[auth] Peer {} room_id mismatch: token={} requested={}",
+                                peer_id, data.claims.room_id, room_id
+                            );
                             return;
                         }
                         if data.claims.sub != user_id {
-                            warn!("[auth] Peer {} user_id mismatch: token={} ws={}", peer_id, data.claims.sub, user_id);
+                            warn!(
+                                "[auth] Peer {} user_id mismatch: token={} ws={}",
+                                peer_id, data.claims.sub, user_id
+                            );
                             return;
                         }
                     }
@@ -396,7 +456,10 @@ async fn handle_signal(
 
             // Reject if peer is already in a room - prevents multi-room joins.
             if let Some(existing) = current_room_id {
-                warn!("[busy] Peer {} tried to join room {} but is already in room {}", peer_id, room_id, existing);
+                warn!(
+                    "[busy] Peer {} tried to join room {} but is already in room {}",
+                    peer_id, room_id, existing
+                );
                 return;
             }
 
@@ -455,12 +518,17 @@ async fn handle_signal(
                         // This peer subscribes to a video track published before it joined,
                         // so it missed the last keyframe: ask the publisher for a fresh IDR now
                         // (otherwise it only gets undecodable delta frames = black video)…
-                        request_keyframe_burst(track.publisher_pc.clone(), track.media_ssrc);
+                        request_keyframe_burst(
+                            track.publisher_pc.clone(),
+                            track.media_ssrc,
+                            track.last_pli.clone(),
+                        );
                         // …and relay its future keyframe requests to the publisher on demand.
                         forward_pli_from_subscriber(
                             sender,
                             track.publisher_pc.clone(),
                             track.media_ssrc,
+                            track.last_pli.clone(),
                         );
                     }
                     Ok(_) => {}
@@ -536,6 +604,7 @@ async fn handle_signal(
 
                         let is_video = remote_track.kind() == RTPCodecType::Video;
                         let media_ssrc = remote_track.ssrc();
+                        let last_pli = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
 
                         {
                             let mut room_tracks = room_clone.tracks.lock().await;
@@ -544,6 +613,7 @@ async fn handle_signal(
                                 publisher_pc: pc_weak.clone(),
                                 media_ssrc,
                                 is_video,
+                                last_pli: last_pli.clone(),
                             });
                         }
 
@@ -564,7 +634,11 @@ async fn handle_signal(
                         // guards against a relayed PLI being lost on the TURN path, which would
                         // otherwise freeze the picture indefinitely on a lossy mobile uplink.
                         if is_video {
-                            periodic_keyframe_recovery(pc_weak.clone(), media_ssrc);
+                            periodic_keyframe_recovery(
+                                pc_weak.clone(),
+                                media_ssrc,
+                                last_pli.clone(),
+                            );
                         }
 
                         for peer_entry in room_clone.peers.iter() {
@@ -577,7 +651,7 @@ async fn handle_signal(
                             match other_ctx
                                 .pc
                                 .add_track(
-                                    Arc::clone(&local_track) as Arc<dyn TrackLocal + Send + Sync>,
+                                    Arc::clone(&local_track) as Arc<dyn TrackLocal + Send + Sync>
                                 )
                                 .await
                             {
@@ -588,8 +662,17 @@ async fn handle_signal(
                                 Ok(sender) if is_video => {
                                     // Existing subscriber gets this freshly-published video track:
                                     // nudge a keyframe now and relay its later requests on demand.
-                                    request_keyframe_burst(pc_weak.clone(), media_ssrc);
-                                    forward_pli_from_subscriber(sender, pc_weak.clone(), media_ssrc);
+                                    request_keyframe_burst(
+                                        pc_weak.clone(),
+                                        media_ssrc,
+                                        last_pli.clone(),
+                                    );
+                                    forward_pli_from_subscriber(
+                                        sender,
+                                        pc_weak.clone(),
+                                        media_ssrc,
+                                        last_pli.clone(),
+                                    );
                                 }
                                 Ok(_) => {}
                             }
@@ -682,8 +765,7 @@ async fn handle_signal(
                         *ts = std::time::Instant::now();
                     }
                     if let Some(ctx) = room.peers.get(peer_id) {
-                        if let Ok(cand) = serde_json::from_str::<RTCIceCandidateInit>(&candidate)
-                        {
+                        if let Ok(cand) = serde_json::from_str::<RTCIceCandidateInit>(&candidate) {
                             apply_remote_ice_candidate(peer_id, ctx.value(), cand).await;
                         } else {
                             warn!("[ICE] candidate JSON parse failed for {}", peer_id);
@@ -712,7 +794,8 @@ struct CloudflareIceServer {
 }
 
 fn urls_include_turn(urls: &[String]) -> bool {
-    urls.iter().any(|u| u.starts_with("turn:") || u.starts_with("turns:"))
+    urls.iter()
+        .any(|u| u.starts_with("turn:") || u.starts_with("turns:"))
 }
 
 /// Returns true when Cloudflare (or env) gave a URL that webrtc-rs must not use.
@@ -798,10 +881,16 @@ fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
                         })
                         .await;
                 } else {
-                    error!("Renegotiation set_local_description failed for {}", target_peer_id);
+                    error!(
+                        "Renegotiation set_local_description failed for {}",
+                        target_peer_id
+                    );
                 }
             }
-            Err(e) => error!("Renegotiation create_offer failed for {}: {}", target_peer_id, e),
+            Err(e) => error!(
+                "Renegotiation create_offer failed for {}: {}",
+                target_peer_id, e
+            ),
         }
     });
 }
@@ -814,12 +903,12 @@ fn build_rtc_ice_server(
 ) -> RTCIceServer {
     let username = username.unwrap_or_default();
     let credential = credential.unwrap_or_default();
-    let credential_type = if urls_include_turn(&urls) && !username.is_empty() && !credential.is_empty()
-    {
-        RTCIceCredentialType::Password
-    } else {
-        RTCIceCredentialType::Unspecified
-    };
+    let credential_type =
+        if urls_include_turn(&urls) && !username.is_empty() && !credential.is_empty() {
+            RTCIceCredentialType::Password
+        } else {
+            RTCIceCredentialType::Unspecified
+        };
     RTCIceServer {
         urls,
         username,
@@ -894,7 +983,10 @@ async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
         return None;
     }
 
-    info!("[ICE] SFU using {} Cloudflare TURN server(s)", servers.len());
+    info!(
+        "[ICE] SFU using {} Cloudflare TURN server(s)",
+        servers.len()
+    );
     Some(servers)
 }
 
@@ -912,11 +1004,7 @@ fn ice_servers_from_env() -> Vec<RTCIceServer> {
             .collect();
         if !urls.is_empty() {
             info!("SFU using TURN_URL env ({} URL(s))", urls.len());
-            return vec![build_rtc_ice_server(
-                urls,
-                Some(turn_user),
-                Some(turn_cred),
-            )];
+            return vec![build_rtc_ice_server(urls, Some(turn_user), Some(turn_cred))];
         }
     }
 
@@ -939,7 +1027,10 @@ async fn apply_remote_ice_candidate(peer_id: &str, ctx: &PeerContext, cand: RTCI
             // Hard cap: drop candidates if the buffer overflows (prevents memory leak when
             // Offer never arrives - e.g. abandoned connections).
             if pending.len() >= 200 {
-                warn!("[ICE] {} candidate buffer overflow (>=200) - clearing buffer", peer_id);
+                warn!(
+                    "[ICE] {} candidate buffer overflow (>=200) - clearing buffer",
+                    peer_id
+                );
                 pending.clear();
                 return;
             }
@@ -996,7 +1087,11 @@ async fn cleanup_stale_rooms(state: Arc<AppState>) {
                 .map(|ts| ts.elapsed())
                 .unwrap_or(std::time::Duration::ZERO);
             if idle > std::time::Duration::from_secs(1800) {
-                info!("[cleanup] Evicting stale room {} (idle {:.0}s)", room_id, idle.as_secs_f32());
+                info!(
+                    "[cleanup] Evicting stale room {} (idle {:.0}s)",
+                    room_id,
+                    idle.as_secs_f32()
+                );
                 false
             } else {
                 true
@@ -1004,7 +1099,11 @@ async fn cleanup_stale_rooms(state: Arc<AppState>) {
         });
         let removed = before.saturating_sub(state.rooms.len());
         if removed > 0 {
-            info!("[cleanup] Removed {} stale room(s), {} remaining", removed, state.rooms.len());
+            info!(
+                "[cleanup] Removed {} stale room(s), {} remaining",
+                removed,
+                state.rooms.len()
+            );
         }
     }
 }
@@ -1026,7 +1125,10 @@ async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
     for sibling in siblings {
         if let Some((_, ctx)) = room.peers.remove(&sibling) {
             if let Err(e) = ctx.pc.close().await {
-                warn!("[multi-device] failed to close sibling peer {}: {}", sibling, e);
+                warn!(
+                    "[multi-device] failed to close sibling peer {}: {}",
+                    sibling, e
+                );
             } else {
                 info!(
                     "[multi-device] evicted sibling peer {} for user {}",
@@ -1055,7 +1157,9 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
     let ice_servers = resolve_ice_servers().await;
     // Match browser clients (iceTransportPolicy: 'relay') so connectivity checks use TURN.
     let ice_transport_policy = if ice_servers.iter().any(|s| {
-        s.urls.iter().any(|u| u.contains("turn:") || u.contains("turns:"))
+        s.urls
+            .iter()
+            .any(|u| u.contains("turn:") || u.contains("turns:"))
     }) {
         RTCIceTransportPolicy::Relay
     } else {

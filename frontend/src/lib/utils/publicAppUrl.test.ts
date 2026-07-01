@@ -35,7 +35,21 @@ describe('publicAppUrl', () => {
     expect(inAppPathFromHref('/admin/platform')).toBe('/admin/platform');
     expect(inAppPathFromHref('/c/join/abc-token')).toBe('/c/join/abc-token');
     expect(inAppPathFromHref('/g/join/xyz-token')).toBe('/g/join/xyz-token');
-    expect(inAppPathFromHref('/unknown')).toBeNull();
+  });
+
+  it('keeps every non-backend Canari path in-app (no duplicate tab)', () => {
+    expect(inAppPathFromHref('/settings')).toBe('/settings');
+    expect(inAppPathFromHref('/lists/abc')).toBe('/lists/abc');
+    expect(inAppPathFromHref('/legal/cgu')).toBe('/legal/cgu');
+    // Formerly returned null (allowlist miss); the denylist now keeps it in-app.
+    expect(inAppPathFromHref('/unknown')).toBe('/unknown');
+    expect(inAppPathFromPublicUrl('https://canari-emse.fr/settings')).toBe('/settings');
+  });
+
+  it('never swallows backend endpoints into in-app navigation', () => {
+    expect(inAppPathFromHref('/api/version')).toBeNull();
+    expect(inAppPathFromPublicUrl('https://canari-emse.fr/api/version')).toBeNull();
+    expect(inAppPathFromHref('/.well-known/assetlinks.json')).toBeNull();
   });
 
   it('maps public dashboard URLs without swallowing navigation', () => {

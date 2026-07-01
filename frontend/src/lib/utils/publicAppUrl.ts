@@ -4,9 +4,19 @@ export const DEFAULT_PUBLIC_APP_ORIGIN = 'https://canari-emse.fr';
 /** Hostnames treated as in-app navigation targets (not external browser). */
 export const PUBLIC_APP_HOSTS = ['canari-emse.fr', 'www.canari-emse.fr'] as const;
 
-/** SPA path prefixes that open inside the app (not the system browser). */
+/**
+ * SPA route prefixes eligible for the rich in-app link label (chat cards) and for
+ * mobile deep-link association. Navigation is NOT gated on this list - see
+ * {@link NON_SPA_PATH_RE}. Keep in sync with the mobile universal-link paths.
+ */
 export const IN_APP_ROUTE_RE =
   /^\/(posts|forms|associations|profile|chat|shop|calendar|communities|notifications|dashboard|admin|events|account|dev|c|g)(\/|$)/;
+
+/**
+ * Path prefixes on the Canari host served by the backend, not the SvelteKit SPA.
+ * Links here must hard-navigate / open externally, never client-side routing.
+ */
+export const NON_SPA_PATH_RE = /^\/(api|internal|\.well-known)(\/|$)/;
 
 /** True when the WebView origin must not be used for outbound share links. */
 function isNonPublicWebViewOrigin(origin: string): boolean {
@@ -55,18 +65,18 @@ export function isPublicAppUrl(url: string, base?: string): boolean {
 }
 
 /**
- * Normalizes a pathname (legacy `/post/{id}` → `/posts/{id}`) and returns the in-app path
- * with query/hash when the route is supported, otherwise null.
+ * Normalizes a pathname (legacy `/post/{id}` -> `/posts/{id}`) and returns the in-app path
+ * with query/hash. Every Canari path resolves in-app except backend endpoints
+ * (see {@link NON_SPA_PATH_RE}), so a Canari link never spawns a duplicate tab/window
+ * (which would open a second WebSocket session).
  */
 export function normalizeInAppPathname(pathname: string, search = '', hash = ''): string | null {
   let path = pathname || '/';
   const legacyPost = path.match(/^\/post\/([^/]+)\/?$/);
   if (legacyPost) path = `/posts/${legacyPost[1]}`;
 
-  if (IN_APP_ROUTE_RE.test(path) || path === '/') {
-    return `${path}${search}${hash}`;
-  }
-  return null;
+  if (NON_SPA_PATH_RE.test(path)) return null;
+  return `${path}${search}${hash}`;
 }
 
 /**

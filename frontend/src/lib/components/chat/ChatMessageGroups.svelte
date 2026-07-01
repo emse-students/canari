@@ -30,6 +30,8 @@
     onReact?: (messageId: string, emoji: string) => void;
     /** Callback fired when the user votes on a poll message (channels only). */
     onVotePoll?: (messageId: string, optionIds: string[]) => void;
+    /** Callback fired when the poll author closes their poll early (channels only). */
+    onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
     /** Callback to edit a message by ID with new text. */
@@ -60,6 +62,7 @@
     onNavigateToMessage,
     onReact,
     onVotePoll,
+    onClosePoll,
     onDelete,
     onEdit,
     onTogglePin,
@@ -267,6 +270,7 @@
               {onNavigateToMessage}
               {onReact}
               {onVotePoll}
+              {onClosePoll}
               {onDelete}
               {onEdit}
               {onTogglePin}

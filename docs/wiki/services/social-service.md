@@ -62,6 +62,8 @@ Channels use server-assisted symmetric encryption (not MLS):
 | POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
 | POST | `/api/channels/:channelId/members/leave` | Leave channel |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |
+| POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
+| PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
 | PATCH | `/api/channels/:channelId/notification-level` | Set push level (`all` \| `mentions` \| `none`) |
 

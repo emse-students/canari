@@ -653,6 +653,21 @@
     }
   }
 
+  /** Closes the caller's own channel poll early (server forces the deadline). */
+  async function handleClosePoll(messageId: string) {
+    const channelId = convs.selectedContact;
+    if (!channelId) return;
+    try {
+      const meta = await channelService.closePoll(channelId, messageId);
+      setPollMeta(messageId, meta);
+    } catch (e) {
+      showToast(
+        `${m.channel_poll_close_error()} : ${e instanceof Error ? e.message : 'erreur'}`,
+        'warning'
+      );
+    }
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -722,6 +737,7 @@
           onSendGif={handleSendGif}
           onCreatePoll={isSelectedChannel ? handleCreatePoll : undefined}
           onVotePoll={isSelectedChannel ? handleVotePoll : undefined}
+          onClosePoll={isSelectedChannel ? handleClosePoll : undefined}
           onLoadSharedContent={loadSharedContent}
           onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
