@@ -89,6 +89,7 @@
     });
     lastRenderedValue = text;
     const pos = cursor ?? getPlainTextSelection(editorEl).start;
+    setPlainTextSelection(editorEl, pos, pos);
     queueMicrotask(() => {
       if (!editorEl) return;
       setPlainTextSelection(editorEl, pos, pos);
@@ -182,7 +183,14 @@
       emitEditorChange();
       return;
     }
-    if (e.key === 'Enter' && !singleLine && markdownPreview && editorEl && !e.isComposing) {
+    if (
+      e.key === 'Enter' &&
+      !singleLine &&
+      markdownPreview &&
+      editorEl &&
+      !e.isComposing &&
+      composerMarkdownPreviewEnabled(serializeMentionEditor(editorEl), renderOptions)
+    ) {
       e.preventDefault();
       const { text, cursor } = insertPlainTextNewline(editorEl);
       syncFromPlainText(text, cursor);
@@ -380,31 +388,16 @@
     opacity: 0.85;
   }
 
-  :global(.md-composer-code) {
+  :global(.md-composer-code),
+  :global(.md-composer-fenced-code) {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 0.92em;
-    background: rgb(0 0 0 / 0.06);
-    border-radius: 0.25rem;
-    padding: 0 0.15rem;
-  }
-
-  :global(:is(.dark) .md-composer-code) {
-    background: rgb(255 255 255 / 0.08);
   }
 
   :global(.md-composer-fenced-code) {
     display: block;
     width: 100%;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.92em;
-    background: rgb(0 0 0 / 0.06);
-    border-radius: 0.25rem;
-    padding: 0.1rem 0.35rem;
     white-space: pre-wrap;
-  }
-
-  :global(:is(.dark) .md-composer-fenced-code) {
-    background: rgb(255 255 255 / 0.08);
   }
 
   :global(.md-composer-h1),

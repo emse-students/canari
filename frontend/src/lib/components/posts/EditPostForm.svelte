@@ -32,6 +32,7 @@
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
@@ -192,6 +193,7 @@
     saving = true;
     errorMessage = '';
     try {
+      markdown = trimComposerText(markdown);
       if (!markdown.trim() && existingImages.length === 0 && newFiles.length === 0) {
         throw new Error('Post content or an image is required.');
       }

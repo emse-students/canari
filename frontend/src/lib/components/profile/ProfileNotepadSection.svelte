@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { NotebookPen } from '@lucide/svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { fetchMyNotes, saveMyNotes } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
 
@@ -31,6 +32,7 @@
     noteError = '';
     noteSaved = false;
     try {
+      noteInput = trimComposerText(noteInput);
       await saveMyNotes(noteInput);
       noteSaved = true;
       setTimeout(() => (noteSaved = false), 2000);

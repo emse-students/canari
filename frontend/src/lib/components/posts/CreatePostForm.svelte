@@ -37,6 +37,7 @@
   import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { trimComposerText } from '$lib/utils/markdown/composerText';
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -264,6 +265,7 @@
     publishing = true;
     errorMessage = '';
     try {
+      markdown = trimComposerText(markdown);
       await assertNotMuted();
       if (!markdown.trim() && selectedFiles.length === 0) {
         throw new Error(m.post_create_content_required());

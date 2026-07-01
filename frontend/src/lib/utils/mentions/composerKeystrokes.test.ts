@@ -38,13 +38,18 @@ describe('markdownStructureKey / shouldRerenderComposerDom', () => {
 
   it('rerenders when a delimiter pair is opened or closed', () => {
     expect(shouldRerenderComposerDom('*test*', '*test', MD)).toBe(true);
-    expect(shouldRerenderComposerDom('*', '', MD)).toBe(true);
+    expect(shouldRerenderComposerDom('*', '', MD)).toBe(false);
     expect(shouldRerenderComposerDom('*a*', '*a', MD)).toBe(true);
   });
 
   it('enables styled preview only for closed spans', () => {
     expect(composerMarkdownPreviewEnabled('*open', MD)).toBe(false);
     expect(composerMarkdownPreviewEnabled('*closed*', MD)).toBe(true);
+  });
+
+  it('does not rerender plain text when only newlines change', () => {
+    expect(shouldRerenderComposerDom('hello\n', 'hello', MD)).toBe(false);
+    expect(shouldRerenderComposerDom('a\nb\n', 'a\nb', MD)).toBe(false);
   });
 });
 

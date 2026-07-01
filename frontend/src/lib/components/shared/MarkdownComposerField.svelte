@@ -2,6 +2,7 @@
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import MarkdownComposerToolbar from '$lib/components/shared/MarkdownComposerToolbar.svelte';
   import { applyComposerMarkdownFormat } from '$lib/utils/markdown/composerMarkdownFormat';
+  import { trimComposerTextIfNeeded } from '$lib/utils/markdown/composerText';
 
   interface Props {
     value?: string;
@@ -53,6 +54,25 @@
       composerEl
     );
   }
+
+  function commitTrimmedValue(): string {
+    const { text, changed } = trimComposerTextIfNeeded(value);
+    if (changed) {
+      value = text;
+      onchange?.(text);
+    }
+    return text;
+  }
+
+  function handleBlur() {
+    commitTrimmedValue();
+    onblur?.();
+  }
+
+  /** @public - Trims padding and syncs the bound value (e.g. before save while still focused). */
+  export function commitValue(): string {
+    return commitTrimmedValue();
+  }
 </script>
 
 <div class="flex flex-col min-w-0 {className}">
@@ -74,6 +94,6 @@
     {onkeydown}
     {onpaste}
     {onfocus}
-    {onblur}
+    onblur={handleBlur}
   />
 </div>

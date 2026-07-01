@@ -33,6 +33,7 @@
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -114,7 +115,8 @@
   async function saveBio() {
     saving = true;
     try {
-      profile = await updateMyProfile({ bio: bioInput.trim() });
+      bioInput = trimComposerText(bioInput);
+      profile = await updateMyProfile({ bio: bioInput });
       editingBio = false;
     } catch (err) {
       error = err instanceof Error ? err.message : m.profile_bio_save_error_fallback();

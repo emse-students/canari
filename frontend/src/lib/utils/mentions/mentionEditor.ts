@@ -128,6 +128,9 @@ function appendTextWithBreaks(parent: HTMLElement, text: string): void {
     if (lines[i]) parent.appendChild(document.createTextNode(lines[i]));
     if (i < lines.length - 1) parent.appendChild(document.createElement('br'));
   }
+  if (text.endsWith('\n')) {
+    parent.appendChild(document.createTextNode(''));
+  }
 }
 
 function appendMutedSpan(parent: HTMLElement, text: string): void {
@@ -247,6 +250,10 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
         break;
     }
   }
+  // Lets the caret land on a trailing empty line (contenteditable has no native anchor otherwise).
+  if (text.endsWith('\n')) {
+    parent.appendChild(document.createTextNode(''));
+  }
 }
 
 export function countMentionTokens(text: string): number {
@@ -277,8 +284,12 @@ export function shouldRerenderComposerDom(
   if (!options.markdownPreview) return false;
   if (!plainText && !lastRendered) return false;
   if (plainText === lastRendered) return false;
+  const formattedNow = hasFormattedMarkdownPreview(plainText);
+  const formattedBefore = hasFormattedMarkdownPreview(lastRendered);
+  // Plain-text edits (including newlines) keep the browser DOM; no styled spans to rebuild.
+  if (!formattedNow && !formattedBefore) return false;
   if (markdownStructureKey(plainText) !== markdownStructureKey(lastRendered)) return true;
-  return hasFormattedMarkdownPreview(plainText);
+  return formattedNow;
 }
 
 /** True when plain text has `@[uuid]` tokens not yet rendered as chips. */
@@ -383,7 +394,9 @@ function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node;
     return false;
   }
 
-  walk(root);
+  if (!walk(root) && remaining > 0) {
+    found = { node: root, offset: root.childNodes.length };
+  }
   return found;
 }
 
