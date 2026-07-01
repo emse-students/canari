@@ -34,10 +34,14 @@ export class UsersService implements OnModuleInit {
     private readonly dataSource: DataSource,
   ) {}
 
-  /** Enables the unaccent PostgreSQL extension used by the search query. */
+  /**
+   * Enables the PostgreSQL extensions used by user search: `unaccent` (accent-insensitive
+   * matching) and `pg_trgm` (trigram similarity, for typo-tolerant fuzzy matching and ranking).
+   */
   async onModuleInit(): Promise<void> {
     await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS unaccent');
-    this.logger.log('unaccent extension ready');
+    await this.dataSource.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    this.logger.log('unaccent + pg_trgm extensions ready');
   }
 
   /** Persists a new user entity and returns it. */
