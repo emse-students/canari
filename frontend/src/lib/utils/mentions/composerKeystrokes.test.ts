@@ -53,8 +53,8 @@ describe('markdownStructureKey / shouldRerenderComposerDom', () => {
   });
 
   it('does not rerender when only fenced code body text changes', () => {
-    expect(shouldRerenderComposerDom('```js\na', '```js\nab', MD)).toBe(false);
-    expect(shouldRerenderComposerDom('```js\na', '```js\n', MD)).toBe(false);
+    expect(shouldRerenderComposerDom('```js\na', '```js\nab', MD)).toBe(true);
+    expect(shouldRerenderComposerDom('```js\na', '```js\n', MD)).toBe(true);
     expect(shouldRerenderComposerDom('```js\n', '```js', MD)).toBe(true);
   });
 });

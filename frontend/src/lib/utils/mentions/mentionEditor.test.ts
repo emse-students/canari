@@ -98,4 +98,19 @@ describe('mentionEditor', () => {
     const sel = window.getSelection();
     expect(codeLine?.contains(sel?.anchorNode ?? null)).toBe(true);
   });
+
+  it('serializes typing on an empty fenced line without merging the previous line', () => {
+    const text = '```js\np\ndd\n';
+    renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
+    setPlainTextSelection(root, text.length, text.length);
+    const sel = window.getSelection();
+    expect(sel?.rangeCount).toBeGreaterThan(0);
+    const range = sel!.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(document.createTextNode('L'));
+    range.collapse(false);
+    sel!.removeAllRanges();
+    sel!.addRange(range);
+    expect(serializeMentionEditor(root)).toBe('```js\np\ndd\nL');
+  });
 });

@@ -24,6 +24,14 @@ export const MD_STRIKE_CLASS = 'md-composer-strike';
 export const MD_CODE_CLASS = 'md-composer-code';
 export const MD_FENCED_CODE_CLASS = 'md-composer-fenced-code';
 export const MD_H1_CLASS = 'md-composer-h1';
+
+/** Invisible placeholder in empty code lines so contenteditable keeps a caret anchor. */
+export const COMPOSER_EMPTY_LINE_FILLER = '\u200B';
+
+/** Removes DOM-only caret placeholders from serialized composer text. */
+export function stripComposerDomFillers(text: string): string {
+  return text.replace(/\u200B/g, '');
+}
 export const MD_H2_CLASS = 'md-composer-h2';
 export const MD_H3_CLASS = 'md-composer-h3';
 
@@ -94,7 +102,7 @@ export function serializeMentionEditor(root: HTMLElement): string {
   }
 
   walkChildren(root);
-  return out;
+  return stripComposerDomFillers(out);
 }
 
 /**
@@ -210,7 +218,8 @@ function appendFencedCodeBody(parent: HTMLElement, lines: readonly string[]): vo
   block.className = MD_FENCED_CODE_CLASS;
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) block.appendChild(document.createElement('br'));
-    block.appendChild(document.createTextNode(lines[i]));
+    const lineText = lines[i] === '' ? COMPOSER_EMPTY_LINE_FILLER : lines[i];
+    block.appendChild(document.createTextNode(lineText));
   }
   parent.appendChild(block);
 }
@@ -306,7 +315,7 @@ export function shouldRerenderComposerDom(
   // Plain-text edits (including newlines) keep the browser DOM; no styled spans to rebuild.
   if (!formattedNow && !formattedBefore) return false;
   if (markdownStructureKey(plainText) !== markdownStructureKey(lastRendered)) return true;
-  if (isFenceBodyContentChange(plainText, lastRendered)) return false;
+  if (isFenceBodyContentChange(plainText, lastRendered)) return true;
   return formattedNow;
 }
 
