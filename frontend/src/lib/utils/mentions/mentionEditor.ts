@@ -7,6 +7,7 @@ import {
   markdownStructureKey,
   parseHeadingLine,
   parseInlineMarkdownPreview,
+  type ComposerLineKind,
   type InlineMarkdownStyle,
   type InlinePreviewSegment,
 } from '$lib/utils/markdown/inlinePreview';
@@ -51,7 +52,8 @@ function isComposerBlockElement(el: HTMLElement): boolean {
   return (
     el.classList.contains(MD_H1_CLASS) ||
     el.classList.contains(MD_H2_CLASS) ||
-    el.classList.contains(MD_H3_CLASS)
+    el.classList.contains(MD_H3_CLASS) ||
+    el.classList.contains(MD_FENCED_CODE_CLASS)
   );
 }
 
@@ -241,19 +243,26 @@ function appendComposerLine(parent: HTMLElement, line: string): void {
   }
 }
 
+function shouldOmitComposerBreak(prev: ComposerLineKind, next: ComposerLineKind): boolean {
+  // The fenced body is a block; the closing ``` already starts on the next line without a <br>.
+  return prev === 'code' && next === 'fence-close';
+}
+
 function appendComposerText(parent: HTMLElement, text: string, markdownPreview: boolean): void {
   if (!markdownPreview) {
     appendTextWithBreaks(parent, text);
     return;
   }
   const classified = classifyComposerLines(text);
+  let prevKind: ComposerLineKind | null = null;
 
   for (let i = 0; i < classified.length; ) {
-    if (i > 0) {
+    const { kind, line } = classified[i];
+
+    if (prevKind !== null && !shouldOmitComposerBreak(prevKind, kind)) {
       parent.appendChild(document.createElement('br'));
     }
 
-    const { kind, line } = classified[i];
     if (kind === 'code') {
       const codeLines: string[] = [];
       while (i < classified.length && classified[i].kind === 'code') {
@@ -261,6 +270,7 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
         i++;
       }
       appendFencedCodeBody(parent, codeLines);
+      prevKind = 'code';
       continue;
     }
 
@@ -273,6 +283,7 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
         appendComposerLine(parent, line);
         break;
     }
+    prevKind = kind;
     i++;
   }
 

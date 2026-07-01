@@ -99,6 +99,17 @@ describe('mentionEditor', () => {
     expect(codeLine?.contains(sel?.anchorNode ?? null)).toBe(true);
   });
 
+  it('does not add an extra break before a closing fence', () => {
+    const text = '```js\ncode\n```';
+    renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
+    expect(serializeMentionEditor(root)).toBe(text);
+    const fenced = root.querySelector(`.${MD_FENCED_CODE_CLASS}`);
+    expect(fenced).not.toBeNull();
+    const afterFenced = fenced!.nextSibling;
+    expect(afterFenced?.nodeName).not.toBe('BR');
+    expect((afterFenced as HTMLElement | null)?.classList.contains('md-composer-muted')).toBe(true);
+  });
+
   it('serializes typing on an empty fenced line without merging the previous line', () => {
     const text = '```js\np\ndd\n';
     renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
