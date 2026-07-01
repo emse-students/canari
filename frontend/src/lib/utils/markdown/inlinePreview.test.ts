@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyComposerLines,
   hasFormattedMarkdownPreview,
+  isFenceBodyContentChange,
   markdownStructureKey,
   parseHeadingLine,
   parseInlineMarkdownPreview,
@@ -260,5 +261,12 @@ describe('fenced code blocks', () => {
     const before = '```\n*a*\n```';
     const after = '```\n*ab*\n```';
     expect(markdownStructureKey(before)).toBe(markdownStructureKey(after));
+  });
+
+  it('detects fence body edits without layout changes', () => {
+    expect(isFenceBodyContentChange('```js\na', '```js\nab')).toBe(true);
+    expect(isFenceBodyContentChange('```js\n', '```js\na')).toBe(true);
+    expect(isFenceBodyContentChange('```js\n', '```js')).toBe(false);
+    expect(isFenceBodyContentChange('*a*', '*ab*')).toBe(false);
   });
 });

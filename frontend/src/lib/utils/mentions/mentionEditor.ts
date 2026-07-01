@@ -3,6 +3,7 @@ import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
   classifyComposerLines,
   hasFormattedMarkdownPreview,
+  isFenceBodyContentChange,
   markdownStructureKey,
   parseHeadingLine,
   parseInlineMarkdownPreview,
@@ -207,7 +208,11 @@ function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegme
 function appendFencedCodeLine(parent: HTMLElement, line: string): void {
   const block = document.createElement('span');
   block.className = MD_FENCED_CODE_CLASS;
-  appendTextWithBreaks(block, line);
+  if (line) {
+    appendTextWithBreaks(block, line);
+  } else {
+    block.appendChild(document.createTextNode(''));
+  }
   parent.appendChild(block);
 }
 
@@ -250,8 +255,8 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
         break;
     }
   }
-  // Lets the caret land on a trailing empty line (contenteditable has no native anchor otherwise).
-  if (text.endsWith('\n')) {
+  const last = classified[classified.length - 1];
+  if (text.endsWith('\n') && last?.kind === 'normal' && last.line === '') {
     parent.appendChild(document.createTextNode(''));
   }
 }
@@ -289,6 +294,7 @@ export function shouldRerenderComposerDom(
   // Plain-text edits (including newlines) keep the browser DOM; no styled spans to rebuild.
   if (!formattedNow && !formattedBefore) return false;
   if (markdownStructureKey(plainText) !== markdownStructureKey(lastRendered)) return true;
+  if (isFenceBodyContentChange(plainText, lastRendered)) return false;
   return formattedNow;
 }
 
@@ -343,6 +349,24 @@ export function getPlainTextSelection(root: HTMLElement): { start: number; end: 
   };
 }
 
+function caretTargetAfterLineBreak(
+  parent: ParentNode,
+  brIndex: number
+): { node: Node; offset: number } | null {
+  const next = parent.childNodes[brIndex + 1];
+  if (!next) return null;
+  if (next.nodeType === Node.TEXT_NODE) {
+    return { node: next, offset: 0 };
+  }
+  if (next instanceof HTMLElement && next.classList.contains(MD_FENCED_CODE_CLASS)) {
+    const textChild = next.firstChild;
+    if (textChild?.nodeType === Node.TEXT_NODE) {
+      return { node: textChild, offset: 0 };
+    }
+  }
+  return null;
+}
+
 function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node; offset: number } {
   let remaining = target;
   let found: { node: Node; offset: number } = { node: root, offset: 0 };
@@ -381,7 +405,8 @@ function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node;
         return true;
       }
       if (remaining === 1) {
-        found = { node: parent, offset: index + 1 };
+        const afterBreak = caretTargetAfterLineBreak(parent, index);
+        found = afterBreak ?? { node: parent, offset: index + 1 };
         return true;
       }
       remaining -= 1;

@@ -7,6 +7,7 @@ vi.mock('$lib/utils/users/displayName', () => ({
 
 import {
   getPlainTextSelection,
+  MD_FENCED_CODE_CLASS,
   needsMentionChipRender,
   insertPlainTextNewline,
   renderPlainTextToMentionEditor,
@@ -71,5 +72,30 @@ describe('mentionEditor', () => {
     renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
     setPlainTextSelection(root, cursor, cursor);
     expect(getPlainTextSelection(root).start).toBe(6);
+  });
+
+  it('round-trips caret offsets inside an open fenced code block', () => {
+    const text = '```js\nconst x = 1;\n';
+    renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
+    for (let pos = 0; pos <= text.length; pos++) {
+      setPlainTextSelection(root, pos, pos);
+      expect(getPlainTextSelection(root).start, `text=${JSON.stringify(text)} pos=${pos}`).toBe(
+        pos
+      );
+    }
+  });
+
+  it('places the caret inside the code body after Enter on a fence opener', () => {
+    renderPlainTextToMentionEditor(root, '```js', { markdownPreview: true });
+    setPlainTextSelection(root, '```js'.length, '```js'.length);
+    const { text, cursor } = insertPlainTextNewline(root);
+    expect(text).toBe('```js\n');
+    expect(cursor).toBe('```js\n'.length);
+    renderPlainTextToMentionEditor(root, text, { markdownPreview: true });
+    setPlainTextSelection(root, cursor, cursor);
+    expect(getPlainTextSelection(root).start).toBe(cursor);
+    const codeLine = root.querySelector(`.${MD_FENCED_CODE_CLASS}`) as HTMLElement | null;
+    const sel = window.getSelection();
+    expect(codeLine?.contains(sel?.anchorNode ?? null)).toBe(true);
   });
 });

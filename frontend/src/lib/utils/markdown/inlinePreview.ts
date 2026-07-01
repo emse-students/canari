@@ -216,6 +216,24 @@ export function classifyComposerLines(text: string): ClassifiedComposerLine[] {
 }
 
 /**
+ * True when `text` and `lastRendered` share the same fenced layout and only `code` line bodies differ.
+ * Those lines are plain monospace spans and do not need a full composer DOM rebuild per keystroke.
+ */
+export function isFenceBodyContentChange(text: string, lastRendered: string): boolean {
+  const current = classifyComposerLines(text);
+  const previous = classifyComposerLines(lastRendered);
+  if (current.length !== previous.length) return false;
+  if (!current.some((line) => line.kind === 'code')) return false;
+  for (let i = 0; i < current.length; i++) {
+    const a = current[i];
+    const b = previous[i];
+    if (a.kind !== b.kind) return false;
+    if (a.kind !== 'code' && a.line !== b.line) return false;
+  }
+  return true;
+}
+
+/**
  * ATX heading at line start: `# title`, `## title`, `### title`.
  * Also matches incomplete lines `##` or `## ` while typing.
  */
