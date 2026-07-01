@@ -94,6 +94,13 @@ channels live under `/communities` (not `/chat`), the deep-link handler routes b
 (`chatDeepLinkRoute`): a `channel_` target goes to `/communities` and sets the selected channel so
 the sidebar reveals its community and the members panel loads; DM/group targets go to `/chat`.
 
+Cross-device read dismissal: opening a channel that had unread messages calls
+`POST /api/channels/:channelId/read`, which fans out a silent `channel_read` push (via the same
+internal push path) to the caller's own devices. Sibling devices in the background cancel that
+channel's notification (`cancelConversationNotification("channel_<uuid>")`); the reading device
+ignores it (foreground guard). This mirrors the MLS DM/group behaviour, where a self read-receipt
+push clears the conversation's notification on the user's other devices.
+
 ### Forms (`/api/forms`)
 
 | Method | Path | Description |

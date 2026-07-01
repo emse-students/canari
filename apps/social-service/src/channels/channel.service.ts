@@ -1536,6 +1536,30 @@ export class ChannelService {
   }
 
   /**
+   * Records that `userId` has read `channelId` and fans out a silent `channel_read` push to that
+   * user's own devices so any device still showing the channel's notification clears it (cross-device
+   * read-state sync). The reading device ignores it (foreground guard); sibling devices in the
+   * background cancel the notification. Access-controlled: the caller must be able to see the channel.
+   */
+  async markChannelRead(channelId: string, userId: string): Promise<void> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+    if (!this.internalSecret) return;
+    await this.sendInternalPush(userId, channel.name, {
+      type: 'channel_read',
+      channelId: channel.id,
+      workspaceId: channel.workspaceId,
+      senderId: userId,
+    });
+  }
+
+  /**
    * Posts a single user's push to chat-delivery's internal endpoint (where Firebase Admin lives).
    * Best-effort: a failed push must never surface to the message sender.
    */

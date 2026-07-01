@@ -320,9 +320,13 @@
       },
       onSelectConversation: handleSelectConversation,
       onSelectChannelConversation: (channelId: string) => {
+        // Capture unread BEFORE selectConversation resets it: only signal a cross-device read
+        // when there was actually something unread, to avoid a self-push on every channel open.
+        const hadUnread = (convs.conversations.get(channelId)?.unreadCount ?? 0) > 0;
         channels.selectedChannelConversationId = channelId;
         convs.selectConversation(channelId);
         void convs.loadHistoryForConversation(channelId, channelId, convCtx());
+        if (hadUnread) void channelService.markChannelRead(channelId);
       },
       onSelectCommunity: () => {
         // Switching community must not keep the previous channel open: clear the selection

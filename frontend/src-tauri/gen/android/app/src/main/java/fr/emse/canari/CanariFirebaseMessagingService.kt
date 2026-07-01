@@ -305,6 +305,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        // Channel read on another of my devices: clear this device's notification for that channel
+        // (cross-device read-state sync, channel counterpart of the MLS silent-receipt path below).
+        // The reading device is in the foreground and already returned above; only background
+        // sibling devices reach here. No decryption, no state - pure notification cancellation.
+        if (msgType == "channel_read") {
+            val channelId = data["channelId"] ?: ""
+            if (channelId.isNotEmpty()) {
+                Log.d(TAG, "type=channel_read → clearing notification for channel=$channelId")
+                cancelConversationNotification("channel_$channelId")
+            }
+            return
+        }
+
         // Sync MLS en arrière-plan : déchiffre et met à jour l'état sans notification visible
         if (data["action"] == "process_queue") {
             Log.d(TAG, "action=process_queue → enqueue MlsBackgroundWorker")

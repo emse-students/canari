@@ -467,6 +467,17 @@ export class ChannelsController {
     return this.service.listPinnedMessageIds(channelId, xUserId.trim().toLowerCase());
   }
 
+  /**
+   * Signals that the caller has read a channel, fanning out a silent `channel_read` push to the
+   * caller's OTHER devices so they clear the channel's notification (cross-device read-state sync).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':channelId/read')
+  async markRead(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    await this.service.markChannelRead(channelId, xUserId.trim().toLowerCase());
+    return { ok: true };
+  }
+
   /** Returns recent messages for a channel accessible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/messages')

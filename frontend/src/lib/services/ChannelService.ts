@@ -521,6 +521,20 @@ export class ChannelService {
   }
 
   /**
+   * Signals that the caller has read this channel, so the server pushes a silent `channel_read`
+   * to the caller's other devices to clear the channel's notification (cross-device read-state
+   * sync). Best-effort and fire-and-forget: read state is not critical enough to surface errors.
+   */
+  async markChannelRead(channelId: string): Promise<void> {
+    const cid = this.normalizeChannelId(channelId);
+    try {
+      await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/read`, { method: 'POST' });
+    } catch {
+      /* best-effort: a failed read signal only means a stale notification lingers elsewhere */
+    }
+  }
+
+  /**
    * Fetches a single page of channel messages (newest-first). When `before` (ISO timestamp) is
    * set, only messages strictly older than it are returned - the keyset cursor used to page back
    * through history.

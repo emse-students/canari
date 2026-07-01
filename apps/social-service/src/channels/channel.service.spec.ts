@@ -541,4 +541,47 @@ describe('ChannelService security hardening', () => {
       global.fetch = prevFetch;
     }
   });
+
+  it('markChannelRead rejects a non-member', async () => {
+    const { service, channelRepo, memberRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+    memberRepo.findOne.mockResolvedValue(null);
+    await expect(service.markChannelRead('ch1', 'uX')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('markChannelRead fans out a silent channel_read push to the caller', async () => {
+    const prevSecret = process.env.INTERNAL_SECRET;
+    const prevFetch = global.fetch;
+    process.env.INTERNAL_SECRET = 'test-secret';
+    const fetchMock = jest.fn((_url: string, _init: { body: string }) =>
+      Promise.resolve({ ok: true } as Response)
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const { service, channelRepo, memberRepo } = makeService();
+      channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        name: 'general',
+        isPrivate: false,
+        allowedRoles: [] as string[],
+        allowedUsers: [] as string[],
+      });
+      memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+
+      await service.markChannelRead('ch1', 'u1');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(payload.userId).toBe('u1');
+      expect(payload.data).toMatchObject({
+        type: 'channel_read',
+        channelId: 'ch1',
+        senderId: 'u1',
+      });
+    } finally {
+      process.env.INTERNAL_SECRET = prevSecret;
+      global.fetch = prevFetch;
+    }
+  });
 });
