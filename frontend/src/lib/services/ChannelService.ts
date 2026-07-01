@@ -141,6 +141,24 @@ export interface ChannelMemberDto {
   joinedAt: string;
 }
 
+/**
+ * A channel message row as returned by the messages API (newest-first). The payload stays
+ * encrypted: `ciphertext`/`nonce`/`keyVersion` are decrypted client-side with the channel epoch
+ * key. `poll` carries the label-free tally so results render without decrypting.
+ */
+export interface ChannelMessageRow {
+  id: string;
+  channelId: string;
+  senderId: string;
+  ciphertext: string;
+  nonce: string | null;
+  keyVersion: number | null;
+  replyTo: string | null;
+  createdAt: string;
+  pinned: boolean;
+  poll: ChannelPollMeta | null;
+}
+
 import { apiFetch } from '$lib/utils/apiFetch';
 
 export class ChannelService {
@@ -502,13 +520,53 @@ export class ChannelService {
     return res.json() as Promise<string[]>;
   }
 
-  async listMessages(channelId: string, limit = 100) {
+  /**
+   * Fetches a single page of channel messages (newest-first). When `before` (ISO timestamp) is
+   * set, only messages strictly older than it are returned - the keyset cursor used to page back
+   * through history.
+   */
+  async listMessages(
+    channelId: string,
+    limit = 100,
+    before?: string
+  ): Promise<ChannelMessageRow[]> {
     const cid = this.normalizeChannelId(channelId);
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (before) params.set('before', before);
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/messages?limit=${limit}`
+      `${this.baseUrl}/api/channels/${cid}/messages?${params.toString()}`
     );
     await this.handleError(res);
     return res.json();
+  }
+
+  /**
+   * Pages back through a channel's entire history (newest-first), following the `createdAt` keyset
+   * cursor until the server returns an empty page or `cap` messages have been collected. Used by
+   * full-text channel search, which must look beyond the most recent page. The cap bounds memory
+   * and request count on very large channels; `capped` signals the history was truncated.
+   */
+  async fetchAllChannelMessages(
+    channelId: string,
+    opts: { cap?: number; pageSize?: number } = {}
+  ): Promise<{ rows: ChannelMessageRow[]; capped: boolean }> {
+    const cap = opts.cap ?? 2000;
+    const pageSize = Math.min(opts.pageSize ?? 200, 200);
+    const rows: ChannelMessageRow[] = [];
+    let before: string | undefined;
+
+    while (rows.length < cap) {
+      const page = await this.listMessages(channelId, pageSize, before);
+      if (!Array.isArray(page) || page.length === 0) break;
+      rows.push(...page);
+      const oldest = page[page.length - 1]?.createdAt;
+      // Server returns strictly-older messages, so passing the oldest createdAt never re-fetches
+      // the same row; a short final page means history is exhausted.
+      if (!oldest || page.length < pageSize) break;
+      before = typeof oldest === 'string' ? oldest : new Date(oldest).toISOString();
+    }
+
+    return { rows: rows.slice(0, cap), capped: rows.length >= cap };
   }
 
   async listMembers(channelId: string): Promise<ChannelMemberDto[]> {

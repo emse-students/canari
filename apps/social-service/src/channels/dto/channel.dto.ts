@@ -146,6 +146,12 @@ export interface SendChannelMessageDto {
 export interface GetChannelMessagesQuery {
   userId: string;
   limit?: number;
+  /**
+   * Keyset cursor: when set, only messages strictly older than this ISO timestamp are
+   * returned (newest-first). Enables paging back through channel history for older-message
+   * loading and full-text search over the whole channel.
+   */
+  before?: string;
 }
 
 export interface UpdateChannelImageDto {

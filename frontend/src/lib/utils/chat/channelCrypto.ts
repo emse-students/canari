@@ -2,12 +2,79 @@ import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import {
   ChannelService,
   type ChannelBootstrapDto,
+  type ChannelMessageRow,
   type ChannelPollInput,
 } from '$lib/services/ChannelService';
-import { encodeAppMessage, mkPoll } from '$lib/proto/codec';
+import { encodeAppMessage, decodeAppMessage, mkPoll } from '$lib/proto/codec';
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
+import { SvelteDate } from 'svelte/reactivity';
 
 const channelService = new ChannelService();
+
+/** A channel message row decrypted and decoded into the fields the chat UI renders. */
+export interface DecodedChannelMessage {
+  id: string;
+  senderId: string;
+  content: string;
+  timestamp: Date;
+  isOwn: boolean;
+}
+
+/**
+ * Decrypts and decodes a single channel message row into a renderable message, or returns null
+ * when the payload is unreadable (missing epoch key) or carries no displayable content. Shared by
+ * channel history loading and full-text search so both decode rows identically. Assumes the
+ * relevant epoch keys are already hydrated in the {@link channelKeyManager}.
+ */
+export async function decodeChannelMessageRow(
+  channelId: string,
+  row: ChannelMessageRow,
+  userIdLower: string
+): Promise<DecodedChannelMessage | null> {
+  const rawChannelId = normalizeChannelId(channelId);
+  const serverMs = parseServerTimestampMs(row.createdAt);
+  let content: string | undefined;
+  let timestamp: Date | undefined;
+  try {
+    let bytes: Uint8Array | undefined;
+    if (row.ciphertext && row.nonce && row.keyVersion != null) {
+      bytes = await channelKeyManager.decryptMessage(
+        rawChannelId,
+        row.ciphertext,
+        row.nonce,
+        row.keyVersion
+      );
+    } else if (row.ciphertext) {
+      const binStr = atob(row.ciphertext);
+      bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+    }
+    if (bytes) {
+      const decoded = decodeAppMessage(bytes);
+      if (decoded) {
+        const envelope = appMsgToEnvelope(decoded, serverMs);
+        if (envelope) {
+          content = envelope.content;
+          timestamp = envelope.options.timestamp;
+        }
+      }
+    }
+  } catch {
+    return null;
+  }
+  if (content === undefined) return null;
+
+  const senderId = String(row.senderId || 'unknown').toLowerCase();
+  return {
+    id: String(row.id),
+    senderId,
+    content,
+    timestamp: timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
+    isOwn: senderId === userIdLower,
+  };
+}
 
 /** Author-supplied poll definition (labels stay client-side, encrypted in the message). */
 export interface ChannelPollDraft {
@@ -26,6 +93,22 @@ function normalizeChannelId(channelId: string): string {
 /** True for community channel conversations (`channel_<uuid>`). */
 export function isChannelConversationId(conversationId: string): boolean {
   return String(conversationId).startsWith('channel_');
+}
+
+/**
+ * Hydrates every known epoch key for a channel into the in-memory {@link channelKeyManager} so
+ * historical messages (encrypted under older epochs) decrypt. Best-effort per key. Shared by
+ * channel history loading and full-text search.
+ */
+export async function hydrateChannelHistoryKeys(channelId: string): Promise<void> {
+  const rawChannelId = normalizeChannelId(channelId);
+  const historyKeys = await channelService.getChannelHistoryKeys(rawChannelId);
+  for (const keyEntry of historyKeys.epochKeys || []) {
+    if (!Number.isFinite(keyEntry.keyVersion) || keyEntry.keyVersion <= 0) continue;
+    if (!keyEntry.encryptedChannelKey) continue;
+    const rawKeyMat = Uint8Array.from(atob(keyEntry.encryptedChannelKey), (c) => c.charCodeAt(0));
+    await importChannelEpochKey(rawChannelId, keyEntry.keyVersion, rawKeyMat);
+  }
 }
 
 /** Return true when an encryption error indicates the local channel key is stale and must be refreshed from the server before retrying. */

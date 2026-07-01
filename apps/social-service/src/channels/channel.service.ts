@@ -6,7 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, LessThan } from 'typeorm';
 import * as crypto from 'crypto';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
@@ -1833,8 +1833,14 @@ export class ChannelService {
     return rows.map((r) => r.id);
   }
 
-  /** Returns up to 200 messages from a channel in reverse chronological order (newest first). Access-controlled by canAccessChannel. */
-  async listMessages(channelId: string, userId: string, limit = 50) {
+  /**
+   * Returns up to 200 messages from a channel in reverse chronological order (newest first).
+   * Access-controlled by canAccessChannel. When `before` (ISO timestamp) is provided, only
+   * messages strictly older than it are returned (keyset pagination): callers page back through
+   * history by passing the oldest `createdAt` of the previous page, until an empty page is
+   * returned. Used for older-message loading and full-text search over the whole channel.
+   */
+  async listMessages(channelId: string, userId: string, limit = 50, before?: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -1846,9 +1852,14 @@ export class ChannelService {
     }
 
     const safeLimit = Math.min(Math.max(1, limit), 200);
+    const beforeDate = before ? new Date(before) : null;
+    const hasValidCursor = beforeDate !== null && !Number.isNaN(beforeDate.getTime());
 
     const msgs = await this.messageRepo.find({
-      where: { channelId },
+      where: {
+        channelId,
+        ...(hasValidCursor ? { createdAt: LessThan(beforeDate) } : {}),
+      },
       order: { createdAt: 'DESC' },
       take: safeLimit,
     });

@@ -315,11 +315,8 @@ export function useConversations() {
     force = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { channelKeyManager } = await import('$lib/crypto/ChannelKeyVault');
-    const { importChannelEpochKey } = await import('$lib/utils/chat/channelKeyMirror');
-    const { decodeAppMessage } = await import('$lib/proto/codec');
-    const { appMsgToEnvelope } = await import('$lib/utils/chat/messageUtils');
-    const { parseServerTimestampMs } = await import('$lib/mls-client/incomingDelivery');
+    const { decodeChannelMessageRow, hydrateChannelHistoryKeys } =
+      await import('$lib/utils/chat/channelCrypto');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -344,71 +341,30 @@ export function useConversations() {
       }
       // Fresh devices may miss historical channel epochs in memory.
       // Hydrate all known epochs before decrypting history.
-      try {
-        const historyKeys = await channelService.getChannelHistoryKeys(rawId);
-        for (const keyEntry of historyKeys.epochKeys || []) {
-          if (!Number.isFinite(keyEntry.keyVersion) || keyEntry.keyVersion <= 0) continue;
-          if (!keyEntry.encryptedChannelKey) continue;
-          const rawKeyMat = Uint8Array.from(atob(keyEntry.encryptedChannelKey), (c) =>
-            c.charCodeAt(0)
-          );
-          await importChannelEpochKey(rawId, keyEntry.keyVersion, rawKeyMat);
-        }
-      } catch (e) {
+      await hydrateChannelHistoryKeys(rawId).catch((e) =>
         ctx.log(
           `[CHANNEL] Hydratation clés historiques impossible pour ${rawId}: ${e instanceof Error ? e.message : e}`
-        );
-      }
+        )
+      );
 
-      const rows: any[] = await channelService.listMessages(rawId, 200);
+      const rows = await channelService.listMessages(rawId, 200);
       const loaded: ChatMessage[] = [];
+      const meLower = ctx.userId.toLowerCase();
 
       if (Array.isArray(rows)) {
         for (const msg of rows) {
-          let content: string | undefined;
-          let messageTimestamp: Date | undefined;
-          const channelServerMs = parseServerTimestampMs(msg.createdAt);
-          try {
-            let bytes: Uint8Array | undefined;
-            if (msg.ciphertext && msg.nonce && msg.keyVersion !== undefined) {
-              bytes = await channelKeyManager.decryptMessage(
-                rawId,
-                msg.ciphertext,
-                msg.nonce,
-                msg.keyVersion
-              );
-            } else if (msg.ciphertext) {
-              const binStr = atob(msg.ciphertext);
-              bytes = new Uint8Array(binStr.length);
-              for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-            }
-            if (bytes) {
-              const decoded = decodeAppMessage(bytes);
-              if (decoded) {
-                const envelope = appMsgToEnvelope(decoded, channelServerMs);
-                if (envelope) {
-                  content = envelope.content;
-                  messageTimestamp = envelope.options.timestamp;
-                }
-              }
-            }
-          } catch (e) {
-            ctx.log(`[CHANNEL] Message non lisible (clé indisponible) ${msg.id}: ${e}`);
-          }
-          if (content === undefined) continue;
+          const decoded = await decodeChannelMessageRow(rawId, msg, meLower);
+          if (!decoded) continue;
 
           // Seed the live poll tally from the server row, keyed by the server id.
           if (msg.poll) setPollMeta(String(msg.id), msg.poll);
 
-          const senderId = String(msg.senderId || 'unknown').toLowerCase();
           loaded.push({
-            id: msg.id,
-            senderId,
-            content,
-            timestamp:
-              messageTimestamp ??
-              (channelServerMs !== undefined ? new SvelteDate(channelServerMs) : new SvelteDate()),
-            isOwn: senderId === ctx.userId.toLowerCase(),
+            id: decoded.id,
+            senderId: decoded.senderId,
+            content: decoded.content,
+            timestamp: decoded.timestamp,
+            isOwn: decoded.isOwn,
           });
         }
       }
@@ -428,6 +384,77 @@ export function useConversations() {
     } finally {
       if (isSelected) isLoadingHistory = false;
     }
+  }
+
+  /**
+   * Full-text search over a channel's ENTIRE history (channels keep only the most recent page in
+   * memory and are never persisted locally). Pages the whole channel from the server, decrypts each
+   * message, and matches the human-readable preview text. As a side effect it merges the fetched
+   * history into the conversation so every hit is rendered and the UI can scroll to it. Returns the
+   * matching message IDs oldest-first (the order ChatArea expects), capped at ~2000 messages.
+   */
+  async function searchChannelHistory(
+    channelConversationId: string,
+    query: string,
+    ctx: ConversationContext
+  ): Promise<string[]> {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+
+    const { channelService } = await import('$lib/services/ChannelService');
+    const { decodeChannelMessageRow, hydrateChannelHistoryKeys } =
+      await import('$lib/utils/chat/channelCrypto');
+    const { getPreviewText, parseEnvelope } = await import('$lib/envelope');
+
+    const rawId = channelConversationId.replace(/^channel_/, '');
+    const meLower = ctx.userId.toLowerCase();
+
+    await hydrateChannelHistoryKeys(rawId).catch(() => {});
+    const { rows, capped } = await channelService.fetchAllChannelMessages(channelConversationId, {
+      cap: 2000,
+    });
+
+    const decodedAll: ChatMessage[] = [];
+    const matches: { id: string; ts: number }[] = [];
+    for (const row of rows) {
+      const decoded = await decodeChannelMessageRow(rawId, row, meLower);
+      if (!decoded) continue;
+      if (row.poll) setPollMeta(String(row.id), row.poll);
+      decodedAll.push({
+        id: decoded.id,
+        senderId: decoded.senderId,
+        content: decoded.content,
+        timestamp: decoded.timestamp,
+        isOwn: decoded.isOwn,
+      });
+      let text = decoded.content;
+      try {
+        text = getPreviewText(parseEnvelope(decoded.content));
+      } catch {
+        /* fall back to the raw content */
+      }
+      if (text.toLowerCase().includes(q)) {
+        matches.push({ id: decoded.id, ts: decoded.timestamp.getTime() });
+      }
+    }
+
+    // Merge the full fetched history into the conversation (union by id, keeping optimistic/pending
+    // local messages) so a hit older than the loaded page is present and scrollable.
+    const current = conversations.get(channelConversationId);
+    if (current) {
+      const existingIds = new SvelteSet(current.messages.map((m) => m.id));
+      const merged = [
+        ...current.messages,
+        ...decodedAll.filter((m) => !existingIds.has(m.id)),
+      ].sort(compareMessageOrder);
+      conversations.set(channelConversationId, { ...current, messages: merged });
+    }
+
+    if (capped) {
+      ctx.log(`[CHANNEL] Search covered the ${rows.length} most recent messages (history capped)`);
+    }
+
+    return matches.sort((a, b) => a.ts - b.ts).map((m) => m.id);
   }
 
   /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
@@ -1027,6 +1054,8 @@ export function useConversations() {
     saveConversation,
     /** Fetches and decrypts network history for a conversation, then reloads from DB. */
     loadHistoryForConversation,
+    /** Full-text search over a channel's entire server history (decrypts + merges hits into view). */
+    searchChannelHistory,
     /** Clears the in-memory channel history TTL cache (one channel or all). */
     invalidateChannelHistoryCache,
     /** Reads saved conversations from IndexedDB and populates the reactive map. */

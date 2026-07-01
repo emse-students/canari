@@ -583,9 +583,10 @@
   }
 
   /**
-   * Full-conversation search over the local store (DMs/groups), returning matching message IDs
-   * oldest-first. Returns null for channels (not persisted locally) so the UI searches the
-   * in-memory loaded messages instead.
+   * Full-conversation search returning matching message IDs oldest-first: over the local store for
+   * DMs/groups, and over the full decrypted server history for channels (which are not persisted
+   * locally). Returns null only when no source is available, so the UI falls back to the in-memory
+   * loaded messages.
    */
   async function searchConversation(
     conversationId: string,
@@ -593,7 +594,12 @@
   ): Promise<string[] | null> {
     const q = query.trim().toLowerCase();
     if (q.length < 2) return [];
-    if (isChannelConversationId(conversationId) || !session.storage) return null;
+    // Channels are not persisted locally: search their full server history (decrypt + match),
+    // which also merges older hits into the view so the UI can scroll to them.
+    if (isChannelConversationId(conversationId)) {
+      return convs.searchChannelHistory(conversationId, query, convCtx());
+    }
+    if (!session.storage) return null;
     const msgs = await session.storage.getMessages(conversationId, session.pin);
     return msgs
       .filter((m) => !m.isDeleted && messageSearchText(m.content).toLowerCase().includes(q))

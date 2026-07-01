@@ -108,6 +108,43 @@ describe('ChannelService security hardening', () => {
     memberRepo.find.mockResolvedValue([]);
   }
 
+  it('listMessages without a cursor filters only by channelId', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.find.mockResolvedValue([]);
+
+    await service.listMessages('ch1', 'u1', 50);
+
+    const where = messageRepo.find.mock.calls[0][0].where;
+    expect(where.channelId).toBe('ch1');
+    expect(where.createdAt).toBeUndefined();
+  });
+
+  it('listMessages with a `before` cursor adds a strict createdAt filter (keyset pagination)', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.find.mockResolvedValue([]);
+    const cursor = '2026-07-01T12:00:00.000Z';
+
+    await service.listMessages('ch1', 'u1', 50, cursor);
+
+    const where = messageRepo.find.mock.calls[0][0].where;
+    // TypeORM LessThan yields a FindOperator whose value is the parsed cursor date.
+    expect(where.createdAt).toBeDefined();
+    expect(where.createdAt.value).toEqual(new Date(cursor));
+  });
+
+  it('listMessages ignores an invalid `before` cursor rather than filtering everything out', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.find.mockResolvedValue([]);
+
+    await service.listMessages('ch1', 'u1', 50, 'not-a-date');
+
+    const where = messageRepo.find.mock.calls[0][0].where;
+    expect(where.createdAt).toBeUndefined();
+  });
+
   it('votePoll rejects a message that is not a poll', async () => {
     const { service, channelRepo, memberRepo, messageRepo } = makeService();
     arrangePollAccess(channelRepo, memberRepo);

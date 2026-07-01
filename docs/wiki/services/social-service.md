@@ -57,6 +57,7 @@ Channels use server-assisted symmetric encryption (not MLS):
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels in workspace for caller |
 | POST | `/api/channels` | Create channel in a workspace |
 | POST | `/api/channels/:channelId/messages` | Send encrypted channel message |
+| GET | `/api/channels/:channelId/messages` | List messages newest-first (`limit`≤200, `before` ISO cursor) |
 | POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
@@ -66,6 +67,17 @@ Channels use server-assisted symmetric encryption (not MLS):
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
 | PATCH | `/api/channels/:channelId/notification-level` | Set push level (`all` \| `mentions` \| `none`) |
+
+#### Channel history and full-text search
+
+`GET /:channelId/messages` returns the newest messages first, capped at 200 per page. Passing
+`before=<ISO createdAt>` returns only strictly-older messages (keyset pagination on `createdAt`),
+so clients page back through the whole channel by following the oldest `createdAt` of the previous
+page until an empty page is returned. Channel messages are never persisted client-side, so full-text
+search fetches and decrypts the entire history on demand (`ChannelService.fetchAllChannelMessages`
+-> `useConversations.searchChannelHistory`, capped at ~2000 messages) and merges the decrypted rows
+into the open conversation so a hit older than the loaded page can be scrolled to. The server only
+ever sees ciphertext; matching happens on the decrypted preview text in the browser.
 
 #### Channel push notifications
 

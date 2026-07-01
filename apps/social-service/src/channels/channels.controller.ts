@@ -476,6 +476,8 @@ export class ChannelsController {
     @Query() query: GetChannelMessagesQuery
   ) {
     const limit = query.limit ? Math.min(Number(query.limit), 200) : 100;
-    return this.service.listMessages(channelId, xUserId.trim().toLowerCase(), limit);
+    const before =
+      typeof query.before === 'string' && query.before.trim() ? query.before.trim() : undefined;
+    return this.service.listMessages(channelId, xUserId.trim().toLowerCase(), limit, before);
   }
 }
