@@ -227,14 +227,11 @@ export class UsersService implements OnModuleInit {
         'user.bio',
       ]);
 
-    if (q.length >= 2) {
-      const terms = q.split(/\s+/).filter(Boolean);
-      terms.forEach((term, i) => {
-        qb.andWhere(
-          `unaccent(LOWER(user.displayName)) LIKE unaccent(LOWER(:term${i}))`,
-          { [`term${i}`]: `%${term}%` },
-        );
-      });
+    // Accent-insensitive, word-order-insensitive, typo-tolerant name matching + relevance ordering.
+    // Only when a name query is present; otherwise the directory keeps its alphabetical order below.
+    const hasNameQuery = q.length >= 2;
+    if (hasNameQuery) {
+      applyFuzzyNameSearch(qb, q);
     }
 
     if (query.promo != null) {
@@ -258,7 +255,10 @@ export class UsersService implements OnModuleInit {
       qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
     }
 
-    qb.orderBy('user.displayName', 'ASC', 'NULLS LAST');
+    // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
+    if (!hasNameQuery) {
+      qb.orderBy('user.displayName', 'ASC', 'NULLS LAST');
+    }
 
     const total = await qb.getCount();
     const rows = await qb.skip(offset).take(limit).getMany();
