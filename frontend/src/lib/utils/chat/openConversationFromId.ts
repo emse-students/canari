@@ -1,6 +1,7 @@
 import type { Conversation } from '$lib/types';
 import type { ConversationContext } from '$lib/composables/useConversations.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
+import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 
 /** Minimal conversation store surface for notification / call deep-link navigation. */
 export interface ConversationNavigator {
@@ -37,4 +38,27 @@ export function openConversationFromId(
   }
 
   return false;
+}
+
+/**
+ * Opens a notification-tap target, handling both DMs/groups and community channels. For a channel
+ * target (`channel_<uuid>`) it also publishes the id to `setSelectedChannel` so the communities
+ * sidebar reveals the right community and the members panel loads - `selectConversation` alone
+ * does not drive that channel-specific UI state. Returns false (without side effects) when the
+ * channel conversation is not loaded yet, so callers can retry once it appears.
+ */
+export function openNotificationTarget(
+  nav: ConversationNavigator,
+  convCtx: ConversationContext,
+  id: string,
+  setSelectedChannel?: (channelConversationId: string) => void
+): boolean {
+  if (isChannelConversationId(id)) {
+    if (!nav.conversations.has(id)) return false;
+    setSelectedChannel?.(id);
+    nav.selectConversation(id);
+    void nav.loadHistoryForConversation(id, id, convCtx);
+    return true;
+  }
+  return openConversationFromId(nav, convCtx, id);
 }

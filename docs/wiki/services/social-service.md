@@ -89,6 +89,11 @@ push carries the ciphertext inline; the Android native layer decrypts it locally
 mirrored to `channel_keys.json` (so plaintext never transits FCM). See the frontend chat module for
 the vault mirror and the per-channel level selector.
 
+Tapping a channel notification opens the deep link `fr.emse.canari://chat/channel_<uuid>`. Because
+channels live under `/communities` (not `/chat`), the deep-link handler routes by target type
+(`chatDeepLinkRoute`): a `channel_` target goes to `/communities` and sets the selected channel so
+the sidebar reveals its community and the members panel loads; DM/group targets go to `/chat`.
+
 ### Forms (`/api/forms`)
 
 | Method | Path | Description |

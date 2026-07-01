@@ -75,17 +75,22 @@ if (isTauriRuntime()) {
             }
 
             // Chat conversation deep link: fr.emse.canari://chat/{groupId}
+            // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
             if (u.protocol === 'fr.emse.canari:' && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
               if (groupId) {
-                import('$lib/stores/notifNav.svelte')
-                  .then(({ notifNav }) => {
+                Promise.all([
+                  import('$lib/stores/notifNav.svelte'),
+                  import('$lib/utils/chat/notificationRouting'),
+                ])
+                  .then(([{ notifNav }, { chatDeepLinkRoute }]) => {
                     notifNav.navigate(groupId);
-                    if (window.location.pathname !== '/chat') {
+                    const target = chatDeepLinkRoute(groupId);
+                    if (window.location.pathname !== target) {
                       import('$app/navigation')
-                        .then(({ goto }) => goto('/chat'))
+                        .then(({ goto }) => goto(target))
                         .catch(() => {
-                          window.location.href = '/chat';
+                          window.location.href = target;
                         });
                     }
                   })

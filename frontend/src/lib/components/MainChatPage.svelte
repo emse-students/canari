@@ -24,7 +24,7 @@
     globalNotifs as notifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
-  import { openConversationFromId } from '$lib/utils/chat/openConversationFromId';
+  import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
@@ -97,7 +97,14 @@
   $effect(() => {
     const id = notifNav.pending;
     if (!id) return;
-    if (openConversationFromId(convs, convCtx(), id)) {
+    if (
+      openNotificationTarget(
+        convs,
+        convCtx(),
+        id,
+        (channelId) => (channels.selectedChannelConversationId = channelId)
+      )
+    ) {
       notifNav.clear();
     }
   });

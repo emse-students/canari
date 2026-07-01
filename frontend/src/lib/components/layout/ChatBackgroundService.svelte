@@ -49,7 +49,8 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import type { CallParticipant } from '$lib/services/CallService';
   import { notifNav } from '$lib/stores/notifNav.svelte';
-  import { openConversationFromId } from '$lib/utils/chat/openConversationFromId';
+  import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
+  import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
@@ -132,18 +133,27 @@
   $effect(() => {
     const id = notifNav.pending;
     if (!id || !globalSession.isLoggedIn) return;
-    // Route to /chat once per pending target. hooks.client.ts also calls goto('/chat'), but on a
-    // cold start that goto can fire before the SvelteKit router is ready and silently no-op,
-    // leaving the user on the home feed. This effect runs post-mount (router ready) and re-runs as
-    // login completes / conversations load, so it reliably reaches /chat and selects the target.
+    // Route to the view that can show this target once per pending id. hooks.client.ts also routes,
+    // but on a cold start that goto can fire before the SvelteKit router is ready and silently
+    // no-op, leaving the user on the home feed. This effect runs post-mount (router ready) and
+    // re-runs as login completes / conversations load, so it reliably reaches the right route and
+    // selects the target. Community channels live under /communities, DMs/groups under /chat.
+    const targetRoute = chatDeepLinkRoute(id);
     if (lastNavigatedNotifTarget !== id) {
       lastNavigatedNotifTarget = id;
-      if (window.location.pathname !== '/chat') {
-        appendLog(`[notifNav] routing to /chat for pending conversation ${id}`);
-        void goto('/chat');
+      if (window.location.pathname !== targetRoute) {
+        appendLog(`[notifNav] routing to ${targetRoute} for pending conversation ${id}`);
+        void goto(targetRoute);
       }
     }
-    if (openConversationFromId(globalConvs, convCtx(), id)) {
+    if (
+      openNotificationTarget(
+        globalConvs,
+        convCtx(),
+        id,
+        (channelId) => (globalChannels.selectedChannelConversationId = channelId)
+      )
+    ) {
       notifNav.clear();
     }
   });
