@@ -205,13 +205,12 @@ function appendInlinePreviewSegment(parent: HTMLElement, seg: InlinePreviewSegme
   }
 }
 
-function appendFencedCodeLine(parent: HTMLElement, line: string): void {
+function appendFencedCodeBody(parent: HTMLElement, lines: readonly string[]): void {
   const block = document.createElement('span');
   block.className = MD_FENCED_CODE_CLASS;
-  if (line) {
-    appendTextWithBreaks(block, line);
-  } else {
-    block.appendChild(document.createTextNode(''));
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) block.appendChild(document.createElement('br'));
+    block.appendChild(document.createTextNode(lines[i]));
   }
   parent.appendChild(block);
 }
@@ -239,22 +238,35 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
     return;
   }
   const classified = classifyComposerLines(text);
-  for (let i = 0; i < classified.length; i++) {
-    if (i > 0) parent.appendChild(document.createElement('br'));
+
+  for (let i = 0; i < classified.length; ) {
+    if (i > 0) {
+      parent.appendChild(document.createElement('br'));
+    }
+
     const { kind, line } = classified[i];
+    if (kind === 'code') {
+      const codeLines: string[] = [];
+      while (i < classified.length && classified[i].kind === 'code') {
+        codeLines.push(classified[i].line);
+        i++;
+      }
+      appendFencedCodeBody(parent, codeLines);
+      continue;
+    }
+
     switch (kind) {
       case 'fence-open':
       case 'fence-close':
         appendMutedSpan(parent, line);
         break;
-      case 'code':
-        appendFencedCodeLine(parent, line);
-        break;
       case 'normal':
         appendComposerLine(parent, line);
         break;
     }
+    i++;
   }
+
   const last = classified[classified.length - 1];
   if (text.endsWith('\n') && last?.kind === 'normal' && last.line === '') {
     parent.appendChild(document.createTextNode(''));
