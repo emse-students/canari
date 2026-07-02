@@ -81,6 +81,23 @@ type MessageEnvelope =
 - **Lightbox**: full-screen image/video with pinch-zoom and download.
 - **Radial menu** (mobile): long-press message -> circular action menu.
 - **Read receipts**: three states — sent / delivered / read — with distinct icons.
+- **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
+  GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
+  `useMessaging.handleFilesSelected` so their animation is preserved.
+
+### Android keyboard media (`commitContent`)
+
+The Android soft keyboard commits rich content (GIF/sticker/image) through the focused editor's
+`InputConnection.commitContent`. The native `KeyboardMediaBridge` (Kotlin) wraps the WebView input
+connection to advertise image MIME types and, on commit, reads the content URI and dispatches a
+`canari-keyboard-media` DOM event (`{ mime, name, data }`, base64). `MainChatPage` listens for it,
+rebuilds a `File`, and routes it through the normal media pipeline (`handleFilesSelected`), so a
+keyboard GIF is encrypted and sent like any picked file, in DMs, groups, and channels.
+
+The single hook lives in the auto-generated `RustWebView.onCreateInputConnection` (marked
+`CANARI CUSTOM PATCH`); all logic is in the non-generated `KeyboardMediaBridge`, so re-applying the
+patch after a `tauri android` regeneration is one line. Reliable IME `commitContent` needs a recent
+Android WebView; on devices where it is unavailable the in-app GIF picker still works.
 
 ## Routes
 

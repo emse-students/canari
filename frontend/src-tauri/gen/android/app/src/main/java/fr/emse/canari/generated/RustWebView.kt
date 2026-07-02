@@ -11,6 +11,8 @@ package fr.emse.canari
 import android.annotation.SuppressLint
 import android.webkit.*
 import android.content.Context
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlin.collections.Map
@@ -94,5 +96,11 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         return cookieManager.getCookie(url)
     }
 
-    
+    // CANARI CUSTOM PATCH (re-apply after `tauri android` regeneration): let the soft keyboard
+    // commit rich content (e.g. a Gboard GIF) into the WebView. All logic lives in the
+    // non-generated KeyboardMediaBridge; this override is the single required hook.
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val ic = super.onCreateInputConnection(outAttrs)
+        return KeyboardMediaBridge.wrapInputConnection(this, ic, outAttrs)
+    }
 }

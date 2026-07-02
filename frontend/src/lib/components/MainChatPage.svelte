@@ -459,15 +459,21 @@
       }
     };
 
+    const handleKeyboardMediaEvent = (e: Event) => {
+      handleKeyboardMedia((e as CustomEvent).detail ?? {});
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('canari-keyboard-media', handleKeyboardMediaEvent);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('canari-keyboard-media', handleKeyboardMediaEvent);
     };
   });
 
@@ -531,6 +537,26 @@
   /** Forwards selected files to the messaging composable for upload. */
   function handleFilesSelected(files: File[]) {
     void messaging.handleFilesSelected(files, msgCtx());
+  }
+
+  /**
+   * Handles rich content committed by the Android soft keyboard (e.g. a Gboard GIF), delivered by
+   * the native KeyboardMediaBridge as a `canari-keyboard-media` event. Rebuilds a File from the
+   * base64 payload and routes it through the normal media pipeline (encrypted upload), so a
+   * keyboard GIF behaves exactly like a picked file - in DMs, groups, and channels alike.
+   */
+  function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
+    if (!convs.selectedContact || !detail?.data) return;
+    try {
+      const bin = atob(detail.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const mime = detail.mime || 'image/gif';
+      const name = detail.name || `gif-${Date.now()}.${mime.split('/')[1] ?? 'gif'}`;
+      handleFilesSelected([new File([bytes], name, { type: mime })]);
+    } catch (e) {
+      appendLog(`[keyboard-media] failed to handle committed content: ${e}`);
+    }
   }
 
   /** Opens the forward picker for a given message. */

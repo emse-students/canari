@@ -695,7 +695,10 @@ export function useMessaging() {
         continue;
       }
       let entry: import('$lib/media').PendingMediaFile = { file };
-      if (file.type.startsWith('image/')) {
+      // Never re-encode GIFs: canvas compression renders a single frame and would drop the
+      // animation (matters for both picked GIFs and keyboard-committed GIFs). They are already
+      // small and optimized, so they are sent as-is.
+      if (file.type.startsWith('image/') && file.type !== 'image/gif') {
         try {
           const { compressImage, IMAGE_COMPRESS_PRESETS } = await import('$lib/media');
           const originalSize = file.size;
