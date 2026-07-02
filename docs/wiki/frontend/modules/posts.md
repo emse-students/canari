@@ -40,6 +40,15 @@ Posts are loaded via `GET /api/posts` (social-service), paginated with infinite 
 | `EditPostForm.svelte` | Create/edit post (markdown, image, poll) |
 | `PostCard.svelte` | Post card in the feed |
 | `PostReactions.svelte` | Emoji reaction bar |
+| `PostComments.svelte` | Comment thread + composer (text, mentions, image/GIF) |
+
+## Comment media (image + GIF)
+
+A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,
+stored as a `PostImageRef`). Three entry points, all funnelled through one `stageMediaFile` helper:
+paste, the in-app GIF picker (`GifPickerModal`/KLIPY — fetches the chosen `.gif` bytes), and the
+Android keyboard's GIF button (the `canari-keyboard-media` event; only the focused comment box
+handles it). GIFs are uploaded as-is — never canvas-compressed, which would flatten the animation.
 
 ## Routes
 

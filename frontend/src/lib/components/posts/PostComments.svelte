@@ -11,7 +11,8 @@
     ImageIcon,
     Flag,
   } from '@lucide/svelte';
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
+  import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
   import type { PostComment, PostImageRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
@@ -96,6 +97,11 @@
   let pendingMedia = $state<PostImageRef | null>(null);
   let pendingPreviewUrl = $state<string | null>(null);
   let uploadingMedia = $state(false);
+  let showGifPicker = $state(false);
+  /** True while the comment input is focused, so only the focused box handles a keyboard GIF. */
+  let commentInputFocused = $state(false);
+  /** GIF button is shown only when a KLIPY key is configured (same gate as the chat composer). */
+  const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
 
   function clearPendingMedia() {
     if (pendingPreviewUrl) {
@@ -105,30 +111,78 @@
     pendingPreviewUrl = null;
   }
 
-  async function handleCommentPaste(e: ClipboardEvent) {
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const imageItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'));
-    if (!imageItem) return;
-    e.preventDefault();
-    const file = imageItem.getAsFile();
-    if (!file || !authToken) return;
+  /**
+   * Encrypts and uploads an image/GIF, then stages it as the pending comment media (preview +
+   * ref). GIFs are uploaded as-is: canvas compression would render a single frame and drop the
+   * animation. Shared by paste, the in-app GIF picker, and keyboard-committed GIFs.
+   */
+  async function stageMediaFile(file: File) {
+    if (!authToken) return;
     uploadingMedia = true;
     try {
-      const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.comment;
-      const compressed = await compressImage(file, maxWidth, maxHeight, quality);
-      const ref = await mediaService.encryptAndUpload(compressed.file, authToken, {
-        width: compressed.width,
-        height: compressed.height,
-      });
+      let uploadFile = file;
+      let dims: { width: number; height: number } | undefined;
+      if (file.type.startsWith('image/') && file.type !== 'image/gif') {
+        const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.comment;
+        const compressed = await compressImage(file, maxWidth, maxHeight, quality);
+        uploadFile = compressed.file;
+        dims = { width: compressed.width, height: compressed.height };
+      }
+      const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims);
       const { type: _type, ...mediaFields } = ref;
+      clearPendingMedia();
       pendingMedia = mediaFields as PostImageRef;
-      pendingPreviewUrl = URL.createObjectURL(file);
+      pendingPreviewUrl = URL.createObjectURL(uploadFile);
     } catch (err) {
       console.error('Failed to upload comment media', err);
     } finally {
       uploadingMedia = false;
     }
   }
+
+  async function handleCommentPaste(e: ClipboardEvent) {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imageItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'));
+    if (!imageItem) return;
+    e.preventDefault();
+    const file = imageItem.getAsFile();
+    if (file) await stageMediaFile(file);
+  }
+
+  /** In-app GIF picker: fetches the chosen GIF's bytes and stages it as encrypted comment media. */
+  async function handleGifSelected(url: string) {
+    showGifPicker = false;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const name = url.split('/').pop()?.split('?')[0] || `gif-${Date.now()}.gif`;
+      await stageMediaFile(new File([blob], name, { type: blob.type || 'image/gif' }));
+    } catch (err) {
+      console.error('Failed to load GIF', err);
+    }
+  }
+
+  /** Rebuilds a File from an Android keyboard-committed GIF (base64) and stages it as comment media. */
+  function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
+    if (!commentInputFocused || !detail?.data) return;
+    try {
+      const bin = atob(detail.data);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const mime = detail.mime || 'image/gif';
+      const name = detail.name || `gif-${Date.now()}.${mime.split('/')[1] ?? 'gif'}`;
+      void stageMediaFile(new File([bytes], name, { type: mime }));
+    } catch (err) {
+      console.error('Failed to handle keyboard GIF', err);
+    }
+  }
+
+  onMount(() => {
+    const onKeyboardMedia = (e: Event) => handleKeyboardMedia((e as CustomEvent).detail ?? {});
+    window.addEventListener('canari-keyboard-media', onKeyboardMedia);
+    return () => window.removeEventListener('canari-keyboard-media', onKeyboardMedia);
+  });
 
   let loadingAll = $state(false);
 
@@ -569,6 +623,8 @@
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
       <div
         class="flex-1 min-w-0 flex items-end bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
+        onfocusin={() => (commentInputFocused = true)}
+        onfocusout={() => (commentInputFocused = false)}
       >
         <MentionComposerInput
           value={commentText}
@@ -581,6 +637,18 @@
           onpaste={handleCommentPaste}
           onkeydown={handleInternalKeyDown}
         />
+        {#if hasGifPicker}
+          <button
+            type="button"
+            onclick={() => (showGifPicker = true)}
+            disabled={uploadingMedia}
+            title={m.chat_send_gif_title()}
+            aria-label={m.chat_send_gif_label()}
+            class="shrink-0 px-1.5 mr-0.5 self-center text-[0.7rem] font-extrabold tracking-tight text-text-muted hover:text-amber-500 disabled:opacity-40 transition-colors"
+          >
+            GIF
+          </button>
+        {/if}
         <button
           type="button"
           onclick={handleSubmitComment}
@@ -594,3 +662,5 @@
     </div>
   </div>
 {/snippet}
+
+<GifPickerModal open={showGifPicker} onClose={() => (showGifPicker = false)} onSelect={handleGifSelected} />
