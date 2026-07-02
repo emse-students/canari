@@ -8,6 +8,7 @@ import {
   warnSkippedKeyPackages,
   purgeLocalConversationRecord,
 } from './groupActions';
+import { canonicalDirectName, resolveDirectPeerId } from './conversations';
 import { classifyServerStatus } from './groupLifecycle';
 import { runExclusiveForGroup } from './groupMutationQueue';
 import { resolveTerminalGroup } from './groupSyncEligibility';
@@ -405,8 +406,21 @@ async function performReboot(
     groups = [];
   }
   const row = groups.find((g) => g.groupId === groupId);
-  const name = row?.name ?? meta?.name ?? '';
   const isGroup = row?.isGroup ?? meta?.isGroup ?? false;
+  let name = row?.name ?? meta?.name ?? '';
+
+  // For a DM, never propagate a possibly-malformed ancestor name (a self-only name would make
+  // the successor look like a "conversation with yourself"). Recompute the canonical self::peer
+  // from the repaired conversation's peer, falling back to the ancestor's authoritative roster.
+  if (!isGroup) {
+    const self = userId.toLowerCase();
+    const convo = [...deps.conversations.values()].find((c) => c.id === groupId);
+    const knownPeer = (convo?.directPeerId ?? '').toLowerCase();
+    let peer = knownPeer && knownPeer !== self ? knownPeer : null;
+    if (!peer) peer = await resolveDirectPeerId(mlsService, groupId, name, userId, log);
+    if (peer) name = canonicalDirectName(userId, peer);
+    else log(`[REBOOT] ${groupId.slice(0, 8)}... DM peer unresolved - keeping name "${name}"`);
+  }
 
   // Step 3: create a successor candidate
   let candidateId: string | null = null;

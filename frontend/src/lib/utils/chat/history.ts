@@ -14,6 +14,7 @@ import {
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
+import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
@@ -107,6 +108,22 @@ export type MlsReplayCommit = () => void;
  * commit / on failure); the caller runs the thunk after the bulk-ingest window has flushed
  * the encrypted checkpoint. Wrap calls in {@link withMlsBulkIngest} to drive that flush.
  */
+/**
+ * Decides whether a history replay run should flag a group as forked-behind (stale epoch gap).
+ * True only when the group is held locally, replay hit an `epoch-gap` (missing commit), and the
+ * local epoch did NOT advance during the replay (no catch-up commit resolved it). A transient gap
+ * fixed by a commit in the same run must not be flagged, or a healthy group catching up would be
+ * needlessly forgotten + re-Welcomed (churn).
+ */
+export function shouldFlagStaleEpochGap(
+  groupWasLocal: boolean,
+  sawEpochGap: boolean,
+  epochBefore: number,
+  epochAfter: number
+): boolean {
+  return groupWasLocal && sawEpochGap && epochAfter === epochBefore;
+}
+
 export async function replayConversationHistory(params: {
   mlsService: IMlsService;
   id: string;
@@ -135,6 +152,13 @@ export async function replayConversationHistory(params: {
     log,
     primedFirstPage,
   } = params;
+
+  // Stale-behind detection: a group present in local WASM whose replay hits an epoch gap
+  // (missing commit) is forked behind the server. We capture the epoch on entry to tell a real
+  // gap from a transient one that a catch-up commit resolves during this same replay.
+  const groupWasLocal = mlsService.getLocalGroups().includes(id);
+  const epochBefore = groupWasLocal ? mlsService.getEpoch(id) : -1;
+  let sawEpochGap = false;
 
   let session: MlsDecryptSession | null = null;
   try {
@@ -329,6 +353,9 @@ export async function replayConversationHistory(params: {
             // Ne PAS marquer "vu" pour que l'entree soit retentee au prochain chargement
             // d'historique apres resynchronisation d'epoch. [[M2]]
             skipSeenHash = true;
+            // epoch-gap = we are BEHIND (missing a commit). Remember it so we can flag the group
+            // for recovery at the end if no catch-up commit advances our epoch in this replay.
+            if (kind === 'epoch-gap') sawEpochGap = true;
             console.warn(`[History] retryable (${kind}): ${String(err).slice(0, 200)}`);
           } else {
             console.warn(`History msg error: ${err}`);
@@ -470,6 +497,15 @@ export async function replayConversationHistory(params: {
 
     if (mlsUpdated) {
       log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
+    }
+
+    // Stale-behind: replay hit an epoch gap for a locally-held group and our epoch did NOT
+    // advance (no catch-up commit applied). The local state is forked behind the server, but no
+    // live frame will arrive to trigger the reactive escalation - register the gap so the sync
+    // watchdog forces forget + re-Welcome. Without this a quiet stale group stays empty forever.
+    if (shouldFlagStaleEpochGap(groupWasLocal, sawEpochGap, epochBefore, mlsService.getEpoch(id))) {
+      markEpochGap(id);
+      log(`[HISTORY] ${id.slice(0, 8)}… epoch gap during replay - flagged for recovery`);
     }
 
     if (!fetchedAnyPage) return undefined;

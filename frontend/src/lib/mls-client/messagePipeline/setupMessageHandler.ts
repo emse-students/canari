@@ -1,4 +1,4 @@
-import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
+import { parseDirectPeerFromName, resolveDirectPeerId } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
@@ -725,15 +725,28 @@ async function upsertConversation(
     directPeerId = peerFromName;
   }
 
-  // Guard against DM with oneself (missing metadata + sender === self).
-  if (isDirect && (!directPeerId || directPeerId === userId)) {
+  // Guard against DM with oneself (missing metadata + sender === self, or a malformed
+  // self-only group name). Try the migrated convo's known peer first, then the authoritative
+  // MLS roster; only give up (treat as group) when the peer truly cannot be resolved.
+  if (isDirect && (!directPeerId || directPeerId === userId.toLowerCase())) {
     const migrated = conversations.get(joinedGroupId);
-    const existing = migrated?.directPeerId ?? migrated?.contactName ?? '';
-    if (existing && existing !== userId) {
+    const existing = (migrated?.directPeerId ?? migrated?.contactName ?? '').toLowerCase();
+    if (existing && existing !== userId.toLowerCase()) {
       directPeerId = existing;
     } else {
-      isDirect = false;
-      directPeerId = '';
+      const fromRoster = await resolveDirectPeerId(
+        deps.mlsService,
+        joinedGroupId,
+        groupName,
+        userId,
+        deps.log
+      );
+      if (fromRoster) {
+        directPeerId = fromRoster;
+      } else {
+        isDirect = false;
+        directPeerId = '';
+      }
     }
   }
 

@@ -3,12 +3,28 @@
  * startHealthCheck (successor migration), startSyncWatchdog (reboot of stuck groups).
  */
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import { checkGroupSuccessors, requestReAdd, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
+import {
+  checkGroupSuccessors,
+  requestReAdd,
+  recoverForkedGroup,
+  RECOVERY_TIMEOUT_MS,
+} from '$lib/utils/chat/recovery';
 import { clearGroupNotReady } from '$lib/utils/chat/rebootDeadline';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { getEpochGapSince, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { getIsTabLeader } from '$lib/utils/chat/connection';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps } from './sessionAuth';
+
+/**
+ * Timer-based safety net for a stuck epoch gap. The pipeline's own escalation is REACTIVE
+ * (only fires when another undecryptable frame arrives): if a group enters an epoch gap and the
+ * peer then goes quiet, no frame escalates and no commit clears it - the group stays local but
+ * `isGroupHealthy` reports false, freezing the outbox forever. Past this delay the watchdog
+ * forces forget + re-Welcome so sends can resume. Slightly longer than the reactive threshold
+ * (EPOCH_GAP_ESCALATION_MS = 30 s) so the reactive path gets first chance.
+ */
+const STUCK_EPOCH_GAP_MS = 45_000;
 
 /**
  * Starts the periodic health check (every 5 min) that migrates groups
@@ -65,6 +81,20 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
         // Healthy group: clear the persistent reboot deadline (prevents a stale key from
         // triggering an immediate reboot if the group later becomes not-ready again).
         clearGroupNotReady(recoveryDeps.userId, id);
+
+        // Safety net for a stuck epoch gap: the group is in WASM but frozen behind the current
+        // epoch, and no incoming frame/commit is coming to escalate or resolve it. Force the
+        // forget + re-Welcome so the outbox (gated on !isInEpochGap) unfreezes.
+        const gapSince = getEpochGapSince(id);
+        if (gapSince !== undefined && now - gapSince > STUCK_EPOCH_GAP_MS) {
+          cb.log(
+            `[SYNC_WATCHDOG] Group ${id.slice(0, 8)}… epoch gap stuck >${STUCK_EPOCH_GAP_MS / 1000}s - forget + welcome_request`
+          );
+          clearEpochGap(id);
+          recoverForkedGroup(id, recoveryDeps, ctx.connectionRecoveryTimers).catch((e: unknown) =>
+            cb.log(`[SYNC_WATCHDOG] gap recovery failed for ${id}: ${String(e)}`)
+          );
+        }
         continue;
       }
       // Channels utilisent AES-GCM, pas MLS - jamais en recovery MLS.

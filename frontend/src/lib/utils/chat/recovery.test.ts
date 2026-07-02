@@ -9,6 +9,7 @@ import {
   cancelReAdd,
   reboot,
   migrateConversation,
+  recoverForkedGroup,
   RECOVERY_TIMEOUT_MS,
   REBOOT_DEADLINE_MS,
 } from './recovery';
@@ -227,6 +228,26 @@ describe('requestReAdd', () => {
   });
 });
 
+// ── recoverForkedGroup ─────────────────────────────────────────────────────────
+
+describe('recoverForkedGroup', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('forgets the forked group at the known minEpoch then requests a re-Welcome', async () => {
+    const mls = makeMls({ getLocalGroups: vi.fn().mockReturnValue([]) });
+    const deps = makeDeps({ mlsService: mls });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await recoverForkedGroup('g-fork', deps, timers, 4);
+
+    // minEpoch rejects a stale re-Welcome from the diverged branch.
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-fork', 4);
+    // The forgotten group is no longer local -> the re-Welcome will be honoured.
+    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith('g-fork');
+  });
+});
+
 // ── reboot ───────────────────────────────────────────────────────────────────
 
 describe('reboot', () => {
@@ -297,6 +318,38 @@ describe('reboot', () => {
 
     expect(mls.acquireRebootLock).toHaveBeenCalledWith('dead');
     expect(mls.releaseRebootLock).toHaveBeenCalledWith('dead');
+  });
+
+  it('DM successor gets the canonical self::peer name from the repaired peer', async () => {
+    const mls = makeMls();
+    const deps = makeDeps({
+      mlsService: mls,
+      conversations: makeConversations([
+        ['dead', { id: 'dead', conversationType: 'direct', directPeerId: 'peer-b' }],
+      ]),
+    });
+
+    await reboot('dead', deps);
+
+    // Never propagate a malformed ancestor name: recompute self::peer.
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('user-a::peer-b', false);
+  });
+
+  it('DM successor recovers the peer from the roster when the ancestor name is self-only', async () => {
+    const mls = makeMls({
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'dead', name: 'user-a', isGroup: false }]),
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'user-a' }, { userId: 'peer-b' }]),
+    });
+    const deps = makeDeps({
+      mlsService: mls,
+      conversations: makeConversations([['dead', { id: 'dead', conversationType: 'direct' }]]),
+    });
+
+    await reboot('dead', deps);
+
+    expect(mls.createRemoteGroup).toHaveBeenCalledWith('user-a::peer-b', false);
   });
 
   it('no other member -> no sendWelcome, no error', async () => {

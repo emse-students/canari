@@ -59,6 +59,54 @@ export function parseDirectPeerFromName(rawName: string, userId: string): string
   return unique.find((p) => p !== current) ?? null;
 }
 
+/** Canonical direct-conversation group name for a peer: `self::peer` (both lowercased). */
+export function canonicalDirectName(userId: string, peerId: string): string {
+  return `${userId.toLowerCase()}::${peerId.toLowerCase()}`;
+}
+
+/**
+ * Resolves the peer userId of a direct conversation authoritatively.
+ *
+ * The group `name` is only a hint: legacy/rebooted groups can carry a malformed name
+ * (self-only, `self::self`, or empty) which makes {@link parseDirectPeerFromName} return
+ * `null` and previously produced a "conversation with yourself". When the name is unusable
+ * we fall back to the server-side user membership (`getGroupUserMembers`) and pick the sole
+ * member that is not the current user - the actual MLS roster is the source of truth.
+ *
+ * Returns `null` only when the peer genuinely cannot be determined (transport failure, or a
+ * roster that transiently contains just this user, e.g. mid re-add). Callers must treat a
+ * null result as "unknown yet" and retry later rather than inventing a self peer.
+ */
+export async function resolveDirectPeerId(
+  mlsService: Pick<IMlsService, 'getGroupUserMembers'>,
+  groupId: string,
+  rawName: string,
+  userId: string,
+  log?: (msg: string) => void
+): Promise<string | null> {
+  const self = userId.toLowerCase();
+  const fromName = parseDirectPeerFromName(rawName, userId);
+  if (fromName && fromName !== self) return fromName;
+
+  try {
+    const members = await mlsService.getGroupUserMembers(groupId);
+    const peer = members.map((m) => m.userId.toLowerCase()).find((u) => u !== self) ?? null;
+    if (peer) {
+      log?.(
+        `[DM_PEER] ${groupId.slice(0, 8)}... peer resolved from roster: ${peer.slice(0, 8)}... (name was malformed)`
+      );
+    } else {
+      log?.(`[DM_PEER] ${groupId.slice(0, 8)}... roster has no peer yet - deferring`);
+    }
+    return peer;
+  } catch (e) {
+    log?.(
+      `[DM_PEER] ${groupId.slice(0, 8)}... roster lookup failed: ${e instanceof Error ? e.message : String(e)}`
+    );
+    return null;
+  }
+}
+
 /** Number of messages loaded from local DB on first display. Older messages load on scroll-up. */
 export const INITIAL_MESSAGES_PAGE = 60;
 
@@ -609,30 +657,42 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       }
       try {
         const existingConvo = ctx.conversations.get(meta.id);
-        if (
-          existingConvo &&
-          (existingConvo.conversationType ?? 'group') === 'group' &&
-          !isChannelConversationId(meta.id) &&
-          serverGroupIndex
-        ) {
+        if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
           const row = serverGroupIndex.byGroupId.get(meta.id);
           if (row?.isGroup === false) {
-            const peerFromName = parseDirectPeerFromName(row.name ?? meta.name, ctx.userId);
-            if (peerFromName && peerFromName !== ctx.userId.toLowerCase()) {
-              ctx.conversations.set(meta.id, {
-                ...existingConvo,
-                conversationType: 'direct',
-                directPeerId: peerFromName,
-                contactName: peerFromName,
-                name: peerFromName,
-              });
-              const normalizedName = `${ctx.userId.toLowerCase()}::${peerFromName}`;
-              if (meta.name !== normalizedName) {
-                await ctx.storage.saveConversation({
-                  ...meta,
-                  name: normalizedName,
-                  updatedAt: Date.now(),
+            // Repair a DM whose peer identity is corrupted: either misclassified as a group,
+            // or stored as direct but with a missing/self peer (legacy self-only group name).
+            // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.
+            const self = ctx.userId.toLowerCase();
+            const currentPeer = (existingConvo.directPeerId ?? '').toLowerCase();
+            const needsRepair =
+              (existingConvo.conversationType ?? 'group') !== 'direct' ||
+              !currentPeer ||
+              currentPeer === self;
+            if (needsRepair) {
+              const peer = await resolveDirectPeerId(
+                ctx.mlsService,
+                meta.id,
+                row.name ?? meta.name,
+                ctx.userId,
+                ctx.log
+              );
+              if (peer && peer !== self) {
+                ctx.conversations.set(meta.id, {
+                  ...existingConvo,
+                  conversationType: 'direct',
+                  directPeerId: peer,
+                  contactName: peer,
+                  name: peer,
                 });
+                const normalizedName = canonicalDirectName(ctx.userId, peer);
+                if (meta.name !== normalizedName) {
+                  await ctx.storage.saveConversation({
+                    ...meta,
+                    name: normalizedName,
+                    updatedAt: Date.now(),
+                  });
+                }
               }
             }
           }

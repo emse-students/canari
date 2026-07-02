@@ -11,7 +11,7 @@ import {
   syncConnectionAfterWsOpen,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
-import { requestReAdd, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
+import { requestReAdd, migrateConversation, RECOVERY_TIMEOUT_MS } from '$lib/utils/chat/recovery';
 import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
@@ -31,6 +31,7 @@ export function runGroupDiscoveryImpl(
   label = ''
 ): void {
   const st = ctx.getStorage();
+  const recoveryDeps = makeRecoveryDeps(ctx, cb);
   discoverMissingGroups({
     mlsService,
     userId: ctx.getUserId(),
@@ -40,6 +41,10 @@ export function runGroupDiscoveryImpl(
     deleteConversation: st ? (id) => st.deleteConversation(id) : undefined,
     log: cb.log,
     storage: st,
+    // Active migration of a soft-deleted group whose successor is already local, so DISCOVERY
+    // never keeps a zombie that the SYNC_WATCHDOG would re-escalate every 60 s.
+    migrateConversation: (fromGroupId, toGroupId) =>
+      migrateConversation(fromGroupId, toGroupId, recoveryDeps),
   }).catch((e) =>
     cb.log(
       `[WARN] Echec decouverte groupes${label ? ` (${label})` : ''}: ${

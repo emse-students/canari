@@ -148,6 +148,65 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(saveConversation).toHaveBeenCalledWith('orphan-id');
   });
 
+  it('actively migrates a soft-deleted group with pending messages to its already-local successor (breaks the zombie watchdog loop)', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'dead-id',
+        {
+          id: 'dead-id',
+          contactName: 'peer',
+          name: 'peer',
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+        },
+      ],
+      [
+        'succ-id',
+        {
+          id: 'succ-id',
+          contactName: 'peer',
+          name: 'peer',
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+        },
+      ],
+    ]);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([
+        {
+          groupId: 'dead-id',
+          name: 'user-a::peer',
+          isGroup: false,
+          successorId: 'succ-id',
+          deletedAt: '2026-01-01T00:00:00Z',
+        },
+        { groupId: 'succ-id', name: 'user-a::peer', isGroup: false, deletedAt: null },
+      ]),
+      getLocalGroups: vi.fn().mockReturnValue(['succ-id']),
+    });
+    // 3 messages still in the dead group's IndexedDB - previously this kept the zombie forever.
+    const storage = {
+      getMessages: vi.fn().mockResolvedValue([{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }]),
+    } as unknown as import('$lib/db').IStorage;
+    const migrateConversation = vi.fn().mockResolvedValue(undefined);
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      pin: '1234',
+      conversations,
+      deleteConversation: vi.fn(),
+      saveConversation: vi.fn(),
+      log: vi.fn(),
+      storage,
+      migrateConversation,
+    });
+
+    expect(migrateConversation).toHaveBeenCalledWith('dead-id', 'succ-id');
+  });
+
   it("purge une conversation que l'utilisateur a dismissée (suppression/quitter manuel, regles 3/5)", async () => {
     const conversations = new Map<string, Conversation>([
       [

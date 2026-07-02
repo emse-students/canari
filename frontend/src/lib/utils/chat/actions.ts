@@ -15,7 +15,7 @@ import {
   isSenderForkError,
   parseForkedEpoch,
 } from '$lib/utils/chat/groupActions';
-import { parseDirectPeerFromName } from '$lib/utils/chat/conversations';
+import { resolveDirectPeerId } from '$lib/utils/chat/conversations';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
@@ -375,6 +375,14 @@ export async function discoverMissingGroups(params: {
   log: (msg: string) => void;
   /** Optional: IndexedDB access to verify messages have been migrated before purge. */
   storage?: IStorage | null;
+  /**
+   * Optional migration callback (predecessor -> successor). Injected by the session layer
+   * (which owns the full recovery deps). When a soft-deleted group still holds un-migrated
+   * messages but its successor is already local, DISCOVERY actively migrates instead of merely
+   * keeping the zombie - otherwise the source lingers forever and the SYNC_WATCHDOG re-escalates
+   * welcome_request/reboot every 60 s for a group that can never become ready.
+   */
+  migrateConversation?: (fromGroupId: string, toGroupId: string) => Promise<void>;
 }) {
   const {
     mlsService,
@@ -385,6 +393,7 @@ export async function discoverMissingGroups(params: {
     deleteConversation,
     log,
     storage,
+    migrateConversation,
   } = params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
@@ -480,6 +489,17 @@ export async function discoverMissingGroups(params: {
         if (storage) {
           const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
           if (pendingMsgs.length > 0) {
+            if (migrateConversation) {
+              // Successor already local: actively migrate the pending messages instead of
+              // keeping the zombie (which the SYNC_WATCHDOG would re-escalate forever).
+              log(
+                `[DISCOVERY] ${convo.id.slice(0, 8)}... migrating ${pendingMsgs.length} msg(s) to terminal ${terminalId.slice(0, 8)}...`
+              );
+              await migrateConversation(convo.id, terminalId).catch((e) =>
+                log(`[DISCOVERY] migration ${convo.id.slice(0, 8)}... failed: ${String(e)}`)
+              );
+              continue;
+            }
             log(
               `[DISCOVERY] ${convo.id.slice(0, 8)}... kept - ${pendingMsgs.length} msg(s) not yet migrated to ${terminalId.slice(0, 8)}...`
             );
@@ -506,6 +526,15 @@ export async function discoverMissingGroups(params: {
         if (storage) {
           const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
           if (pendingMsgs.length > 0) {
+            if (migrateConversation) {
+              log(
+                `[DISCOVERY] ${convo.id.slice(0, 8)}... migrating ${pendingMsgs.length} msg(s) to successor ${serverEntry.successorId.slice(0, 8)}...`
+              );
+              await migrateConversation(convo.id, serverEntry.successorId).catch((e) =>
+                log(`[DISCOVERY] migration ${convo.id.slice(0, 8)}... failed: ${String(e)}`)
+              );
+              continue;
+            }
             log(
               `[DISCOVERY] ${convo.id.slice(0, 8)}... kept - ${pendingMsgs.length} msg(s) not yet migrated to ${serverEntry.successorId.slice(0, 8)}...`
             );
@@ -591,7 +620,17 @@ export async function discoverMissingGroups(params: {
   for (const g of missing) {
     if (conversations.has(g.groupId)) continue;
 
-    const directPeer = !g.isGroup ? parseDirectPeerFromName(g.name || '', userId) : null;
+    // Resolve the DM peer authoritatively: the group name is only a hint and may be malformed
+    // (legacy/rebooted groups can carry a self-only name -> a bogus "conversation with yourself").
+    // When it is unusable, fall back to the server roster. A DM whose peer cannot be resolved yet
+    // (transport error, or roster transiently self-only mid re-add) is skipped, not shown as self.
+    const directPeer = !g.isGroup
+      ? await resolveDirectPeerId(mlsService, g.groupId, g.name || '', userId, log)
+      : null;
+    if (!g.isGroup && !directPeer) {
+      log(`[DISCOVERY] DM "${g.groupId.slice(0, 8)}..." peer unresolved - skip (retry next sync)`);
+      continue;
+    }
     const displayName = directPeer || g.name || g.groupId;
 
     // Local dedup: if a direct conv with this same peer already exists
