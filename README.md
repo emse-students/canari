@@ -65,10 +65,10 @@ La documentation technique est dans [`docs/wiki/`](docs/wiki/index.md) (en angla
 
 Docs de reference en cours d'evolution (vivantes, garder) :
 
-- [`docs/AUDIT-MLS-2026-06.md`](docs/AUDIT-MLS-2026-06.md) — audit securite MLS en cours
-- [`docs/MLS_DESYNC_PREVENTION.md`](docs/MLS_DESYNC_PREVENTION.md) — prevention des desync MLS
-- [`docs/MLS_RECOVERY_LADDER.md`](docs/MLS_RECOVERY_LADDER.md) — procedure de recovery MLS
-- [`docs/TESTS-DEVICE-PENDING.md`](docs/TESTS-DEVICE-PENDING.md) — tests appareil en attente
+- [`docs/AUDIT-MLS-2026-06.md`](docs/AUDIT-MLS-2026-06.md) - audit securite MLS en cours
+- [`docs/MLS_DESYNC_PREVENTION.md`](docs/MLS_DESYNC_PREVENTION.md) - prevention des desync MLS
+- [`docs/MLS_RECOVERY_LADDER.md`](docs/MLS_RECOVERY_LADDER.md) - procedure de recovery MLS
+- [`docs/TESTS-DEVICE-PENDING.md`](docs/TESTS-DEVICE-PENDING.md) - tests appareil en attente
 
 ---
 
