@@ -10,6 +10,10 @@ export interface UserMembershipRow {
   logoUrl: string | null;
   role: string;
   isAdmin: boolean;
+  /** 'association' or 'list' - lets the client hide finished campaign lists. */
+  type?: 'association' | 'list';
+  /** Lists only: campaign year; null for associations. */
+  promo?: number | null;
 }
 
 /** Past/honorary association role on a user profile. */

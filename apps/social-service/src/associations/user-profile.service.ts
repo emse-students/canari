@@ -20,6 +20,10 @@ export interface UserMembershipRow {
   logoUrl: string | null;
   role: string;
   isAdmin: boolean;
+  /** 'association' or 'list' - lets the client hide finished campaign lists. */
+  type: 'association' | 'list';
+  /** Lists only: campaign year; null for associations. */
+  promo: number | null;
 }
 
 /** Role history row enriched with association display fields. */
@@ -77,6 +81,8 @@ export class UserProfileService {
           logoUrl: a.logoUrl ?? null,
           role: m.role,
           isAdmin: (m.permissions ?? 0) > 0,
+          type: a.type,
+          promo: a.promo ?? null,
         };
       })
       .filter((row): row is UserMembershipRow => row != null);

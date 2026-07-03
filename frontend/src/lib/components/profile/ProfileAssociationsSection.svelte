@@ -1,6 +1,7 @@
 <script lang="ts">
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import type { UserMembershipRow } from '$lib/profile/api';
+  import { isPastCampaignList } from '$lib/associations/campaign';
   import { Building2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -11,7 +12,9 @@
   }
 
   const props: Props = $props();
-  const memberships = $derived(props.memberships);
+  // Finished campaign lists (past their 1 August cutoff) drop out of the current
+  // memberships; the user can still surface them under their associative history.
+  const memberships = $derived(props.memberships.filter((mb) => !isPastCampaignList(mb)));
   const loading = $derived(props.loading ?? false);
   const emptyMessage = $derived(props.emptyMessage ?? m.profile_asso_empty());
 </script>
