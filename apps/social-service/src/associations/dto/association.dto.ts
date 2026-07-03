@@ -76,6 +76,17 @@ export class CreateAssociationDto {
   @IsUUID()
   @IsOptional()
   parentAssociationId?: string;
+
+  /** Lists only: optional second theme name. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  name2?: string;
+
+  /** Lists only: optional second theme logo (media-service UUID). */
+  @IsUUID()
+  @IsOptional()
+  logoMediaId2?: string;
 }
 
 export class UpdateAssociationDto {
@@ -139,6 +150,18 @@ export class UpdateAssociationDto {
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
   parentAssociationId?: string | null;
+
+  /** Lists only: optional second theme name. Pass `""` to clear (stored as null). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  name2?: string | null;
+
+  /** Lists only: optional second theme logo. Pass `""`/null to clear. */
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  logoMediaId2?: string | null;
 }
 
 export class AddMemberDto {

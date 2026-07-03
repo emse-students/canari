@@ -20,6 +20,12 @@ export interface PublicAssociation {
   type: 'association' | 'list';
   promo: number | null;
   parentAssociationId: string | null;
+  /** Lists only: display name of the parent association, when resolved. */
+  parentName: string | null;
+  /** Lists only: optional second theme name. Null otherwise. */
+  name2: string | null;
+  /** Lists only: optional second theme logo (media-service UUID). Null otherwise. */
+  logoMediaId2: string | null;
   archived: boolean;
   isBDE: boolean;
   contactEmail: string | null;
@@ -27,7 +33,9 @@ export interface PublicAssociation {
 }
 
 /** Maps a full association entity to the safe public subset. */
-function toPublic(a: Association & { memberCount?: number }): PublicAssociation {
+function toPublic(
+  a: Association & { memberCount?: number; parentName?: string | null }
+): PublicAssociation {
   return {
     id: a.id,
     slug: a.slug,
@@ -40,6 +48,9 @@ function toPublic(a: Association & { memberCount?: number }): PublicAssociation 
     type: a.type,
     promo: a.promo,
     parentAssociationId: a.parentAssociationId,
+    parentName: a.parentName ?? null,
+    name2: a.name2,
+    logoMediaId2: a.logoMediaId2,
     archived: a.archived,
     isBDE: a.isBDE,
     contactEmail: a.contactEmail,

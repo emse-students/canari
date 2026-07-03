@@ -136,10 +136,37 @@ export class AssociationsService {
       ])
     );
 
+    const parents = await this.parentNameMap(associations.map((a) => a.parentAssociationId));
+
     return associations.map((a) => ({
       ...a,
       memberCount: countMap.get(a.id) ?? 0,
+      parentName: a.parentAssociationId ? (parents.get(a.parentAssociationId) ?? null) : null,
     }));
+  }
+
+  /**
+   * Resolves parent association ids to their display names in a single query.
+   * Lets lists render "BDE - <list> - <year>" without an N+1 lookup.
+   */
+  private async parentNameMap(ids: (string | null)[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids.filter((x): x is string => !!x))];
+    if (unique.length === 0) return new Map();
+    const rows = await this.assoRepo.find({
+      where: { id: In(unique) },
+      select: { id: true, name: true },
+    });
+    return new Map(rows.map((r) => [r.id, r.name]));
+  }
+
+  /** Display name of a list's parent association, or null when it has none. */
+  private async parentName(parentId: string | null): Promise<string | null> {
+    if (!parentId) return null;
+    const parent = await this.assoRepo.findOne({
+      where: { id: parentId },
+      select: { name: true },
+    });
+    return parent?.name ?? null;
   }
 
   /** Loads one association by its UUID and appends a memberCount. Throws NotFoundException if absent. */
@@ -149,7 +176,7 @@ export class AssociationsService {
     const memberCount = await this.memberRepo.count({
       where: { associationId: id },
     });
-    return { ...asso, memberCount };
+    return { ...asso, memberCount, parentName: await this.parentName(asso.parentAssociationId) };
   }
 
   /** Loads one association by its URL slug and appends a memberCount. */
@@ -159,7 +186,7 @@ export class AssociationsService {
     const memberCount = await this.memberRepo.count({
       where: { associationId: asso.id },
     });
-    return { ...asso, memberCount };
+    return { ...asso, memberCount, parentName: await this.parentName(asso.parentAssociationId) };
   }
 
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
@@ -180,6 +207,13 @@ export class AssociationsService {
       (dto.contactEmail === null || dto.contactEmail.trim() === '')
     ) {
       patch.contactEmail = null;
+    }
+    // Second-theme fields (lists): blank clears them back to null.
+    if (dto.name2 !== undefined && (dto.name2 === null || dto.name2.trim() === '')) {
+      patch.name2 = null;
+    }
+    if (dto.logoMediaId2 !== undefined && (dto.logoMediaId2 === null || dto.logoMediaId2 === '')) {
+      patch.logoMediaId2 = null;
     }
     // documentQuotaBytes comes in as bigint but must stay a number in TypeORM
     if (patch.documentQuotaBytes !== undefined) {

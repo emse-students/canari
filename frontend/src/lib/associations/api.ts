@@ -86,6 +86,12 @@ export interface Association {
   promo?: number | null;
   /** Lists only: optional parent association (e.g. the owning BDE). */
   parentAssociationId?: string | null;
+  /** Lists only: display name of the parent association, when resolved by the API. */
+  parentName?: string | null;
+  /** Lists only: optional second theme name (some lists run two themes). */
+  name2?: string | null;
+  /** Lists only: optional second theme logo (media-service UUID). */
+  logoMediaId2?: string | null;
   /** True when archived: shown under "Anciennes", hidden from "Mes associations". */
   archived: boolean;
   /** Public contact e-mail, shown on the trombinoscope and the association page. */
@@ -107,6 +113,10 @@ export interface CreateAssociationPayload {
   promo?: number;
   /** Lists only: optional parent association. */
   parentAssociationId?: string;
+  /** Lists only: optional second theme name. */
+  name2?: string;
+  /** Lists only: optional second theme logo (media-service UUID). */
+  logoMediaId2?: string;
 }
 
 export interface UpdateAssociationPayload {
@@ -128,6 +138,10 @@ export interface UpdateAssociationPayload {
   promo?: number | null;
   /** Lists only: optional parent association. */
   parentAssociationId?: string | null;
+  /** Lists only: optional second theme name. Pass `""` to clear. */
+  name2?: string | null;
+  /** Lists only: optional second theme logo. Pass `""`/null to clear. */
+  logoMediaId2?: string | null;
 }
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected';

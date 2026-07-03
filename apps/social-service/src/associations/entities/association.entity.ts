@@ -89,6 +89,17 @@ export class Association {
   @Column({ type: 'uuid', nullable: true })
   parentAssociationId: string | null;
 
+  /**
+   * Lists only: optional second theme name. Some lists run two themes at once
+   * (two names + two logos); this holds the second name. Null otherwise.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  name2: string | null;
+
+  /** Lists only: optional second theme logo (media-service UUID). Null otherwise. */
+  @Column({ type: 'uuid', nullable: true })
+  logoMediaId2: string | null;
+
   /** When true, the association is archived: shown under "Anciennes", hidden from "Mes associations". */
   @Column({ default: false })
   archived: boolean;

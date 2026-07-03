@@ -39,6 +39,25 @@
   const activeLists = $derived(lists.filter((a) => !a.archived));
   const archivedLists = $derived(lists.filter((a) => a.archived));
 
+  /**
+   * Active lists grouped into per-campaign-year "shelves": most recent year on
+   * top, lists with no year collected under a trailing "Divers" shelf. Pure page
+   * sections (no accordion) so the whole directory reads like trophy shelves.
+   */
+  const shelves = $derived.by(() => {
+    const byYear: Record<number, Association[]> = {};
+    for (const list of activeLists) {
+      const key = list.promo ?? 0;
+      (byYear[key] ??= []).push(list);
+    }
+    return Object.entries(byYear)
+      .map(([year, items]) => ({
+        year: Number(year),
+        items: items.sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => b.year - a.year); // recent first; year 0 (Divers) lands last
+  });
+
   /** Lists are created by global admins or BDE members holding MANAGE_ASSO. */
   const canCreate = $derived(
     isGlobalAdmin() ||
@@ -81,53 +100,62 @@
   {:else if error}
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {:else}
-    <section>
-      {#if activeLists.length === 0}
-        <div
-          class="text-center py-16 bg-[var(--cn-surface)]/60 rounded-2xl border-2 border-dashed border-cn-border"
-        >
-          <div class="text-5xl mb-3">📋</div>
-          <h3 class="text-lg font-bold text-text-main mb-1">{m.list_empty_title()}</h3>
-          <p class="text-sm text-text-muted">{m.list_empty_desc()}</p>
-        </div>
-      {:else}
-        <div class="grid gap-4 sm:grid-cols-2">
-          {#each activeLists as list (list.id)}
-            <a
-              href="/lists/{list.slug}"
-              class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 hover:shadow-md transition-shadow block"
-            >
-              <div class="flex items-start gap-3">
-                <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
-                <div class="min-w-0 flex-1">
-                  <h3 class="font-bold text-text-main truncate">
-                    {list.name}
-                    {#if list.promo}
-                      <span class="text-xs font-semibold text-text-muted">· {list.promo}</span>
+    {#if activeLists.length === 0}
+      <div
+        class="text-center py-16 bg-[var(--cn-surface)]/60 rounded-2xl border-2 border-dashed border-cn-border"
+      >
+        <div class="text-5xl mb-3">📋</div>
+        <h3 class="text-lg font-bold text-text-main mb-1">{m.list_empty_title()}</h3>
+        <p class="text-sm text-text-muted">{m.list_empty_desc()}</p>
+      </div>
+    {:else}
+      {#each shelves as shelf (shelf.year)}
+        <section class="space-y-3">
+          <h2
+            class="flex items-center gap-3 text-sm font-extrabold uppercase tracking-wide text-text-muted"
+          >
+            <span class="whitespace-nowrap">
+              {shelf.year === 0
+                ? m.list_misc_heading()
+                : m.list_campaigns_heading({ year: shelf.year })}
+            </span>
+            <span class="h-px flex-1 bg-cn-border"></span>
+          </h2>
+          <div class="grid gap-4 sm:grid-cols-2">
+            {#each shelf.items as list (list.id)}
+              <a
+                href="/lists/{list.slug}"
+                class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 hover:shadow-md transition-shadow block"
+              >
+                <div class="flex items-start gap-3">
+                  <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
+                  <div class="min-w-0 flex-1">
+                    {#if list.parentName}
+                      <div class="text-[0.7rem] font-bold uppercase tracking-wide text-cn-dark">
+                        {list.parentName}
+                      </div>
                     {/if}
-                  </h3>
-                  {#if list.description?.trim()}
-                    <div
-                      class="mt-0.5 max-h-[2.75rem] overflow-hidden text-text-muted [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
-                    >
-                      <ProfileBioMarkdown source={list.description} />
-                    </div>
-                  {/if}
-                  <p class="text-xs text-text-muted mt-1">
-                    {(list.memberCount ?? 0) !== 1
-                      ? m.assoc_member_count_many({ count: list.memberCount ?? 0 })
-                      : m.assoc_member_count_one({ count: list.memberCount ?? 0 })}
+                    <h3 class="font-bold text-text-main truncate">{list.name}</h3>
+                    {#if list.description?.trim()}
+                      <div
+                        class="mt-0.5 max-h-[2.75rem] overflow-hidden text-text-muted [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
+                      >
+                        <ProfileBioMarkdown source={list.description} />
+                      </div>
+                    {/if}
                     {#if myIds.has(list.id)}
-                      <span class="ml-1 text-cn-dark font-semibold">&#183; {m.assoc_list_member_badge()}</span>
+                      <p class="text-xs text-cn-dark font-semibold mt-1">
+                        {m.assoc_list_member_badge()}
+                      </p>
                     {/if}
-                  </p>
+                  </div>
                 </div>
-              </div>
-            </a>
-          {/each}
-        </div>
-      {/if}
-    </section>
+              </a>
+            {/each}
+          </div>
+        </section>
+      {/each}
+    {/if}
 
     <!-- Archived lists (collapsed by default) -->
     {#if archivedLists.length > 0}
@@ -151,17 +179,19 @@
                 <div class="flex items-start gap-3">
                   <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
                   <div class="min-w-0 flex-1">
+                    {#if list.parentName}
+                      <div class="text-[0.7rem] font-bold uppercase tracking-wide text-text-muted">
+                        {list.parentName}
+                      </div>
+                    {/if}
                     <h3 class="font-bold text-text-main truncate">
                       {list.name}
                       {#if list.promo}
                         <span class="text-xs font-semibold text-text-muted">· {list.promo}</span>
                       {/if}
                     </h3>
-                    <p class="text-xs text-text-muted mt-1">
-                      {(list.memberCount ?? 0) !== 1
-                        ? m.assoc_member_count_many({ count: list.memberCount ?? 0 })
-                        : m.assoc_member_count_one({ count: list.memberCount ?? 0 })}
-                      <span class="ml-1 font-semibold">&#183; {m.assoc_list_archived_badge()}</span>
+                    <p class="text-xs text-text-muted mt-1 font-semibold">
+                      {m.assoc_list_archived_badge()}
                     </p>
                   </div>
                 </div>
