@@ -215,6 +215,8 @@
     {/each}
   </div>
 
+  <!-- Cotisation tags make no sense for promo lists; hidden there. -->
+  {#if asso.type !== 'list'}
   <div class="border-t border-cn-border pt-5 space-y-3">
     <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
       <Tag size={16} />
@@ -254,6 +256,7 @@
       </ul>
     {/if}
   </div>
+  {/if}
 
   <div class="border-t border-cn-border pt-5">
     <h3 class="text-sm font-bold text-text-main mb-3 flex items-center gap-2">

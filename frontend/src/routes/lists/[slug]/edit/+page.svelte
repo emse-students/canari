@@ -94,7 +94,9 @@
   {:else if list}
     <header class="space-y-1">
       <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Gestion de la liste</h1>
-      <p class="text-sm text-text-muted">@{list.slug}{list.promo ? ` · Promo ${list.promo}` : ''}</p>
+      <p class="text-sm text-text-muted">
+        @{list.slug}{list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}
+      </p>
     </header>
 
     {#if error}

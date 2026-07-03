@@ -174,16 +174,31 @@
   {:else if asso}
     <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
       <div class="flex items-start gap-4">
-        <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
+        <div class="flex gap-2 shrink-0">
+          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
+          {#if kind === 'list' && asso.logoMediaId2}
+            <AssociationAvatar
+              name={asso.name2 ?? asso.name}
+              logoUrl={`/api/media/public/${asso.logoMediaId2}`}
+              size="lg"
+            />
+          {/if}
+        </div>
         <div class="flex-1 min-w-0">
-          <h1 class="text-xl font-extrabold text-text-main tracking-tight truncate">{asso.name}</h1>
+          <h1 class="text-xl font-extrabold text-text-main tracking-tight truncate">
+            {asso.name}{#if kind === 'list' && asso.name2}<span class="text-text-muted font-bold">
+                &amp; {asso.name2}</span
+              >{/if}
+          </h1>
           <p class="text-sm text-text-muted">
-            @{asso.slug} · {asso.memberCount ?? members.length} membre{(asso.memberCount ??
+            {#if kind === 'list' && asso.parentName}<span class="font-semibold text-text-main"
+                >{asso.parentName}</span
+              > · {/if}@{asso.slug} · {asso.memberCount ?? members.length} membre{(asso.memberCount ??
               members.length) !== 1
               ? 's'
               : ''}
             {#if kind === 'list' && asso.promo}
-              · {m.asso_promo_label({ promo: String(asso.promo) })}
+              · {m.list_campaigns_heading({ year: asso.promo })}
             {/if}
           </p>
         </div>

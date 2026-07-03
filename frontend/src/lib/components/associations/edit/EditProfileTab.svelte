@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, onMount } from 'svelte';
   import {
     updateAssociation,
     uploadAssociationLogo,
     deleteAssociationLogo,
+    listAssociations,
     type Association,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -35,6 +36,23 @@
   let editColor = $state(initial.color ?? '');
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
+
+  // ── List-only fields (campaign year, parent association, optional 2nd theme) ──
+  const isList = initial.type === 'list';
+  let editPromo = $state<number | ''>(initial.promo ?? '');
+  let editParentId = $state(initial.parentAssociationId ?? '');
+  let editName2 = $state(initial.name2 ?? '');
+  /** Candidate parent associations (regular associations only), for the select. */
+  let parentOptions = $state<Association[]>([]);
+
+  onMount(async () => {
+    if (!isList) return;
+    try {
+      parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
+    } catch {
+      parentOptions = [];
+    }
+  });
 
   /** Material You-inspired tonal palette (tone ~60, moderate saturation). */
   const PRESET_COLORS = [
@@ -69,11 +87,21 @@
         bioMarkdown: editBioMarkdown.trim(),
         color: editColor.trim() || null,
         contactEmail: editContactEmail.trim() || null,
+        ...(isList
+          ? {
+              promo: editPromo === '' ? null : Number(editPromo),
+              parentAssociationId: editParentId || null,
+              name2: editName2.trim() || null,
+            }
+          : {}),
       });
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
       editContactEmail = updated.contactEmail ?? '';
+      editPromo = updated.promo ?? '';
+      editParentId = updated.parentAssociationId ?? '';
+      editName2 = updated.name2 ?? '';
       onUpdated(updated);
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
@@ -150,6 +178,31 @@
   {/if}
 
   <Input label={m.asso_edit_name_label()} bind:value={editName} />
+
+  {#if isList}
+    <Input
+      label={m.list_new_name2_label()}
+      bind:value={editName2}
+      placeholder={m.list_new_name2_placeholder()}
+    />
+    <Input label={m.list_new_promo_label()} type="number" bind:value={editPromo} placeholder="2027" />
+    <div>
+      <label for="edit-list-parent" class="block text-sm font-bold text-text-main mb-2 ml-1">
+        {m.list_new_parent_label()}
+      </label>
+      <select
+        id="edit-list-parent"
+        bind:value={editParentId}
+        class="w-full rounded-xl border border-cn-border bg-cn-bg/30 px-4 py-2.5 text-sm text-text-main"
+      >
+        <option value="">{m.list_new_parent_none()}</option>
+        {#each parentOptions as opt (opt.id)}
+          <option value={opt.id}>{opt.name}</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
+
   <Input
     label={m.asso_edit_contact_email_label()}
     type="email"
