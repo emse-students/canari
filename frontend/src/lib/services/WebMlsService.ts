@@ -57,14 +57,60 @@ export class WebMlsService extends BaseMlsService {
     return this.keyPackageWorker;
   }
 
-  /** Rebuilds the in-memory WASM client from a trusted persisted state snapshot. */
-  private async reloadClientFromState(state: Uint8Array, pin: string): Promise<void> {
-    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
+  /**
+   * Installs `candidate` as the live client only if it does not regress any group.
+   *
+   * The live MLS epoch is a hard, non-decreasing invariant per group across every
+   * context (foreground WASM here, native background service elsewhere): a stale
+   * snapshot must never clobber newer live state. A swap is refused if any group the
+   * live client holds would either disappear or move to a lower epoch in `candidate`.
+   * Returns true when the swap happened, false when the live client was kept.
+   */
+  private swapClientMonotonic(candidate: any): boolean {
+    const current = this.client;
+    if (!current) {
+      this.client = candidate;
+      return true;
+    }
+    const liveGroups = [...(current.get_groups() as unknown as Iterable<string>)];
+    for (const gid of liveGroups) {
+      let liveEpoch: number;
+      try {
+        liveEpoch = current.get_epoch(gid) as number;
+      } catch {
+        continue;
+      }
+      let candEpoch: number | null;
+      try {
+        candEpoch = candidate.get_epoch(gid) as number;
+      } catch {
+        candEpoch = null;
+      }
+      if (candEpoch === null || candEpoch < liveEpoch) {
+        console.warn(
+          `[MLS] Reload refused: group ${gid.slice(0, 8)}… would regress (live epoch=${liveEpoch}, candidate=${candEpoch ?? 'absent'}) - keeping live state`
+        );
+        return false;
+      }
+    }
+    this.client = candidate;
+    return true;
   }
 
-  /** Rebuilds WASM from a plain CBOR snapshot (no PIN) after worker catch-up. */
-  private async reloadClientFromPlainState(state: Uint8Array): Promise<void> {
-    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, undefined);
+  /**
+   * Rebuilds a candidate WASM client from a persisted snapshot and installs it only
+   * if it does not regress any live group (see {@link swapClientMonotonic}).
+   * Returns whether the live client was actually replaced.
+   */
+  private async reloadClientFromState(state: Uint8Array, pin: string): Promise<boolean> {
+    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
+    return this.swapClientMonotonic(candidate);
+  }
+
+  /** Plain-CBOR (no PIN) variant of {@link reloadClientFromState} for worker catch-up. */
+  private async reloadClientFromPlainState(state: Uint8Array): Promise<boolean> {
+    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, undefined);
+    return this.swapClientMonotonic(candidate);
   }
 
   /**
@@ -589,8 +635,28 @@ export class WebMlsService extends BaseMlsService {
           console.log('[MLS] generateKeyPackage via worker (under mlsLock)');
           const snapshot = (this.client.save_state(pin) as Uint8Array).slice();
           const workerResult = await this.runWorkerKeyPackageGeneration(pin, needed, snapshot);
-          // Lock is held: no message could have modified WASM state during worker execution.
-          await this.reloadClientFromState(workerResult.state, pin);
+          const swapped = await this.reloadClientFromState(workerResult.state, pin);
+          if (!swapped) {
+            // The worker snapshot became stale (a mutation advanced the live client while it
+            // ran): its key packages belong to a state we refused, so their private keys are
+            // not in the live client. Regenerate on the authoritative live client rather than
+            // publish orphaned prekeys (which would later cause NoMatchingKeyPackage).
+            console.warn('[MLS] key package worker snapshot stale - regenerating on live client');
+            const fb = this.client.generate_key_package() as Uint8Array;
+            const pool =
+              needed > 0
+                ? [
+                    ...(this.client.generate_key_packages(
+                      needed
+                    ) as unknown as Iterable<Uint8Array>),
+                  ]
+                : [];
+            return {
+              fallback: fb,
+              poolPackages: pool,
+              stateBytesToPersist: this.client.save_state(pin) as Uint8Array,
+            };
+          }
           return {
             fallback: workerResult.fallback,
             poolPackages: workerResult.poolPackages,
@@ -788,8 +854,10 @@ export class WebMlsService extends BaseMlsService {
         try {
           if (usedWorker) {
             const finalState = await session.finalize();
-            await this.reloadClientFromPlainState(finalState);
-            this.lastKnownState = finalState.slice();
+            const swapped = await this.reloadClientFromPlainState(finalState);
+            // Only adopt the catch-up state if it did not regress the live client: decrypted
+            // plaintexts were already handed to the caller, so refusing the swap loses nothing.
+            if (swapped) this.lastKnownState = finalState.slice();
           }
         } catch (e) {
           // A page or finalize failed: leave the live client at the untouched snapshot
