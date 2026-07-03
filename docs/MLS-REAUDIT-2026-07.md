@@ -85,6 +85,20 @@ a group's epoch nor drop a live group; both reload callers respect the refusal (
 on the live client if its snapshot went stale; catch-up keeps the live client). `bun run check` clean.
 This already neutralizes the trace's exact regression.
 
+**Piece B (done + verified):** write-if-newer IDB persistence. Monotonic snapshot version tagged at
+the synchronous snapshot moment, carried on the bytes via a `WeakMap` (so off-thread Argon2 cannot
+reorder it), enforced by an IDB read-modify-write in `saveMlsStateEncrypted` that refuses any blob
+whose version is not strictly newer than the stored `MLS_STATE_VERSION_KEY`. Reseeded from the stored
+version at load so a fresh session never emits a stale-looking version. Fixes the persistence-layer
+variant of root cause 1: a slow encrypted flush (`mlsStatePersister`, worker Argon2) overwriting a
+fresher concurrent write (`generateKeyPackage`, main-thread Argon2) and regressing the persisted epoch
+on reload. Touched only `utils/hex.ts` + `WebMlsService.ts` (persister/registry/restore paths already
+flow tagged bytes or write untagged with no concurrency). Web-only (Tauri uses filesystem +
+`mls_bin_write_lock`). Tests: `hex.mlsVersion.test.ts` (8). `bun run check` clean; persister/services
+tests green. Verifications V1 (welcome_request outside the locked drain), V2 (native push-decrypt is
+ephemeral, no `mls.bin` write), V3 (ratchet tree exported post-merge - Option B makes merge-immediate
+unnecessary) all confirmed against code.
+
 ## Phase 0 remaining - elaborated plan
 
 **KEY INSIGHT:** the mls-lock critical section == the validate-then-merge unit (stage -> validate on

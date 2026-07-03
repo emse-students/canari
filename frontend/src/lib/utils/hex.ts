@@ -48,8 +48,47 @@ const IDB_STORE = 'state';
 
 /** IndexedDB key for PIN-encrypted MLS state (loaded at login). */
 export const MLS_STATE_ENCRYPTED_KEY = 'mls_autosave';
+/** IndexedDB key for the monotonic write version guarding against stale overwrites. */
+export const MLS_STATE_VERSION_KEY = 'mls_autosave_ver';
 /** @deprecated Legacy plain autosave key — purged on load; never written anymore. */
 const MLS_STATE_PLAIN_KEY_LEGACY = 'mls_autosave_plain';
+
+// Monotonic snapshot versioning (write-if-newer). The live MLS client is epoch-monotonic, so a
+// snapshot taken later never reflects a staler state than an earlier one. Tagging each snapshot
+// with an increasing version at the synchronous capture moment, and refusing any IDB write whose
+// version is not strictly newer than what is stored, prevents a slow off-thread encryption from
+// overwriting a fresher concurrent write (which would silently regress the persisted epoch). The
+// version travels with the bytes via a WeakMap, so the async Argon2 step cannot reorder it. Only a
+// plain integer is persisted at rest - no groupId/epoch - so privacy is unchanged.
+let _snapshotSeq = 0;
+const _snapshotVersions = new WeakMap<Uint8Array, number>();
+
+/** Tags `bytes` with the next monotonic snapshot version and returns the same reference. */
+export function tagMlsSnapshot(bytes: Uint8Array): Uint8Array {
+  _snapshotVersions.set(bytes, ++_snapshotSeq);
+  return bytes;
+}
+
+/** Copies the snapshot version from `from` to `to` (used when re-encrypting a plain snapshot). */
+export function propagateMlsSnapshotVersion(from: Uint8Array, to: Uint8Array): Uint8Array {
+  const v = _snapshotVersions.get(from);
+  if (v !== undefined) _snapshotVersions.set(to, v);
+  return to;
+}
+
+/** Returns the snapshot version tagged onto `bytes`, or undefined if the bytes were never tagged. */
+export function mlsSnapshotVersion(bytes: Uint8Array): number | undefined {
+  return _snapshotVersions.get(bytes);
+}
+
+/**
+ * Raises the snapshot counter to at least `version`.
+ * The counter resets on page reload while the stored version does not, so a fresh session must
+ * seed from the persisted version or its first writes would look stale and be skipped.
+ */
+export function seedMlsSnapshotSeq(version: number | undefined): void {
+  if (version !== undefined && version > _snapshotSeq) _snapshotSeq = version;
+}
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -87,10 +126,25 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
     }
   }
 
+  const version = mlsSnapshotVersion(bytes);
   const db = await openMlsDb(userId);
   return new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(bytes, MLS_STATE_ENCRYPTED_KEY);
+    const store = tx.objectStore(IDB_STORE);
+    const verReq = store.get(MLS_STATE_VERSION_KEY);
+    verReq.onsuccess = () => {
+      const stored = (verReq.result as number | undefined) ?? 0;
+      // A tagged write older than or equal to what is stored is a stale flush - skip it so a slow
+      // encrypted checkpoint cannot clobber a fresher concurrent write. Untagged writes (restore,
+      // migration) have no concurrency and always land.
+      if (version !== undefined && version <= stored) {
+        console.log(`[MLS] Skipping stale MLS state write (v${version} <= stored v${stored})`);
+        return;
+      }
+      store.put(bytes, MLS_STATE_ENCRYPTED_KEY);
+      if (version !== undefined) store.put(version, MLS_STATE_VERSION_KEY);
+    };
+    verReq.onerror = () => reject(verReq.error);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -137,9 +191,16 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
   const db = await openMlsDb(userId);
   const idbResult = await new Promise<Uint8Array | null>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(MLS_STATE_ENCRYPTED_KEY);
-    req.onsuccess = () => resolve((req.result as Uint8Array) ?? null);
-    req.onerror = () => reject(req.error);
+    const store = tx.objectStore(IDB_STORE);
+    const req = store.get(MLS_STATE_ENCRYPTED_KEY);
+    const verReq = store.get(MLS_STATE_VERSION_KEY);
+    tx.oncomplete = () => {
+      // Seed this session's counter above the persisted version so the first flush is not
+      // mistaken for stale (the in-memory counter resets on reload; the stored version does not).
+      seedMlsSnapshotSeq(verReq.result as number | undefined);
+      resolve((req.result as Uint8Array) ?? null);
+    };
+    tx.onerror = () => reject(tx.error);
   });
   if (idbResult) {
     void purgeLegacyPlainMlsState(userId).catch(() => {});

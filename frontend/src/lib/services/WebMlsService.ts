@@ -12,7 +12,13 @@ import {
 } from '$lib/mls-client';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
-import { saveMlsState, toBase64, fromBase64 } from '$lib/utils/hex';
+import {
+  saveMlsState,
+  toBase64,
+  fromBase64,
+  tagMlsSnapshot,
+  propagateMlsSnapshotVersion,
+} from '$lib/utils/hex';
 import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
 
@@ -578,7 +584,9 @@ export class WebMlsService extends BaseMlsService {
 
   /** WASM client wrapper - serialises current MLS state as plain CBOR (no Argon2). */
   async saveStatePlain(): Promise<Uint8Array> {
-    return this.client.save_state(undefined) as Uint8Array;
+    // Tag at the synchronous snapshot moment: this is the freshness reference the write-if-newer
+    // guard uses, and it must be captured before the async encryption can let anything interleave.
+    return tagMlsSnapshot(this.client.save_state(undefined) as Uint8Array);
   }
 
   /** Encrypts a plain CBOR snapshot (worker when enabled, else main-thread WASM). */
@@ -590,6 +598,9 @@ export class WebMlsService extends BaseMlsService {
   async saveState(pin: string): Promise<Uint8Array> {
     const plain = await this.saveStatePlain();
     const encrypted = await this.encryptState(plain, pin);
+    // Carry the plain snapshot's version onto the encrypted bytes so the off-thread Argon2 step
+    // cannot reorder the write relative to a concurrent, fresher save.
+    propagateMlsSnapshotVersion(plain, encrypted);
     this.lastKnownState = encrypted.slice();
     return encrypted;
   }
@@ -693,7 +704,9 @@ export class WebMlsService extends BaseMlsService {
 
     if (stateBytesToPersist) {
       try {
-        await saveMlsState(this.userId, stateBytesToPersist);
+        // Tag here: this synchronous save-and-write turn has no interleaving await, so the version
+        // reflects the just-captured state and orders correctly against a concurrent encrypted flush.
+        await saveMlsState(this.userId, tagMlsSnapshot(stateBytesToPersist));
         this.lastKnownState = stateBytesToPersist.slice();
       } catch (e) {
         console.warn('[MLS] Auto-save failed in WASM mode:', e);

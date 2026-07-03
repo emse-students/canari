@@ -40,11 +40,16 @@ Run `npm run test -- --run src/lib/services/desyncPrevention.contract.test.ts` i
 
 - **`discoverMissingGroups`** (**`actions.ts`**) - **`sendGroupReset`** must succeed **before** **`forceCreateGroup`** + commits; otherwise **`epoch_mismatch`** would return. **`acquireAddLock`** reduces duplicate bootstraps. **`epoch_mismatch`** after reset → **`forgetGroup`** + retry path.
 
+### 7. Client - persistence write-if-newer (Web/IndexedDB)
+
+- **Monotonic snapshot version** (**`utils/hex.ts`**) - the encrypted MLS checkpoint is written under a **write-if-newer** guard. Every serialized snapshot is tagged (`tagMlsSnapshot`) with an increasing version at the synchronous capture moment; the version rides with the bytes via a `WeakMap` (`propagateMlsSnapshotVersion` across the plain→encrypted step) so the off-thread Argon2 encryption cannot reorder it. **`saveMlsStateEncrypted`** does an IDB read-modify-write and refuses any blob whose version is not strictly newer than the stored **`MLS_STATE_VERSION_KEY`**. This stops a slow encrypted flush (`mlsStatePersister`, worker Argon2) from overwriting a fresher concurrent write (`generateKeyPackage`, main-thread Argon2) - which would silently regress the persisted epoch on the next reload. The in-memory counter is reseeded from the stored version at load (`seedMlsSnapshotSeq`) so a fresh session never emits a version below what is already on disk. Only a plain integer is stored - no groupId/epoch at rest, so privacy is unchanged. Web-only: Tauri persists to the filesystem under its own `mls_bin_write_lock`.
+
 ## Verification
 
 | Tactic                 | What must hold                                   | How we check                                       |
 | ---------------------- | ------------------------------------------------ | -------------------------------------------------- |
 | `baseEpoch` formula    | Web and Tauri use `commitBaseEpochForValidation` | `desyncPrevention.contract.test.ts`                |
+| Persistence monotonic  | Stale encrypted flush cannot lower the stored blob | `hex.mlsVersion.test.ts`                          |
 | Recovery vs prevention | Desync _handling_ (ACK rules, retries)           | [MLS_RECOVERY_LADDER.md](./MLS_RECOVERY_LADDER.md) |
 | Server commit logic    | Locks + `activeEpoch` rules                      | Code review / `app.controller.ts`                  |
 
