@@ -85,7 +85,10 @@ describe('handleWelcomeRequest - membership guard', () => {
         .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
       // Leaf not yet in the tree -> no kick, straight to addMember.
       getGroupMembers: vi.fn().mockResolvedValue([]),
-      addMember: vi.fn().mockResolvedValue({ commit: new Uint8Array([1]) }),
+      // addMember now runs the whole staged transaction and returns the Welcome + ratchet tree.
+      addMember: vi
+        .fn()
+        .mockResolvedValue({ welcome: new Uint8Array([1]), ratchetTree: new Uint8Array([2]) }),
     });
 
     await handleWelcomeRequest({

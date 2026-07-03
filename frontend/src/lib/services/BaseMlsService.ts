@@ -33,7 +33,7 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
-import { fromBase64 } from '$lib/utils/hex';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
@@ -926,27 +926,146 @@ export abstract class BaseMlsService implements IMlsService {
   abstract changePIN(newPin: string): Promise<void>;
   abstract generateKeyPackage(pin: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
-  abstract sendCommit(
-    commitBytes: Uint8Array,
-    groupId: string,
-    excludeDeviceIds?: string[]
-  ): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;
   abstract forceCreateGroup(groupId: string): Promise<void>;
-  abstract addMember(
+
+  // ── One commit regime (C7-A unified: stage -> validate -> merge/clear) ──────
+  //
+  // Every structural commit (ADD and REMOVE) runs through runCommitTransaction: the stage step
+  // produces the commit WITHOUT merging, the server validates the epoch, then we merge (accept) or
+  // clear (reject). A rejected commit therefore never leaves the local epoch ahead, so the whole
+  // class of "sender fork" desyncs disappears. The platform primitives below (stage / merge / clear
+  // / export tree / fresh epoch) are the only pieces that differ between WASM and native.
+
+  /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, and the input
+   *  positions actually added / dropped-as-invalid (already-member dedup is silent). */
+  protected abstract stageAddMembers(
     groupId: string,
-    keyPackageBytes: Uint8Array
-  ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
-  abstract addMembersBulk(
-    groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
+    keyPackages: Uint8Array[]
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
-    addedDeviceIds: string[];
-    ratchetTree?: Uint8Array;
-    skippedDeviceIds: string[];
+    addedIndices: number[];
+    skippedIndices: number[];
   }>;
+  /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit. */
+  protected abstract stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array>;
+  /** Stages a Remove commit for specific devices ("userId:deviceId") WITHOUT merging. */
+  protected abstract stageRemoveMembersByDevice(
+    groupId: string,
+    deviceIdentities: string[]
+  ): Promise<Uint8Array>;
+  /** Merges the pending staged commit (server accepted): advances the local epoch. */
+  protected abstract mergePendingCommit(groupId: string): Promise<void>;
+  /** Clears the pending staged commit (server rejected): local epoch unchanged, no fork. */
+  protected abstract clearPendingCommit(groupId: string): Promise<void>;
+  /** Exports the group's ratchet tree from the CURRENT (post-merge) state for the Welcome. */
+  protected abstract exportRatchetTree(groupId: string): Promise<Uint8Array>;
+  /** Reads the authoritative current (pre-merge) epoch for server validation. */
+  protected abstract freshEpoch(groupId: string): Promise<number>;
+
+  /**
+   * Runs one staged commit transaction under the MLS lock: stage (no merge) -> validate the epoch
+   * server-side -> merge (accept) or clear (reject, throws). On accept it broadcasts the commit
+   * (skipping `excludeDeviceIds`) and, when `exportTree` is set, exports the post-merge ratchet
+   * tree for the caller to deliver in the Welcome. The network preamble that builds the stage
+   * inputs stays OUTSIDE this method; only the stage->merge unit is locked.
+   */
+  protected async runCommitTransaction(
+    groupId: string,
+    stageFn: () => Promise<{
+      commit: Uint8Array;
+      welcome?: Uint8Array;
+      addedDeviceIds?: string[];
+      skippedDeviceIds?: string[];
+    }>,
+    opts: { excludeDeviceIds?: string[]; exportTree?: boolean } = {}
+  ): Promise<{
+    welcome?: Uint8Array;
+    ratchetTree?: Uint8Array;
+    addedDeviceIds: string[];
+    skippedDeviceIds: string[];
+  }> {
+    return this.runUnderMlsLock(async () => {
+      const staged = await stageFn();
+      // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
+      const baseEpoch = await this.freshEpoch(groupId);
+      const validation = await this.delivery.validateCommitEpoch(groupId, baseEpoch);
+      if (!validation.accepted) {
+        // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
+        // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
+        // retryable failure rather than a fork to heal. [[C7]]
+        await this.clearPendingCommit(groupId).catch(() => {});
+        throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
+      }
+      await this.mergePendingCommit(groupId);
+      const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
+      await this.delivery.broadcastCommit(toBase64(staged.commit), groupId, opts.excludeDeviceIds);
+      return {
+        welcome: staged.welcome,
+        ratchetTree,
+        addedDeviceIds: staged.addedDeviceIds ?? [],
+        skippedDeviceIds: staged.skippedDeviceIds ?? [],
+      };
+    });
+  }
+
+  async addMember(
+    groupId: string,
+    keyPackageBytes: Uint8Array,
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+    const result = await this.runCommitTransaction(
+      groupId,
+      async () => {
+        const staged = await this.stageAddMembers(groupId, [keyPackageBytes]);
+        return { commit: staged.commit, welcome: staged.welcome };
+      },
+      { excludeDeviceIds, exportTree: true }
+    );
+    return { welcome: result.welcome, ratchetTree: result.ratchetTree };
+  }
+
+  async addMembersBulk(
+    groupId: string,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    excludeDeviceIds?: string[]
+  ): Promise<{
+    welcome?: Uint8Array;
+    ratchetTree?: Uint8Array;
+    addedDeviceIds: string[];
+    skippedDeviceIds: string[];
+  }> {
+    return this.runCommitTransaction(
+      groupId,
+      async () => {
+        const staged = await this.stageAddMembers(
+          groupId,
+          devices.map((d) => d.keyPackage)
+        );
+        return {
+          commit: staged.commit,
+          welcome: staged.welcome,
+          addedDeviceIds: staged.addedIndices.map((i) => devices[i].deviceId),
+          skippedDeviceIds: staged.skippedIndices.map((i) => devices[i].deviceId),
+        };
+      },
+      { excludeDeviceIds, exportTree: true }
+    );
+  }
+
+  async removeMember(groupId: string, userIds: string[]): Promise<void> {
+    await this.runCommitTransaction(groupId, async () => ({
+      commit: await this.stageRemoveMembers(groupId, userIds),
+    }));
+  }
+
+  async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
+    await this.runCommitTransaction(groupId, async () => ({
+      commit: await this.stageRemoveMembersByDevice(groupId, deviceIdentities),
+    }));
+  }
+
   abstract processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
   abstract sendMessage(
     groupId: string,
@@ -968,6 +1087,4 @@ export abstract class BaseMlsService implements IMlsService {
   abstract getEpoch(groupId: string): number;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
   abstract dropGroup(groupId: string): void;
-  abstract removeMember(groupId: string, userIds: string[]): Promise<void>;
-  abstract removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
 }

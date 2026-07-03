@@ -91,10 +91,16 @@ fn bench_send_message(c: &mut Criterion) {
     let group_id = "bench-send".to_string();
     alice.create_group(group_id.clone()).expect("create_group");
     let kp = bob.generate_key_package().expect("key_package");
-    let (_c, welcome, _, rt, _skipped) = alice
+    let (_c, welcome, _added, _skipped) = alice
         .add_members_bulk(&group_id, &[&kp])
         .expect("add_members_bulk");
-    bob.process_welcome(welcome.as_deref().expect("welcome"), rt.as_deref())
+    alice
+        .merge_pending_commit_for(&group_id)
+        .expect("merge add commit");
+    let rt = alice
+        .export_ratchet_tree_for(&group_id)
+        .expect("export ratchet tree");
+    bob.process_welcome(welcome.as_deref().expect("welcome"), Some(&rt))
         .expect("process_welcome");
 
     let payload = b"bench outbound payload";

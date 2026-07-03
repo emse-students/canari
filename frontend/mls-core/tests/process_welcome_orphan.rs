@@ -28,11 +28,15 @@ fn rejected_stale_welcome_leaves_no_orphan_blocking_a_fresh_welcome() {
     let kp_bob2 = bob.generate_key_package().expect("kp bob 2");
 
     // Welcome v1 : ajout de bob -> epoch 1.
-    let (_, welcome_v1, _, rt_v1, _skipped) = alice
+    let (_, welcome_v1, _, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob1])
         .expect("add bob v1");
+    // Stage-only add (C7-A): confirm to reach epoch 1, then export the post-merge tree.
+    alice
+        .merge_pending_commit_for(gid)
+        .expect("confirm add bob v1");
     let welcome_v1 = welcome_v1.expect("welcome v1");
-    let rt_v1 = rt_v1.expect("ratchet tree v1");
+    let rt_v1 = alice.export_ratchet_tree_for(gid).expect("ratchet tree v1");
 
     // Retrait de bob (epoch 2) puis re-ajout via kp_bob2 (epoch 3) -> Welcome v2 a l'epoch 3.
     // Le retrait STAGE le commit (C7 Option A) : on le confirme pour que bob quitte reellement
@@ -43,11 +47,15 @@ fn rejected_stale_welcome_leaves_no_orphan_blocking_a_fresh_welcome() {
     alice
         .merge_pending_commit_for(gid)
         .expect("confirm remove bob");
-    let (_, welcome_v2, _, rt_v2, _skipped) = alice
+    let (_, welcome_v2, _, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob2])
         .expect("add bob v2");
+    // Stage-only add (C7-A): confirm to reach epoch 3, then export the post-merge tree.
+    alice
+        .merge_pending_commit_for(gid)
+        .expect("confirm add bob v2");
     let welcome_v2 = welcome_v2.expect("welcome v2");
-    let rt_v2 = rt_v2.expect("ratchet tree v2");
+    let rt_v2 = alice.export_ratchet_tree_for(gid).expect("ratchet tree v2");
 
     // bob oublie le groupe en imposant min_epoch=3 (il attend un re-Welcome a jour).
     bob.forget_group(gid, 3);

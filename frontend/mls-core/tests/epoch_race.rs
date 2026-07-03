@@ -97,9 +97,14 @@ fn test_scenario1_happy_path() {
 
     // Étapes 2-4
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (commit1, welcome1, added1, rt1, _skipped) = jolan1
+    let (commit1, welcome1, added1, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
+    // Stage-only add (C7-A): merge as if the server accepted, then export the post-merge tree.
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge add test1");
+    let rt1 = jolan1.export_ratchet_tree_for(gid).expect("tree1");
     println!(
         "  ✓ [3] jolan-dev1 a ajouté test-dev1 ({} device(s)), commit {} bytes",
         added1.len(),
@@ -107,18 +112,19 @@ fn test_scenario1_happy_path() {
     );
 
     test1
-        .process_welcome(
-            welcome1.as_deref().expect("welcome1 manquant"),
-            rt1.as_deref(),
-        )
+        .process_welcome(welcome1.as_deref().expect("welcome1 manquant"), Some(&rt1))
         .expect("test1 process_welcome");
     println!("  ✓ [4] test-dev1 a rejoint le groupe (epoch 1)");
 
     // Étapes 5-8
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
-    let (commit2, welcome2, added2, rt2, _skipped) = jolan1
+    let (commit2, welcome2, added2, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("add jolan3");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge add jolan3");
+    let rt2 = jolan1.export_ratchet_tree_for(gid).expect("tree2");
     println!(
         "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({} device(s)), commit {} bytes",
         added2.len(),
@@ -130,10 +136,7 @@ fn test_scenario1_happy_path() {
     assert!(r_test1_commit.is_ok(), "test1 doit traiter C2 sans erreur");
 
     jolan3
-        .process_welcome(
-            welcome2.as_deref().expect("welcome2 manquant"),
-            rt2.as_deref(),
-        )
+        .process_welcome(welcome2.as_deref().expect("welcome2 manquant"), Some(&rt2))
         .expect("jolan3 process_welcome");
     println!("  ✓ [8] jolan-dev3 a rejoint le groupe (epoch 2)");
 
@@ -217,13 +220,17 @@ fn test_scenario2_race_condition() {
     // Setup initial (époque 0→1)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_, welcome_test1, _, rt_test1, _skipped) = jolan1
+    let (_, welcome_test1, _, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge add test1");
+    let rt_test1 = jolan1.export_ratchet_tree_for(gid).expect("tree test1");
     test1
         .process_welcome(
             welcome_test1.as_deref().expect("welcome_test1"),
-            rt_test1.as_deref(),
+            Some(&rt_test1),
         )
         .expect("test1 join");
     println!("  ✓ Setup : jolan-dev1 + test-dev1 dans le groupe (epoch 1)");
@@ -232,9 +239,13 @@ fn test_scenario2_race_condition() {
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
     // jolan-dev1 ajoute jolan3 PREMIER (côté jolan, processPendingInvitations)
-    let (commit_a, welcome_a, _, rt_a, _skipped) = jolan1
+    let (commit_a, welcome_a, _, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge commit-A");
+    let rt_a = jolan1.export_ratchet_tree_for(gid).expect("tree A");
     println!(
         "  ✓ [6] jolan-dev1 commit-A créé (epoch 1→2), {} bytes",
         commit_a.len()
@@ -244,7 +255,7 @@ fn test_scenario2_race_condition() {
     // MÊME KeyPackage ! Les deux partaient de la même base epoch.
     let result_test1_add = test1.add_members_bulk(gid, &[&kp_jolan3]);
     match &result_test1_add {
-        Ok((c, _, _, _, _)) => println!(
+        Ok((c, _, _, _)) => println!(
             "  ⚠ [7] test-dev1 commit-B créé (epoch 1→2 DIVERGÉ), {} bytes - RACE ACTIVE",
             c.len()
         ),
@@ -252,10 +263,15 @@ fn test_scenario2_race_condition() {
             "  ✓ [7] test-dev1 a échoué à créer commit-B (peut-être kp déjà consommé): {e}"
         ),
     }
+    // Stage-only: confirm test1's divergent commit-B so it truly advances to epoch 2 (secrets set-B).
+    if result_test1_add.is_ok() {
+        test1
+            .merge_pending_commit_for(gid)
+            .expect("merge divergent commit-B");
+    }
 
     // jolan-dev3 reçoit le Welcome issu du commit-A de jolan-dev1
-    let join_result =
-        jolan3.process_welcome(welcome_a.as_deref().expect("welcome_a"), rt_a.as_deref());
+    let join_result = jolan3.process_welcome(welcome_a.as_deref().expect("welcome_a"), Some(&rt_a));
     let join_ok = join_result.is_ok();
     let join_status = match join_result {
         Ok(_) => "OK (epoch 2, secrets set-A)".to_string(),
@@ -357,13 +373,17 @@ fn test_scenario3_fix_single_adder_guard() {
     // Setup (epoch 0→1)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_, welcome_test1, _, rt_test1, _skipped) = jolan1
+    let (_, welcome_test1, _, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge add test1");
+    let rt_test1 = jolan1.export_ratchet_tree_for(gid).expect("tree test1");
     test1
         .process_welcome(
             welcome_test1.as_deref().expect("welcome_test1"),
-            rt_test1.as_deref(),
+            Some(&rt_test1),
         )
         .expect("test1 join");
     println!("  ✓ Setup : jolan-dev1 + test-dev1 dans le groupe (epoch 1)");
@@ -372,9 +392,13 @@ fn test_scenario3_fix_single_adder_guard() {
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
 
     // jolan-dev1 ajoute jolan-dev3 (via processPendingInvitations)
-    let (commit_a, welcome_a, added, rt_a, _skipped) = jolan1
+    let (commit_a, welcome_a, added, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("jolan1 add jolan3");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge commit-A");
+    let rt_a = jolan1.export_ratchet_tree_for(gid).expect("tree A");
     println!(
         "  ✓ [6] jolan-dev1 a ajouté jolan-dev3 ({} device(s)), commit {} bytes",
         added.len(),
@@ -396,7 +420,7 @@ fn test_scenario3_fix_single_adder_guard() {
 
     // jolan-dev3 rejoint
     jolan3
-        .process_welcome(welcome_a.as_deref().expect("welcome_a"), rt_a.as_deref())
+        .process_welcome(welcome_a.as_deref().expect("welcome_a"), Some(&rt_a))
         .expect("jolan3 join via Welcome-A");
     println!("  ✓ [9] jolan-dev3 a rejoint (epoch 2, secrets set-A)");
 
@@ -440,22 +464,30 @@ fn test_scenario4_bidirectional_messaging() {
     // Setup complet (même que scénario 3)
     jolan1.create_group(gid.to_string()).expect("create_group");
     let kp_test1 = test1.generate_key_package().expect("kp test1");
-    let (_commit1, welcome_test1, _, rt1, _skipped) = jolan1
+    let (_commit1, welcome_test1, _, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_test1])
         .expect("add test1");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge add test1");
+    let rt1 = jolan1.export_ratchet_tree_for(gid).expect("tree1");
     test1
-        .process_welcome(welcome_test1.as_deref().unwrap(), rt1.as_deref())
+        .process_welcome(welcome_test1.as_deref().unwrap(), Some(&rt1))
         .expect("test1 join");
 
     let kp_jolan3 = jolan3.generate_key_package().expect("kp jolan3");
-    let (commit2, welcome_jolan3, _, rt2, _skipped) = jolan1
+    let (commit2, welcome_jolan3, _, _skipped) = jolan1
         .add_members_bulk(gid, &[&kp_jolan3])
         .expect("add jolan3");
+    jolan1
+        .merge_pending_commit_for(gid)
+        .expect("merge add jolan3");
+    let rt2 = jolan1.export_ratchet_tree_for(gid).expect("tree2");
     test1
         .process_incoming_message(gid, &commit2)
         .expect("test1 process commit2");
     jolan3
-        .process_welcome(welcome_jolan3.as_deref().unwrap(), rt2.as_deref())
+        .process_welcome(welcome_jolan3.as_deref().unwrap(), Some(&rt2))
         .expect("jolan3 join");
 
     // Les deux commits précédents ont été broadcastés. Dans notre test, jolan1 a mergé commit1

@@ -4,7 +4,6 @@ import {
   loadAndInitWasm,
   shouldAckAfterSuccess,
   shouldAckAfterException,
-  commitBaseEpochForValidation,
   logMlsMetric,
   initTabLeadershipAsync,
   getIsTabLeader,
@@ -23,7 +22,6 @@ describe('$lib/mls-client public barrel', () => {
     expect(typeof loadAndInitWasm).toBe('function');
     expect(typeof shouldAckAfterSuccess).toBe('function');
     expect(typeof shouldAckAfterException).toBe('function');
-    expect(typeof commitBaseEpochForValidation).toBe('function');
     expect(typeof logMlsMetric).toBe('function');
     expect(typeof initTabLeadershipAsync).toBe('function');
     expect(typeof getIsTabLeader).toBe('function');

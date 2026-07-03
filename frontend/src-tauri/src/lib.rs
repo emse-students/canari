@@ -413,43 +413,20 @@ fn obtenir_epoch(group_id: String, state: tauri::State<AppState>) -> Result<u64,
 }
 
 #[tauri::command]
-fn ajouter_membre(
-    group_id: String,
-    key_package_bytes: Vec<u8>,
-    state: tauri::State<AppState>,
-) -> Result<(Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>), String> {
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-
-    manager
-        .add_member(&group_id, &key_package_bytes)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     state: tauri::State<AppState>,
-) -> Result<
-    (
-        Vec<u8>,
-        Option<Vec<u8>>,
-        Vec<u32>,
-        Option<Vec<u8>>,
-        Vec<u32>,
-    ),
-    String,
-> {
+) -> Result<(Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<u32>), String> {
     let mut lock = state
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
+    // Stage-only (C7-A): the commit is NOT merged here. The caller validates it server-side then
+    // calls confirmer_commit (accepted) / annuler_commit (rejected), and reads the post-merge
+    // ratchet tree via exporter_ratchet_tree.
     let refs: Vec<&[u8]> = key_packages_bytes.iter().map(|v| v.as_slice()).collect();
     manager
         .add_members_bulk(&group_id, &refs)
@@ -574,13 +551,13 @@ fn retirer_membres_par_appareil(
         .map_err(|e| e.to_string())
 }
 
-/// Confirme (merge) un commit de retrait *stage* APRES acceptation serveur (`validateCommit`).
+/// Confirme (merge) un commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`).
 /// Avance l'epoch local. Pendant de `annuler_commit`. [[C7]] Option A : valider-puis-merger,
-/// jamais de fork local sur rejet (chemin REMOVE, non protege par l'add-lock).
+/// jamais de fork local sur rejet (regime unifie ADD+REMOVE).
 ///
 /// NE persiste PAS : l'appelant enchaine `persistMlsStateAfterMutation` (qui detient le pin,
 /// recupere via le keystore au niveau session) comme pour tout autre mutation - meme fenetre
-/// merge->persist qu'avant (le merge etait alors fait dans `retirer_membres`).
+/// merge->persist qu'avant.
 #[tauri::command]
 fn confirmer_commit(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
     let mut lock = state
@@ -593,8 +570,8 @@ fn confirmer_commit(group_id: String, state: tauri::State<AppState>) -> Result<(
         .map_err(|e| e.to_string())
 }
 
-/// Annule (clear) un commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
-/// inchange (aucun fork). Pas de persistance : `mls.bin` est deja a l'etat pre-stage. [[C7]]
+/// Annule (clear) un commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local
+/// reste inchange (aucun fork). Pas de persistance : `mls.bin` est deja a l'etat pre-stage. [[C7]]
 #[tauri::command]
 fn annuler_commit(group_id: String, state: tauri::State<AppState>) -> Result<(), String> {
     let mut lock = state
@@ -604,6 +581,23 @@ fn annuler_commit(group_id: String, state: tauri::State<AppState>) -> Result<(),
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
     manager
         .clear_pending_commit_for(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Exporte le ratchet tree du groupe depuis l'etat COURANT (post-merge) pour le Welcome. Pour un
+/// ADD, a appeler APRES `confirmer_commit` (le nouveau membre rejoint l'epoch N+1). [[C7]]
+#[tauri::command]
+fn exporter_ratchet_tree(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .export_ratchet_tree_for(&group_id)
         .map_err(|e| e.to_string())
 }
 
@@ -979,7 +973,10 @@ async fn bootstrap_dead_conversation(
             .map_err(|_| "Failed to lock state")?;
         let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
         let refs: Vec<&[u8]> = all_key_packages.iter().map(|v| v.as_slice()).collect();
-        let (commit_b, welcome_b, _count, rt_b, skipped) = manager
+        // Stage-only add (C7-A). The bootstrap holds the Redis bootstrap-lock and resets the epoch
+        // to 0, so there is no concurrent commit to lose: merge immediately, then export the
+        // post-merge ratchet tree the new members join with.
+        let (commit_b, welcome_b, _added, skipped) = manager
             .add_members_bulk(&conversation_id, &refs)
             .map_err(|e| e.to_string())?;
         if !skipped.is_empty() {
@@ -990,7 +987,13 @@ async fn bootstrap_dead_conversation(
                 skipped
             );
         }
-        (commit_b, welcome_b, rt_b)
+        manager
+            .merge_pending_commit_for(&conversation_id)
+            .map_err(|e| e.to_string())?;
+        let rt_b = manager
+            .export_ratchet_tree_for(&conversation_id)
+            .map_err(|e| e.to_string())?;
+        (commit_b, welcome_b, Some(rt_b))
     };
 
     // ── Étape 6 : Sauvegarder l'état MLS ────────────────────────────────────
@@ -1900,12 +1903,12 @@ pub fn run() {
             generer_key_packages,
             generer_key_packages_et_persister,
             key_package_a_clef_privee,
-            ajouter_membre,
             ajouter_membres_bulk,
             retirer_membres,
             retirer_membres_par_appareil,
             confirmer_commit,
             annuler_commit,
+            exporter_ratchet_tree,
             trailer_welcome,
             envoyer_message,
             envoyer_message_bytes,

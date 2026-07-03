@@ -174,13 +174,12 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 1. Creator: `createRemoteGroup(name, isGroup=false)` -> server returns `groupId`
 2. Creator: `createGroup(groupId)` in WASM
 3. Creator: `fetchUserDevices(peerId)` -> get peer's key packages
-4. Creator: `addMembersBulk(groupId, devices)` -> WASM returns `(commit, welcome, ratchetTree)`
-5. Creator: `sendCommit(commit, groupId)` -> POST `/api/mls/commit` + `/api/mls/send`
-6. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` -> POST `/api/mls/welcome`
-7. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)`
-8. Peer: Welcome arrives via WS or pending queue -> `processWelcome(bytes, ratchetTree)` -> group joined in WASM
-9. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(..., 'active')`
-10. Peer: `saveState(pin)` -> persisted to IndexedDB
+4. Creator: `addMembersBulk(groupId, devices, excludeDeviceIds)` -> one staged transaction (C7-A): stage the Add, validate the epoch (`POST /api/mls/commit`), merge on accept and broadcast the commit / roll back on reject. Returns `{ welcome, ratchetTree, addedDeviceIds, skippedDeviceIds }` (the ratchet tree is exported post-merge).
+5. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` -> POST `/api/mls/welcome`
+6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)`
+7. Peer: Welcome arrives via WS or pending queue -> `processWelcome(bytes, ratchetTree)` -> group joined in WASM
+8. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(..., 'active')`
+9. Peer: `saveState(pin)` -> persisted to IndexedDB
 
 ### Sending a message
 
@@ -207,8 +206,8 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 3. `getDeviceMemberships()` -> empty -> send `welcome_request` for each user group
 4. Online devices receive `welcome_request` via WS -> `handleWelcomeRequest()`:
    - Acquire add-lock
-   - `addMembersBulk(groupId, [newDeviceKP])` -> commit + welcome
-   - `sendCommit()` + `sendWelcome()`
+   - `addMember(groupId, newDeviceKP, excludeDeviceIds)` -> staged transaction (validate + merge + broadcast) -> `{ welcome, ratchetTree }`
+   - `sendWelcome()`
    - `updateInvitationStatus(..., 'active')`
 5. New device receives Welcome -> joins group -> saves state
 
@@ -331,7 +330,7 @@ If saved WASM/Rust state embeds a different device ID than what's in localStorag
 | R1 | Watchdog vs Welcome race | Timer cancelled on WASM ok |
 | R2 | Insufficient coalescing | `timers.has(groupId)` gate |
 | R3 | Double `welcome_request` in two-pass | Single pass with `seen` Set |
-| R4 | `addMembersBulk` without epoch | `sendCommit` path validated |
+| R4 | `addMembersBulk` without epoch | `runCommitTransaction` stage->validate->merge |
 | R5 | Silent add-lock failure | 2s retry |
 
 ## Earlier bug fixes (pre-rewrite)

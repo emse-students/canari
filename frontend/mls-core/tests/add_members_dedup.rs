@@ -24,11 +24,14 @@ fn add_members_bulk_rejects_keypackage_of_an_existing_member() {
     let kp_bob = bob.generate_key_package().expect("kp bob");
 
     // Premier ajout : doit réussir et inclure bob à l'index 0.
-    let (_, welcome, added, rt, _skipped) = alice
+    let (_, welcome, added, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("first add should succeed");
     assert_eq!(added, vec![0]);
-    bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
+    // Stage-only add (C7-A): merge as if the server accepted, then export the post-merge tree.
+    alice.merge_pending_commit_for(gid).expect("merge add bob");
+    let rt = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins");
 
     // bob est désormais un membre réel de l'arbre local d'alice. Si une tentative
@@ -53,23 +56,29 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
 
     alice.create_group(gid.to_string()).expect("create_group");
     let kp_bob = bob.generate_key_package().expect("kp bob");
-    let (_, welcome, _, rt, _skipped) = alice
+    let (_, welcome, _added, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("bob joins first");
-    bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
+    alice.merge_pending_commit_for(gid).expect("merge add bob");
+    let rt = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins");
 
     // Lot mixte : bob (déjà membre - doit être ignoré) + carol (nouvelle - doit être ajoutée).
     let kp_bob_stale = bob.generate_key_package().expect("kp bob stale");
     let kp_carol = carol.generate_key_package().expect("kp carol");
-    let (_, welcome2, added, rt2, _skipped) = alice
+    let (_, welcome2, added, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob_stale, &kp_carol])
         .expect("mixed batch should still add carol");
 
     // Seul l'index 1 (carol) doit être marqué comme ajouté.
     assert_eq!(added, vec![1]);
+    alice
+        .merge_pending_commit_for(gid)
+        .expect("merge add carol");
+    let rt2 = alice.export_ratchet_tree_for(gid).expect("tree");
     carol
-        .process_welcome(welcome2.as_deref().unwrap(), rt2.as_deref())
+        .process_welcome(welcome2.as_deref().unwrap(), Some(&rt2))
         .expect("carol joins");
 }
 
@@ -89,7 +98,7 @@ fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
     // Index 1 : KeyPackage valide de bob -> doit etre ajoute.
     let kp_bob = bob.generate_key_package().expect("kp bob");
 
-    let (_, welcome, added, rt, skipped) = alice
+    let (_, welcome, added, skipped) = alice
         .add_members_bulk(gid, &[&garbage, &kp_bob])
         .expect("batch with one invalid KP still adds the valid one");
 
@@ -101,6 +110,8 @@ fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
     );
 
     // Le membre valide rejoint bien malgre le KP invalide du lot.
-    bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
+    alice.merge_pending_commit_for(gid).expect("merge add bob");
+    let rt = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins despite the skipped invalid KP");
 }

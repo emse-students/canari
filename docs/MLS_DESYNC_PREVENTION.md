@@ -2,7 +2,7 @@
 
 Tactics used to keep **server routing / epoch tracking**, **OpenMLS group state**, and **delivery order** aligned. Pair with [MLS_RECOVERY_LADDER.md](./MLS_RECOVERY_LADDER.md) for what happens _after_ a fault is detected.
 
-Run `npm run test -- --run src/lib/services/desyncPrevention.contract.test.ts` in `frontend` after changing **`commitBaseEpochForValidation`** or **`sendCommit`**.
+Run the MLS service and call-site suites in `frontend` after changing **`runCommitTransaction`** or the staged commit primitives (`stageAddMembers` / `mergePendingCommit` / `clearPendingCommit` / `exportRatchetTree`).
 
 ## Ordered tactics (by layer)
 
@@ -22,11 +22,11 @@ Run `npm run test -- --run src/lib/services/desyncPrevention.contract.test.ts` i
 
 - **`POST/DELETE /api/mls/add-lock`** - Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** and discovery re-bootstrap. Guard: **`HeaderAuthGuard`**.
 
-### 4. Client - same `baseEpoch` on Web and Tauri
+### 4. Client - one staged commit regime (ADD + REMOVE)
 
-- **`commitBaseEpochForValidation(currentEpoch)`** in **`mlsDesyncPrevention.ts`** - Single formula **`max(0, floor(currentEpoch) - 1)`** used by **`WebMlsService.sendCommit`** and **`TauriMlsService.sendCommit`** after reading the post-merge local epoch. Keeps Web/Tauri consistent with **`validateCommit`**.
+- **`runCommitTransaction(groupId, stageFn, opts)`** in **`BaseMlsService`** - the single primitive behind **every** structural commit. Under the MLS lock: stage the commit WITHOUT merging (`stageAddMembers` / `stageRemoveMembers*`), read the current **pre-merge** epoch (`freshEpoch`), **`validateCommitEpoch(groupId, baseEpoch)`**, then on accept **`mergePendingCommit`** + broadcast (and **`exportRatchetTree`** for an ADD Welcome), on reject **`clearPendingCommit`** and throw. Because the merge happens only after the server accepts, a rejected commit never advances the local epoch - the whole class of "sender fork" desyncs disappears. `baseEpoch` is the raw current epoch (no `-1` formula: nothing is merged before validation). The platform primitives (`stage*` / `merge` / `clear` / `exportRatchetTree` / `freshEpoch`) are the only pieces that differ between WASM (`WebMlsService`) and native (`TauriMlsService`). [[C7]]
 
-- **Tauri** - **`_epochByGroupId`** + **`refreshEpochCache`** keep **`getEpoch()`** meaningful for validation and UI; **`forgetGroup`** clears the cache.
+- **Tauri** - **`_epochByGroupId`** + **`refreshEpochCache`** keep **`getEpoch()`** meaningful for validation and UI; `freshEpoch` reads the authoritative pre-merge epoch via `obtenir_epoch`; **`forgetGroup`** clears the cache.
 
 ### 5. Client - message ordering and gaps
 

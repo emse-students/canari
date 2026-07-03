@@ -96,7 +96,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
         .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
       addMember: vi.fn().mockResolvedValue({
         welcome: new Uint8Array([2]),
-        commit: new Uint8Array([3]),
         ratchetTree: new Uint8Array([4]),
       }),
     });
@@ -112,34 +111,33 @@ describe('processPendingInvitations - leaf already in tree', () => {
       log,
     });
 
-    expect(mlsService.addMember).toHaveBeenCalledWith('g1', expect.any(Uint8Array));
+    // addMember now runs the whole staged transaction and takes the commit-broadcast exclude list.
+    expect(mlsService.addMember).toHaveBeenCalledWith('g1', expect.any(Uint8Array), [
+      'peer:peer-dev',
+    ]);
     expect(mlsService.sendWelcome).toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
   });
 });
 
-describe('processPendingInvitations - local state forked behind server', () => {
-  it('triggers recoverForkedGroup and abandons the group when commit is rejected (gap > 1)', async () => {
+describe('processPendingInvitations - staged Add commit outcomes', () => {
+  it('does NOT trigger fork recovery when a staged Add commit is rejected (benign retry, C7-A)', async () => {
+    // C7-A: a staged Add validates the epoch server-side and rolls back on reject, so the local
+    // epoch never advances - there is no fork. The rejection carries a plain `epoch_mismatch`
+    // reason WITHOUT the `server epoch:.., sent:..` marker, so it is treated as a transient race to
+    // retry on the next cycle, NEVER as a divergent branch needing destructive recovery.
     const mlsService = makeMls({
       getPendingInvitations: vi.fn().mockResolvedValue([
         { id: 'i1', userId: 'peer', deviceId: 'peer-dev-1', groupId: 'g1', status: 'pending' },
         { id: 'i2', userId: 'peer', deviceId: 'peer-dev-2', groupId: 'g1', status: 'pending' },
       ]),
       getGroupMembers: vi.fn().mockResolvedValue([]),
+      getDeviceMemberships: vi.fn().mockResolvedValue([]),
       fetchUserDevices: vi.fn().mockResolvedValue([
         { deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) },
         { deviceId: 'peer-dev-2', keyPackage: new Uint8Array([1]) },
       ]),
-      addMember: vi.fn().mockResolvedValue({
-        welcome: new Uint8Array([2]),
-        commit: new Uint8Array([3]),
-        ratchetTree: new Uint8Array([4]),
-      }),
-      sendCommit: vi
-        .fn()
-        .mockRejectedValue(
-          new Error('Commit rejected: epoch_mismatch (server epoch: 23, sent: 7)')
-        ),
+      addMember: vi.fn().mockRejectedValue(new Error('Staged commit rejected: epoch_mismatch')),
     });
     const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
     const log = vi.fn();
@@ -155,54 +153,10 @@ describe('processPendingInvitations - local state forked behind server', () => {
       recoverForkedGroup,
     });
 
-    // Recovery triggered once for the group, and the 2nd invitation is not attempted
-    // (break on forked group): addMember called only once.
-    expect(recoverForkedGroup).toHaveBeenCalledTimes(1);
-    expect(recoverForkedGroup).toHaveBeenCalledWith('g1', 23);
-    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
-  });
-
-  it('triggers recovery at a gap of 1 when OUR commit is rejected (sender concurrent fork, C7)', async () => {
-    // On the sender side, addMember has already merged the commit locally (epoch N+1) before
-    // the server rejects it: a gap of 1 is a real concurrent fork (divergent branch), not a
-    // simple receiver lag. Must recover, otherwise the winning commit is dropped as same-epoch
-    // benign and the fork becomes permanent.
-    const mlsService = makeMls({
-      getPendingInvitations: vi
-        .fn()
-        .mockResolvedValue([
-          { id: 'i1', userId: 'peer', deviceId: 'peer-dev-1', groupId: 'g1', status: 'pending' },
-        ]),
-      getGroupMembers: vi.fn().mockResolvedValue([]),
-      getDeviceMemberships: vi.fn().mockResolvedValue([]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) }]),
-      addMember: vi.fn().mockResolvedValue({
-        welcome: new Uint8Array([2]),
-        commit: new Uint8Array([3]),
-        ratchetTree: new Uint8Array([4]),
-      }),
-      sendCommit: vi
-        .fn()
-        .mockRejectedValue(new Error('Commit rejected: epoch_mismatch (server epoch: 8, sent: 7)')),
-    });
-    const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
-    const log = vi.fn();
-    const recoverForkedGroup = vi.fn().mockResolvedValue(undefined);
-
-    await processPendingInvitations({
-      mlsService,
-      storage: null,
-      userId: 'self',
-      pin: 'pin',
-      conversations,
-      log,
-      recoverForkedGroup,
-    });
-
-    expect(recoverForkedGroup).toHaveBeenCalledTimes(1);
-    expect(recoverForkedGroup).toHaveBeenCalledWith('g1', 8);
+    // No destructive fork recovery, and the group is not abandoned: both invitations are still
+    // attempted (a benign reject just retries next cycle).
+    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    expect(mlsService.addMember).toHaveBeenCalledTimes(2);
   });
 
   it('treats ALREADY_MEMBER as a fulfilled invitation (skip, no kick or recovery)', async () => {

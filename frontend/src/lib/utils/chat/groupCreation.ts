@@ -129,7 +129,10 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     if (ownDevices.length > 0) {
       const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
       try {
-        const bulk = await mlsService.addMembersBulk(groupId, ownDevices);
+        // Staged transaction (C7-A): exclude every candidate device from the commit broadcast (the
+        // added subset receives the Welcome instead; skipped devices are not in the group anyway).
+        const excludeIds = ownDevices.map((d) => `${userId}:${d.deviceId}`);
+        const bulk = await mlsService.addMembersBulk(groupId, ownDevices, excludeIds);
         log(
           `[GROUP] addMembersBulk result: welcome=${!!bulk.welcome} (${bulk.welcome?.length ?? 0} bytes), added=${bulk.addedDeviceIds.length} (${bulk.addedDeviceIds.join(', ')})`
         );
@@ -151,15 +154,8 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
           console.warn('[GROUP] addMembersBulk returned no welcome for own devices');
         }
 
-        // Save MLS state BEFORE sending the commit to the network.
-        // If a crash occurs between saveState and sendCommit, the local state
-        // remains consistent (post-addMember) and the commit can be retried.
+        // Save MLS state after the merged commit (crash-safety).
         await persistMlsStateAfterMutation(mlsService, userId, pin, log);
-
-        if (bulk.commit) {
-          const excludeIds = bulk.addedDeviceIds.map((did) => `${userId}:${did}`);
-          await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
-        }
       } catch (e) {
         log(`Error syncing own devices: ${e}`);
         console.error('[GROUP] Sync own devices failed:', e);
@@ -270,8 +266,16 @@ async function processBulkAddition(
     const deliveredUsers = new Set<string>();
 
     try {
-      // Add all devices in bulk (single MLS commit)
-      const bulk = await mlsService.addMembersBulk(conversation.id, allDevices);
+      // Add all devices in one staged MLS commit (C7-A): exclude every candidate device from the
+      // commit broadcast (the added subset receives the Welcome instead; skipped devices are not in
+      // the group anyway). The stage -> validate -> merge -> broadcast runs inside addMembersBulk.
+      const excludeIds = allDevices
+        .map((d) => {
+          const uid = userMap.get(d.deviceId);
+          return uid ? `${uid}:${d.deviceId}` : null;
+        })
+        .filter((s): s is string => s !== null);
+      const bulk = await mlsService.addMembersBulk(conversation.id, allDevices, excludeIds);
       warnSkippedKeyPackages(bulk.skippedDeviceIds, conversation.id, '[SYNC]', log);
 
       await persistMlsStateAfterMutation(mlsService, userId, pin, log);
@@ -310,16 +314,6 @@ async function processBulkAddition(
             );
           }
         }
-      }
-
-      if (bulk.commit) {
-        const excludeIds = bulk.addedDeviceIds
-          .map((did) => {
-            const uid = userMap.get(did);
-            return uid ? `${uid}:${did}` : null;
-          })
-          .filter((s): s is string => s !== null);
-        await mlsService.sendCommit(bulk.commit, conversation.id, excludeIds);
       }
 
       log(
@@ -375,10 +369,15 @@ async function performDirectAdd(
 
   const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
   try {
-    const bulk = await mlsService.addMembersBulk(groupId, allDevices);
-    log(
-      `[ADD] ${bulk.addedDeviceIds.length} device(s), welcome=${!!bulk.welcome}, commit=${!!bulk.commit}`
-    );
+    // Staged transaction (C7-A): exclude every candidate device from the commit broadcast (the
+    // added subset receives the Welcome instead). stage -> validate -> merge -> broadcast is
+    // handled inside addMembersBulk.
+    const excludeIds = allDevices.map((d) => {
+      const owner = contactDeviceIds.has(d.deviceId) ? contact : userId;
+      return `${owner}:${d.deviceId}`;
+    });
+    const bulk = await mlsService.addMembersBulk(groupId, allDevices, excludeIds);
+    log(`[ADD] ${bulk.addedDeviceIds.length} device(s), welcome=${!!bulk.welcome}`);
     warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[ADD]', log);
 
     // registerMember is user-level (upsert GroupMember): one call per userId is enough.
@@ -413,17 +412,8 @@ async function performDirectAdd(
       console.warn('[ADD] addMembersBulk returned no welcome');
     }
 
-    // Save BEFORE sendCommit (crash-safety: local state must survive a crash here)
+    // Save MLS state after the merged commit (crash-safety).
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
-
-    if (bulk.commit) {
-      const excludeIds = bulk.addedDeviceIds.map((did) => {
-        const owner = contactDeviceIds.has(did) ? contact : userId;
-        return `${owner}:${did}`;
-      });
-      await mlsService.sendCommit(bulk.commit, groupId, excludeIds);
-      log(`[ADD] Commit sent (excluded: ${excludeIds.join(', ')})`);
-    }
   } finally {
     if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
   }

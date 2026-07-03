@@ -110,11 +110,21 @@ pub fn create_welcome_background(
         "[BG_WELCOME] add_member group={group_id} kp_len={} base_epoch={base_epoch}",
         kp_bytes.len()
     );
-    let (commit, welcome_opt, ratchet_tree_opt) = manager
+    let (commit, welcome_opt) = manager
         .add_member(group_id, &kp_bytes)
         .map_err(|e| e.to_string())?;
 
     let welcome = welcome_opt.ok_or_else(|| "add_member returned no welcome bytes".to_string())?;
+
+    // Stage-only add (C7-A). This background path cannot do the interactive validate-then-merge
+    // round-trip (the app may be killed); it is serialized by the add-lock like the bootstrap path,
+    // so merge immediately and export the post-merge ratchet tree the new member joins with.
+    manager
+        .merge_pending_commit_for(group_id)
+        .map_err(|e| e.to_string())?;
+    let ratchet_tree = manager
+        .export_ratchet_tree_for(group_id)
+        .map_err(|e| e.to_string())?;
 
     let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
@@ -127,7 +137,7 @@ pub fn create_welcome_background(
     Ok(serde_json::json!({
         "ok": true,
         "welcome": STANDARD.encode(&welcome),
-        "ratchetTree": ratchet_tree_opt.as_deref().map(|rt| STANDARD.encode(rt)),
+        "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
         "baseEpoch": base_epoch,
     }))

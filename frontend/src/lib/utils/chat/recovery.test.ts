@@ -48,12 +48,10 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     addMembersBulk: vi.fn().mockResolvedValue({
-      commit: new Uint8Array([2]),
       addedDeviceIds: [],
       skippedDeviceIds: [],
       welcome: undefined,
     }),
-    sendCommit: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
@@ -251,14 +249,13 @@ describe('recoverForkedGroup', () => {
 // ── reboot ───────────────────────────────────────────────────────────────────
 
 describe('reboot', () => {
-  it('CAS won -> sendCommit then sendWelcome for each member', async () => {
+  it('CAS won -> staged addMembersBulk (validated commit) then sendWelcome for each member', async () => {
     const mls = makeMls({
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'other', deviceId: 'dev2' }]),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ keyPackage: new Uint8Array([9]), deviceId: 'dev2' }]),
       addMembersBulk: vi.fn().mockResolvedValue({
-        commit: new Uint8Array([2]),
         welcome: new Uint8Array([3]),
         addedDeviceIds: ['dev2'],
         skippedDeviceIds: [],
@@ -269,7 +266,8 @@ describe('reboot', () => {
 
     await reboot('dead', deps);
 
-    expect(mls.sendCommit).toHaveBeenCalledWith(expect.any(Uint8Array), 'new-id');
+    // addMembersBulk now stages + validates the epoch + merges + broadcasts the commit internally.
+    expect(mls.addMembersBulk).toHaveBeenCalledWith('new-id', expect.any(Array));
     expect(mls.sendWelcome).toHaveBeenCalledWith(
       expect.any(Uint8Array),
       'other',
@@ -372,7 +370,6 @@ describe('reboot', () => {
         .fn()
         .mockResolvedValue([{ keyPackage: new Uint8Array([9]), deviceId: 'dev2' }]),
       addMembersBulk: vi.fn().mockResolvedValue({
-        commit: new Uint8Array([2]),
         welcome: new Uint8Array([3]),
         addedDeviceIds: ['dev2'],
         skippedDeviceIds: [],
@@ -432,7 +429,6 @@ describe('reboot', () => {
           )
         ),
       addMembersBulk: vi.fn().mockResolvedValue({
-        commit: new Uint8Array([2]),
         welcome: new Uint8Array([3]),
         addedDeviceIds: ['dev-current'],
         skippedDeviceIds: [],

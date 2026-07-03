@@ -12,9 +12,8 @@ export function createMlsServiceStub(
     createRemoteGroup: vi.fn().mockResolvedValue('group-uuid'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
-    addMember: vi.fn().mockResolvedValue({ commit: new Uint8Array([1]) }),
+    addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
     addMembersBulk: vi.fn().mockResolvedValue({
-      commit: new Uint8Array([1]),
       addedDeviceIds: [],
       skippedDeviceIds: [],
     }),
@@ -37,7 +36,6 @@ export function createMlsServiceStub(
     reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(0),
-    sendCommit: vi.fn().mockResolvedValue(undefined),
     registerMember: vi.fn().mockResolvedValue(undefined),
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),

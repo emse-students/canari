@@ -19,7 +19,6 @@ export {
   shouldAckGroupResetControl,
   type QueueMsgFlags,
 } from './mlsQueueAckPolicy';
-export { commitBaseEpochForValidation } from './mlsDesyncPrevention';
 export { logMlsMetric, type MlsMetricEvent } from './mlsRecoveryMetrics';
 export {
   isCatchupBenchEnabled,

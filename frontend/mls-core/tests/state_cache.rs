@@ -39,14 +39,18 @@ fn save_state_rebuilds_after_mutation() {
         .create_group(group_id.to_string())
         .expect("alice create_group");
     let kp = bob.generate_key_package().expect("bob key_package");
-    let (_commit, welcome, _, ratchet_tree, _skipped) = alice
+    let (_commit, welcome, _added, _skipped) = alice
         .add_members_bulk(group_id, &[&kp])
         .expect("add_members_bulk");
-    bob.process_welcome(
-        welcome.as_deref().expect("welcome"),
-        ratchet_tree.as_deref(),
-    )
-    .expect("bob process_welcome");
+    // Stage-only add (C7-A): merge as if the server accepted, then export the post-merge tree.
+    alice
+        .merge_pending_commit_for(group_id)
+        .expect("merge add commit");
+    let ratchet_tree = alice
+        .export_ratchet_tree_for(group_id)
+        .expect("export ratchet tree");
+    bob.process_welcome(welcome.as_deref().expect("welcome"), Some(&ratchet_tree))
+        .expect("bob process_welcome");
 
     let before = alice.save_state().expect("save before send");
     bob.send_message(group_id, b"hello").expect("send");

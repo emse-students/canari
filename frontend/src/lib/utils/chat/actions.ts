@@ -199,13 +199,19 @@ export async function processPendingInvitations(params: {
             /* proceed with add attempt */
           }
 
-          // Add the member to the MLS group
-          const result = await mlsService.addMember(groupId, targetDevice.keyPackage);
+          // One staged transaction (C7-A): stage the Add, validate the epoch server-side, then
+          // merge + broadcast on accept (excluding the inviter self and the newly-welcomed device)
+          // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
+          // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
+          // only sent once the commit is accepted. [[C7]]
+          const result = await mlsService.addMember(groupId, targetDevice.keyPackage, [
+            `${inv.userId}:${inv.deviceId}`,
+          ]);
 
-          // Register member on server (upsert GroupMember row) (not strictly necessary to add before Welcome, but keeps server state more up-to-date in case of failure during the MLS flow)
+          // Register member on server (upsert GroupMember row), keeping server state up to date.
           await mlsService.registerMember(groupId, inv.userId);
 
-          // Send Welcome
+          // Send the Welcome + post-merge ratchet tree to the newly added device.
           if (result.welcome) {
             await mlsService.sendWelcome(
               result.welcome,
@@ -218,27 +224,12 @@ export async function processPendingInvitations(params: {
             log(`[PENDING] Welcome → ${inv.deviceId} (user: ${inv.userId}) pour ${groupId}`);
           }
 
-          // Save MLS state before commit (crash-safety)
+          // Save MLS state after the merged commit (crash-safety).
           await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
-          // Send commit, excluding the inviter (self) and the newly-welcomed device
-          let commitError: unknown = null;
-          if (result.commit) {
-            try {
-              await mlsService.sendCommit(result.commit, groupId, [
-                `${inv.userId}:${inv.deviceId}`,
-              ]);
-            } catch (e) {
-              commitError = e;
-            }
-          }
-
-          // The history bundle = APPLICATION MESSAGES (not a commit, does not go through
-          // validateCommit). The new member has already joined via the Welcome (same epoch as
-          // us), so we send the history even if the commit broadcast failed - otherwise a
-          // rejected commit (concurrent race or server counter lag) would silently deprive
-          // them of the full history. [[C8]]
-          const bundlePromise = sendFullHistoryBundle(groupId, {
+          // The new member has joined at our epoch via the Welcome; send the full history bundle
+          // (APPLICATION MESSAGES, not a commit, so it does not go through validateCommit). [[C8]]
+          await sendFullHistoryBundle(groupId, {
             storage,
             pin,
             mlsService,
@@ -246,13 +237,6 @@ export async function processPendingInvitations(params: {
           }).catch((e) =>
             log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
           );
-
-          if (commitError) {
-            // Recovery (catch) will forgetGroup: wait for the history send to complete
-            // before cutting it, then surface the commit error.
-            await bundlePromise;
-            throw commitError;
-          }
         } catch (e) {
           const errStr = String(e);
 
@@ -789,7 +773,11 @@ export async function generateDevKeyPackage(params: { mlsService: IMlsService; p
   return toHex(bytes);
 }
 
-/** Dev helper: adds a member to a group using a hex-encoded KeyPackage, returning the commit and welcome as hex strings. */
+/**
+ * Dev helper: adds a member to a group using a hex-encoded KeyPackage. The Add is a staged
+ * transaction (validate + merge + broadcast handled internally); returns the resulting Welcome and
+ * post-merge ratchet tree as hex strings for manual inspection.
+ */
 export async function addDevMember(params: {
   mlsService: IMlsService;
   groupId: string;
@@ -798,8 +786,8 @@ export async function addDevMember(params: {
   const { mlsService, groupId, incomingBytesHex } = params;
   const result = await mlsService.addMember(groupId, fromHex(incomingBytesHex));
   return {
-    commitHex: toHex(result.commit),
     welcomeHex: result.welcome ? toHex(result.welcome) : '',
+    ratchetTreeHex: result.ratchetTree ? toHex(result.ratchetTree) : '',
   };
 }
 
@@ -1056,11 +1044,17 @@ export async function handleWelcomeRequest(params: {
       // On verification error, still attempt the add
     }
 
-    // ── Add the device to the MLS group ────────────────────────────────
-    const result = await mlsService.addMember(groupId, targetDevice.keyPackage);
+    // ── Add the device to the MLS group (staged transaction, C7-A) ─────
+    // Stage the Add, validate the epoch server-side, then merge + broadcast on accept (excluding
+    // the inviter self and the invitee) or roll back on reject. A rejected commit throws WITHOUT
+    // advancing the local epoch (no fork) and is handled by the outer catch as a retryable failure;
+    // the Welcome is only sent once the commit is accepted. [[C7]]
+    const result = await mlsService.addMember(groupId, targetDevice.keyPackage, [
+      `${requesterUserId}:${requesterDeviceId}`,
+    ]);
     await mlsService.registerMember(groupId, requesterUserId);
 
-    // Send the Welcome to the requesting device
+    // Send the Welcome + post-merge ratchet tree to the requesting device.
     if (result.welcome) {
       await mlsService.sendWelcome(
         result.welcome,
@@ -1073,38 +1067,16 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] Welcome -> ${requesterUserId}:${requesterDeviceId} for ${groupId}`);
     }
 
-    // Save MLS state before the commit (crash-safety)
+    // Save MLS state after the merged commit (crash-safety).
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
-    // Broadcast the commit excluding the inviter (self) and the invitee
-    let commitError: unknown = null;
-    if (result.commit) {
-      try {
-        await mlsService.sendCommit(result.commit, groupId, [
-          `${requesterUserId}:${requesterDeviceId}`,
-        ]);
-      } catch (e) {
-        commitError = e;
-      }
-    }
-
-    // Send the full history to the new member. These are APPLICATION MESSAGES
-    // (not a commit, do not go through validateCommit): the recipient has already joined via
-    // the Welcome (same epoch as us), so we send the history EVEN IF the commit broadcast
-    // failed - otherwise a rejected commit (concurrent race, server counter lag) would silently
-    // deprive them of the full history. The bundle arrives after the Welcome client-side
-    // (order guaranteed by MLS) and reads IndexedDB (including messages migrated from the
-    // predecessor via migrateConversation). [[C8]]
-    const bundlePromise = sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch(
-      (e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
+    // Send the full history to the new member. These are APPLICATION MESSAGES (not a commit, do not
+    // go through validateCommit): the recipient has already joined via the Welcome (same epoch as
+    // us). The bundle arrives after the Welcome client-side (order guaranteed by MLS) and reads
+    // IndexedDB (including messages migrated from the predecessor via migrateConversation). [[C8]]
+    await sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+      log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
     );
-
-    if (commitError) {
-      // Recovery (catch) will forgetGroup: wait for the history send to complete before
-      // cutting it, then surface the commit error to trigger the heal (C7).
-      await bundlePromise;
-      throw commitError;
-    }
   } catch (e) {
     const errStr = String(e);
 

@@ -129,13 +129,22 @@ export interface IMlsService {
    * conçu pour tourner en arrière-plan à la connexion.
    */
   reconcilePublishedKeyPackages(): Promise<void>;
-  /** Adds one device to a group via an MLS Add commit, returning the Commit and optional Welcome. */
+  /**
+   * Adds one device to a group via a STAGED MLS Add commit (C7-A unified regime): stages the
+   * commit under the MLS lock, validates it server-side, merges on accept / rolls back on reject
+   * (throws), broadcasts the commit, and returns the Welcome + post-merge ratchet tree for the
+   * caller to deliver to the new device. `excludeDeviceIds` are skipped in the commit broadcast
+   * (typically the inviter self and the invitee).
+   */
   addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array
-  ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+    keyPackageBytes: Uint8Array,
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
   /**
-   * Adds multiple devices to a group in a single MLS commit, returning the Commit and Welcome.
+   * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
+   * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
+   * the commit (skipping `excludeDeviceIds`), and returns the Welcome + post-merge ratchet tree.
    * Devices already present in the group (e.g. a "ghost" member from a prior add whose
    * Welcome/commit failed to deliver) are silently skipped: `addedDeviceIds` may be a strict
    * subset of the input. If *every* device in the batch is already a member, the call rejects
@@ -147,12 +156,12 @@ export interface IMlsService {
    */
   addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    excludeDeviceIds?: string[]
   ): Promise<{
-    commit: Uint8Array;
     welcome?: Uint8Array;
-    addedDeviceIds: string[];
     ratchetTree?: Uint8Array;
+    addedDeviceIds: string[];
     skippedDeviceIds: string[];
   }>;
   /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
@@ -234,19 +243,6 @@ export interface IMlsService {
   ): Promise<void>;
   /** Returns the current MLS epoch number for a group (needed for epoch-gating). */
   getEpoch(groupId: string): number;
-  /**
-   * Broadcast a structural commit to all group members.
-   * `excludeDeviceIds` - optional list of "userId:deviceId" pairs to skip
-   * (typically the inviter and the newly-welcomed invitee).
-   * `staged` - C7 Option A : si vrai, le commit a ete genere SANS merge local (chemin REMOVE) ;
-   * on valide cote serveur PUIS on merge (accepte) ou annule (rejete), donc aucun fork sur rejet.
-   */
-  sendCommit(
-    commitBytes: Uint8Array,
-    groupId: string,
-    excludeDeviceIds?: string[],
-    staged?: boolean
-  ): Promise<void>;
   /** Registers a user as a member of a group on the delivery service (server-side membership tracking). */
   registerMember(groupId: string, userId: string): Promise<void>;
   /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.

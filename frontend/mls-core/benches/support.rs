@@ -63,13 +63,20 @@ pub fn build_decrypt_fixture(message_count: usize) -> DecryptFixture {
         .expect("alice create_group");
 
     let kp = bob.generate_key_package().expect("bob key_package");
-    let (_commit, welcome, _added, ratchet_tree, _skipped) = alice
+    let (_commit, welcome, _added, _skipped) = alice
         .add_members_bulk(&group_id, &[&kp])
         .expect("alice add_members_bulk");
+    // Stage-only add (C7-A): merge as if the server accepted, then export the post-merge tree.
+    alice
+        .merge_pending_commit_for(&group_id)
+        .expect("merge add commit");
+    let ratchet_tree = alice
+        .export_ratchet_tree_for(&group_id)
+        .expect("export ratchet tree");
 
     bob.process_welcome(
         welcome.as_deref().expect("welcome bytes"),
-        ratchet_tree.as_deref(),
+        Some(&ratchet_tree),
     )
     .expect("bob process_welcome");
 

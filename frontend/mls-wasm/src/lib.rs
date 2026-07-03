@@ -207,7 +207,10 @@ impl WasmMlsClient {
             group_id,
             key_package_bytes.len()
         );
-        let (commit, welcome, ratchet_tree) = self
+        // C7-A stage-only: returns [commit, welcome]. The commit is NOT merged; the caller
+        // validates it server-side, then merge_pending_commit / clear_pending_commit, and reads
+        // the post-merge ratchet tree via export_ratchet_tree.
+        let (commit, welcome) = self
             .manager
             .add_member(&group_id, &key_package_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -219,18 +222,15 @@ impl WasmMlsClient {
         } else {
             array.push(&JsValue::UNDEFINED);
         }
-        if let Some(rt) = ratchet_tree {
-            array.push(&js_sys::Uint8Array::from(&rt[..]));
-        } else {
-            array.push(&JsValue::UNDEFINED);
-        }
         Ok(array)
     }
 
-    /// Add multiple members in a single commit (single epoch increment).
+    /// Add multiple members in a single commit (single epoch increment). Stage-only (C7-A): the
+    /// commit is NOT merged - the caller validates it server-side then merge/clear, and reads the
+    /// post-merge ratchet tree via `export_ratchet_tree`.
     /// `key_packages` is a JS Array of Uint8Array.
     /// Returns [commit: Uint8Array, welcome: Uint8Array, added_indices: number[],
-    /// ratchet_tree: Uint8Array, skipped_indices: number[]].
+    /// skipped_indices: number[]].
     /// `added_indices` lists, in order, the positions within the input `key_packages` array that
     /// were actually included in the commit - positions skipped (invalid, or already a member of
     /// the group) are omitted rather than collapsing to a bare count, so the caller can correctly
@@ -264,7 +264,7 @@ impl WasmMlsClient {
 
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
 
-        let (commit, welcome, added_indices, ratchet_tree, skipped_indices) = self
+        let (commit, welcome, added_indices, skipped_indices) = self
             .manager
             .add_members_bulk(&group_id, &kp_slices)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -281,11 +281,6 @@ impl WasmMlsClient {
             indices_array.push(&JsValue::from_f64(idx as f64));
         }
         array.push(&indices_array);
-        if let Some(rt) = ratchet_tree {
-            array.push(&js_sys::Uint8Array::from(&rt[..]));
-        } else {
-            array.push(&JsValue::UNDEFINED);
-        }
         let skipped_array = js_sys::Array::new();
         for idx in skipped_indices {
             skipped_array.push(&JsValue::from_f64(idx as f64));
@@ -492,7 +487,7 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Merge le commit de retrait *stage* APRES acceptation serveur (`validateCommit`). Avance
+    /// Merge le commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`). Avance
     /// l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
     #[wasm_bindgen]
     pub fn merge_pending_commit(&mut self, group_id: String) -> Result<(), JsValue> {
@@ -501,12 +496,22 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Annule le commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
+    /// Annule le commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local reste
     /// inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
     #[wasm_bindgen]
     pub fn clear_pending_commit(&mut self, group_id: String) -> Result<(), JsValue> {
         self.manager
             .clear_pending_commit_for(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Export the group's current ratchet tree (TLS-serialised). For an ADD this MUST be called
+    /// AFTER `merge_pending_commit` so the tree reflects the post-commit epoch the newly welcomed
+    /// member joins. [[C7]]
+    #[wasm_bindgen]
+    pub fn export_ratchet_tree(&self, group_id: String) -> Result<Vec<u8>, JsValue> {
+        self.manager
+            .export_ratchet_tree_for(&group_id)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }

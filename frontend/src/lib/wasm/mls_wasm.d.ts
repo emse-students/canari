@@ -6,10 +6,12 @@ export class WasmMlsClient {
     [Symbol.dispose](): void;
     add_member(group_id: string, key_package_bytes: Uint8Array): Array<any>;
     /**
-     * Add multiple members in a single commit (single epoch increment).
+     * Add multiple members in a single commit (single epoch increment). Stage-only (C7-A): the
+     * commit is NOT merged - the caller validates it server-side then merge/clear, and reads the
+     * post-merge ratchet tree via `export_ratchet_tree`.
      * `key_packages` is a JS Array of Uint8Array.
      * Returns [commit: Uint8Array, welcome: Uint8Array, added_indices: number[],
-     * ratchet_tree: Uint8Array, skipped_indices: number[]].
+     * skipped_indices: number[]].
      * `added_indices` lists, in order, the positions within the input `key_packages` array that
      * were actually included in the commit - positions skipped (invalid, or already a member of
      * the group) are omitted rather than collapsing to a bare count, so the caller can correctly
@@ -19,16 +21,22 @@ export class WasmMlsClient {
      */
     add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
     /**
-     * Annule le commit de retrait *stage* quand le serveur le REJETTE. L'epoch local reste
+     * Annule le commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local reste
      * inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
      */
     clear_pending_commit(group_id: string): void;
     create_group(group_id: string): void;
     /**
-     * Purge définitive d'un groupe (Poison Pill) : mémoire, stockage OpenMLS et
-     * verrou d'epoch à MAX. Aucun Welcome ne sera jamais accepté pour ce groupId.
+     * Permanent purge of a group (Poison Pill): memory, OpenMLS storage, and epoch lock
+     * set to MAX. No Welcome will ever be accepted for this groupId.
      */
     drop_group(group_id: string): void;
+    /**
+     * Export the group's current ratchet tree (TLS-serialised). For an ADD this MUST be called
+     * AFTER `merge_pending_commit` so the tree reflects the post-commit epoch the newly welcomed
+     * member joins. [[C7]]
+     */
+    export_ratchet_tree(group_id: string): Uint8Array;
     export_secret(group_id: string, label: string, context: Uint8Array | null | undefined, key_len: number): Uint8Array;
     /**
      * Wipes any existing orphan state for this groupId then creates a fresh group.
@@ -47,7 +55,7 @@ export class WasmMlsClient {
     get_groups(): Array<any>;
     key_package_has_private(key_package_bytes: Uint8Array): boolean;
     /**
-     * Merge le commit de retrait *stage* APRES acceptation serveur (`validateCommit`). Avance
+     * Merge le commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`). Avance
      * l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
      */
     merge_pending_commit(group_id: string): void;
@@ -114,6 +122,7 @@ export interface InitOutput {
     readonly wasmmlsclient_clear_pending_commit: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_drop_group: (a: number, b: number, c: number) => void;
+    readonly wasmmlsclient_export_ratchet_tree: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly wasmmlsclient_force_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_forget_group: (a: number, b: number, c: number, d: number) => void;

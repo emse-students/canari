@@ -23,10 +23,13 @@ fn pair_in_group(gid: &str) -> (MlsManager, MlsManager, String) {
     let mut bob = make_device("bob", "dev1");
     alice.create_group(gid.to_string()).expect("create_group");
     let kp_bob = bob.generate_key_package().expect("kp bob");
-    let (_, welcome, _, rt, _skipped) = alice
+    let (_, welcome, _added, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("add bob to group");
-    bob.process_welcome(welcome.as_deref().unwrap(), rt.as_deref())
+    // Stage-only add (C7-A): merge as if the server accepted, then export the post-merge tree.
+    alice.merge_pending_commit_for(gid).expect("merge add bob");
+    let rt = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins");
     (alice, bob, gid.to_string())
 }

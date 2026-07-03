@@ -671,17 +671,14 @@ async function inviteMembers(
   }
 
   try {
+    // Staged transaction (C7-A): addMembersBulk stages the Add, validates the epoch server-side,
+    // merges on accept and broadcasts the commit (fix R4: epoch-validated), or rolls back on reject.
     const bulk = await mlsService.addMembersBulk(successorId, allDevices);
     log(`[REBOOT] ${bulk.addedDeviceIds.length} device(s) added`);
     warnSkippedKeyPackages(bulk.skippedDeviceIds, successorId, '[REBOOT]', log);
 
-    // Persist BEFORE sending (on crash, members can rejoin via welcome_request)
+    // Persist after the merged commit (on crash, members can rejoin via welcome_request).
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
-
-    // Send the commit first (fix R4: via sendCommit which validates the epoch)
-    if (bulk.commit) {
-      await mlsService.sendCommit(bulk.commit, successorId);
-    }
 
     // Then the Welcomes
     if (bulk.welcome) {

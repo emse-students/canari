@@ -11,6 +11,7 @@ export const wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d
 export const wasmmlsclient_clear_pending_commit: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_drop_group: (a: number, b: number, c: number) => void;
+export const wasmmlsclient_export_ratchet_tree: (a: number, b: number, c: number) => [number, number, number, number];
 export const wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const wasmmlsclient_force_create_group: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_forget_group: (a: number, b: number, c: number, d: number) => void;

@@ -4,7 +4,6 @@ import { fetch } from '@tauri-apps/plugin-http';
 import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
 import {
   logMlsMetric,
-  commitBaseEpochForValidation,
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
@@ -599,57 +598,80 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
-  /** Tauri-native `invoke` wrapper - calls `ajouter_membre` and returns the commit, optional Welcome, and optional ratchet tree as Uint8Arrays. */
-  async addMember(
+  /**
+   * Tauri-native `invoke` wrapper - stages an Add commit WITHOUT merging via `ajouter_membres_bulk`
+   * (all key packages in one OpenMLS commit, one shared Welcome). Returns
+   * (commit, welcome?, addedIndices, skippedIndices). `addedIndices` are positions in `keyPackages`
+   * actually included - entries skipped (invalid, or already a member) are omitted rather than
+   * collapsing to a bare count. `skippedIndices` are positions dropped for an INVALID/undeserializable
+   * KeyPackage (not the already-member dedup), surfaced so the loss is not silent. [[C5]]
+   */
+  protected async stageAddMembers(
     groupId: string,
-    keyPackageBytes: Uint8Array
-  ): Promise<{ commit: Uint8Array; welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
-    // Returns tuple (commit, welcome?)
-    const result = await invoke<[number[], number[] | null, number[] | null]>('ajouter_membre', {
-      groupId,
-      keyPackageBytes: Array.from(keyPackageBytes),
-    });
-    return {
-      commit: Uint8Array.from(result[0]),
-      welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
-      ratchetTree: result[2] ? Uint8Array.from(result[2]) : undefined,
-    };
-  }
-
-  /** Tauri-native `invoke` wrapper - calls `ajouter_membres_bulk` to add multiple devices in a single OpenMLS commit, producing one shared Welcome. */
-  async addMembersBulk(
-    groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>
+    keyPackages: Uint8Array[]
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
-    addedDeviceIds: string[];
-    ratchetTree?: Uint8Array;
-    skippedDeviceIds: string[];
+    addedIndices: number[];
+    skippedIndices: number[];
   }> {
-    // Single bulk Tauri invoke: all key packages are added in one OpenMLS commit
-    // so all new members share the same epoch and a single Welcome covers them all.
-    const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
-    // Returns (commit: Vec<u8>, welcome: Option<Vec<u8>>, addedIndices: Vec<u32>,
-    // ratchetTree: Option<Vec<u8>>, skippedIndices: Vec<u32>)
-    // `addedIndices` are positions in `devices` actually included - entries skipped (invalid, or
-    // already an existing member) are omitted rather than collapsing to a bare count.
-    // `skippedIndices` are positions dropped for an INVALID/undeserializable KeyPackage (not the
-    // already-member dedup), surfaced so the loss is not silent. [[C5]]
-    const result = await invoke<[number[], number[] | null, number[], number[] | null, number[]]>(
+    const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
+    const result = await invoke<[number[], number[] | null, number[], number[]]>(
       'ajouter_membres_bulk',
       { groupId, keyPackagesBytes }
     );
-    const addedIndices = result[2];
-    const addedDeviceIds = addedIndices.map((i) => devices[i].deviceId);
-    const skippedDeviceIds = (result[4] ?? []).map((i) => devices[i].deviceId);
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
-      addedDeviceIds,
-      ratchetTree: result[3] ? Uint8Array.from(result[3]) : undefined,
-      skippedDeviceIds,
+      addedIndices: result[2],
+      skippedIndices: result[3] ?? [],
     };
+  }
+
+  /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
+  protected async stageRemoveMembers(groupId: string, userIds: string[]): Promise<Uint8Array> {
+    const commitBytes = await invoke<number[]>('retirer_membres', { groupId, userIds });
+    return new Uint8Array(commitBytes);
+  }
+
+  /** Tauri-native `invoke` wrapper - stages a Remove commit for specific device identities (no merge). */
+  protected async stageRemoveMembersByDevice(
+    groupId: string,
+    deviceIdentities: string[]
+  ): Promise<Uint8Array> {
+    const commitBytes = await invoke<number[]>('retirer_membres_par_appareil', {
+      groupId,
+      deviceIdentities,
+    });
+    return new Uint8Array(commitBytes);
+  }
+
+  /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */
+  protected async mergePendingCommit(groupId: string): Promise<void> {
+    await invoke('confirmer_commit', { groupId });
+    void this.refreshEpochCache(groupId);
+  }
+
+  /** Tauri-native `invoke` wrapper - clears the pending staged commit (server rejected, no fork). */
+  protected async clearPendingCommit(groupId: string): Promise<void> {
+    await invoke('annuler_commit', { groupId });
+  }
+
+  /** Tauri-native `invoke` wrapper - exports the post-merge ratchet tree for the Welcome. */
+  protected async exportRatchetTree(groupId: string): Promise<Uint8Array> {
+    const rt = await invoke<number[]>('exporter_ratchet_tree', { groupId });
+    return new Uint8Array(rt);
+  }
+
+  /** Tauri-native `invoke` wrapper - reads the authoritative pre-merge epoch via `obtenir_epoch`. */
+  protected async freshEpoch(groupId: string): Promise<number> {
+    try {
+      const epoch = await invoke<number>('obtenir_epoch', { groupId });
+      this._epochByGroupId.set(groupId, epoch);
+      return epoch;
+    } catch {
+      return this.getEpoch(groupId);
+    }
   }
 
   /** Tauri-native `invoke` wrapper - calls `trailer_welcome`, updates the known-groups cache, refreshes the epoch, and returns the derived groupId. */
@@ -738,63 +760,6 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
-  /**
-   * Tauri-native `invoke` wrapper - validates the commit epoch via the delivery service then
-   * broadcasts the MLS commit to all group members.
-   *
-   * `staged` (C7 Option A, chemin REMOVE) : le commit a ete genere SANS etre merge localement
-   * (`retirer_membres*`). On valide d'abord ; sur acceptation on confirme (merge) PUIS on diffuse,
-   * sur rejet on annule le commit stage - l'epoch local n'a jamais bouge, donc AUCUN fork. Le
-   * chemin add (`staged=false`) reste merge-avant-validation (serialise par l'add-lock + heal C7-B).
-   */
-  async sendCommit(
-    commitBytes: Uint8Array,
-    groupId: string,
-    excludeDeviceIds?: string[],
-    staged = false
-  ): Promise<void> {
-    const proto = toBase64(commitBytes);
-
-    if (staged) {
-      // baseEpoch = epoch courant : le commit stage transitionnera N -> N+1 (rien n'est merge).
-      let currentEpoch = 0;
-      try {
-        currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
-        this._epochByGroupId.set(groupId, currentEpoch);
-      } catch {
-        /* 0 : le serveur validera */
-      }
-      const validation = await this.delivery.validateCommitEpoch(groupId, currentEpoch);
-      if (!validation.accepted) {
-        // Rejet : on annule le commit stage (epoch local inchange). Erreur SANS le motif
-        // `server epoch:.., sent:..` pour que parseForkedEpoch/isSenderForkError la traitent
-        // comme un simple echec a retenter, PAS comme un fork (il n'y en a pas). [[C7]]
-        await invoke('annuler_commit', { groupId }).catch(() => {});
-        throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
-      }
-      await invoke('confirmer_commit', { groupId });
-      await this.delivery.broadcastCommit(proto, groupId, excludeDeviceIds);
-      void this.refreshEpochCache(groupId);
-      return;
-    }
-
-    let baseEpoch = 0;
-    try {
-      // Add path : Rust a deja merge le commit, donc obtenir_epoch renvoie l'epoch post-merge.
-      // commitBaseEpochForValidation(n) = n-1 (epoch pre-commit que le serveur valide).
-      const currentEpoch = await invoke<number>('obtenir_epoch', { groupId });
-      this._epochByGroupId.set(groupId, currentEpoch);
-      baseEpoch = commitBaseEpochForValidation(currentEpoch);
-    } catch {
-      // If epoch retrieval fails, send 0 (server will validate)
-    }
-    await this.delivery.sendValidatedCommit(proto, groupId, baseEpoch, excludeDeviceIds);
-    // Re-read the epoch after the server has accepted the commit: the epoch visible
-    // to other members is now confirmed. Best-effort - failure leaves the cache at
-    // the pre-send value which is off by one until the next message is processed.
-    void this.refreshEpochCache(groupId);
-  }
-
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */
   getLocalGroups(): string[] {
     return [...this._knownGroups];
@@ -836,26 +801,6 @@ export class TauriMlsService extends BaseMlsService {
           .catch(() => {});
       })
     );
-  }
-
-  /** Tauri-native `invoke` wrapper - calls `retirer_membres` to generate a remove commit for all devices of the given users, then broadcasts it. */
-  async removeMember(groupId: string, userIds: string[]): Promise<void> {
-    const commitBytes = await invoke<number[]>('retirer_membres', {
-      groupId,
-      userIds,
-    });
-    // staged=true : le retrait est valide-puis-merge (C7 Option A, pas de fork sur rejet).
-    await this.sendCommit(new Uint8Array(commitBytes), groupId, undefined, true);
-  }
-
-  /** Tauri-native `invoke` wrapper - calls `retirer_membres_par_appareil` to remove specific devices by identity string and broadcasts the resulting commit. */
-  async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
-    const commitBytes = await invoke<number[]>('retirer_membres_par_appareil', {
-      groupId,
-      deviceIdentities,
-    });
-    // staged=true : le retrait est valide-puis-merge (C7 Option A, pas de fork sur rejet).
-    await this.sendCommit(new Uint8Array(commitBytes), groupId, undefined, true);
   }
 
   private async getRuntimeAppVersion(): Promise<string | undefined> {

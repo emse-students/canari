@@ -69,8 +69,13 @@ impl MlsError {
     }
 }
 
-/// Resultat de `add_members_bulk` :
-/// `(commit, welcome, added_indices, ratchet_tree, skipped_indices)`.
+/// Resultat de `add_members_bulk` (stage-only, C7-A unified) :
+/// `(commit, welcome, added_indices, skipped_indices)`.
+/// Le commit est *stage* (non merge) : l'appelant le valide cote serveur PUIS appelle
+/// `merge_pending_commit_for` (accepte) ou `clear_pending_commit_for` (rejete), donc un ADD
+/// rejete ne laisse jamais l'epoch local en avance (aucun fork). Le ratchet tree est exporte
+/// separement par `export_ratchet_tree_for` APRES le merge (il exige l'etat post-commit
+/// epoch N+1 que le nouveau membre rejoint).
 /// - `added_indices` donne, dans l'ordre, les positions (dans le slice d'entree
 ///   `key_packages_bytes`) des KeyPackages effectivement inclus dans le commit.
 /// - `skipped_indices` donne les positions des KeyPackages **invalides ou illisibles**
@@ -80,14 +85,8 @@ impl MlsError {
 ///   Les positions correspondant a un membre **deja present** ne sont PAS comptees ici :
 ///   c'est une deduplication intentionnelle (le device est deja - ou fantome - dans l'arbre),
 ///   signalee globalement par `MlsError::AlreadyMember` quand rien d'autre n'a ete ajoute.
-type AddMembersBulkResult = (
-    Vec<u8>,
-    Option<Vec<u8>>,
-    Vec<u32>,
-    Option<Vec<u8>>,
-    Vec<u32>,
-);
-type AddMemberResult = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
+type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<u32>);
+type AddMemberResult = (Vec<u8>, Option<Vec<u8>>);
 
 /// Sender-ratchet tolerance for incoming application messages, shared by group
 /// creation and Welcome processing so both decrypt bursts identically.
@@ -632,6 +631,20 @@ impl MlsManager {
         Ok(())
     }
 
+    /// Export the group's current ratchet tree (TLS-serialised). For an ADD this MUST be called
+    /// AFTER `merge_pending_commit_for` so the exported tree reflects the post-commit epoch (N+1)
+    /// the newly welcomed member joins, not the stale pre-merge tree. [[C7]]
+    pub fn export_ratchet_tree_for(&self, group_id: &str) -> Result<Vec<u8>, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        group
+            .export_ratchet_tree()
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))
+    }
+
     // --- C. AJOUT DE MEMBRE(S) ---
 
     /// Add a single key package (kept for backward compat, delegates to bulk).
@@ -640,9 +653,8 @@ impl MlsManager {
         group_id: &str,
         key_package_bytes: &[u8],
     ) -> Result<AddMemberResult, MlsError> {
-        let (commit, welcome, _, ratchet_tree, _) =
-            self.add_members_bulk(group_id, &[key_package_bytes])?;
-        Ok((commit, welcome, ratchet_tree))
+        let (commit, welcome, _, _) = self.add_members_bulk(group_id, &[key_package_bytes])?;
+        Ok((commit, welcome))
     }
 
     /// Add multiple members in a single commit so all new members share the same epoch.
@@ -733,22 +745,15 @@ impl MlsManager {
             .add_members(&self.provider, &self.keypair, &key_packages)
             .map_err(|e| MlsError::OpenMls(format!("AddMembers error: {:?}", e)))?;
 
-        // L'ajout reste merge-immediat : (1) le chemin add est serialise cross-device par
-        // l'add-lock Redis (pas de course concurrente -> pas de fork concurrent a healer), et
-        // (2) l'export du ratchet tree ci-dessous exige l'etat POST-commit (epoch N+1). Option A
-        // (valider-puis-merger) est applique au chemin REMOVE, non protege par l'add-lock. [[C7]]
-        group
-            .merge_pending_commit(&self.provider)
-            .map_err(|e| MlsError::OpenMls(format!("Merge error: {:?}", e)))?;
-
+        // C7-A unified: stage only, do NOT merge here. The caller validates the commit server-side
+        // then calls merge_pending_commit_for (accepted) or clear_pending_commit_for (rejected), so
+        // a server-rejected ADD never leaves the local epoch ahead (no fork). The ratchet tree is
+        // exported by export_ratchet_tree_for AFTER the merge (it needs the post-commit epoch N+1
+        // state the newly welcomed member joins). [[C7]]
         let commit_bytes = commit_msg_out
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
         let welcome_bytes = welcome_msg_out
-            .tls_serialize_detached()
-            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
-        let ratchet_tree_bytes = group
-            .export_ratchet_tree()
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
@@ -757,7 +762,6 @@ impl MlsManager {
             commit_bytes,
             Some(welcome_bytes),
             added_indices,
-            Some(ratchet_tree_bytes),
             skipped_indices,
         ))
     }

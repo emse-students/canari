@@ -23,7 +23,8 @@ export async function addDevMemberImpl(
       groupId: targetGroupId,
       incomingBytesHex: ctx.getIncomingBytesHex(),
     });
-    ctx.setLastCommit(result.commitHex);
+    // The Add is now a staged transaction (commit validated + broadcast internally); only the
+    // Welcome and ratchet tree are surfaced for manual inspection.
     if (result.welcomeHex) ctx.setLastWelcome(result.welcomeHex);
     ctx.setIncomingBytesHex('');
   } catch (_e: unknown) {

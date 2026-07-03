@@ -17,14 +17,18 @@ fn process_incoming_messages_matches_sequential_decrypt() {
         .create_group(group_id.to_string())
         .expect("alice create_group");
     let kp = bob.generate_key_package().expect("bob key_package");
-    let (_commit, welcome, _, ratchet_tree, _skipped) = alice
+    let (_commit, welcome, _added, _skipped) = alice
         .add_members_bulk(group_id, &[&kp])
         .expect("add_members_bulk");
-    bob.process_welcome(
-        welcome.as_deref().expect("welcome"),
-        ratchet_tree.as_deref(),
-    )
-    .expect("bob process_welcome");
+    // Stage-only add (C7-A): merge as if the server accepted, then export the post-merge tree.
+    alice
+        .merge_pending_commit_for(group_id)
+        .expect("merge add commit");
+    let ratchet_tree = alice
+        .export_ratchet_tree_for(group_id)
+        .expect("export ratchet tree");
+    bob.process_welcome(welcome.as_deref().expect("welcome"), Some(&ratchet_tree))
+        .expect("bob process_welcome");
 
     let mut ciphertexts = Vec::new();
     for i in 0..5 {
@@ -57,8 +61,12 @@ fn process_incoming_messages_captures_per_message_errors() {
 
     alice.create_group(group_id.to_string()).expect("create");
     let kp = bob.generate_key_package().expect("kp");
-    let (_c, welcome, _, rt, _skipped) = alice.add_members_bulk(group_id, &[&kp]).expect("add");
-    bob.process_welcome(welcome.as_deref().expect("w"), rt.as_deref())
+    let (_c, welcome, _added, _skipped) = alice.add_members_bulk(group_id, &[&kp]).expect("add");
+    alice.merge_pending_commit_for(group_id).expect("merge add");
+    let rt = alice
+        .export_ratchet_tree_for(group_id)
+        .expect("export ratchet tree");
+    bob.process_welcome(welcome.as_deref().expect("w"), Some(&rt))
         .expect("welcome");
 
     let good = bob.send_message(group_id, b"ok").expect("send");

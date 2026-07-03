@@ -99,6 +99,27 @@ tests green. Verifications V1 (welcome_request outside the locked drain), V2 (na
 ephemeral, no `mls.bin` write), V3 (ratchet tree exported post-merge - Option B makes merge-immediate
 unnecessary) all confirmed against code.
 
+**Piece A + Phase 1 (done + verified):** one staged commit regime (chosen Option B - unify ADD+REMOVE).
+`runCommitTransaction(groupId, stageFn, opts)` in `BaseMlsService` is the single primitive behind
+every structural commit: under the MLS lock it stages (no merge), reads the pre-merge epoch
+(`freshEpoch`), `validateCommitEpoch`, then merges + broadcasts on accept (and exports the post-merge
+ratchet tree for an ADD Welcome) or clears + throws on reject. The public verbs `addMember` /
+`addMembersBulk` / `removeMember` / `removeMemberDevice` all funnel through it. `sendCommit` and the now
+obsolete `commitBaseEpochForValidation` (+ its module/test) are deleted. Rust `add_members_bulk` /
+`add_member` are stage-only (dropped the immediate merge + the tree from their return);
+`export_ratchet_tree_for` added; internal merge-immediate callers (`bootstrap_dead_conversation`,
+mobile `create_welcome_background`) merge explicitly after staging. WASM mirrors (add returns
+`[commit, welcome, added, skipped]`, new `export_ratchet_tree`); native Tauri mirrors (`ajouter_membre`
+retired, `ajouter_membres_bulk` 4-tuple, new `exporter_ratchet_tree` command). Call-sites migrated
+(`actions.ts` pending/welcome-request, `groupCreation.ts` x3, `recovery.ts` reboot): the Welcome is now
+sent only AFTER the commit is accepted, so a rejected ADD no longer delivers a Welcome to a forked
+epoch and no longer triggers destructive fork recovery (benign retry instead). Result: root cause 2
+closed - a server-rejected ADD never advances the local epoch. Tests: `cargo test` mls-core green
+(new `pending_commit` ADD stage/abort cases), `cargo clippy` clean; `bun run check` clean; full vitest
+474 green (call-site suites rewritten to the staged contract); `cargo check`/`clippy` src-tauri green.
+Docs updated: `mls-protocol.md`, `MLS_DESYNC_PREVENTION.md` (tactic 4 rewritten), `ARCHITECTURE.md`.
+No user-facing strings -> no i18n change.
+
 ## Phase 0 remaining - elaborated plan
 
 **KEY INSIGHT:** the mls-lock critical section == the validate-then-merge unit (stage -> validate on
