@@ -425,6 +425,39 @@ export class AssociationsService {
     });
   }
 
+  /**
+   * Public members list for the read-only showcase (portail-etu vitrine).
+   * Never exposes the raw permission bitmask - only a coarse `isAdmin` flag -
+   * and joins the users mirror for display name and promo. Ordered like the
+   * public members grid (sortOrder, then createdAt).
+   */
+  async listMembersPublic(associationId: string) {
+    const rows = await this.memberRepo
+      .createQueryBuilder('m')
+      .select(['m.id', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
+      .addSelect('u."displayName"', 'displayName')
+      .addSelect('u."firstName"', 'firstName')
+      .addSelect('u."lastName"', 'lastName')
+      .addSelect('u.promo', 'promo')
+      .leftJoin('users', 'u', 'u.id = m."userId"')
+      .where('m."associationId" = :associationId', { associationId })
+      .orderBy('m."sortOrder"', 'ASC')
+      .addOrderBy('m."createdAt"', 'ASC')
+      .getRawMany();
+
+    return rows.map((r) => ({
+      id: r.m_id,
+      userId: r.m_userId,
+      role: r.m_role,
+      isAdmin: Number(r.m_permissions ?? 0) > 0,
+      displayName: r.displayName || [r.firstName, r.lastName].filter(Boolean).join(' ') || null,
+      firstName: r.firstName || null,
+      lastName: r.lastName || null,
+      promo: r.promo ?? null,
+      createdAt: r.m_createdAt,
+    }));
+  }
+
   /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
   async addMember(dto: AddMemberDto & { associationId: string }) {
     const { associationId, userId, role, permissions } = dto;

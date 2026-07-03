@@ -220,6 +220,14 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
+    location /api/public/ {\n\
+    set $upstream_public social-service:3014;\n\
+    proxy_pass http://$upstream_public;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
     location /api/media/public/ {\n\
     set $upstream_media_public media-service:3011;\n\
     proxy_pass http://$upstream_media_public;\n\
