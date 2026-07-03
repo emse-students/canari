@@ -120,6 +120,21 @@ closed - a server-rejected ADD never advances the local epoch. Tests: `cargo tes
 Docs updated: `mls-protocol.md`, `MLS_DESYNC_PREVENTION.md` (tactic 4 rewritten), `ARCHITECTURE.md`.
 No user-facing strings -> no i18n change.
 
+**Piece C (done + verified):** epoch-monotonic reload invariant extended to the native path.
+`MlsManager::reload_is_monotonic(&self, candidate)` in mls-core - the Rust mirror of the TS
+`swapClientMonotonic`: refuse a reload when any live group would disappear or move to a lower epoch.
+Applied in `recharger_mls_au_resume` (`src-tauri`): the foreground-resume reload from `mls.bin` now
+compares the candidate against the live manager under the lock and keeps the live state (returns
+`false`) on regression, instead of clobbering it unconditionally. This closes the native half of root
+cause 1 (a stale `mls.bin` could previously lower a live group's epoch on resume). The two guards
+(TS `swapClientMonotonic`, Rust `reload_is_monotonic`) are cross-referenced in comments and kept in
+sync; the web path already had its guard from Phase 0. Tests: `reload_monotonic.rs` (3 - regress /
+missing-group / equal). `cargo test` + `cargo clippy` mls-core green; `cargo check` src-tauri green;
+`bun run check` clean. No user-facing strings -> no i18n change.
+
+Phase 0 is now complete (Pieces A, B, C + the 3 verifications). Next: Phase 2 (server ordered
+commit-log `(groupId, epoch)` + `sinceEpoch` endpoint + client gap replay + DB migration).
+
 ## Phase 0 remaining - elaborated plan
 
 **KEY INSIGHT:** the mls-lock critical section == the validate-then-merge unit (stage -> validate on

@@ -70,6 +70,9 @@ export class WebMlsService extends BaseMlsService {
    * snapshot must never clobber newer live state. A swap is refused if any group the
    * live client holds would either disappear or move to a lower epoch in `candidate`.
    * Returns true when the swap happened, false when the live client was kept.
+   *
+   * Native mirror: `MlsManager::reload_is_monotonic` (mls-core), applied by
+   * `recharger_mls_au_resume` in `src-tauri` on foreground resume. Keep the two in sync. [[C2]]
    */
   private swapClientMonotonic(candidate: any): boolean {
     const current = this.client;

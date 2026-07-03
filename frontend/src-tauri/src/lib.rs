@@ -1451,12 +1451,23 @@ async fn recharger_mls_au_resume(
             log::debug!("[RESUME] mls.bin absent - rien a recharger (C2)");
             return Ok(false);
         };
-        let manager = MlsManager::load_encrypted(&user_id, &device_id, Some(bytes), &pin)
+        let candidate = MlsManager::load_encrypted(&user_id, &device_id, Some(bytes), &pin)
             .map_err(|e| format!("reload mls.bin: {e}"))?;
         let mut lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        *lock = Some(manager);
+        // Epoch-monotonic reload guard (C2): a snapshot must never regress a live group's epoch.
+        // If the live manager already holds a group at a higher epoch than the reloaded candidate
+        // (e.g. a stale mls.bin), keep the live state rather than clobber it. [[C2]]
+        if let Some(current) = lock.as_ref() {
+            if !current.reload_is_monotonic(&candidate) {
+                log::warn!(
+                    "[RESUME] reload refused - mls.bin would regress a live group epoch, keeping live state (C2)"
+                );
+                return Ok(false);
+            }
+        }
+        *lock = Some(candidate);
         log::debug!("[RESUME] manager foreground recharge depuis mls.bin (C2)");
         Ok(true)
     })

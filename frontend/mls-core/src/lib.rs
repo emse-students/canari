@@ -645,6 +645,31 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(e.to_string()))
     }
 
+    /// Epoch-monotonic reload guard - the strictest invariant, shared by every context that
+    /// replaces the live manager with one rebuilt from a persisted snapshot (native foreground
+    /// resume, background engines). The mirror of the TS `swapClientMonotonic` (WebMlsService):
+    /// a reload is only safe if every group the LIVE manager (`self`) holds is still present in
+    /// `candidate` at an epoch >= the live one. Returns false (keep the live state) if any live
+    /// group would disappear or move to a LOWER epoch, so a stale snapshot can never regress the
+    /// epoch - the root-cause-1 invariant enforced at the reload boundary. [[C2]]
+    pub fn reload_is_monotonic(&self, candidate: &MlsManager) -> bool {
+        for gid in self.get_known_groups() {
+            let Ok(live_epoch) = self.get_epoch(&gid) else {
+                continue;
+            };
+            let ok = matches!(candidate.get_epoch(&gid), Ok(cand) if cand >= live_epoch);
+            if !ok {
+                log::warn!(
+                    "[RELOAD] refused: group {}... would regress (live epoch={}, candidate absent-or-lower) - keeping live state",
+                    gid.chars().take(8).collect::<String>(),
+                    live_epoch
+                );
+                return false;
+            }
+        }
+        true
+    }
+
     // --- C. AJOUT DE MEMBRE(S) ---
 
     /// Add a single key package (kept for backward compat, delegates to bulk).
