@@ -1,14 +1,8 @@
 /**
- * Session watchdogs extracted from useChatSession:
- * startHealthCheck (successor migration), startSyncWatchdog (reboot of stuck groups).
+ * Session watchdog extracted from useChatSession: startSyncWatchdog (recovery of not-ready groups).
  */
 import { SvelteSet } from 'svelte/reactivity';
-import {
-  checkGroupSuccessors,
-  requestReAdd,
-  recoverForkedGroup,
-  cancelReAdd,
-} from '$lib/utils/chat/recovery';
+import { requestReAdd, recoverForkedGroup, cancelReAdd } from '$lib/utils/chat/recovery';
 import { clearGroupNotReady, enumerateNotReadyGroups } from '$lib/utils/chat/rebootDeadline';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { getEpochGapSince, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
@@ -21,34 +15,10 @@ import { makeRecoveryDeps } from './sessionAuth';
  * (only fires when another undecryptable frame arrives): if a group enters an epoch gap and the
  * peer then goes quiet, no frame escalates and no commit clears it - the group stays local but
  * `isGroupHealthy` reports false, freezing the outbox forever. Past this delay the watchdog
- * forces forget + re-Welcome so sends can resume. Slightly longer than the reactive threshold
+ * forces forget + re-add so sends can resume. Slightly longer than the reactive threshold
  * (EPOCH_GAP_ESCALATION_MS = 30 s) so the reactive path gets first chance.
  */
 const STUCK_EPOCH_GAP_MS = 45_000;
-
-/**
- * Starts the periodic health check (every 5 min) that migrates groups
- * whose successor has been claimed by another device.
- * Also runs an immediate check on startup. Overwrites any previous timer.
- */
-export function startHealthCheckImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
-  const recoveryDeps = makeRecoveryDeps(ctx, cb);
-
-  checkGroupSuccessors(recoveryDeps).catch((e) =>
-    cb.log(`[HEALTH] Initial health check error: ${e instanceof Error ? e.message : String(e)}`)
-  );
-
-  if (ctx.timers.health !== null) clearInterval(ctx.timers.health);
-  ctx.timers.health = setInterval(
-    () => {
-      if (!getIsTabLeader()) return;
-      checkGroupSuccessors(recoveryDeps).catch((e) =>
-        cb.log(`[HEALTH] Health check error: ${e instanceof Error ? e.message : String(e)}`)
-      );
-    },
-    5 * 60 * 1_000
-  );
-}
 
 /**
  * Starts the universal watchdog (every 5 s), the SINGLE owner of the re-add cadence. It drives

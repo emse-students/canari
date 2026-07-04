@@ -74,7 +74,7 @@ import {
   startConnectionWatchdogImpl,
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
-import { startHealthCheckImpl, startSyncWatchdogImpl } from './sessionWatchdogs';
+import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { isBiometricPromptDismissed } from './sessionBiometrics';
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
@@ -790,7 +790,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }, delay);
     }
 
-    startHealthCheckImpl(ctx, cb);
     startSyncWatchdogImpl(ctx, cb);
     startConnectionWatchdogImpl(ctx, cb);
   } catch (_e: unknown) {

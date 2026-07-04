@@ -5,7 +5,7 @@ import { persistMlsStateAfterMutation, warnSkippedKeyPackages } from '$lib/utils
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { reboot } from '$lib/utils/chat/recovery';
+import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { isRawId } from '$lib/utils/chat/conversations';
 
@@ -531,7 +531,7 @@ export async function startNewConversation(
         return;
       }
 
-      // MLS state missing locally - recover via successor / welcome flow.
+      // MLS state missing locally - recover via the external-join / welcome_request seam.
       log(`[1v1] MLS state missing for ${key} - triggering recovery...`);
       if (deadKey && conversations.has(deadKey) && !conversations.has(key)) {
         await ensureDirectConvo(deadKey, false);
@@ -539,7 +539,7 @@ export async function startNewConversation(
         await ensureDirectConvo(key, false);
       }
       try {
-        await reboot(deadKey ?? key, {
+        await requestReAdd(deadKey ?? key, {
           mlsService,
           storage: deps.storage,
           userId,

@@ -33,7 +33,7 @@ import {
   inviteMembersToGroup,
   startNewConversation as startConversation,
 } from '$lib/utils/chat/groupCreation';
-import { reboot } from '$lib/utils/chat/recovery';
+import { requestReAdd } from '$lib/utils/chat/recovery';
 import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
@@ -698,7 +698,7 @@ export function useConversations() {
         }
 
         try {
-          await reboot(contactName, {
+          await requestReAdd(contactName, {
             mlsService,
             storage: ctx.storage,
             userId: ctx.userId,
@@ -711,7 +711,7 @@ export function useConversations() {
             saveConversation: (name: string) => saveConversation(name, ctx),
             log: ctx.log,
           });
-          console.log(`[VERIFY] Direct conversation ${convo.id} recovered successfully`);
+          console.log(`[VERIFY] Direct conversation ${convo.id} recovery triggered`);
           return true;
         } catch {
           // Recovery failed - fall through to show removal notice
