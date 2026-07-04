@@ -46,6 +46,8 @@ export function createMlsServiceStub(
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
+    refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
+    externalJoin: vi.fn().mockResolvedValue(false),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),

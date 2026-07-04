@@ -32,6 +32,11 @@ export class WasmMlsClient {
      */
     drop_group(group_id: string): void;
     /**
+     * Export a self-contained GroupInfo (ratchet tree included) for `group_id`, to be stored by the
+     * delivery service and served to an authorized member who then joins via `join_by_external_commit`.
+     */
+    export_group_info(group_id: string): Uint8Array;
+    /**
      * Export the group's current ratchet tree (TLS-serialised). For an ADD this MUST be called
      * AFTER `merge_pending_commit` so the tree reflects the post-commit epoch the newly welcomed
      * member joins. [[C7]]
@@ -53,6 +58,14 @@ export class WasmMlsClient {
      */
     get_epoch(group_id: string): number;
     get_groups(): Array<any>;
+    /**
+     * Join a group via an external commit built from a served GroupInfo. The returned group is at
+     * the new epoch with the commit STAGED: submit the commit for server epoch validation (against
+     * the GroupInfo's base epoch), then `merge_pending_commit` on accept, or `forget_group` +
+     * retry with a fresher GroupInfo on reject (an external commit cannot be cleared). Returns
+     * [group_id: string, commit: Uint8Array].
+     */
+    join_by_external_commit(group_info_bytes: Uint8Array): Array<any>;
     key_package_has_private(key_package_bytes: Uint8Array): boolean;
     /**
      * Merge le commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`). Avance
@@ -122,6 +135,7 @@ export interface InitOutput {
     readonly wasmmlsclient_clear_pending_commit: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_drop_group: (a: number, b: number, c: number) => void;
+    readonly wasmmlsclient_export_group_info: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_export_ratchet_tree: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly wasmmlsclient_force_create_group: (a: number, b: number, c: number) => [number, number];
@@ -130,6 +144,7 @@ export interface InitOutput {
     readonly wasmmlsclient_generate_key_packages: (a: number, b: number) => [number, number, number];
     readonly wasmmlsclient_get_epoch: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmmlsclient_get_groups: (a: number) => any;
+    readonly wasmmlsclient_join_by_external_commit: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmmlsclient_key_package_has_private: (a: number, b: number, c: number) => [number, number, number];
     readonly wasmmlsclient_merge_pending_commit: (a: number, b: number, c: number) => [number, number];
     readonly wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];

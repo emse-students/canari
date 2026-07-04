@@ -88,6 +88,23 @@ export class WasmMlsClient {
         wasm.wasmmlsclient_drop_group(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Export a self-contained GroupInfo (ratchet tree included) for `group_id`, to be stored by the
+     * delivery service and served to an authorized member who then joins via `join_by_external_commit`.
+     * @param {string} group_id
+     * @returns {Uint8Array}
+     */
+    export_group_info(group_id) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_export_group_info(this.__wbg_ptr, ptr0, len0);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
      * Export the group's current ratchet tree (TLS-serialised). For an ADD this MUST be called
      * AFTER `merge_pending_commit` so the tree reflects the post-commit epoch the newly welcomed
      * member joins. [[C7]]
@@ -194,6 +211,24 @@ export class WasmMlsClient {
     get_groups() {
         const ret = wasm.wasmmlsclient_get_groups(this.__wbg_ptr);
         return ret;
+    }
+    /**
+     * Join a group via an external commit built from a served GroupInfo. The returned group is at
+     * the new epoch with the commit STAGED: submit the commit for server epoch validation (against
+     * the GroupInfo's base epoch), then `merge_pending_commit` on accept, or `forget_group` +
+     * retry with a fresher GroupInfo on reject (an external commit cannot be cleared). Returns
+     * [group_id: string, commit: Uint8Array].
+     * @param {Uint8Array} group_info_bytes
+     * @returns {Array<any>}
+     */
+    join_by_external_commit(group_info_bytes) {
+        const ptr0 = passArray8ToWasm0(group_info_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_join_by_external_commit(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * @param {Uint8Array} key_package_bytes

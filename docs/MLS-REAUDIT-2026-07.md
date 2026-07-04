@@ -174,9 +174,28 @@ Tests: `rebootDeadline.test.ts` (new, 4), rewritten `requestReAdd`/unknown-group
 `bun run check` clean, full vitest 481 green, ESLint clean. Client-only - no DB, no native, no
 user-facing strings -> no i18n change.
 
-Next: Phase 4 (external join - replace successor/CAS/reboot with native openmls external commits;
-GroupInfo piggybacked on every commit; external join for all re-adds, Welcome only for first-time
-adds; retire the legacy reboot/reset-epoch machinery; server GroupInfo DB migration).
+**Phase 4a (done + verified):** native external-commit self-join added, legacy reboot/CAS kept as
+fallback (the retirement is Phase 4b). openmls 0.8.1 confirmed at compile time: `export_group_info`
+(with ratchet tree -> self-contained) + `join_by_external_commit` (returns a group already at base+1
+with the commit staged; on epoch-reject the group is discarded and rebuilt from a fresher GroupInfo -
+this self-service retry replaces the CAS). mls-core (`export_group_info`, `join_by_external_commit`)
++ WASM wrappers + native Tauri commands (`exporter_group_info`, `rejoindre_par_commit_externe`);
+mobile background unchanged (push-decrypt is ephemeral, no re-add path). Server: new `mls_group_info`
+table (latest GroupInfo per group) + entity/migration `008`; `GET`/`POST /api/mls/group-info/:groupId`
+(membership-gated, monotonic write-if-newer by epoch). Client: `refreshGroupInfo` runs after every
+accepted commit in `runCommitTransaction` (a new group's first member-add is itself a commit, so the
+base always exists once the group has a peer); `externalJoin(groupId)` = fetch GroupInfo -> build
+external commit -> `submitCommit` at the GroupInfo's base epoch (excluding own device) -> merge on
+accept, or `forgetGroup` + retry with a fresher GroupInfo on reject. The recovery seam `requestReAdd`
+tries `externalJoin` FIRST; the welcome_request + reboot path stays as the fallback for when no
+GroupInfo is available (or the caller is not an authorized member). Tests: `external_join.rs` (2,
+mls-core round-trip), `messaging.group-info.spec.ts` (7, server), `BaseMlsService.externalJoin.test.ts`
+(5, orchestration/retry), recovery seam success/fallback. `bun run check` clean, full vitest 487 green,
+server jest green, cargo test/clippy green across mls-core/mls-wasm/src-tauri. Nginx unchanged
+(`/api/mls/*` wildcard). No user-facing strings -> no i18n change.
+
+Next: Phase 4b (retire the legacy machinery - reboot/CAS/successor/reset-epoch/reboot-lock/
+parseForkedEpoch - and flatten existing successor chains via a DB migration+purge, then hard break).
 
 ## Phase 0 remaining - elaborated plan
 

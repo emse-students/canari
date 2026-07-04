@@ -645,6 +645,90 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(e.to_string()))
     }
 
+    /// Export a self-contained GroupInfo (WITH the ratchet tree extension) for `group_id`, in the
+    /// standard `MlsMessageOut` wire form. The delivery service stores the latest one per group and
+    /// serves it - only to authorized members - so a member lacking local MLS state can rejoin via
+    /// an external commit (see [[Self::join_by_external_commit]]) without waiting for a peer Welcome.
+    /// Because `with_ratchet_tree=true`, the joiner needs nothing but this blob.
+    pub fn export_group_info(&self, group_id: &str) -> Result<Vec<u8>, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        group
+            .export_group_info(self.provider.crypto(), &self.keypair, true)
+            .map_err(|e| MlsError::OpenMls(format!("export_group_info: {:?}", e)))?
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))
+    }
+
+    /// Join a group via an external commit, using a GroupInfo served by the delivery service. Builds
+    /// the external commit (which adds THIS device's own leaf) and inserts the resulting group
+    /// locally with the commit STAGED. Mirrors the staged-commit regime: the caller submits the
+    /// returned commit for server epoch validation, then calls `merge_pending_commit_for` on accept.
+    /// An external commit CANNOT be cleared, so on reject the caller must `forget_group` and rebuild
+    /// from a fresher GroupInfo (self-service retry - this is what replaces the CAS/successor dance).
+    /// Returns `(group_id, commit_bytes)`. Refuses to clobber a group already held locally (a
+    /// concurrent Welcome may have landed first); rung-2 callers `forget_group` before calling.
+    pub fn join_by_external_commit(
+        &mut self,
+        group_info_bytes: &[u8],
+    ) -> Result<(String, Vec<u8>), MlsError> {
+        // The served GroupInfo is an MlsMessageOut wire blob -> parse back to a VerifiableGroupInfo.
+        let verifiable_group_info = match MlsMessageIn::tls_deserialize(&mut &group_info_bytes[..])
+        {
+            Ok(msg_in) => match msg_in.extract() {
+                MlsMessageBodyIn::GroupInfo(gi) => gi,
+                _ => return Err(MlsError::InvalidData),
+            },
+            Err(_) => return Err(MlsError::InvalidData),
+        };
+
+        let group_config = MlsGroupJoinConfig::builder()
+            .use_ratchet_tree_extension(true)
+            .max_past_epochs(2)
+            .sender_ratchet_configuration(sender_ratchet_config())
+            .build();
+
+        let credential_with_key = CredentialWithKey {
+            credential: self.credential.clone().into(),
+            signature_key: self.keypair.public().into(),
+        };
+
+        // The ratchet tree travels inside the GroupInfo (exported with_ratchet_tree=true) -> None.
+        #[allow(deprecated)]
+        let (group, commit_msg_out, _group_info) = MlsGroup::join_by_external_commit(
+            &self.provider,
+            &self.keypair,
+            None,
+            verifiable_group_info,
+            &group_config,
+            None,
+            None,
+            b"",
+            credential_with_key,
+        )
+        .map_err(|e| MlsError::OpenMls(format!("join_by_external_commit: {:?}", e)))?;
+
+        let group_id = String::from_utf8_lossy(group.group_id().as_slice()).to_string();
+
+        // Guard: never overwrite a live group we already hold (concurrent Welcome).
+        if self.groups.contains_key(&group_id) {
+            return Err(MlsError::OpenMls(format!(
+                "join_by_external_commit: group {} already present locally",
+                group_id
+            )));
+        }
+
+        let commit = commit_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+
+        self.groups.insert(group_id.clone(), group);
+        self.mark_state_dirty();
+        Ok((group_id, commit))
+    }
+
     /// Epoch-monotonic reload guard - the strictest invariant, shared by every context that
     /// replaces the live manager with one rebuilt from a persisted snapshot (native foreground
     /// resume, background engines). The mirror of the TS `swapClientMonotonic` (WebMlsService):

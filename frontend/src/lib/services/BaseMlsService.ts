@@ -974,6 +974,13 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract exportRatchetTree(groupId: string): Promise<Uint8Array>;
   /** Reads the authoritative current (pre-merge) epoch for server validation. */
   protected abstract freshEpoch(groupId: string): Promise<number>;
+  /** Exports a self-contained GroupInfo (ratchet tree included) for the external-join base. */
+  protected abstract exportGroupInfo(groupId: string): Promise<Uint8Array>;
+  /** Builds an external commit from a served GroupInfo and stages it locally (group at epoch+1).
+   *  Returns the resolved group id and the commit to submit for server epoch validation. */
+  protected abstract joinByExternalCommit(
+    groupInfoBytes: Uint8Array
+  ): Promise<{ groupId: string; commit: Uint8Array }>;
 
   /**
    * Runs one staged commit transaction under the MLS lock: stage (no merge) -> validate the epoch
@@ -997,7 +1004,7 @@ export abstract class BaseMlsService implements IMlsService {
     addedDeviceIds: string[];
     skippedDeviceIds: string[];
   }> {
-    return this.runUnderMlsLock(async () => {
+    const out = await this.runUnderMlsLock(async () => {
       const staged = await stageFn();
       // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
       const baseEpoch = await this.freshEpoch(groupId);
@@ -1027,6 +1034,87 @@ export abstract class BaseMlsService implements IMlsService {
         skippedDeviceIds: staged.skippedDeviceIds ?? [],
       };
     });
+    // The commit advanced the epoch: refresh the external-join base so a member lacking state can
+    // self-join at the new epoch. Best-effort, off the critical path; skipped on reject (the closure
+    // above throws before we get here, so the epoch never moved). [[Phase 4]]
+    void this.refreshGroupInfo(groupId);
+    return out;
+  }
+
+  /**
+   * Exports the current GroupInfo and pushes it to the delivery service (external-join base, Phase 4).
+   * Refreshed after every commit (a new group's first member-add is itself a commit) so an authorized
+   * member lacking MLS state can self-join at the current epoch. Best-effort: never throws (a failed
+   * refresh only means a joiner
+   * may momentarily get a one-epoch-stale base and retry).
+   */
+  async refreshGroupInfo(groupId: string): Promise<void> {
+    try {
+      const groupInfo = await this.exportGroupInfo(groupId);
+      const baseEpoch = this.getEpoch(groupId);
+      await this.delivery.storeGroupInfo(groupId, toBase64(groupInfo), baseEpoch);
+    } catch (e) {
+      console.warn(
+        `[MLS] refreshGroupInfo failed for ${groupId.slice(0, 8)}…:`,
+        String(e).slice(0, 120)
+      );
+    }
+  }
+
+  /**
+   * Attempts to (re)join `groupId` via an external commit built from the server-stored GroupInfo,
+   * WITHOUT a peer Welcome. This is the self-service recovery seam (Phase 4): a member with no local
+   * MLS state fetches the current GroupInfo, builds an external commit, and submits it under the
+   * standard epoch gate. On an epoch-race reject it discards the group and retries with a fresher
+   * GroupInfo (this replaces the CAS/successor dance - no peer liveness required).
+   *
+   * Returns true on success. Returns false when no GroupInfo is available (never stored, or the
+   * caller is not an authorized member), or the build fails, or the epoch race is lost repeatedly -
+   * the caller then falls back to the legacy welcome_request path.
+   */
+  async externalJoin(groupId: string): Promise<boolean> {
+    const excludeSelf = [`${this.userId}:${this.deviceId}`];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const gi = await this.delivery.fetchGroupInfo(groupId).catch(() => null);
+      if (!gi) return false; // nothing stored / not a member -> fall back to welcome_request
+
+      let joined: { groupId: string; commit: Uint8Array };
+      try {
+        joined = await this.runUnderMlsLock(() =>
+          this.joinByExternalCommit(fromBase64(gi.groupInfo))
+        );
+      } catch (e) {
+        // Build failed (e.g. the group is already held locally) -> fall back.
+        console.warn(
+          `[MLS] externalJoin build failed for ${groupId.slice(0, 8)}…:`,
+          String(e).slice(0, 120)
+        );
+        return false;
+      }
+
+      // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
+      // commit out to existing members (excluding this device, which already applied it).
+      const validation = await this.delivery
+        .submitCommit(joined.groupId, gi.baseEpoch, toBase64(joined.commit), excludeSelf)
+        .catch(() => ({ accepted: false, reason: 'network' as const }));
+
+      if (validation.accepted) {
+        await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+        void this.refreshGroupInfo(joined.groupId);
+        console.log(
+          `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}… (base epoch ${gi.baseEpoch})`
+        );
+        return true;
+      }
+
+      // Rejected: a newer commit landed since we fetched the GroupInfo. An external commit cannot be
+      // cleared, so discard the group and retry with a fresher GroupInfo.
+      this.forgetGroup(joined.groupId);
+      console.log(
+        `[MLS] externalJoin epoch race for ${joined.groupId.slice(0, 8)}… (base ${gi.baseEpoch}) - retrying`
+      );
+    }
+    return false;
   }
 
   async addMember(

@@ -29,6 +29,7 @@ import { GroupInvite } from './entities/group-invite.entity';
 import { PushToken } from './entities/push-token.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
+import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -65,6 +66,7 @@ const RedisProvider: Provider = {
         RevokedDevice,
         GroupInvite,
         MlsCommitLog,
+        MlsGroupInfo,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
@@ -81,6 +83,7 @@ const RedisProvider: Provider = {
       RevokedDevice,
       GroupInvite,
       MlsCommitLog,
+      MlsGroupInfo,
     ]),
   ],
   controllers: [

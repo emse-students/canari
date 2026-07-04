@@ -601,6 +601,40 @@ fn exporter_ratchet_tree(
         .map_err(|e| e.to_string())
 }
 
+/// Exporte un GroupInfo auto-suffisant (arbre inclus) pour `group_id`, a stocker cote serveur et a
+/// servir aux membres autorises qui rejoignent via un commit externe (`rejoindre_par_commit_externe`).
+#[tauri::command]
+fn exporter_group_info(group_id: String, state: tauri::State<AppState>) -> Result<Vec<u8>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .export_group_info(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Rejoint un groupe via un commit externe construit depuis un GroupInfo servi. Le groupe retourne
+/// est a l'epoch N+1 avec le commit *stage* : l'appelant soumet le commit pour validation d'epoch
+/// serveur (contre l'epoch de base du GroupInfo), puis `confirmer_commit` si accepte, ou
+/// `oublier_groupe` + retry avec un GroupInfo plus frais si rejete (un commit externe ne s'annule
+/// pas). Retourne (group_id, commit).
+#[tauri::command]
+fn rejoindre_par_commit_externe(
+    group_info_bytes: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<(String, Vec<u8>), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .join_by_external_commit(&group_info_bytes)
+        .map_err(|e| e.to_string())
+}
+
 /// Déchiffre un message MLS entrant.
 /// Si le déchiffrement échoue avec "Process error:" (gap du Sender Ratchet : la
 /// génération reçue est supérieure à celle attendue), le message est stocké dans
@@ -1920,6 +1954,8 @@ pub fn run() {
             confirmer_commit,
             annuler_commit,
             exporter_ratchet_tree,
+            exporter_group_info,
+            rejoindre_par_commit_externe,
             trailer_welcome,
             envoyer_message,
             envoyer_message_bytes,

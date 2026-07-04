@@ -674,6 +674,25 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
+  /** Tauri-native `invoke` wrapper - exports the self-contained GroupInfo (external-join base). */
+  protected async exportGroupInfo(groupId: string): Promise<Uint8Array> {
+    const gi = await invoke<number[]>('exporter_group_info', { groupId });
+    return new Uint8Array(gi);
+  }
+
+  /** Tauri-native `invoke` wrapper - builds an external commit from a served GroupInfo and stages it.
+   *  The native command returns the (group_id, commit) tuple; the group joins the known-groups cache. */
+  protected async joinByExternalCommit(
+    groupInfoBytes: Uint8Array
+  ): Promise<{ groupId: string; commit: Uint8Array }> {
+    const [groupId, commit] = await invoke<[string, number[]]>('rejoindre_par_commit_externe', {
+      groupInfoBytes: Array.from(groupInfoBytes),
+    });
+    this._knownGroups.add(groupId);
+    await this.refreshEpochCache(groupId);
+    return { groupId, commit: new Uint8Array(commit) };
+  }
+
   /** Tauri-native `invoke` wrapper - calls `trailer_welcome`, updates the known-groups cache, refreshes the epoch, and returns the derived groupId. */
   async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string> {
     const groupId = await invoke<string>('trailer_welcome', {

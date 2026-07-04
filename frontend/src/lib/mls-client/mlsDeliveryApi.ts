@@ -375,6 +375,43 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * External-join base (Phase 4): fetches the latest stored GroupInfo for `groupId` so an authorized
+   * member lacking MLS state can build an external commit to (re)join. Membership-gated server-side.
+   * Returns null when no GroupInfo has been stored yet (caller falls back to a peer welcome_request).
+   */
+  async fetchGroupInfo(groupId: string): Promise<{ groupInfo: string; baseEpoch: number } | null> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
+      { headers: await this.auth() }
+    );
+    if (!res.ok) {
+      throw new Error(`GroupInfo fetch HTTP error: ${res.status}`);
+    }
+    const data = await res.json();
+    // The server returns null (no body content) when nothing is stored.
+    return data && typeof data.groupInfo === 'string' ? data : null;
+  }
+
+  /**
+   * Refreshes the stored GroupInfo for `groupId` (the committer calls this after each accepted commit;
+   * a new group's first member-add is itself a commit). Membership-gated and monotonic server-side
+   * (a lower baseEpoch is ignored).
+   */
+  async storeGroupInfo(groupId: string, groupInfoBase64: string, baseEpoch: number): Promise<void> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch }),
+      }
+    );
+    if (!res.ok) {
+      throw new Error(`GroupInfo store HTTP error: ${res.status}`);
+    }
+  }
+
+  /**
    * Acquires a distributed Redis lock to serialise concurrent `addMember` commits on `groupId`.
    * Returns `false` if another device already holds the lock (caller should abort or retry).
    */

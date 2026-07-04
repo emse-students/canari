@@ -797,6 +797,23 @@ export class WebMlsService extends BaseMlsService {
     return this.getEpoch(groupId);
   }
 
+  /** WASM client wrapper - exports the self-contained GroupInfo (external-join base). */
+  protected async exportGroupInfo(groupId: string): Promise<Uint8Array> {
+    return this.client.export_group_info(groupId) as Uint8Array;
+  }
+
+  /** WASM client wrapper - builds an external commit from a served GroupInfo and stages it. Returns
+   *  [group_id, commit] from the WASM boundary. */
+  protected async joinByExternalCommit(
+    groupInfoBytes: Uint8Array
+  ): Promise<{ groupId: string; commit: Uint8Array }> {
+    const res = this.client.join_by_external_commit(groupInfoBytes) as unknown as [
+      string,
+      Uint8Array,
+    ];
+    return { groupId: res[0], commit: res[1] };
+  }
+
   /** WASM client wrapper - calls `this.client.process_welcome` and returns the derived groupId. */
   async processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string> {
     return this.client.process_welcome(welcomeBytes, ratchetTreeBytes);

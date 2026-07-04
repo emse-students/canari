@@ -20,6 +20,7 @@ import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
+import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { ApnsService } from './apns.service';
 import {
   buildPushDataFields,
@@ -169,6 +170,8 @@ export class MessagingService {
     private pushTokenRepo: Repository<PushToken>,
     @InjectRepository(MlsCommitLog)
     private commitLogRepo: Repository<MlsCommitLog>,
+    @InjectRepository(MlsGroupInfo)
+    private groupInfoRepo: Repository<MlsGroupInfo>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly apns: ApnsService,
   ) {}
@@ -926,6 +929,80 @@ export class MessagingService {
       activeEpoch,
       belowFloor,
     };
+  }
+
+  /**
+   * Stores the latest GroupInfo for `groupId` (Phase 4 external-join base). Membership-gated. The
+   * committer refreshes it after every accepted commit (a new group's first member-add is itself a
+   * commit), so an authorized member lacking MLS state can self-join. Monotonic: a write with a
+   * lower `baseEpoch` than the
+   * stored one is ignored (a late/out-of-order refresh must never regress the served base epoch,
+   * mirroring the write-if-newer discipline of the commit-log and persistence layers).
+   */
+  async storeGroupInfo(
+    groupId: string,
+    requesterUserId: string,
+    groupInfo: string,
+    baseEpoch: number,
+  ): Promise<{ stored: boolean }> {
+    const membership = await this.groupMemberRepo.findOne({
+      where: { groupId, userId: requesterUserId },
+    });
+    if (!membership) {
+      throw new ForbiddenException(
+        `User ${requesterUserId} is not a member of group ${groupId}`,
+      );
+    }
+
+    // Monotonic upsert: only overwrite when the incoming epoch is newer-or-equal. `orIgnore` guards
+    // the concurrent-insert race; the WHERE guards the concurrent-update race.
+    const existing = await this.groupInfoRepo.findOne({ where: { groupId } });
+    if (existing && existing.baseEpoch > baseEpoch) {
+      return { stored: false };
+    }
+    if (!existing) {
+      await this.groupInfoRepo
+        .createQueryBuilder()
+        .insert()
+        .values({ groupId, groupInfo, baseEpoch })
+        .orIgnore()
+        .execute();
+      return { stored: true };
+    }
+    await this.groupInfoRepo
+      .createQueryBuilder()
+      .update()
+      .set({ groupInfo, baseEpoch, updatedAt: () => 'now()' })
+      .where('"groupId" = :groupId AND "baseEpoch" <= :baseEpoch', {
+        groupId,
+        baseEpoch,
+      })
+      .execute();
+    return { stored: true };
+  }
+
+  /**
+   * Returns the latest stored GroupInfo for `groupId` so an authorized member can build an external
+   * commit to (re)join. Membership-gated (the ratchet tree it carries is public group state, but we
+   * still restrict it to roster members). Returns null when no GroupInfo has been stored yet (the
+   * caller then falls back to a peer welcome_request).
+   */
+  async getGroupInfo(
+    groupId: string,
+    requesterUserId: string,
+  ): Promise<{ groupInfo: string; baseEpoch: number } | null> {
+    const membership = await this.groupMemberRepo.findOne({
+      where: { groupId, userId: requesterUserId },
+    });
+    if (!membership) {
+      throw new ForbiddenException(
+        `User ${requesterUserId} is not a member of group ${groupId}`,
+      );
+    }
+
+    const row = await this.groupInfoRepo.findOne({ where: { groupId } });
+    if (!row) return null;
+    return { groupInfo: row.groupInfo, baseEpoch: row.baseEpoch };
   }
 
   /**

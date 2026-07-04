@@ -63,6 +63,10 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     releaseRebootLock: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(0),
     getDeviceId: vi.fn().mockReturnValue('self-device'),
+    // Phase 4a: default = external join unavailable, so tests exercise the legacy welcome_request
+    // fallback. Cases that want the self-service path override this to resolve true.
+    externalJoin: vi.fn().mockResolvedValue(false),
+    refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -102,6 +106,21 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
     // Marked in the persistent registry so the SYNC_WATCHDOG drives the re-add cadence.
     expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).not.toBeNull();
+  });
+
+  it('external join success short-circuits the legacy welcome_request', async () => {
+    const deps = makeDeps();
+    deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue(true);
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('g1', deps, timers);
+
+    // Self-service join succeeded -> no welcome_request, no reboot; not-ready marker cleared.
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
+    expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).toBeNull();
   });
 
   it('throttles: two immediate calls emit a single welcome_request (cooldown)', async () => {

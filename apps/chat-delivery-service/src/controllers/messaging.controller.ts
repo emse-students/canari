@@ -72,6 +72,53 @@ export class MessagingController {
     );
   }
 
+  /**
+   * External-join base (Phase 4): the latest GroupInfo for a group, so an authorized member lacking
+   * MLS state can build an external commit to (re)join. Membership-gated in the service.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/group-info/:groupId')
+  async getGroupInfo(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Param('groupId') groupId: string,
+  ) {
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    return this.messagingService.getGroupInfo(groupId, authUserId);
+  }
+
+  /**
+   * Refreshes the stored GroupInfo for a group (the committer calls this after each accepted commit;
+   * a new group's first member-add is itself a commit). Membership-gated; monotonic (a lower
+   * baseEpoch is ignored).
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('mls/group-info/:groupId')
+  async storeGroupInfo(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Param('groupId') groupId: string,
+    @Body() body: { groupInfo: string; baseEpoch: number },
+  ) {
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    if (
+      typeof body?.groupInfo !== 'string' ||
+      !Number.isFinite(body?.baseEpoch)
+    ) {
+      throw new BadRequestException(
+        'groupInfo (base64) and baseEpoch are required',
+      );
+    }
+    return this.messagingService.storeGroupInfo(
+      groupId,
+      authUserId,
+      body.groupInfo,
+      body.baseEpoch,
+    );
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls/welcome')
   async sendWelcome(

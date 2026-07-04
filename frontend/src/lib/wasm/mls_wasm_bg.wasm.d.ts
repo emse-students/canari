@@ -11,6 +11,7 @@ export const wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d
 export const wasmmlsclient_clear_pending_commit: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_create_group: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_drop_group: (a: number, b: number, c: number) => void;
+export const wasmmlsclient_export_group_info: (a: number, b: number, c: number) => [number, number, number, number];
 export const wasmmlsclient_export_ratchet_tree: (a: number, b: number, c: number) => [number, number, number, number];
 export const wasmmlsclient_export_secret: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const wasmmlsclient_force_create_group: (a: number, b: number, c: number) => [number, number];
@@ -19,6 +20,7 @@ export const wasmmlsclient_generate_key_package: (a: number) => [number, number,
 export const wasmmlsclient_generate_key_packages: (a: number, b: number) => [number, number, number];
 export const wasmmlsclient_get_epoch: (a: number, b: number, c: number) => [number, number, number];
 export const wasmmlsclient_get_groups: (a: number) => any;
+export const wasmmlsclient_join_by_external_commit: (a: number, b: number, c: number) => [number, number, number];
 export const wasmmlsclient_key_package_has_private: (a: number, b: number, c: number) => [number, number, number];
 export const wasmmlsclient_merge_pending_commit: (a: number, b: number, c: number) => [number, number];
 export const wasmmlsclient_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];

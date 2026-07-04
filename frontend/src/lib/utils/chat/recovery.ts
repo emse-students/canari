@@ -221,11 +221,24 @@ export async function requestReAdd(
     return;
   }
 
-  // Commit to an attempt: start (or keep) the persistent wall-clock reboot deadline and arm the
-  // throttle for both the input and the resolved terminal key.
-  markGroupNotReady(deps.userId, terminalId);
+  // Commit to an attempt: arm the throttle for both the input and the resolved terminal key
+  // (one attempt per RECOVERY_TIMEOUT_MS).
   lastReAddAt.set(groupId, now);
   lastReAddAt.set(terminalId, now);
+
+  // Phase 4a: try the self-service external-commit join FIRST - fetch the stored GroupInfo and
+  // rejoin at the current epoch without waiting for a peer Welcome. On success, clear the recovery
+  // bookkeeping and return. The legacy welcome_request + reboot path below stays as the fallback for
+  // when no GroupInfo is available yet (or this device is not an authorized member).
+  if (await deps.mlsService.externalJoin(terminalId).catch(() => false)) {
+    deps.log(`[READD] ${terminalId.slice(0, 8)}... rejoined via external commit (self-service)`);
+    clearGroupNotReady(deps.userId, terminalId);
+    cancelReAdd(terminalId, timers);
+    return;
+  }
+
+  // Fallback: start (or keep) the persistent wall-clock reboot deadline.
+  markGroupNotReady(deps.userId, terminalId);
 
   // One escalation step (folded from the former self-rearming timer). Reboot is the last resort:
   // only once the group has been not-ready for REBOOT_DEADLINE_MS in PERSISTENT real time
