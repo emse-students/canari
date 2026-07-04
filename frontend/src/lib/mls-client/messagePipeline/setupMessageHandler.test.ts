@@ -446,6 +446,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       .fn()
       .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=13, group_epoch=7]'));
     mls.forgetGroup = vi.fn();
+    // Rung-1 replay cannot help here: the missing commits were pruned (belowFloor) -> rung-2.
+    mls.fetchCommitsSince = vi
+      .fn()
+      .mockResolvedValue({ commits: [], activeEpoch: 20, belowFloor: true });
     const { requestReAdd } = await import('$lib/utils/chat/recovery');
     vi.mocked(requestReAdd).mockClear();
     setupMessageHandler(deps as any);
@@ -484,6 +488,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       .fn()
       .mockRejectedValue(new Error(`GAP_QUEUED:${gid}:msg_epoch=4:group_epoch=2`));
     mls.forgetGroup = vi.fn();
+    // Rung-1 replay cannot help here: the missing commits were pruned (belowFloor) -> rung-2.
+    mls.fetchCommitsSince = vi
+      .fn()
+      .mockResolvedValue({ commits: [], activeEpoch: 20, belowFloor: true });
     const { requestReAdd } = await import('$lib/utils/chat/recovery');
     vi.mocked(requestReAdd).mockClear();
     setupMessageHandler(deps as any);

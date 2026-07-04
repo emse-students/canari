@@ -38,6 +38,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
   private cleanupStaleDevicesInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
+  private commitLogPruneInterval: ReturnType<typeof setInterval>;
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
@@ -126,6 +127,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Prune the epoch-indexed MLS commit-log (rung-1 backbone): age window (~1 year) + per-group
+    // size cap. Commits are tiny, so a long window keeps replay covering almost every gap.
+    this.commitLogPruneInterval = setInterval(() => {
+      void this.messagingService
+        .pruneExpiredCommitLog()
+        .catch((e) =>
+          this.logger.error('[CRON] pruneExpiredCommitLog failed', e),
+        );
+    }, ONE_HOUR);
+
     // Cleanup orphaned Redis group:members:* keys with no matching DB group
     this.cleanupOrphanedRedisGroupsInterval = setInterval(() => {
       void this.cleanupOrphanedRedisGroups().catch((e) =>
@@ -207,6 +218,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupMessagesInterval);
     clearInterval(this.cleanupStaleDevicesInterval);
     clearInterval(this.cleanupOrphanedRedisGroupsInterval);
+    clearInterval(this.commitLogPruneInterval);
     clearInterval(this.softDeletedGroupsCleanupInterval);
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupOrphanedMemberRowsInterval);

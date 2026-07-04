@@ -32,9 +32,11 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 - **Queue priority (Tauri)** - **`group_reset`** control → **Welcome queue** → **application queue** so resets and welcomes are applied before ciphertext that assumes a joined epoch.
 
-- **Rust / WASM epoch gap** - **`frontend/mls-core`** (and Tauri path) detect **message epoch > group epoch** and fail fast so the caller can run **gap recovery** (history fetch / `GAP_QUEUED`) instead of consuming ratchet material incorrectly.
+- **Rust / WASM epoch gap** - **`frontend/mls-core`** (and Tauri path) detect **message epoch > group epoch** and fail fast so the caller can run **gap recovery** instead of consuming ratchet material incorrectly.
 
-- **`connection.ts`** - Optional recovery: stale decrypt / epoch error patterns can trigger **`forgetGroup`** + **`sendReinviteRequest`** when local epoch is behind the message (see `[RECOVER]` logs).
+- **Commit-log replay (rung 1)** - on that gap, the pipeline (`setupMessageHandler` → `attemptCommitReplay`) fetches the missed ordered commits from the server commit-log (**`GET /api/mls/commits/:groupId?sinceEpoch=N`**, written atomically with the epoch advance in **`POST /api/mls/commit`**) and re-applies them to catch the epoch up **without dropping state**. Only a below-floor (pruned) or unapplicable commit falls through to the destructive rung-2 forget + re-Welcome. See [MLS_RECOVERY_LADDER.md](./MLS_RECOVERY_LADDER.md) step 4.
+
+- **`connection.ts`** - Rung-2 fallback: stale decrypt / epoch error patterns can trigger **`forgetGroup`** + **`sendReinviteRequest`** when local epoch is behind the message and rung-1 replay could not catch up (see `[RECOVER]` / `[GAP]` logs).
 
 ### 6. Client - discovery re-bootstrap (stale placeholder)
 

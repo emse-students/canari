@@ -270,6 +270,20 @@ export interface IMlsService {
   fetchHistoryBatch?(
     groups: Array<{ groupId: string; afterStreamId?: string }>
   ): Promise<Map<string, import('./historyTypes').HistoryStreamRow[]>>;
+  /**
+   * Rung-1 replay: fetches the ordered commits this device missed (`baseEpoch >= sinceEpoch`) so a
+   * gap can be healed by re-applying them instead of dropping local state. `belowFloor` signals the
+   * intermediate commits were pruned (fall back to rung-2 re-Welcome); `activeEpoch` is the epoch to
+   * reach after replay.
+   */
+  fetchCommitsSince(
+    groupId: string,
+    sinceEpoch: number
+  ): Promise<{
+    commits: Array<{ baseEpoch: number; proto: string }>;
+    activeEpoch: number;
+    belowFloor: boolean;
+  }>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /**

@@ -319,70 +319,59 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Validates a commit's epoch against the server (`POST /api/mls/commit`) WITHOUT broadcasting.
-   * Returns the raw validation result (`accepted`, `reason`, `currentEpoch`, `newEpoch`) so the
-   * caller can decide what to do : le chemin add (commit deja merge) diffuse directement via
-   * `sendValidatedCommit` ; le chemin REMOVE en Option A (commit *stage*) merge localement APRES
-   * acceptation puis diffuse, ou annule le commit stage sur rejet - jamais de fork. [[C7]]
-   * Throws only on transport/HTTP failure (pas sur un rejet metier).
+   * Submits a staged MLS commit in one atomic server round-trip (`POST /api/mls/commit`): the
+   * server validates the epoch (strict `baseEpoch == activeEpoch` under a Redis lock), and on
+   * accept records it in the epoch-indexed commit-log (rung-1 replay backbone) AND fans it out to
+   * members, skipping `excludeDeviceIds`. Returns the raw validation result so the caller merges
+   * locally on accept / rolls back the staged commit on reject. Throws only on transport/HTTP
+   * failure (not on a business reject). [[C7]]
    */
-  async validateCommitEpoch(
+  async submitCommit(
     groupId: string,
-    baseEpoch: number
-  ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
-    const validateRes = await this.f(`${this.historyUrl}/api/mls/commit`, {
-      method: 'POST',
-      headers: await this.auth({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ groupId, deviceId: this.deviceId, baseEpoch }),
-    });
-    if (!validateRes.ok) {
-      throw new Error(`Commit validation HTTP error: ${validateRes.status}`);
-    }
-    return validateRes.json();
-  }
-
-  /** Broadcasts an already-validated commit to all group members (`POST /api/mls/send`, isCommit). */
-  async broadcastCommit(
+    baseEpoch: number,
     protoBase64: string,
-    groupId: string,
     excludeDeviceIds?: string[]
-  ): Promise<void> {
-    const res = await this.f(`${this.historyUrl}/api/mls/send`, {
+  ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
+    const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
-        senderId: this.userId,
-        senderDeviceId: this.deviceId,
         groupId,
+        deviceId: this.deviceId,
+        baseEpoch,
         proto: protoBase64,
-        isCommit: true,
+        senderId: this.userId,
         ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
       }),
     });
     if (!res.ok) {
-      throw new Error(`Commit delivery HTTP error: ${res.status}`);
+      throw new Error(`Commit submission HTTP error: ${res.status}`);
     }
+    return res.json();
   }
 
   /**
-   * Validates then broadcasts an MLS commit (chemin ADD : le commit est deja merge localement).
-   * `baseEpoch` is the epoch before the commit was applied, computed by the caller
-   * (WebMlsService/TauriMlsService). Sur rejet, throw avec le motif `server epoch:.., sent:..`
-   * que `parseForkedEpoch` reconnait pour declencher la heal C7-B (l'add a deja forke localement).
+   * Rung-1 replay: fetches the ordered commits the local client missed (`baseEpoch >= sinceEpoch`)
+   * so it can apply them and catch up instead of dropping state (`GET /api/mls/commits/:groupId`).
+   * `belowFloor` signals the intermediate commits were pruned, so the caller must fall back to
+   * rung-2 (re-Welcome). `activeEpoch` is the epoch to reach after replay.
    */
-  async sendValidatedCommit(
-    protoBase64: string,
+  async fetchCommitsSince(
     groupId: string,
-    baseEpoch: number,
-    excludeDeviceIds?: string[]
-  ): Promise<void> {
-    const validation = await this.validateCommitEpoch(groupId, baseEpoch);
-    if (!validation.accepted) {
-      throw new Error(
-        `Commit rejected: ${validation.reason || 'epoch_mismatch'} (server epoch: ${validation.currentEpoch}, sent: ${baseEpoch})`
-      );
+    sinceEpoch: number
+  ): Promise<{
+    commits: Array<{ baseEpoch: number; proto: string }>;
+    activeEpoch: number;
+    belowFloor: boolean;
+  }> {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/commits/${encodeURIComponent(groupId)}?sinceEpoch=${sinceEpoch}`,
+      { headers: await this.auth() }
+    );
+    if (!res.ok) {
+      throw new Error(`Commit replay HTTP error: ${res.status}`);
     }
-    await this.broadcastCommit(protoBase64, groupId, excludeDeviceIds);
+    return res.json();
   }
 
   /**

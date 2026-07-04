@@ -8,6 +8,7 @@ import {
   clearEpochGap,
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
+import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { handleSystemEvent } from './systemMessageHandler';
@@ -655,20 +656,33 @@ async function handleKnownGroup({
     }
     if (kind === 'epoch-gap') {
       // Tauri: message buffered in SQLite (`GAP_QUEUED`). Web WASM: direct error
-      // `epoch gap [msg_epoch=…, group_epoch=…]`. A gap normally resolves when
-      // the missing commits arrive. But on a group we already hold,
-      // if commits never come back (purged from the server), the group stays frozen
-      // behind and all future messages fail in a loop - SYNC_WATCHDOG does not cover
-      // this (it only targets groups absent from WASM). Beyond the threshold, we forget
-      // the forked state and request a new Welcome: since the group is no longer local,
-      // the re-Welcome is honoured (not ignored as idempotent) → we rejoin at the
-      // current epoch. Message history is backfilled by the history bundle.
+      // `epoch gap [msg_epoch=…, group_epoch=…]`: our local epoch is behind the sender's.
       const now = Date.now();
       const since = markEpochGap(groupId);
+
+      // Rung 1 (non-destructive): fetch the ordered commits we missed from the server commit-log
+      // and re-apply them so our epoch catches up - no state loss, no re-Welcome. This is the
+      // common case (we simply missed a commit while offline / between frames).
+      try {
+        const replay = await attemptCommitReplay(mlsService, groupId, log);
+        if (replay.healed) {
+          clearEpochGap(groupId);
+          statePersister.persistNow();
+          return true;
+        }
+      } catch (e) {
+        log(`[GAP] replay error for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 80)}`);
+      }
+
+      // Rung 2 (destructive, fallback): only once the gap has persisted past the threshold AND
+      // rung-1 could not catch us up (commits pruned below the retained floor, or a commit failed
+      // to apply). Forget the frozen state and request a new Welcome: since the group is no longer
+      // local, the re-Welcome is honoured (not ignored as idempotent) and we rejoin at the current
+      // epoch; message history is backfilled by the history bundle.
       if (now - since > EPOCH_GAP_ESCALATION_MS) {
         clearEpochGap(groupId);
         log(
-          `[GAP] ${groupId.slice(0, 8)}… frozen behind >${EPOCH_GAP_ESCALATION_MS / 1000}s - forget + welcome_request`
+          `[GAP] ${groupId.slice(0, 8)}… frozen behind >${EPOCH_GAP_ESCALATION_MS / 1000}s and rung-1 replay failed - forget + welcome_request`
         );
         mlsService.forgetGroup(groupId);
         statePersister.persistNow();

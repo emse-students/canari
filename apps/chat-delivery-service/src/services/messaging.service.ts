@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
@@ -19,6 +19,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
+import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { ApnsService } from './apns.service';
 import {
   buildPushDataFields,
@@ -60,6 +61,16 @@ export interface ValidateCommitBody {
   groupId: string;
   deviceId: string;
   baseEpoch: number;
+  /**
+   * Base64 serialised MLS Commit. When present, an accepted commit is recorded in the epoch-indexed
+   * commit-log (rung-1 replay) and fanned out to members in the SAME call - a single atomic
+   * validate -> store -> broadcast round-trip. Optional for backward compatibility.
+   */
+  proto?: string;
+  /** Sender user id, for the fan-out envelope (required when `proto` is present). */
+  senderId?: string;
+  /** userId:deviceId pairs to skip in the commit fan-out (inviter self, freshly-welcomed invitee). */
+  excludeDeviceIds?: string[];
 }
 
 export interface ValidateCommitResult {
@@ -68,6 +79,29 @@ export interface ValidateCommitResult {
   currentEpoch?: number;
   reason?: string;
 }
+
+/** One replayable commit returned by the `sinceEpoch` endpoint. */
+export interface CommitLogEntry {
+  baseEpoch: number;
+  proto: string;
+}
+
+export interface CommitsSinceResult {
+  /** Ordered commits with `baseEpoch >= sinceEpoch`, ascending. */
+  commits: CommitLogEntry[];
+  /** Server `activeEpoch` at read time (the epoch the caller should reach after replay). */
+  activeEpoch: number;
+  /**
+   * True when the caller's `sinceEpoch` is below the retained floor (older commits were pruned):
+   * rung-1 replay cannot fully catch them up, so the caller must fall back to rung-2 (re-Welcome).
+   */
+  belowFloor: boolean;
+}
+
+/** Commit-log retention: keep ~1 year so rung-1 replay covers almost every gap (commits are tiny). */
+const COMMIT_LOG_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+/** Per-group safety cap: never keep more than this many commits for one group (bounds runaway growth). */
+const COMMIT_LOG_MAX_PER_GROUP = 20_000;
 
 export interface SendWelcomeBody {
   targetDeviceId: string;
@@ -133,6 +167,8 @@ export class MessagingService {
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
+    @InjectRepository(MlsCommitLog)
+    private commitLogRepo: Repository<MlsCommitLog>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly apns: ApnsService,
   ) {}
@@ -778,6 +814,49 @@ export class MessagingService {
       group.activeEpoch = baseEpoch + 1;
       await this.groupRepo.save(group);
 
+      // Record the commit in the epoch-indexed log UNDER THE LOCK (atomic with the advance) so a
+      // device that fell behind can replay it (rung-1). Keyed by baseEpoch - only one commit can
+      // advance from a given epoch (linearization). ON CONFLICT DO NOTHING makes an idempotent
+      // retry safe. Storing is best-effort: a failure must not undo the accepted epoch advance.
+      if (body.proto) {
+        try {
+          await this.commitLogRepo
+            .createQueryBuilder()
+            .insert()
+            .values({
+              groupId,
+              baseEpoch,
+              commit: body.proto,
+              senderDeviceId: deviceId,
+            })
+            .orIgnore()
+            .execute();
+        } catch (e) {
+          this.logger.warn(
+            `[COMMIT][${traceId}] commit-log store failed group=${groupId} epoch=${baseEpoch}: ${String(e)}`,
+          );
+        }
+      }
+
+      // Fan out the commit to members. Kept inside the locked section so validate + store +
+      // broadcast is a single atomic unit; delivery is fast (queued rows + Redis publish, FCM is
+      // deferred). Best-effort: the commit-log is already the durable source of truth, so a device
+      // that misses the realtime fan-out replays it via GET /mls/commits. [[C7]]
+      if (body.proto) {
+        await this.sendMessage({
+          groupId,
+          senderId: body.senderId,
+          senderDeviceId: deviceId,
+          proto: body.proto,
+          isCommit: true,
+          excludeDeviceIds: body.excludeDeviceIds,
+        }).catch((e) =>
+          this.logger.warn(
+            `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`,
+          ),
+        );
+      }
+
       this.logger.log(
         `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`,
       );
@@ -801,6 +880,77 @@ export class MessagingService {
         );
       }
     }
+  }
+
+  /**
+   * Returns the ordered, replayable commits for `groupId` with `baseEpoch >= sinceEpoch` (rung-1).
+   * Membership-gated by the caller. When `sinceEpoch` is below the retained floor (older commits
+   * pruned), sets `belowFloor` so the caller falls back to rung-2 (re-Welcome) instead of a
+   * partial, unusable replay.
+   */
+  async getCommitsSince(
+    groupId: string,
+    sinceEpoch: number,
+    requesterUserId: string,
+  ): Promise<CommitsSinceResult> {
+    // Serve the commit-log ONLY to members of the group (the commits are ciphertext, but ordering
+    // metadata still gates on membership). x-user-id is injected by the proxy after JWT validation.
+    const membership = await this.groupMemberRepo.findOne({
+      where: { groupId, userId: requesterUserId },
+    });
+    if (!membership) {
+      throw new ForbiddenException(
+        `User ${requesterUserId} is not a member of group ${groupId}`,
+      );
+    }
+
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
+    const activeEpoch = group?.activeEpoch ?? 0;
+
+    const rows = await this.commitLogRepo.find({
+      where: { groupId, baseEpoch: MoreThanOrEqual(sinceEpoch) },
+      order: { baseEpoch: 'ASC' },
+    });
+
+    // Below floor: the caller needs commits from `sinceEpoch`, but the oldest retained commit
+    // starts LATER, so the intermediate ones were pruned and replay cannot fully catch up.
+    const oldest = await this.commitLogRepo.findOne({
+      where: { groupId },
+      order: { baseEpoch: 'ASC' },
+    });
+    const belowFloor =
+      sinceEpoch < activeEpoch && !!oldest && oldest.baseEpoch > sinceEpoch;
+
+    return {
+      commits: rows.map((r) => ({ baseEpoch: r.baseEpoch, proto: r.commit })),
+      activeEpoch,
+      belowFloor,
+    };
+  }
+
+  /**
+   * Prunes the commit-log (hourly cron). Two bounds: an age window (~1 year - commits are tiny, a
+   * long window keeps rung-1 replay covering almost every gap and minimises destructive rung-2
+   * re-Welcomes) and a per-group size cap (safety against runaway growth on very active groups:
+   * keep only the last {@link COMMIT_LOG_MAX_PER_GROUP} epochs behind each group's activeEpoch).
+   */
+  async pruneExpiredCommitLog(): Promise<number> {
+    const cutoff = new Date(Date.now() - COMMIT_LOG_RETENTION_MS);
+    const byAge = await this.commitLogRepo.delete({
+      createdAt: LessThan(cutoff),
+    });
+    await this.commitLogRepo.query(
+      `DELETE FROM mls_commit_log c USING dm_groups g
+       WHERE c."groupId" = g.id AND c."baseEpoch" < g."activeEpoch" - $1`,
+      [COMMIT_LOG_MAX_PER_GROUP],
+    );
+    const deleted = byAge.affected ?? 0;
+    if (deleted > 0) {
+      this.logger.log(
+        `[CRON] pruneExpiredCommitLog: deleted ${deleted} aged commit(s)`,
+      );
+    }
+    return deleted;
   }
 
   /**

@@ -776,6 +776,17 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.fetchHistoryBatch(groups);
   }
 
+  async fetchCommitsSince(
+    groupId: string,
+    sinceEpoch: number
+  ): Promise<{
+    commits: Array<{ baseEpoch: number; proto: string }>;
+    activeEpoch: number;
+    belowFloor: boolean;
+  }> {
+    return this.delivery.fetchCommitsSince(groupId, sinceEpoch);
+  }
+
   async forceLeaveGroup(groupId: string): Promise<void> {
     try {
       await this.delivery.deliveryPost(`groups/${groupId}/force_leave`, {
@@ -990,7 +1001,16 @@ export abstract class BaseMlsService implements IMlsService {
       const staged = await stageFn();
       // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
       const baseEpoch = await this.freshEpoch(groupId);
-      const validation = await this.delivery.validateCommitEpoch(groupId, baseEpoch);
+      // One atomic server round-trip: validate the epoch, and on accept the server records the
+      // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
+      // between this accept and the local merge below, our epoch lags the server by one - a gap the
+      // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
+      const validation = await this.delivery.submitCommit(
+        groupId,
+        baseEpoch,
+        toBase64(staged.commit),
+        opts.excludeDeviceIds
+      );
       if (!validation.accepted) {
         // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
         // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
@@ -1000,7 +1020,6 @@ export abstract class BaseMlsService implements IMlsService {
       }
       await this.mergePendingCommit(groupId);
       const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
-      await this.delivery.broadcastCommit(toBase64(staged.commit), groupId, opts.excludeDeviceIds);
       return {
         welcome: staged.welcome,
         ratchetTree,

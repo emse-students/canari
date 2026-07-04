@@ -39,7 +39,8 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
  * Detects a rejected-commit error indicating the local MLS state is forked BEHIND the server
  * (the sent epoch is strictly less than the server `activeEpoch`).
  *
- * Recognised format (cf. `mlsDeliveryApi.sendValidatedCommit`):
+ * Recognised format (legacy `server epoch:.., sent:..` marker; retained for the successor/fork
+ * recovery machinery pending its Phase 4 retirement):
  *   `Commit rejected: epoch_mismatch (server epoch: 23, sent: 7)`
  *
  * Returns `{ serverEpoch, sentEpoch }` if the device is behind, or `null`

@@ -132,8 +132,30 @@ sync; the web path already had its guard from Phase 0. Tests: `reload_monotonic.
 missing-group / equal). `cargo test` + `cargo clippy` mls-core green; `cargo check` src-tauri green;
 `bun run check` clean. No user-facing strings -> no i18n change.
 
-Phase 0 is now complete (Pieces A, B, C + the 3 verifications). Next: Phase 2 (server ordered
-commit-log `(groupId, epoch)` + `sinceEpoch` endpoint + client gap replay + DB migration).
+Phase 0 is now complete (Pieces A, B, C + the 3 verifications).
+
+**Phase 2 (done + verified):** rung-1 replay backbone. New Postgres table `mls_commit_log`
+`(groupId, baseEpoch)` unique + `commit` (base64) + entity/migration `007`, retention ~1 year +
+per-group size cap (hourly `pruneExpiredCommitLog` cron). Decisions taken: (1) folded the commit
+path into ONE atomic `POST /api/mls/commit` - the client sends the commit bytes with the validate
+call (`submitCommit`), the server validates the epoch under the lock, stores `(groupId, baseEpoch,
+commit)` atomically with the advance, then fans out via the existing `sendMessage` (retired the
+separate /send-for-commits, `broadcastCommit`, and the dead `sendValidatedCommit`); (2) long
+retention for maximum availability; (3) rung-1 replay now, rung-2 kept as fallback, trigger-merge
+deferred to Phase 3. New `GET /api/mls/commits/:groupId?sinceEpoch=N` (membership-gated, returns
+ordered commits + `activeEpoch` + `belowFloor`). Client: `attemptCommitReplay` (`commitReplay.ts`)
+fetches + re-applies missed commits on an epoch gap in `setupMessageHandler`; only a below-floor or
+unapplicable commit past the escalation threshold falls to the destructive rung-2 forget +
+re-Welcome. This collapses clusters B/C for the common gap case (a device simply behind now replays
+instead of dropping state), and makes the crash-between-submit-and-merge window recoverable.
+Known edge (deferred): replaying THIS device's own commit after a crash-before-merge fails in OpenMLS
+and degrades to rung-2; a persisted pending-commit would close it. Tests: `commitReplay.test.ts` (3),
+`messaging.commit-log.spec.ts` (5, server), updated `setupMessageHandler.test.ts`; `bun run check`
+clean, full vitest 477 green, server jest 34 green, chat-delivery `tsc` clean. Docs updated
+(`mls-protocol.md`, `MLS_RECOVERY_LADDER.md` step 4, `MLS_DESYNC_PREVENTION.md`). Nginx unchanged
+(`/api/mls/*` wildcard already routes the new GET). No user-facing strings -> no i18n change.
+
+Next: Phase 3 (collapse cluster A - merge the redundant re-add triggers into one rung-1 trigger).
 
 ## Phase 0 remaining - elaborated plan
 

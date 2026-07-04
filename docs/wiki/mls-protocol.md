@@ -126,7 +126,8 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 | POST | `/api/mls/welcome` | Deliver Welcome to device |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch pending messages |
 | POST | `/api/mls/messages/ack` | Acknowledge messages |
-| POST | `/api/mls/commit` | Validate commit epoch |
+| POST | `/api/mls/commit` | Submit a commit: validate epoch + store in the commit-log + fan out (one atomic call) |
+| GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits `baseEpoch >= N` to catch up a lagging device |
 
 ### Device sync / invitation
 

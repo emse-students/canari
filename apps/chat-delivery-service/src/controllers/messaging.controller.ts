@@ -32,9 +32,44 @@ export class MessagingController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/commit')
   async validateCommit(
-    @Body() body: { groupId: string; deviceId: string; baseEpoch: number },
+    @Body()
+    body: {
+      groupId: string;
+      deviceId: string;
+      baseEpoch: number;
+      proto?: string;
+      senderId?: string;
+      excludeDeviceIds?: string[];
+    },
   ) {
     return this.messagingService.validateCommit(body);
+  }
+
+  /**
+   * Rung-1 replay: ordered commits with `baseEpoch >= sinceEpoch` so a device that fell behind
+   * catches up without dropping its state. Membership-gated in the service.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/commits/:groupId')
+  async getCommitsSince(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Param('groupId') groupId: string,
+    @Query('sinceEpoch') sinceEpochRaw?: string,
+  ) {
+    const sinceEpoch = Number.parseInt(sinceEpochRaw ?? '0', 10);
+    if (!Number.isFinite(sinceEpoch) || sinceEpoch < 0) {
+      throw new BadRequestException(
+        'sinceEpoch must be a non-negative integer',
+      );
+    }
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    return this.messagingService.getCommitsSince(
+      groupId,
+      sinceEpoch,
+      authUserId,
+    );
   }
 
   @UseGuards(HeaderAuthGuard)
