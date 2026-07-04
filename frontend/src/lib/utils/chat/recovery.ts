@@ -16,9 +16,10 @@ import { reassignOutboxConversation } from './outbox';
 import { markGroupNotReady, clearGroupNotReady, groupNotReadyForMs } from './rebootDeadline';
 
 /**
- * Cadence for (re)sending welcome_requests for a not-ready group. On each expiry, if the group
- * is still not in WASM AND the persistent reboot deadline is not reached, we simply resend a
- * welcome_request (SYNC_WATCHDOG also re-arms this cycle).
+ * Minimum interval between two welcome_requests for the same not-ready group (throttle + cadence).
+ * `requestReAdd` is the single recovery ACTION seam; it self-throttles to one welcome_request per
+ * this interval regardless of how often it is invoked. The SYNC_WATCHDOG (the sole cadence owner)
+ * re-invokes it every poll, and reactive paths call it on demand - all funnel through this cooldown.
  * 60s gives FCM iOS (background) time to wake the peer and receive the Welcome.
  */
 export const RECOVERY_TIMEOUT_MS = 60_000;
@@ -38,6 +39,22 @@ export const REBOOT_DEADLINE_MS = 60 * 60_000;
  * pipeline per group at any given time.
  */
 const rebootsInFlight = new Set<string>();
+
+/**
+ * Per-group timestamp (ms) of the last welcome_request emitted by {@link requestReAdd}. Since
+ * requestReAdd no longer arms its own re-add timer (the SYNC_WATCHDOG owns the cadence), this
+ * cooldown is the single throttle that caps every caller - watchdog cadence and reactive triggers
+ * alike - to one welcome_request per {@link RECOVERY_TIMEOUT_MS} per group.
+ */
+const lastReAddAt = new Map<string, number>();
+
+/**
+ * Clears the recovery cooldowns. Called at session setup so a re-login does not inherit a stale
+ * throttle that would delay the first welcome_request of the new session.
+ */
+export function resetReAddCooldowns(): void {
+  lastReAddAt.clear();
+}
 
 /**
  * Minimal dependencies required by the recovery functions.
@@ -83,21 +100,22 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
 
 /**
  * Requests to be re-invited into `groupId` when the local MLS state is absent or out of sync.
+ * This is the single recovery ACTION seam (Phase 4 will swap its body for a native external-commit
+ * self-join). It performs ONE step per call and self-throttles via {@link RECOVERY_TIMEOUT_MS};
+ * the SYNC_WATCHDOG drives the cadence by re-invoking it, and reactive paths call it on demand.
+ * There is no private recovery timer.
  *
  * Flow:
  *  1. Conversation already marked dead -> immediate return (idempotent, no network call).
- *  2. If a timer is already active for this group -> immediate return (idempotent).
- *  3. If the group has a successor: call `requestReAdd(successorId)` then call
- *     `migrateConversation(groupId -> successorId)` to delete the dead group from IndexedDB.
- *     If the successor is already in WASM -> direct migration without recursion.
+ *  2. Throttled (a welcome_request was emitted for this group < RECOVERY_TIMEOUT_MS ago) -> return.
+ *  3. If the group has a successor: `migrateConversation(groupId -> successorId)`; recovery then
+ *     continues on the terminal group.
  *  4. Terminal of a successor chain with no server metadata (successor group missing/unreachable)
  *     -> abort without welcome_request or reboot.
  *  5. If the group is deleted without a successor -> mark `deletedRemotely`, abort.
- *  6. Send `welcome_request` to the active group members and set the persistent reboot deadline
- *     (`markGroupNotReady`).
- *  7. Arm a `RECOVERY_TIMEOUT_MS` (60 s) timer. On expiry, if the group is still not in WASM:
- *     `reboot(groupId)` only if the persistent wall-clock deadline `REBOOT_DEADLINE_MS` (1 h)
- *     is reached; otherwise, simply resend `welcome_request`.
+ *  6. Mark the persistent reboot deadline (`markGroupNotReady`), then take ONE escalation step:
+ *     `reboot(groupId)` if the persistent wall-clock deadline `REBOOT_DEADLINE_MS` (1 h) is
+ *     reached, otherwise (re)send a single `welcome_request`.
  */
 export async function requestReAdd(
   groupId: string,
@@ -109,6 +127,12 @@ export async function requestReAdd(
   // group during a single drain).
   const known = deps.conversations.get(groupId);
   if (known?.lifecycle === 'removed') return;
+
+  // Throttle: this seam is invoked by the watchdog every poll and by reactive paths on demand.
+  // Cap it to one attempt per RECOVERY_TIMEOUT_MS per group. The marker is set only once we
+  // commit to an attempt (below), so a first call is never blocked. No private timer.
+  const now = Date.now();
+  if (now - (lastReAddAt.get(groupId) ?? 0) < RECOVERY_TIMEOUT_MS) return;
 
   const {
     terminalId,
@@ -158,14 +182,6 @@ export async function requestReAdd(
     }
   }
 
-  // Only one timer per terminal group, but we always resend the welcome_request if the timer
-  // is already running: the peer may have come back online since last time, and the request
-  // stored server-side may have expired (Redis TTL 24 h).
-  if (timers.has(terminalId)) {
-    await deps.mlsService.sendWelcomeRequest(terminalId).catch(() => {});
-    return;
-  }
-
   const localGroups = deps.mlsService.getLocalGroups();
 
   if (localGroups.includes(terminalId)) {
@@ -205,43 +221,35 @@ export async function requestReAdd(
     return;
   }
 
-  // Start (or keep) the persistent wall-clock reboot deadline for this group.
+  // Commit to an attempt: start (or keep) the persistent wall-clock reboot deadline and arm the
+  // throttle for both the input and the resolved terminal key.
   markGroupNotReady(deps.userId, terminalId);
+  lastReAddAt.set(groupId, now);
+  lastReAddAt.set(terminalId, now);
 
-  await deps.mlsService
-    .sendWelcomeRequest(terminalId)
-    .catch((e) =>
-      deps.log(`[READD] welcome_request failed for ${terminalId.slice(0, 8)}...: ${String(e)}`)
+  // One escalation step (folded from the former self-rearming timer). Reboot is the last resort:
+  // only once the group has been not-ready for REBOOT_DEADLINE_MS in PERSISTENT real time
+  // (survives reload/reconnect). Before that, (re)send a single welcome_request. The SYNC_WATCHDOG
+  // re-invokes this every RECOVERY_TIMEOUT_MS; reboot() self-cancels if a Welcome has meanwhile
+  // made the group local.
+  const notReadyMs = groupNotReadyForMs(deps.userId, terminalId);
+  if (notReadyMs !== null && notReadyMs >= REBOOT_DEADLINE_MS) {
+    deps.log(
+      `[READD] ${terminalId.slice(0, 8)}... not ready for ${Math.round(notReadyMs / 60_000)}min (>=${REBOOT_DEADLINE_MS / 60_000}min) - rebooting`
     );
-  deps.log(
-    `[READD] welcome_request sent for ${terminalId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s, reboot after ${REBOOT_DEADLINE_MS / 60_000}min)`
-  );
-
-  const t = setTimeout(async () => {
-    timers.delete(terminalId);
-    if (deps.mlsService.getLocalGroups().includes(terminalId)) {
-      clearGroupNotReady(deps.userId, terminalId);
-      return;
-    }
-    // Reboot = last resort: only after REBOOT_DEADLINE_MS in PERSISTENT real time
-    // (survives reload/reconnect). Before the deadline, we only resend a welcome_request; the
-    // SYNC_WATCHDOG re-arms this cycle every RECOVERY_TIMEOUT_MS without restarting the counter.
-    const notReadyMs = groupNotReadyForMs(deps.userId, terminalId);
-    if (notReadyMs !== null && notReadyMs >= REBOOT_DEADLINE_MS) {
-      deps.log(
-        `[READD] ${terminalId.slice(0, 8)}... not ready for ${Math.round(notReadyMs / 60_000)}min (>=${REBOOT_DEADLINE_MS / 60_000}min) - rebooting`
+    await reboot(terminalId, deps, timers).catch((e) =>
+      deps.log(`[READD] reboot failed for ${terminalId.slice(0, 8)}...: ${String(e)}`)
+    );
+  } else {
+    await deps.mlsService
+      .sendWelcomeRequest(terminalId)
+      .catch((e) =>
+        deps.log(`[READD] welcome_request failed for ${terminalId.slice(0, 8)}...: ${String(e)}`)
       );
-      await reboot(terminalId, deps, timers).catch((e) =>
-        deps.log(`[READD] reboot failed for ${terminalId.slice(0, 8)}...: ${String(e)}`)
-      );
-    } else {
-      deps.log(
-        `[READD] ${terminalId.slice(0, 8)}... still not ready - welcome_request resent, reboot deferred`
-      );
-      await deps.mlsService.sendWelcomeRequest(terminalId).catch(() => {});
-    }
-  }, RECOVERY_TIMEOUT_MS);
-  timers.set(terminalId, t);
+    deps.log(
+      `[READD] welcome_request sent for ${terminalId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s, reboot after ${REBOOT_DEADLINE_MS / 60_000}min)`
+    );
+  }
 }
 
 /**
@@ -274,15 +282,17 @@ export async function recoverForkedGroup(
 }
 
 /**
- * Cancels the recovery timer armed by `requestReAdd` for `groupId`.
+ * Cancels any in-flight recovery bookkeeping for `groupId`: clears the welcome_request cooldown
+ * (so a later desync re-triggers immediately) and any residual legacy timer in `timers`.
  *
- * Called as soon as a Welcome is successfully processed for this group, to prevent
- * a spurious `reboot` from firing when the group has just been joined.
+ * Called as soon as a Welcome is successfully processed for this group, to prevent a spurious
+ * `reboot` from firing when the group has just been joined.
  */
 export function cancelReAdd(
   groupId: string,
   timers: Map<string, ReturnType<typeof setTimeout>>
 ): void {
+  lastReAddAt.delete(groupId);
   const t = timers.get(groupId);
   if (t !== undefined) {
     clearTimeout(t);

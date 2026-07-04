@@ -2,7 +2,7 @@ import { parseDirectPeerFromName, resolveDirectPeerId } from '$lib/utils/chat/co
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { addMessageReaction } from '$lib/utils/chat/messageReactions';
-import { requestReAdd, cancelReAdd } from '$lib/utils/chat/recovery';
+import { requestReAdd, cancelReAdd, resetReAddCooldowns } from '$lib/utils/chat/recovery';
 import {
   markEpochGap,
   clearEpochGap,
@@ -53,13 +53,13 @@ const noMatchKpFailures = new Map<string, number>();
  *
  * Simplified architecture (RFC 9420 + OpenMLS fork-resolution):
  * - Welcome → traitement + replay du buffer
- * - Groupe inconnu → buffer 10s + welcome_request → requestReAdd si timeout
+ * - Groupe inconnu → welcome_request immediat (seam) + buffer ; cadence owned by the SYNC_WATCHDOG
  * - Known group → decrypt → display / requestReAdd if out-of-sync
  *
  * Invariants :
  * 1. Every message is ACKed exactly once.
  * 2. `requestReAdd` remplace toute escalade (pas de Poison Pill, pas de compteurs).
- * 3. Recovery state (timers) is in-memory only - reset on every session.
+ * 3. Recovery state (cooldowns) is in-memory only - reset on every session.
  */
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const { mlsService, pin, userId, log } = deps;
@@ -67,6 +67,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Repartir d'un registre de gap d'epoch vierge : ce registre est module-global (partage
   // avec l'outbox) et ne doit pas conserver d'entree perimee d'une session precedente.
   resetEpochGapRegistry();
+  // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
+  resetReAddCooldowns();
 
   installWasmDuplicateDeliveryLogInterceptor();
 
@@ -79,11 +81,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // sessionAuth; the two are independent subscribers, no longer multiplexed over one hook.
   mlsService.addBulkIngestObserver(statePersister);
 
-  // Short buffer: commits arriving before their Welcome (max 10 s wait).
-  const pendingBuffer = new Map<
-    string,
-    { msgs: PendingMsg[]; timer: ReturnType<typeof setTimeout> }
-  >();
+  // Buffer of commits that arrived before their Welcome, replayed once the Welcome lands. No
+  // expiry timer: the SYNC_WATCHDOG owns the re-add cadence; the entry is dropped on Welcome, and
+  // the same frames also stay server-side (handleUnknownGroup returns false) as a fallback.
+  const pendingBuffer = new Map<string, { msgs: PendingMsg[] }>();
 
   // Per-group recovery timers - map shared with the connection layer
   // (connectionRecoveryTimers): only one timer armed per group regardless of source.
@@ -167,7 +168,7 @@ interface WelcomeArgs {
   ratchetTreeBytes: Uint8Array | undefined;
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
-  pendingBuffer: Map<string, { msgs: PendingMsg[]; timer: ReturnType<typeof setTimeout> }>;
+  pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   recoveryTimers: Map<string, ReturnType<typeof setTimeout>>;
 }
 
@@ -271,12 +272,9 @@ async function handleWelcome({
       const joinedGroupId =
         (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
 
-      // Annuler les timers en cours pour ce groupe (dans les deux maps : locale + connexion)
+      // Drop the pending buffer for this group; cancel any recovery bookkeeping (cooldown + timer).
       const buf = pendingBuffer.get(joinedGroupId);
-      if (buf) {
-        clearTimeout(buf.timer);
-        pendingBuffer.delete(joinedGroupId);
-      }
+      if (buf) pendingBuffer.delete(joinedGroupId);
       cancelReAdd(joinedGroupId, recoveryTimers);
       noMatchKpFailures.delete(joinedGroupId); // Welcome processed - reset NoMatchingKeyPackage escalation
 
@@ -439,15 +437,16 @@ interface UnknownGroupArgs {
   content: Uint8Array;
   groupId: string;
   deps: MessageHandlerDeps;
-  pendingBuffer: Map<string, { msgs: PendingMsg[]; timer: ReturnType<typeof setTimeout> }>;
+  pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   recoveryTimers: Map<string, ReturnType<typeof setTimeout>>;
 }
 
 /**
  * Buffers a commit received for an unknown group (Welcome not yet received).
  *
- * Sends a `welcome_request` on the first message and arms a 10 s timer.
- * On timeout: ACKs the buffer and requests a re-add.
+ * On the FIRST frame for the group, fires one immediate recovery attempt through the single seam
+ * `requestReAdd` (welcome_request + marks the group not-ready in the persistent registry). No
+ * private timer: the SYNC_WATCHDOG owns the re-add cadence and reboot escalation from there.
  * Returns `false` to keep the message in the server queue (replay possible).
  */
 async function handleUnknownGroup({
@@ -460,11 +459,11 @@ async function handleUnknownGroup({
 }: UnknownGroupArgs): Promise<boolean> {
   const { mlsService, log } = deps;
 
-  // Guard: dead group with a known successor - the message cannot be decrypted
-  // (wrong epoch). Avoids a spurious welcome_request that would create a duplicate
-  // conversation on other devices and trigger a cascade of erroneous recovery.
   let buf = pendingBuffer.get(groupId);
   if (!buf) {
+    // Guard: dead group with a known successor - the message is at a dead epoch (undecryptable).
+    // Route recovery to the successor and ACK (do not buffer): avoids a spurious welcome_request
+    // for the dead group that would create a duplicate conversation on other devices.
     const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
     if (meta?.successorId) {
       const localGroups = mlsService.getLocalGroups();
@@ -481,15 +480,10 @@ async function handleUnknownGroup({
       return true; // ACK: a dead group's message cannot be decrypted
     }
 
-    await mlsService.sendWelcomeRequest(groupId).catch(() => {});
-    const timer = setTimeout(async () => {
-      pendingBuffer.delete(groupId);
-      if (!mlsService.getLocalGroups().includes(groupId)) {
-        log(`[BUFFER] 10 s elapsed for ${groupId.slice(0, 8)}… - requestReAdd`);
-        await requestReAdd(groupId, deps, recoveryTimers);
-      }
-    }, 10_000);
-    buf = { msgs: [], timer };
+    // Live unknown group: one immediate recovery attempt through the seam, then buffer. The
+    // watchdog takes over the cadence (the group is now in the not-ready registry).
+    await requestReAdd(groupId, deps, recoveryTimers);
+    buf = { msgs: [] };
     pendingBuffer.set(groupId, buf);
     log(`[BUFFER] welcome_request sent for unknown group ${groupId.slice(0, 8)}…`);
   }

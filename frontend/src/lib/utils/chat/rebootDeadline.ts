@@ -33,6 +33,23 @@ export function clearGroupNotReady(userId: string, groupId: string): void {
 }
 
 /**
+ * All groupIds currently marked not-ready for `userId`. This registry is the single source of
+ * truth for "groups needing recovery": the SYNC_WATCHDOG (the sole recovery-cadence owner)
+ * enumerates it to drive re-adds for groups that have NO conversation record yet - a commit
+ * arrived before the Welcome - not only for live conversations.
+ */
+export function enumerateNotReadyGroups(userId: string): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  const prefix = `${PREFIX}:${userId}:`;
+  const out: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k !== null && k.startsWith(prefix)) out.push(k.slice(prefix.length));
+  }
+  return out;
+}
+
+/**
  * Milliseconds (wall-clock) since `groupId` was first marked not-ready, or null when no marker
  * exists. Used to decide whether the reboot deadline has elapsed.
  */

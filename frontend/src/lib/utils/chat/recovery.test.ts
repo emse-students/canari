@@ -10,6 +10,7 @@ import {
   reboot,
   migrateConversation,
   recoverForkedGroup,
+  resetReAddCooldowns,
   RECOVERY_TIMEOUT_MS,
   REBOOT_DEADLINE_MS,
 } from './recovery';
@@ -19,6 +20,8 @@ beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
   // Reboot deadline markers persist in localStorage across tests - reset between cases.
   if (typeof localStorage !== 'undefined') localStorage.clear();
+  // The welcome_request cooldown is module-global - reset it so throttling never leaks between cases.
+  resetReAddCooldowns();
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -90,56 +93,57 @@ describe('requestReAdd', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('sends sendWelcomeRequest and arms a timer', async () => {
+  it('sends a welcome_request and marks the group not-ready', async () => {
     const deps = makeDeps();
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
 
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
-    expect(timers.has('g1')).toBe(true);
+    // Marked in the persistent registry so the SYNC_WATCHDOG drives the re-add cadence.
+    expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).not.toBeNull();
   });
 
-  it('only one timer armed but welcome_request resent on every reconnection', async () => {
+  it('throttles: two immediate calls emit a single welcome_request (cooldown)', async () => {
     const deps = makeDeps();
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
     await requestReAdd('g1', deps, timers);
 
-    // The welcome_request is resent silently even when the timer is already running
-    // (the peer may have come back online since the last attempt).
-    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
-    // But only one timer should be active (no double reboot).
-    expect(timers.size).toBe(1);
+    // The second call is within RECOVERY_TIMEOUT_MS -> throttled by the internal cooldown
+    // (the seam self-throttles regardless of caller: watchdog cadence or reactive).
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
   });
 
-  it(`after ${RECOVERY_TIMEOUT_MS / 1000}s without Welcome -> resends welcome_request, no reboot (deadline not reached)`, async () => {
+  it(`resends welcome_request on the next call past the ${RECOVERY_TIMEOUT_MS / 1000}s cooldown, no reboot`, async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
     await vi.advanceTimersByTimeAsync(RECOVERY_TIMEOUT_MS);
+    await requestReAdd('g1', deps, timers);
 
-    // Persistent 1h deadline not reached -> no reboot, just a new welcome_request.
+    // Persistent 1h deadline not reached -> no reboot, a second welcome_request once the cooldown
+    // elapsed.
     expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('reboot only once REBOOT_DEADLINE_MS has elapsed in persistent real time', async () => {
+  it('reboots immediately when REBOOT_DEADLINE_MS has already elapsed (persistent)', async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue([]); // toujours absent
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    // Simulates a group not ready for more than 1h (deadline set in a previous session).
+    // Simulates a group not ready for more than 1h (deadline set in a previous session): the
+    // escalation step reboots on the first attempt, no waiting for a timer.
     localStorage.setItem(
       'mls_not_ready_since:user-a:g1',
       String(Date.now() - REBOOT_DEADLINE_MS - 1_000)
     );
 
     await requestReAdd('g1', deps, timers);
-    await vi.advanceTimersByTimeAsync(RECOVERY_TIMEOUT_MS);
 
     expect(deps.mlsService.createRemoteGroup).toHaveBeenCalled();
     expect(deps.mlsService.claimGroupSuccessor).toHaveBeenCalled();
@@ -162,27 +166,22 @@ describe('requestReAdd', () => {
 
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('live');
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
-    expect(timers.has('live')).toBe(true);
   });
 
-  it('Welcome received before 60s -> cancelReAdd cancels the timer, no reboot', async () => {
+  it('Welcome received (group already in WASM) -> no welcome_request, no reboot', async () => {
     const deps = makeDeps();
-    // At timeout the group is in WASM (Welcome received in the meantime)
+    // The group is already in WASM (Welcome received in the meantime) -> recovery is a no-op.
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue(['g1']);
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);
     cancelReAdd('g1', timers);
 
-    vi.advanceTimersByTime(30_000);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // reboot ne doit pas être appelé
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(deps.mlsService.createRemoteGroup).not.toHaveBeenCalled();
   });
 
-  it('group confirmed absent from server -> purges the phantom, no welcome_request or timer', async () => {
+  it('group confirmed absent from server -> purges the phantom, no welcome_request', async () => {
     const deps = makeDeps({
       mlsService: makeMls({
         getGroupMeta: vi.fn().mockResolvedValue(null),
@@ -197,9 +196,8 @@ describe('requestReAdd', () => {
 
     await requestReAdd('ghost', deps, timers);
 
-    // Loop stopped: no welcome_request, no timer armed.
+    // Loop stopped: no welcome_request emitted.
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
-    expect(timers.has('ghost')).toBe(false);
     // Local conversation purged.
     expect(deps.deleteConversation).toHaveBeenCalledWith('ghost');
     expect(deps.conversations.has('ghost')).toBe(false);

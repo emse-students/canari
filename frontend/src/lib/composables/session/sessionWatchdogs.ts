@@ -2,14 +2,14 @@
  * Session watchdogs extracted from useChatSession:
  * startHealthCheck (successor migration), startSyncWatchdog (reboot of stuck groups).
  */
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteSet } from 'svelte/reactivity';
 import {
   checkGroupSuccessors,
   requestReAdd,
   recoverForkedGroup,
-  RECOVERY_TIMEOUT_MS,
+  cancelReAdd,
 } from '$lib/utils/chat/recovery';
-import { clearGroupNotReady } from '$lib/utils/chat/rebootDeadline';
+import { clearGroupNotReady, enumerateNotReadyGroups } from '$lib/utils/chat/rebootDeadline';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { getEpochGapSince, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { getIsTabLeader } from '$lib/utils/chat/connection';
@@ -51,20 +51,18 @@ export function startHealthCheckImpl(ctx: SessionContext, cb: ChatSessionCallbac
 }
 
 /**
- * Starts the universal watchdog (every 5 s) that re-triggers recovery for any group
- * that has been not-ready (no local WASM state) for longer than RECOVERY_TIMEOUT_MS.
- * Covers all desync paths regardless of whether an individual timer was armed.
+ * Starts the universal watchdog (every 5 s), the SINGLE owner of the re-add cadence. It drives
+ * recovery for every group lacking local WASM state - both live conversations that lost their
+ * state AND groups marked not-ready that have no conversation record yet (a commit arrived before
+ * the Welcome, tracked in the persistent `mls_not_ready_since` registry).
  *
- * Routes through `requestReAdd` (welcome_request first, escalating to reboot via the
- * shared `connectionRecoveryTimers`) rather than calling `reboot()` directly: orphaned
- * groups get a Welcome grace window before the irreversible CAS, and `requestReAdd`
- * also resolves the lineage (migration to the terminal already present in WASM).
+ * It routes through the single recovery seam `requestReAdd`, which self-throttles to one
+ * welcome_request per RECOVERY_TIMEOUT_MS and escalates to `reboot` past the persistent wall-clock
+ * deadline - so invoking it every poll is safe and needs no per-group timer here. Reactive paths
+ * (unknown group, out-of-sync) only fire an immediate first attempt; this watchdog owns the rest.
  * Overwrites any previous timer.
  */
 export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
-  /** Timestamp (ms) when each group was first detected as not-ready. */
-  const notReadySince = new SvelteMap<string, number>();
-
   if (ctx.timers.syncWatchdog !== null) clearInterval(ctx.timers.syncWatchdog);
   ctx.timers.syncWatchdog = setInterval(() => {
     if (!getIsTabLeader()) return;
@@ -72,15 +70,21 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
     const recoveryDeps = makeRecoveryDeps(ctx, cb);
     const localGroups = new SvelteSet(recoveryDeps.mlsService.getLocalGroups());
 
-    for (const [id] of cb.conversations) {
-      // WASM has state → group is operational (or Welcome in transit) → no recovery needed.
+    // Union of candidate groups: live conversations + not-ready registry (covers pre-conversation
+    // unknown groups). A single set so each group is evaluated once per poll.
+    const candidates = new SvelteSet<string>();
+    for (const [id] of cb.conversations) candidates.add(id);
+    for (const id of enumerateNotReadyGroups(recoveryDeps.userId)) candidates.add(id);
+
+    for (const id of candidates) {
+      // WASM has state → group is operational (or Welcome in transit) → no re-add needed.
       // Do NOT test convo.isReady: if isReady=true but WASM lost state during the session,
       // the watchdog must still trigger recovery.
       if (localGroups.has(id)) {
-        notReadySince.delete(id);
-        // Healthy group: clear the persistent reboot deadline (prevents a stale key from
-        // triggering an immediate reboot if the group later becomes not-ready again).
+        // Healthy group: clear recovery bookkeeping (cooldown + persistent reboot deadline) so a
+        // stale marker cannot trigger an immediate reboot if the group later becomes not-ready.
         clearGroupNotReady(recoveryDeps.userId, id);
+        cancelReAdd(id, ctx.connectionRecoveryTimers);
 
         // Safety net for a stuck epoch gap: the group is in WASM but frozen behind the current
         // epoch, and no incoming frame/commit is coming to escalate or resolve it. Force the
@@ -99,27 +103,15 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       }
       // Channels utilisent AES-GCM, pas MLS - jamais en recovery MLS.
       if (isChannelConversationId(id)) {
-        notReadySince.delete(id);
+        clearGroupNotReady(recoveryDeps.userId, id);
         continue;
       }
-      const since = notReadySince.get(id);
-      if (since === undefined) {
-        notReadySince.set(id, now);
-      } else if (now - since > RECOVERY_TIMEOUT_MS) {
-        // Reset the 60 s window rather than using a permanent flag: if recovery fails
-        // silently (e.g. cross-device lock winner crashes mid-reboot), the group will be
-        // retried on the next 60 s cycle instead of staying stuck. Concurrent reboots are
-        // already blocked upstream (rebootsInFlight intra-device + Redis cross-device lock
-        // in reboot()), and requestReAdd deduplicates its own timer - re-triggering only
-        // produces one welcome_request per 60 s, not a storm.
-        notReadySince.set(id, now);
-        cb.log(
-          `[SYNC_WATCHDOG] Group ${id.slice(0, 8)}… not ready for >${RECOVERY_TIMEOUT_MS / 1000}s - welcome_request + reboot escalation`
-        );
-        requestReAdd(id, recoveryDeps, ctx.connectionRecoveryTimers).catch((e: unknown) =>
-          cb.log(`[SYNC_WATCHDOG] requestReAdd failed for ${id}: ${String(e)}`)
-        );
-      }
+      // Not in WASM → drive the single recovery seam. It marks the group not-ready on the first
+      // attempt, throttles to one welcome_request per RECOVERY_TIMEOUT_MS, and reboots past the
+      // wall-clock deadline. Calling it every poll is intentional - the seam owns all pacing.
+      requestReAdd(id, recoveryDeps, ctx.connectionRecoveryTimers).catch((e: unknown) =>
+        cb.log(`[SYNC_WATCHDOG] requestReAdd failed for ${id}: ${String(e)}`)
+      );
     }
   }, 5_000);
 }

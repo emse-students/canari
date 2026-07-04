@@ -155,7 +155,28 @@ clean, full vitest 477 green, server jest 34 green, chat-delivery `tsc` clean. D
 (`mls-protocol.md`, `MLS_RECOVERY_LADDER.md` step 4, `MLS_DESYNC_PREVENTION.md`). Nginx unchanged
 (`/api/mls/*` wildcard already routes the new GET). No user-facing strings -> no i18n change.
 
-Next: Phase 3 (collapse cluster A - merge the redundant re-add triggers into one rung-1 trigger).
+**Phase 3 (done + verified):** collapsed cluster A - the three redundant re-add triggers
+(unknown-group 10 s buffer timer / `requestReAdd` 60 s self-rearming timer / SYNC_WATCHDOG 5 s poll)
+are now ONE mechanism. Detection is separated from action behind a single seam, `requestReAdd`,
+which Phase 4 will swap for a native external-commit self-join. Decisions taken: (1) the SYNC_WATCHDOG
+is the SOLE cadence owner; (2) Phase 3 is detection-only - the welcome_request + reboot action stays
+intact behind the seam. Changes: `requestReAdd` no longer arms a private timer - it is a one-shot
+action that self-throttles via an in-memory cooldown (`lastReAddAt`, RECOVERY_TIMEOUT_MS) and folds
+the escalation decision inline (reboot past the persistent wall-clock deadline, else one
+welcome_request); the watchdog drives cadence by enumerating live conversations UNION the persistent
+`mls_not_ready_since` registry (new `enumerateNotReadyGroups` - covers pre-conversation unknown
+groups) and calling the seam every poll (the cooldown throttles). `handleUnknownGroup` drops its 10 s
+timer and duplicated successor logic: on the first frame it fires the seam once (immediate
+welcome_request) and buffers (buffer no longer carries a timer; dropped on Welcome, frames also stay
+server-side as fallback). The STUCK_EPOCH_GAP watchdog branch (Phase 2 rung-1/rung-2) is untouched.
+`cancelReAdd` now also clears the cooldown; `resetReAddCooldowns` is called at session setup.
+Tests: `rebootDeadline.test.ts` (new, 4), rewritten `requestReAdd`/unknown-group cases;
+`bun run check` clean, full vitest 481 green, ESLint clean. Client-only - no DB, no native, no
+user-facing strings -> no i18n change.
+
+Next: Phase 4 (external join - replace successor/CAS/reboot with native openmls external commits;
+GroupInfo piggybacked on every commit; external join for all re-adds, Welcome only for first-time
+adds; retire the legacy reboot/reset-epoch machinery; server GroupInfo DB migration).
 
 ## Phase 0 remaining - elaborated plan
 

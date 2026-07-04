@@ -50,6 +50,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
   requestReAdd: vi.fn().mockResolvedValue(undefined),
   cancelReAdd: vi.fn(),
   reboot: vi.fn().mockResolvedValue(undefined),
+  resetReAddCooldowns: vi.fn(),
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
@@ -327,12 +328,14 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
-  it('commit for unknown group → buffered + welcome_request sent', async () => {
+  it('commit for unknown group → buffered + recovery seam fired immediately', async () => {
     const unknownGroupId = 'aaaaaaaa-0000-4000-8000-000000000001';
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     // Groupe absent du WASM local
     mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (
       a: string,
@@ -345,15 +348,22 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const result = await onMsg('peer', new Uint8Array([1]), unknownGroupId, false, undefined, true);
     // false → message kept in server queue (pending buffer)
     expect(result).toBe(false);
-    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(unknownGroupId);
+    // The single recovery seam is fired at once (no 10 s timer); it sends the welcome_request and
+    // marks the group not-ready for the SYNC_WATCHDOG cadence.
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
+      unknownGroupId,
+      expect.anything(),
+      expect.anything()
+    );
   });
 
-  it('buffer timeout 10 s → requestReAdd triggered', async () => {
-    vi.useFakeTimers();
+  it('second frame for the same unknown group → no duplicate recovery (buffer dedup)', async () => {
     const unknownGroupId = 'bbbbbbbb-0000-4000-8000-000000000001';
     const deps = baseDeps();
     const mls = deps.mlsService as any;
     mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
     setupMessageHandler(deps as any);
     const onMsg = mls.onMessage.mock.calls[0][0] as (
       a: string,
@@ -364,18 +374,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       f?: boolean
     ) => Promise<boolean>;
     await onMsg('peer', new Uint8Array([1]), unknownGroupId, false, undefined, true);
+    await onMsg('peer', new Uint8Array([2]), unknownGroupId, false, undefined, true);
 
-    const { requestReAdd } = await import('$lib/utils/chat/recovery');
-    vi.advanceTimersByTime(10_000);
-    await Promise.resolve(); // flush microtasks
-    await Promise.resolve();
-
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
-      unknownGroupId,
-      expect.anything(),
-      expect.anything()
-    );
-    vi.useRealTimers();
+    // Recovery is fired once on the first frame; the second frame only appends to the buffer.
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledTimes(1);
   });
 
   it('known group, decryption fails → requestReAdd + ACK', async () => {
