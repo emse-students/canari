@@ -1,6 +1,6 @@
 {
   "name": "social-service",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "private": true,
   "scripts": {
     "start": "ts-node src/main.ts",
