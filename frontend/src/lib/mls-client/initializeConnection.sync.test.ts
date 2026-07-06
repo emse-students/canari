@@ -53,7 +53,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
 
   it('does not purge local WASM groups when getUserGroups fails (server unavailable)', async () => {
     // Régression : un redeploy CD rend getUserGroups indisponible. Sans garde-fou,
-    // l'étape 3 oubliait tous les groupes locaux → reboot-storm via SYNC_WATCHDOG.
+    // l'étape 3 oubliait tous les groupes locaux → re-add storm via SYNC_WATCHDOG.
     const mls = {
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),

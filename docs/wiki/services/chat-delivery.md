@@ -22,7 +22,7 @@ The chat-delivery-service is the MLS API layer. It:
 | Store | Purpose |
 |---|---|
 | PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, RevokedDevice |
-| Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `add-lock:{groupId}`, `reboot-lock:{groupId}`, `pending_welcomes:{userId}` |
+| Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `add-lock:{groupId}`, `pending_welcomes:{userId}` |
 | Firebase | Push notifications (FCM) |
 
 ## Background jobs (cron)
@@ -66,7 +66,6 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | PATCH | `/api/mls/groups/:groupId` | Rename group |
 | PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar |
 | DELETE | `/api/mls/groups/:groupId` | Soft-delete group |
-| POST | `/api/mls/groups/:groupId/successor` | Claim successor for dead group (CAS) |
 
 ### Membership
 
@@ -86,7 +85,10 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices) |
-| POST | `/api/mls/commit` | Validate MLS commit epoch |
+| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call) |
+| GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
+| GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
+| POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | DELETE | `/api/mls/welcome-request/group/:groupId` | Clear pending welcome_request queue |
@@ -159,8 +161,6 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 |---|---|---|
 | POST | `/api/mls/add-lock` | Acquire distributed add-lock |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
-| POST | `/api/mls/reboot-lock` | Acquire reboot-lock |
-| DELETE | `/api/mls/reboot-lock` | Release reboot-lock |
 
 ### Calls
 

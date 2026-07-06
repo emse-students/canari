@@ -8,9 +8,7 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 ### 1. Server - epoch-gated commits
 
-- **`POST /api/mls/commit`** - `baseEpoch` must match the group row **`activeEpoch`** (except fast-forward when `activeEpoch === 0`). A **Redis lock** (`mls:commitlock:{groupId}`) serializes concurrent validators so two devices cannot both advance from the same epoch. On success, **`activeEpoch ← baseEpoch + 1`**. Rejects: **`epoch_mismatch`**, **`concurrent_commit`**. Guard: **`HeaderAuthGuard`**. Source: `app.controller.ts` → `validateCommit`.
-
-- **`POST /api/mls/groups/:groupId/reset-epoch`** - Sets **`activeEpoch` to 0** when replacing MLS state for the same server `groupId` (re-bootstrap). Guard: **`HeaderAuthGuard`**.
+- **`POST /api/mls/commit`** - `baseEpoch` must match the group row **`activeEpoch`** (except fast-forward when `activeEpoch === 0`). A **Redis lock** (`mls:commitlock:{groupId}`) serializes concurrent validators so two devices cannot both advance from the same epoch. On success, the commit bytes are stored in the commit-log and **`activeEpoch ← baseEpoch + 1`** atomically, then fanned out. Rejects: **`epoch_mismatch`**, **`concurrent_commit`**. Guard: **`HeaderAuthGuard`**. Source: `app.controller.ts` → `validateCommit`.
 
 ### 2. Server - coordinated reset and bootstrap
 
@@ -50,7 +48,7 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 | Tactic                 | What must hold                                   | How we check                                       |
 | ---------------------- | ------------------------------------------------ | -------------------------------------------------- |
-| `baseEpoch` formula    | Web and Tauri use `commitBaseEpochForValidation` | `desyncPrevention.contract.test.ts`                |
+| `baseEpoch` formula    | Web and Tauri stage the commit then read the pre-merge epoch in `runCommitTransaction` | `messaging.commit-log.spec.ts`  |
 | Persistence monotonic  | Stale encrypted flush cannot lower the stored blob | `hex.mlsVersion.test.ts`                          |
 | Recovery vs prevention | Desync _handling_ (ACK rules, retries)           | [MLS_RECOVERY_LADDER.md](./MLS_RECOVERY_LADDER.md) |
 | Server commit logic    | Locks + `activeEpoch` rules                      | Code review / `app.controller.ts`                  |

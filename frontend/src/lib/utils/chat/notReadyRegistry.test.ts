@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { markGroupNotReady, clearGroupNotReady, enumerateNotReadyGroups } from './rebootDeadline';
+import { markGroupNotReady, clearGroupNotReady, enumerateNotReadyGroups } from './notReadyRegistry';
 
 beforeEach(() => {
   if (typeof localStorage !== 'undefined') localStorage.clear();
 });
 
-describe('rebootDeadline registry', () => {
+describe('notReadyRegistry', () => {
   it('marks a group not-ready, idempotently', () => {
     markGroupNotReady('user-a', 'g1');
     markGroupNotReady('user-a', 'g1');

@@ -669,7 +669,7 @@ export function useMessaging() {
     });
 
     // Text/reply now always succeed (captured into the outbox); only a hard block
-    // (deleted lineage) or a channel error surfaces a message to the user.
+    // (deleted group) or a channel error surfaces a message to the user.
     if (!result.success) {
       if (result.error) {
         ctx.setSendError(result.error);

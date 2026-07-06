@@ -39,9 +39,9 @@ interface SendMessageDeps {
  *
  * For direct/group MLS conversations the message is captured into the persistent outbox and
  * displayed optimistically with status `'pending'`; the outbox flusher encrypts and delivers it
- * as soon as the group is sendable (now, on reconnect, after a Welcome, or after a reboot),
+ * as soon as the group is sendable (now, on reconnect, or after a Welcome),
  * surviving reload/kill. The user never sees a transient "send failed" error - the only hard
- * block is a conversation whose whole lineage was deleted (`deletedRemotely`).
+ * block is a conversation whose group was deleted server-side (`deletedRemotely`).
  *
  * For channel conversations (`contactName` starts with `'channel_'`) the message is server-
  * authoritative and sent directly via `sendEncryptedChannelMessage` (no outbox).

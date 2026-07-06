@@ -2,7 +2,7 @@
  * Etat de cycle de vie d'une conversation - source UNIQUE qui remplace l'ancien couple
  * `(isReady, deletedRemotely)`.
  *  - `active`  : groupe MLS etabli, membre actif -> lecture + ENVOI.
- *  - `pending` : placeholder en attente de Welcome (recovery/reboot applicables) -> lecture seule.
+ *  - `pending` : placeholder en attente de Welcome (recovery applicable) -> lecture seule.
  *  - `removed` : supprime par un pair / exclusion / suppression locale en attente -> lecture seule +
  *                banniere, reste jusqu'a SUPPRESSION MANUELLE (regles 2 & 4).
  * Predicats et logique de transition : `$lib/utils/chat/groupLifecycle`.

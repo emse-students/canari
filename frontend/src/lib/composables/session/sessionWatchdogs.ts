@@ -3,7 +3,7 @@
  */
 import { SvelteSet } from 'svelte/reactivity';
 import { requestReAdd, recoverForkedGroup, cancelReAdd } from '$lib/utils/chat/recovery';
-import { clearGroupNotReady, enumerateNotReadyGroups } from '$lib/utils/chat/rebootDeadline';
+import { clearGroupNotReady, enumerateNotReadyGroups } from '$lib/utils/chat/notReadyRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { getEpochGapSince, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { getIsTabLeader } from '$lib/utils/chat/connection';

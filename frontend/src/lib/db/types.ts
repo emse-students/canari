@@ -99,7 +99,7 @@ export interface OutboxMediaPayload {
 
 /**
  * A queued outbound message awaiting delivery. Persisted (payload encrypted with the user
- * PIN) so it survives reload, reconnection, MLS reboot, and app kill. The flusher re-encodes
+ * PIN) so it survives reload, reconnection, MLS recovery, and app kill. The flusher re-encodes
  * the proto and sends it against the current epoch once the target group is healthy.
  *
  * Clear columns (id, conversationId, sentAt, kind, status, attempts, nextAttemptAt) mirror the

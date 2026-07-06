@@ -4,7 +4,7 @@ import type { Conversation } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
 import { classifyServerStatus } from './groupLifecycle';
-import { markGroupNotReady, clearGroupNotReady } from './rebootDeadline';
+import { markGroupNotReady, clearGroupNotReady } from './notReadyRegistry';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).

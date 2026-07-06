@@ -1158,7 +1158,7 @@ export class MessagingService {
 
     // Upsert DeviceGroupMembership to active.
     // INSERT ... ON CONFLICT DO UPDATE guarantees record creation even when no prior
-    // invitation existed (reboot case: brand-new group, no pending record).
+    // invitation existed (bootstrap case: brand-new group, no pending record).
     // A plain UPDATE WHERE status='pending' would touch 0 rows in that case, leaving the
     // device without a record -> processPendingInvitations would incorrectly kick it.
     await this.deviceGroupRepo.upsert(

@@ -8,7 +8,7 @@ import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupS
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
  * was invalid/unreadable. Without this, a skipped device would vanish silently: never invited,
- * never retried. The remedy (republish a fresh KeyPackage then re-add/reboot) is deferred;
+ * never retried. The remedy (republish a fresh KeyPackage then re-add) is deferred;
  * here we at least ensure visibility. [[C5]]
  *
  * @param tag Log prefix of the caller (e.g. `[ADD]`, `[SYNC]`, `[GROUP]`, `[REBOOT]`).

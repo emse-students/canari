@@ -439,7 +439,7 @@ export async function discoverMissingGroups(params: {
     if (conversations.has(g.groupId)) continue;
 
     // Resolve the DM peer authoritatively: the group name is only a hint and may be malformed
-    // (legacy/rebooted groups can carry a self-only name -> a bogus "conversation with yourself").
+    // (legacy groups can carry a self-only name -> a bogus "conversation with yourself").
     // When it is unusable, fall back to the server roster. A DM whose peer cannot be resolved yet
     // (transport error, or roster transiently self-only mid re-add) is skipped, not shown as self.
     const directPeer = !g.isGroup

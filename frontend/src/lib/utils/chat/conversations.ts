@@ -66,7 +66,7 @@ export function canonicalDirectName(userId: string, peerId: string): string {
 /**
  * Resolves the peer userId of a direct conversation authoritatively.
  *
- * The group `name` is only a hint: legacy/rebooted groups can carry a malformed name
+ * The group `name` is only a hint: legacy groups can carry a malformed name
  * (self-only, `self::self`, or empty) which makes {@link parseDirectPeerFromName} return
  * `null` and previously produced a "conversation with yourself". When the name is unusable
  * we fall back to the server-side user membership (`getGroupUserMembers`) and pick the sole

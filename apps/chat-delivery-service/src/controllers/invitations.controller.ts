@@ -549,7 +549,7 @@ export class InvitationsController {
   }
 
   /**
-   * Forces a device out of a group (unrecoverable MLS state or reboot requested).
+   * Forces a device out of a group (unrecoverable MLS state or explicit eviction).
    * Deletes the DeviceGroupMembership and removes the device from the Redis routing set
    * so the server stops sending messages for this group to it.
    */

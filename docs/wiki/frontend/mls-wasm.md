@@ -48,7 +48,7 @@ Measures that avoid entering bad MLS states:
 
 - Single MLS tab leader + `BroadcastChannel` coordination (`tabLeader.ts`).
 - Distributed add-lock (`acquireAddLock` / `releaseAddLock` on `IMlsService`).
-- Server-side commit epoch validation (`commitBaseEpochForValidation`).
+- One staged commit transaction (`runCommitTransaction`): stage -> validate epoch server-side (`POST /api/mls/commit`) -> merge on accept / roll back on reject.
 - Shared delivery HTTP helpers (`mlsDeliveryHttp.ts`): URLs, keepalive POST, response assertion.
 - Correct Welcome-before-commit ordering (handled in the message pipeline).
 

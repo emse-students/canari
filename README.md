@@ -12,7 +12,7 @@
 [![CI](https://github.com/emse-students/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/ci.yml)
 [![CD](https://github.com/emse-students/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/cd.yml)
 [![Code Analysis](https://github.com/emse-students/canari/actions/workflows/code-analysis.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/code-analysis.yml)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
 </div>
 
@@ -213,3 +213,19 @@ Pour configurer un nouveau serveur, voir [`infrastructure/MIGRATION.md`](infrast
 git commit -m "feat: description"   # conventional commits
 git push
 ```
+
+---
+
+## Licence
+
+Canari est distribue sous la [**PolyForm Noncommercial License 1.0.0**](LICENSE).
+
+- **Usage non-commercial** : vous pouvez utiliser, copier, modifier et redistribuer
+  le logiciel librement pour tout usage non commercial (etude, recherche, projets
+  associatifs, usage personnel, institutions educatives comme l'EMSE, etc.).
+- **Citation obligatoire** : toute copie ou redistribution doit conserver la mention
+  `Required Notice:` du fichier [`LICENSE`](LICENSE) (auteur + lien vers le depot).
+- **Usage commercial** : interdit sans un accord de licence separe avec les auteurs.
+
+Ce n'est donc pas une licence "open source" au sens de l'OSI (qui interdit toute
+restriction sur l'usage commercial), mais une licence source-available.

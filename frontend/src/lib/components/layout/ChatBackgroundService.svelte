@@ -683,7 +683,7 @@
     // Pause/resume WebSocket based on app visibility.
     // On mobile/Tauri, pause immediately when backgrounded (OS will kill the process soon).
     // On desktop web, don't pause: browsers keep WebSocket connections alive in background
-    // tabs, and pausing breaks recovery timers (60s reboot) and causes unnecessary reconnects.
+    // tabs, and pausing breaks recovery timers and causes unnecessary reconnects.
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && globalSession.isLoggedIn) {
         if (isTauriRuntime()) {

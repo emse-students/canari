@@ -41,7 +41,7 @@
   <SettingsSubscriptionsSection />
   <SettingsDangerZone />
 
-  <!-- Device identifier (discreet diagnostic, useful for tracing MLS reboots). -->
+  <!-- Device identifier (discreet diagnostic, useful for tracing MLS recovery). -->
   {#if session.myDeviceId}
     <p class="text-center text-[0.65rem] font-mono text-text-muted/40 select-all pt-2">
       device: {session.myDeviceId}

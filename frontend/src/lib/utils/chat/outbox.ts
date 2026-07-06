@@ -62,7 +62,7 @@ export interface OutboxDeps {
   requestReAdd: (groupId: string) => Promise<void>;
   /** True when the group can be sent into (in the WASM, not in an unresolved epoch gap). */
   isGroupHealthy: (groupId: string) => boolean;
-  /** Mark a conversation deletedRemotely (banner) when its whole lineage is gone. */
+  /** Mark a conversation deletedRemotely (banner) when the group is gone server-side. */
   markDeletedRemotely?: (groupId: string) => void;
   /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
   uploadMedia?: (media: NonNullable<OutboxEntry['media']>) => Promise<MediaRef>;

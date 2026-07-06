@@ -30,7 +30,7 @@ describe('resolveDirectPeerId', () => {
 
   it('falls back to the roster when the name is self-only (the production bug)', async () => {
     const mls = mockMls([{ userId: ME }, { userId: PEER }]);
-    // Malformed successor name: the user's own id alone, no "::peer".
+    // Malformed group name: the user's own id alone, no "::peer".
     const peer = await resolveDirectPeerId(mls, GROUP, ME, ME);
     expect(peer).toBe(PEER);
     expect(mls.getGroupUserMembers).toHaveBeenCalledWith(GROUP);

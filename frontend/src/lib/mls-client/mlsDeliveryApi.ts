@@ -144,7 +144,7 @@ export class MlsDeliveryApi {
    * THROWS sur un echec transport/HTTP (reseau coupe, non-2xx) : un `[]` ne doit JAMAIS etre
    * indiscernable d'un echec (cf. audit S2). Ne renvoie `[]` que pour un vrai 200 sans device.
    * Les appelants best-effort (creation, fallback KeyPackage) opt-in explicitement via
-   * `.catch(() => [])` ; le chemin reboot laisse l'erreur remonter pour ne pas inviter un
+   * `.catch(() => [])` ; le chemin d'invitation laisse l'erreur remonter pour ne pas inviter un
    * sous-ensemble silencieux de membres.
    */
   async fetchUserDevices(userId: string): Promise<
