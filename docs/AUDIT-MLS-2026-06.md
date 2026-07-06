@@ -1,5 +1,12 @@
 # Audit MLS - Canari (2026-06-19)
 
+> **Snapshot historique (superseded).** Cet audit decrit l'ANCIENNE architecture MLS
+> (recovery reboot/CAS/successeur, fork detection, etc.). Il a servi de point de depart au
+> chantier de re-architecture de juillet 2026, aujourd'hui termine : voir
+> [`MLS-REAUDIT-2026-07.md`](./MLS-REAUDIT-2026-07.md) pour l'etat actuel (external join,
+> commit-log replay, plus de reboot/successeur). Conserve tel quel comme trace historique -
+> ne pas lire comme une description du code actuel.
+
 Audit de correction, races, concurrence et veracite des types sur tout le sous-systeme MLS.
 Reference de depart : commit `34e43259649cd2ae716ae7fdb2ef4b62be064062` (37 commits, ~177 fichiers).
 

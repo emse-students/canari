@@ -63,11 +63,12 @@ La documentation technique est dans [`docs/wiki/`](docs/wiki/index.md) (en angla
 | [MLS WASM](docs/wiki/frontend/mls-wasm.md) | openmls compile en WASM, gestion cles, sync |
 | [Infrastructure](docs/wiki/infrastructure/docker.md) | Docker Compose, bases de donnees, Kafka |
 
-Docs de reference en cours d'evolution (vivantes, garder) :
+Docs de reference (vivantes, garder) :
 
-- [`docs/AUDIT-MLS-2026-06.md`](docs/AUDIT-MLS-2026-06.md) - audit securite MLS en cours
+- [`docs/MLS-REAUDIT-2026-07.md`](docs/MLS-REAUDIT-2026-07.md) - re-architecture MLS (plan + avancement, Phases 0-4 terminees)
 - [`docs/MLS_DESYNC_PREVENTION.md`](docs/MLS_DESYNC_PREVENTION.md) - prevention des desync MLS
 - [`docs/MLS_RECOVERY_LADDER.md`](docs/MLS_RECOVERY_LADDER.md) - procedure de recovery MLS
+- [`docs/AUDIT-MLS-2026-06.md`](docs/AUDIT-MLS-2026-06.md) - audit securite MLS (2026-06, historique - a l'origine du chantier)
 - [`docs/TESTS-DEVICE-PENDING.md`](docs/TESTS-DEVICE-PENDING.md) - tests appareil en attente
 
 ---
