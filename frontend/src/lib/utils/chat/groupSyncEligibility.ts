@@ -45,59 +45,14 @@ export function isGroupEligibleForMlsRecovery(
 }
 
 /**
- * Follows successor links from a tombstone to an active group id (if any).
- * Returns null when the chain ends on a deleted group without a usable successor.
- */
-export function resolveActiveGroupTarget(
-  groupId: string,
-  index: UserGroupSyncIndex,
-  maxHops = 5
-): string | null {
-  let current = groupId;
-
-  for (let hop = 0; hop < maxHops; hop++) {
-    const row = index.byGroupId.get(current);
-    if (!row) return null;
-
-    if (!row.deletedAt) {
-      return current;
-    }
-
-    if (!row.successorId) return null;
-    current = row.successorId;
-    // Successor may exist on the server before this user appears in getUserGroups().
-    if (!index.byGroupId.has(current)) return current;
-  }
-
-  return null;
-}
-
-/** Successor group ids referenced by tombstones in the user's server group list. */
-export function collectKnownSuccessorIds(groups: UserGroupRow[]): Set<string> {
-  return new Set(
-    groups
-      .map((g) => g.successorId)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0)
-  );
-}
-
-/** Resolved 1:1 group to open: active row or successor id when only a tombstone is listed. */
-export interface ResolvedDirectGroup {
-  groupId: string;
-  /** Tombstone id when membership list still points at a deleted predecessor. */
-  tombstoneGroupId?: string;
-}
-
-/**
- * Finds the live DM group id for a peer, following successor links on soft-deleted tombstones.
- * Returns null when no matching direct group exists on the server.
+ * Finds the live DM group id for a peer. Returns null when no matching, non-deleted direct
+ * group exists on the server.
  */
 export function findActiveDirectGroupForPeer(
   groups: UserGroupRow[],
   userId: string,
   peerId: string
-): ResolvedDirectGroup | null {
-  const index = buildUserGroupSyncIndex(groups);
+): string | null {
   const expectedNames = [
     `${userId.toLowerCase()}::${peerId.toLowerCase()}`,
     `${peerId.toLowerCase()}::${userId.toLowerCase()}`,
@@ -105,15 +60,9 @@ export function findActiveDirectGroupForPeer(
 
   for (const g of groups) {
     if (g.isGroup) continue;
+    if (g.deletedAt) continue;
     if (!expectedNames.includes((g.name ?? '').toLowerCase())) continue;
-
-    const activeId = resolveActiveGroupTarget(g.groupId, index);
-    if (activeId) {
-      return {
-        groupId: activeId,
-        tombstoneGroupId: activeId !== g.groupId ? g.groupId : undefined,
-      };
-    }
+    return g.groupId;
   }
 
   return null;

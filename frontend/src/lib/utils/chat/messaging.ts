@@ -111,7 +111,7 @@ export async function sendChatMessage(
     }
   }
 
-  // Whole lineage deleted without a successor: the only hard block (deletion banner is shown).
+  // Group deleted/excluded server-side: the only hard block (deletion banner is shown).
   if (conversation.lifecycle === 'removed') {
     return { success: false, error: 'Cette conversation a été supprimée.' };
   }
@@ -162,7 +162,7 @@ interface MessageActionDeps {
 /**
  * Captures a pre-encoded control AppMessage (reaction, edit, delete, pin, read receipt) into the
  * durable outbox instead of sending it fire-and-forget. The flusher delivers it (silent, retried
- * with backoff, re-keyed to a rebooted successor) as soon as the group is sendable, so control
+ * with backoff) as soon as the group is sendable, so control
  * events converge across peers even if the group was momentarily unsendable, or the app reloaded
  * or was killed before the original direct send could go through.
  */

@@ -66,8 +66,6 @@ export type ConversationFate = {
 
 /** Signaux d'entree pour {@link decideAbsentGroupFate}. */
 export interface AbsentGroupFateInput {
-  /** Le groupe est un successeur tombstone connu (lignee de reboot) -> conserve, la migration gere. */
-  isKnownSuccessor: boolean;
   /** Etat de cycle de vie actuel de la conversation locale. */
   lifecycle: ConversationLifecycle;
   /** Etat serveur resolu (cf. `classifyServerStatus`). */
@@ -93,10 +91,6 @@ export interface AbsentGroupFateInput {
  * qui restent jusqu'a suppression manuelle. On ne purge JAMAIS sur un doute reseau.
  */
 export function decideAbsentGroupFate(input: AbsentGroupFateInput): ConversationFate {
-  // Successeur tombstone : la migration de lignee s'en occupe, on ne touche pas.
-  if (input.isKnownSuccessor) {
-    return { action: 'keep', reason: 'successeur tombstone (migration en charge)' };
-  }
   // Deja `removed` : reste jusqu'a SUPPRESSION MANUELLE locale (regles 2 & 4), quoi qu'il advienne
   // cote serveur (meme apres hard-purge du tombstone). Jamais re-interroge ni re-purge.
   if (input.lifecycle === 'removed') {

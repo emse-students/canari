@@ -13,13 +13,13 @@ import {
  *
  * This table is the authoritative source for three things:
  *
- * 1. **"Who belongs to this group?"** - used by reboot/recovery to determine which
- *    users to invite into a successor group. Unlike `dm_device_group_memberships`,
- *    this table is NOT affected by device lifecycle events (fresh-start, delete).
- *    A user remains a member here until they explicitly leave or are removed.
+ * 1. **"Who belongs to this group?"** - used by recovery to determine which users may be
+ *    re-invited (welcome_request). Unlike `dm_device_group_memberships`, this table is NOT
+ *    affected by device lifecycle events (fresh-start, delete). A user remains a member here
+ *    until they explicitly leave or are removed.
  *
  * 2. **Group listing** - `getUserGroups` queries this table to enumerate all groups
- *    a user belongs to, following successor chains to resolve the active terminal.
+ *    a user belongs to.
  *
  * 3. **Authorization** - `sendMessage` and history endpoints verify the requesting
  *    user has a row here before allowing access to the group.

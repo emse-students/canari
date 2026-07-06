@@ -531,14 +531,6 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
   }
 
-  /** Re-key every queued entry from `fromId` to `toId` (MLS reboot migration). */
-  async reassignOutboxConversation(fromId: string, toId: string): Promise<void> {
-    await this.db.execute('UPDATE outbox SET conversation_id = $1 WHERE conversation_id = $2', [
-      toId,
-      fromId,
-    ]);
-  }
-
   // -- Misc ----------------------------------------------------------------
 
   /** Delete all rows from the messages, conversations, and outbox tables (account reset / testing). */

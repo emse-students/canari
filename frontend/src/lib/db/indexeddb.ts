@@ -546,29 +546,6 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  /** Re-key every queued entry from `fromId` to `toId` (MLS reboot migration). */
-  async reassignOutboxConversation(fromId: string, toId: string): Promise<void> {
-    const db = this.ensureDb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('outbox', 'readwrite');
-      const cursorReq = tx
-        .objectStore('outbox')
-        .index('byConversation')
-        .openCursor(IDBKeyRange.only(fromId));
-      cursorReq.onsuccess = () => {
-        const cursor = cursorReq.result;
-        if (cursor) {
-          cursor.update({ ...cursor.value, conversationId: toId });
-          cursor.continue();
-        }
-      };
-      cursorReq.onerror = () =>
-        console.error('[IDB] reassignOutboxConversation cursor error', cursorReq.error);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
   // -- Misc ----------------------------------------------------------------
 
   /** Erase all rows from the conversations, messages, and outbox stores in a single transaction. */

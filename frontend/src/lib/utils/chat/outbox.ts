@@ -76,8 +76,6 @@ export interface OutboxController {
   flush: () => Promise<void>;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
   applyPendingStatuses: () => Promise<void>;
-  /** Re-key queued entries from a dead group to its successor (MLS reboot G -> S). */
-  reassign: (fromId: string, toId: string) => Promise<void>;
   /** Stop the internal backoff timer. */
   dispose: () => void;
 }
@@ -87,9 +85,8 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
 
 /**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
- * send time (so epoch changes are transparent), resolves the terminal group (so a rebooted group
- * G is sent into its successor S), is idempotent on the stable messageId (a re-send after a crash
- * is deduplicated by the receiver), and never sends into an unhealthy group.
+ * send time (so epoch changes are transparent), is idempotent on the stable messageId (a re-send
+ * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
  */
 export function createOutbox(deps: OutboxDeps): OutboxController {
   const { conversations, storage, mlsService, pin, log } = deps;
@@ -117,7 +114,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     document.addEventListener('visibilitychange', onVisible);
   }
 
-  /** Locate a message by id across all conversations (it may have migrated to a successor key). */
+  /** Locate a message by id across all conversations (it may have been re-keyed to a duplicate). */
   function findMessage(
     messageId: string
   ): { key: string; convo: Conversation; idx: number } | null {
@@ -390,13 +387,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
     },
 
-    async reassign(fromId: string, toId: string): Promise<void> {
-      if (!storage) return;
-      await storage.reassignOutboxConversation(fromId, toId).catch(() => {});
-      await refreshMirror();
-      runFlush();
-    },
-
     dispose(): void {
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
@@ -443,9 +433,4 @@ export function enqueueOutboxMessage(entry: OutboxEntry): Promise<void> {
 /** Mark loaded messages still queued as `pending` (no-op when none). */
 export function applyOutboxPendingStatuses(): Promise<void> {
   return active ? active.applyPendingStatuses() : Promise.resolve();
-}
-
-/** Re-key queued entries from a dead group to its successor (no-op when none). */
-export function reassignOutboxConversation(fromId: string, toId: string): Promise<void> {
-  return active ? active.reassign(fromId, toId) : Promise.resolve();
 }

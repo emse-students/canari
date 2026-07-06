@@ -17,7 +17,7 @@ import {
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
-import { requestReAdd, recoverForkedGroup } from '$lib/utils/chat/recovery';
+import { requestReAdd } from '$lib/utils/chat/recovery';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -80,7 +80,7 @@ import { isBiometricPromptDismissed } from './sessionBiometrics';
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 /**
- * Builds the RecoveryDeps required by requestReAdd / reboot.
+ * Builds the RecoveryDeps required by requestReAdd / recoverForkedGroup.
  * Centralised here to avoid duplication across login and attemptReconnect.
  */
 export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
@@ -97,16 +97,6 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     deleteConversation: st ? (id: string) => st.deleteConversation(id) : undefined,
     log: cb.log,
   };
-}
-
-/**
- * Recovery callback for a stale-forked group (commit rejected with epoch_mismatch),
- * injected into processPendingInvitations / handleWelcomeRequest. Discards the stale
- * local state and re-requests a Welcome to rejoin at the current epoch.
- */
-export function makeRecoverForkedGroup(ctx: SessionContext, cb: ChatSessionCallbacks) {
-  return (groupId: string, minEpoch?: number) =>
-    recoverForkedGroup(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers, minEpoch);
 }
 
 /**
@@ -162,7 +152,6 @@ export async function processDeviceInvitationsLocally(
       pin: ctx.getPin(),
       conversations: cb.conversations,
       log: cb.log,
-      recoverForkedGroup: makeRecoverForkedGroup(ctx, cb),
     });
   } finally {
     ctx.setIsSyncing(false);
@@ -580,7 +569,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onGroupReady: (() => {
         let t: ReturnType<typeof setTimeout> | null = null;
         return (readyGroupId: string) => {
-          // The group just became sendable (Welcome processed / reboot complete): drain
+          // The group just became sendable (Welcome processed / external join complete): drain
           // the outbox to deliver pending messages and refresh their status.
           flushOutbox();
           void applyOutboxPendingStatuses();
@@ -598,7 +587,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
                 requesterUserId: req.requesterUserId,
                 requesterDeviceId: req.requesterDeviceId,
                 groupId: readyGroupId,
-                recoverForkedGroup: makeRecoverForkedGroup(ctx, cb),
               }).catch(() => {});
             }
           }
@@ -690,7 +678,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             requesterUserId,
             requesterDeviceId,
             groupId,
-            recoverForkedGroup: makeRecoverForkedGroup(ctx, cb),
             onNotReady: (terminalGroupId) => {
               const list = ctx.deferredWelcomeRequests.get(terminalGroupId) ?? [];
               list.push({ requesterUserId, requesterDeviceId });

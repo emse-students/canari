@@ -1504,9 +1504,9 @@ export class MessagingService {
    * `history:`, `group:members:`, and `pending_welcome:`.
    *
    * These groups result from an incomplete deletion: the row is gone but surviving data
-   * causes a client-side recovery loop (welcome_request/reboot with no target) and an
-   * undecipherable ghost history. Soft-deleted groups keep their tombstone row and are
-   * therefore never purged: their successor chain remains client-driven.
+   * causes a client-side recovery loop (welcome_request with no target) and an undecipherable
+   * ghost history. Soft-deleted groups keep their tombstone row and are therefore never purged
+   * here (the 90-day cron reclaims them).
    *
    * @returns the set of `groupId`s still present in `dm_groups` (deliverable).
    */

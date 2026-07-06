@@ -54,7 +54,7 @@ export interface ChatMessage {
   /**
    * Optimistic send state: undefined = received/confirmed, 'pending' = queued in the outbox
    * (group not yet sendable / offline), 'sending' = handed to MLS and in-flight, 'sent' =
-   * confirmed by the server, 'error' = permanent failure (lineage deleted without successor).
+   * confirmed by the server, 'error' = permanent failure (group deleted server-side).
    */
   status?: 'pending' | 'sending' | 'sent' | 'error';
   replyTo?: MessageReference;

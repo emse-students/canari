@@ -20,12 +20,8 @@ beforeEach(() => {
 function makeMls(overrides: Record<string, unknown> = {}) {
   return {
     // Default = group alive on server (neither absent nor tombstone).
-    getGroupMeta: vi
-      .fn()
-      .mockResolvedValue({ groupId: 'mock-group', deletedAt: null, successorId: null }),
-    getGroupServerStatus: vi
-      .fn()
-      .mockResolvedValue({ groupId: 'mock-group', deletedAt: null, successorId: null }),
+    getGroupMeta: vi.fn().mockResolvedValue({ groupId: 'mock-group', deletedAt: null }),
+    getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'mock-group', deletedAt: null }),
     getLocalGroups: vi.fn().mockReturnValue([]),
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
@@ -131,9 +127,7 @@ describe('requestReAdd', () => {
   it('group tombstoned server-side (deletedAt) -> marks the conversation removed, no recovery', async () => {
     const deps = makeDeps({
       mlsService: makeMls({
-        getGroupMeta: vi
-          .fn()
-          .mockResolvedValue({ groupId: 'tomb', deletedAt: '2026-01-01', successorId: null }),
+        getGroupMeta: vi.fn().mockResolvedValue({ groupId: 'tomb', deletedAt: '2026-01-01' }),
       }),
       conversations: makeConversations([
         ['tomb', { id: 'tomb', name: 'Gone', lifecycle: 'active' }],

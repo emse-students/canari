@@ -2,12 +2,11 @@
  * Serialise les mutations de la Map reactive `conversations` PAR groupId (audit H3).
  *
  * Contexte : deux flux concurrents lisaient puis reecrivaient `conversations` autour de plusieurs
- * `await` reseau/stockage, s'entrelacant sur le meme groupId :
- *  - reception d'un Welcome -> `upsertConversation(joinedGroupId)`
- *  - tick 5 min / connexion -> `checkGroupSuccessors` -> `migrateConversation(G -> S)`
- * Si l'un s'intercale entre la LECTURE et l'ECRITURE de l'autre, on obtient une double migration
- * ou un ecrasement des messages en memoire (lost update). `runExclusiveForGroup` garantit qu'une
- * seule section critique par groupId tourne a la fois.
+ * `await` reseau/stockage, s'entrelacant sur le meme groupId (ex. deux receptions de Welcome, ou
+ * un Welcome et une reconciliation de doublons re-cle la meme conversation directe). Si l'un
+ * s'intercale entre la LECTURE et l'ECRITURE de l'autre, on obtient un ecrasement des messages en
+ * memoire (lost update). `runExclusiveForGroup` garantit qu'une seule section critique par groupId
+ * tourne a la fois.
  *
  * INVARIANT ANTI-DEADLOCK : une section verrouillee ici ne doit JAMAIS acquerir le verrou MLS
  * async (`runUnderMlsLock`). Les sections concernees ne touchent que la Map et le stockage

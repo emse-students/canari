@@ -12,8 +12,6 @@ import {
   kickStaleLeaf,
   isGroupActiveOnServer,
   handleDuplicateLeafError,
-  isSenderForkError,
-  parseForkedEpoch,
 } from '$lib/utils/chat/groupActions';
 import { resolveDirectPeerId } from '$lib/utils/chat/conversations';
 import {
@@ -21,7 +19,6 @@ import {
   decideAbsentGroupFate,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
-import { collectKnownSuccessorIds } from '$lib/utils/chat/groupSyncEligibility';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -43,15 +40,8 @@ export async function processPendingInvitations(params: {
   pin: string;
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
-  /**
-   * Recovery of a group whose LOCAL state is forked behind the server (commit rejected
-   * epoch_mismatch). Performs forget + welcome_request to rejoin at the current epoch.
-   * `minEpoch` (known server epoch) rejects stale Welcomes from a diverged branch.
-   * Injected by the session layer (needs recovery timers/conversations).
-   */
-  recoverForkedGroup?: (groupId: string, minEpoch?: number) => Promise<void>;
 }) {
-  const { mlsService, storage, userId, pin, conversations, log, recoverForkedGroup } = params;
+  const { mlsService, storage, userId, pin, conversations, log } = params;
 
   const myDeviceId = mlsService.getDeviceId();
 
@@ -84,57 +74,36 @@ export async function processPendingInvitations(params: {
 
   let totalWelcomes = 0;
 
-  for (const [origGroupId, invitations] of byGroup) {
-    const groupId = origGroupId;
-    const resolved = groupId;
-
+  for (const [groupId, invitations] of byGroup) {
     // "Ready to invite" = conversation active AND group present in local WASM.
-    // After a recovery forgetGroup (fork), the conversation stays isReady but the group
+    // After a recovery forgetGroup, the conversation stays active but the group
     // has left WASM: calling addMember would loop on "Group not found". We fall into the
     // not-ready branch (recovery welcome_request already in flight).
     const readyForInvites =
       conversations.get(groupId)?.lifecycle === 'active' &&
       mlsService.getLocalGroups().includes(groupId);
     if (!readyForInvites) {
-      if (resolved !== origGroupId) {
-        // The terminal successor exists but is not ready yet (Welcome in transit).
-        // onGroupReady() will trigger another pass in 500 ms.
-        log(
-          `[PENDING] ${origGroupId.slice(0, 8)}... -> successor ${resolved.slice(0, 8)}... not ready yet - skip`
-        );
-      } else {
-        // Original group not ready locally. If completely absent (not even an
-        // isReady:false placeholder), send a welcome_request. A placeholder indicates
-        // the Welcome may already be in transit from the queue - do not resend.
-        const isAbsent = !conversations.has(origGroupId) && !conversations.has(resolved);
-        if (isAbsent) {
-          const active = await isGroupActiveOnServer(mlsService, userId, resolved);
-          if (active === false) {
-            log(
-              `[PENDING] Group ${origGroupId} deleted or absent from server - cleaning up invitations (${resolved})`
-            );
-            for (const inv of invitations) {
-              mlsService
-                .deleteDeviceMembership(inv.userId, inv.deviceId, origGroupId)
-                .catch(() => {});
-            }
-          } else {
-            // Group present on server but absent from local WASM -> welcome_request.
-            // The useChatSession watchdog escalates to reboot after 60s if no response.
-            mlsService.sendWelcomeRequest(resolved).catch(() => {});
-            log(
-              `[PENDING] Group ${origGroupId} absent locally -> welcome_request sent for ${resolved}`
-            );
+      // Group not ready locally. If completely absent (not even an active:false placeholder),
+      // send a welcome_request. A placeholder indicates the Welcome may already be in transit
+      // from the queue - do not resend.
+      const isAbsent = !conversations.has(groupId);
+      if (isAbsent) {
+        const active = await isGroupActiveOnServer(mlsService, userId, groupId);
+        if (active === false) {
+          log(`[PENDING] Group ${groupId} deleted or absent from server - cleaning up invitations`);
+          for (const inv of invitations) {
+            mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
           }
         } else {
-          log(`[PENDING] Group ${groupId}: local conversation not ready - skip`);
+          // Group present on server but absent from local WASM -> welcome_request.
+          // The SYNC_WATCHDOG keeps re-driving recovery until the group is back.
+          mlsService.sendWelcomeRequest(groupId).catch(() => {});
+          log(`[PENDING] Group ${groupId} absent locally -> welcome_request sent`);
         }
+      } else {
+        log(`[PENDING] Group ${groupId}: local conversation not ready - skip`);
       }
       continue;
-    }
-
-    if (resolved !== origGroupId) {
-      log(`[PENDING] Group ${origGroupId} -> resolved via successor chain: ${resolved}`);
     }
 
     // Acquire distributed lock to prevent concurrent Add commits (default TTL = worst case
@@ -236,22 +205,6 @@ export async function processPendingInvitations(params: {
         } catch (e) {
           const errStr = String(e);
 
-          // OUR commit (addMember merged locally) was rejected for epoch_mismatch: we lost a
-          // concurrent commit race and are on a divergent branch. All subsequent commits will
-          // be rejected and the winning commit dropped as same-epoch benign -> we never catch
-          // up alone. We forget the stale state (rejecting Welcomes < server epoch) and
-          // re-request a Welcome, then abandon THIS group for this cycle. We escalate at a
-          // gap of 1 (`isSenderForkError`), not only >= 2. [[C7]]
-          const forked = parseForkedEpoch(e);
-          if (isSenderForkError(e)) {
-            log(
-              `[PENDING] ${groupId.slice(0, 8)}... forked (commit rejected) - recovery + abandon`
-            );
-            if (recoverForkedGroup)
-              await recoverForkedGroup(groupId, forked?.serverEpoch).catch(() => {});
-            break;
-          }
-
           // Device already a member: invitation fulfilled (its leaf is already in our MLS tree).
           // Promote the invitation to active so the server stops re-serving this stale pending
           // row on every sync (root cause of the repeated "already a member" reprocessing every
@@ -281,16 +234,6 @@ export async function processPendingInvitations(params: {
                 log,
               });
             } catch (kickErr) {
-              if (isSenderForkError(kickErr)) {
-                log(
-                  `[PENDING] ${groupId.slice(0, 8)}... forked (kick rejected) - recovery + group abandoned`
-                );
-                if (recoverForkedGroup)
-                  await recoverForkedGroup(groupId, parseForkedEpoch(kickErr)?.serverEpoch).catch(
-                    () => {}
-                  );
-                break;
-              }
               log(
                 `[PENDING] Kick error for ${inv.deviceId} in ${groupId}: ${String(kickErr).slice(0, 100)}`
               );
@@ -366,7 +309,6 @@ export async function discoverMissingGroups(params: {
     name: string;
     isGroup: boolean;
     imageMediaId?: string | null;
-    successorId?: string | null;
     deletedAt?: string | null;
   }[] = [];
   let serverFetchSucceeded = false;
@@ -380,9 +322,8 @@ export async function discoverMissingGroups(params: {
   // Some backends can transiently return duplicates; keep first occurrence by groupId.
   const uniqueServerGroups = Array.from(new Map(serverGroups.map((g) => [g.groupId, g])).values());
 
-  // Active groups only: exclude soft-deleted (replaced by a successor).
-  // Soft-deleted groups still exist on the server for recovery routing but should not
-  // be created as local placeholders - checkGroupSuccessors handles the migration.
+  // Active groups only: exclude soft-deleted tombstones (kept server-side for the 90-day
+  // recovery window but never re-created as local placeholders).
   const activeServerGroups = uniqueServerGroups.filter((g) => !g.deletedAt);
 
   // ── Orphan cleanup (server membership = source of truth) ─────────────────
@@ -391,7 +332,6 @@ export async function discoverMissingGroups(params: {
   // Only when getUserGroups succeeded (never purge on transient network errors).
   if (serverFetchSucceeded) {
     const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
-    const knownSuccessorIds = collectKnownSuccessorIds(uniqueServerGroups);
     // Groups dismissed by THIS user (manual deletion/leave on one device): must be purged
     // on ALL their devices (rules 3 & 5), not shown with the banner.
     // Best-effort (`[]` on error -> never purge on doubt).
@@ -400,14 +340,6 @@ export async function discoverMissingGroups(params: {
 
     for (const groupId of mlsService.getLocalGroups()) {
       if (isChannelConversationId(groupId)) continue;
-      const serverEntry = uniqueServerGroups.find((g) => g.groupId === groupId);
-      if (
-        serverEntry?.successorId &&
-        mlsService.getLocalGroups().includes(serverEntry.successorId)
-      ) {
-        if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
-        continue;
-      }
       if (!serverGroupIds.has(groupId)) {
         if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
       }
@@ -445,13 +377,11 @@ export async function discoverMissingGroups(params: {
 
       if (!serverGroupIds.has(convo.id)) {
         // Fate decision centralised in `decideAbsentGroupFate` (single source shared with
-        // other reconcilers). We only query the server for genuinely undecided cases: a known
-        // tombstone successor or a conv already `deletedRemotely` short-circuit without a
-        // network call (migration / manual deletion handle them).
-        const isKnownSuccessor = knownSuccessorIds.has(convo.id);
+        // other reconcilers). We only query the server for genuinely undecided cases: a conv
+        // already `deletedRemotely` short-circuits without a network call.
         let serverStatus: GroupServerStatus = { kind: 'unknown' };
         let isStillUserMember: boolean | null = null;
-        if (!isKnownSuccessor && convo.lifecycle !== 'removed') {
+        if (convo.lifecycle !== 'removed') {
           serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(convo.id));
           // Anti-race: only re-validate our actual membership on a LIVE group absent from our
           // getUserGroups snapshot (which may be stale for a group just created/joined).
@@ -463,7 +393,6 @@ export async function discoverMissingGroups(params: {
         }
 
         const fate = decideAbsentGroupFate({
-          isKnownSuccessor,
           lifecycle: convo.lifecycle,
           serverStatus,
           isStillUserMember,
@@ -495,8 +424,8 @@ export async function discoverMissingGroups(params: {
   }
 
   // Include both ready and placeholder conversations to avoid recreating
-  // the same pending entry on each login.
-  // Only create placeholders for active groups - soft-deleted ones are handled by checkGroupSuccessors.
+  // the same pending entry on each login. Only active groups get placeholders
+  // (soft-deleted tombstones are skipped via activeServerGroups above).
   const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
   const missing = activeServerGroups.filter((g) => !localGroupIds.has(g.groupId));
 
@@ -759,12 +688,6 @@ export async function handleWelcomeRequest(params: {
   groupId: string;
   /** Called when the terminal group exists but is not ready yet (Welcome in transit). */
   onNotReady?: (terminalGroupId: string) => void;
-  /**
-   * Recovery of a group whose LOCAL state is forked behind the server (commit rejected
-   * epoch_mismatch during add). Performs forget + welcome_request.
-   * `minEpoch` (known server epoch) rejects stale Welcomes from a diverged branch.
-   */
-  recoverForkedGroup?: (groupId: string, minEpoch?: number) => Promise<void>;
 }) {
   const {
     mlsService,
@@ -777,13 +700,11 @@ export async function handleWelcomeRequest(params: {
     requesterDeviceId,
     groupId: requestedGroupId,
     onNotReady,
-    recoverForkedGroup,
   } = params;
 
   // Anti-self guard: the gateway broadcasts welcome_requests to ALL devices of the user,
   // including the sender. A device must never handle its own request: it would add itself
-  // to the MLS tree and kick its own leaf (self-eviction), leaving the group it just created
-  // and restarting the successor cascade.
+  // to the MLS tree and kick its own leaf (self-eviction), leaving the group it just created.
   if (requesterUserId === userId && requesterDeviceId === mlsService.getDeviceId()) {
     log(`[WELCOME_REQ] Request from self (${requesterDeviceId.slice(0, 12)}...) - ignored`);
     return;
@@ -969,23 +890,14 @@ export async function handleWelcomeRequest(params: {
     // Send the full history to the new member. These are APPLICATION MESSAGES (not a commit, do not
     // go through validateCommit): the recipient has already joined via the Welcome (same epoch as
     // us). The bundle arrives after the Welcome client-side (order guaranteed by MLS) and reads
-    // IndexedDB (including messages migrated from the predecessor via migrateConversation). [[C8]]
+    // IndexedDB. [[C8]]
     await sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
       log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
     );
   } catch (e) {
     const errStr = String(e);
 
-    // OUR commit (addMember merged locally) was rejected for epoch_mismatch: divergent branch
-    // after a lost concurrent race, we never catch up alone (the winning commit is dropped as
-    // same-epoch benign). We forget the stale state and re-request a Welcome for ourselves.
-    // We escalate at a gap of 1 (`isSenderForkError`). [[C7]]
-    const forked = parseForkedEpoch(e);
-    if (isSenderForkError(e)) {
-      log(`[WELCOME_REQ] ${groupId.slice(0, 8)}... forked (commit rejected) - recovery`);
-      if (recoverForkedGroup)
-        await recoverForkedGroup(groupId, forked?.serverEpoch).catch(() => {});
-    } else if (errStr.includes('ALREADY_MEMBER')) {
+    if (errStr.includes('ALREADY_MEMBER')) {
       // Device already a member: request fulfilled (will join via queued Welcome).
       log(
         `[WELCOME_REQ] ${requesterDeviceId} already a member of ${groupId.slice(0, 8)}... - skip`
@@ -1002,16 +914,7 @@ export async function handleWelcomeRequest(params: {
           log,
         });
       } catch (kickErr) {
-        const kickForked = parseForkedEpoch(kickErr);
-        if (isSenderForkError(kickErr)) {
-          log(`[WELCOME_REQ] ${groupId.slice(0, 8)}... forked (kick rejected) - recovery`);
-          if (recoverForkedGroup)
-            await recoverForkedGroup(groupId, kickForked?.serverEpoch).catch(() => {});
-        } else {
-          log(
-            `[WELCOME_REQ] Kick error for ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`
-          );
-        }
+        log(`[WELCOME_REQ] Kick error for ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`);
       }
     } else {
       log(`[WELCOME_REQ] Error for ${requesterDeviceId}: ${errStr.slice(0, 100)}`);

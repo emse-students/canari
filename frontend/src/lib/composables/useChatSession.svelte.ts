@@ -74,9 +74,8 @@ export function useChatSession() {
   /** True once the circuit is open; cleared by an explicit manual retry. */
   let reconnectCircuitOpen = false;
   /**
-   * Reboot timers armed by `onGroupMissing` at connection time.
-   * Independent from syncWatchdog: ensures reboot even if discoverMissingGroups fails.
-   * Cleared on logout.
+   * Per-group recovery bookkeeping timers used by the `requestReAdd` seam (cancelReAdd clears
+   * them). Shared across the connection sync and the syncWatchdog. Cleared on logout.
    */
   const connectionRecoveryTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
   /** welcome_requests received while the target group was not yet ready.

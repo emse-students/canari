@@ -681,7 +681,7 @@ export class MlsDeliveryApi {
     return await res.json();
   }
 
-  /** Returns all groups `userId` belongs to, including tombstones with successor/deleted metadata. */
+  /** Returns all groups `userId` belongs to, including soft-deleted tombstones (`deletedAt`). */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
       headers: await this.auth(),
@@ -744,7 +744,6 @@ export class MlsDeliveryApi {
         typeof (g as { isGroup?: boolean }).isGroup === 'boolean'
           ? (g as { isGroup: boolean }).isGroup
           : undefined,
-      successorId: (g as { successorId?: string | null }).successorId ?? null,
       deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
     };
   }
@@ -796,7 +795,7 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Fetches group metadata - name, `successorId`, `deletedAt`. Returns `null` on 404 or error. */
+  /** Fetches group metadata - name, `deletedAt`. Returns `null` on 404 or error. */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
@@ -817,7 +816,6 @@ export class MlsDeliveryApi {
           typeof (g as { isGroup?: boolean }).isGroup === 'boolean'
             ? (g as { isGroup: boolean }).isGroup
             : undefined,
-        successorId: (g as { successorId?: string | null }).successorId ?? null,
         deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
       };
     } catch {

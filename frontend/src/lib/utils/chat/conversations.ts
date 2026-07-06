@@ -367,11 +367,6 @@ export async function mergeDirectConversationDuplicates(
   const duplicatesToMerge: Array<{
     canonical: ConversationMeta;
     duplicate: ConversationMeta;
-    /** true when duplicate is a proper ancestor of canonical (already soft-deleted
-     *  server-side via claimSuccessor). deleteGroupOnServer must be skipped in this
-     *  case: the backend follows the full successor chain and would cascade-delete
-     *  the active canonical group. */
-    duplicateIsAncestor: boolean;
   }> = [];
 
   for (const [peer, metas] of directByPeer) {
@@ -405,15 +400,15 @@ export async function mergeDirectConversationDuplicates(
 
     for (const meta of metas) {
       if (meta.id === canonical.id) continue;
-      // No successor lineage anymore: independent duplicates are merged into the canonical (most
-      // recent), never treated as a predecessor to keep.
-      duplicatesToMerge.push({ canonical, duplicate: meta, duplicateIsAncestor: false });
+      // Independent duplicates (same DM peer, concurrently created groups) are merged into the
+      // canonical (most recent).
+      duplicatesToMerge.push({ canonical, duplicate: meta });
     }
   }
 
   if (duplicatesToMerge.length === 0) return convMetas;
 
-  for (const { canonical, duplicate, duplicateIsAncestor } of duplicatesToMerge) {
+  for (const { canonical, duplicate } of duplicatesToMerge) {
     if (canonical.id === duplicate.id) continue;
     try {
       const canonicalMessages = await storage.getMessages(canonical.id, pin);
@@ -428,10 +423,7 @@ export async function mergeDirectConversationDuplicates(
       await storage.deleteConversation(duplicate.id);
       // Supprimer le groupe orphelin côté serveur pour éviter qu'il réapparaisse
       // au prochain login via discoverMissingGroups.
-      // Exception : si le duplicate est un ancêtre du canonical (successorId = canonical.id),
-      // le serveur l'a déjà soft-deleted via claimSuccessor. Appeler deleteGroupOnServer
-      // suivrait la chaîne successeur et supprimerait aussi le canonical actif.
-      if (mlsService && !duplicateIsAncestor) {
+      if (mlsService) {
         try {
           await mlsService.deleteGroupOnServer(duplicate.id);
         } catch {

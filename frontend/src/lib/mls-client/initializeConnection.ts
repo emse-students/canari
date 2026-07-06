@@ -13,15 +13,14 @@ export interface ConnectionDeps {
   processDeviceInvitationsLocally: () => Promise<void>;
   log: (msg: string) => void;
   /**
-   * Called for each group absent from WASM at connection time.
-   * Must send a `welcome_request` AND arm a reboot timer (60 s).
-   * When omitted, falls back to `sendWelcomeRequest` alone (no timer - less reliable).
+   * Called for each group absent from WASM at connection time. Drives the single recovery seam
+   * (`requestReAdd`: external join, else welcome_request). When omitted, falls back to
+   * `sendWelcomeRequest` alone (the session watchdog takes over the cadence when available).
    */
   onGroupMissing?: (groupId: string) => Promise<void>;
   /**
-   * Called when sync detects that a group was deleted server-side
-   * (deletedAt set, no successor). Lets the UI mark the conversation
-   * `deletedRemotely` instead of removing it silently.
+   * Called when sync detects that a group was deleted server-side (deletedAt set). Lets the UI
+   * mark the conversation `deletedRemotely` instead of removing it silently.
    */
   onGroupDeletedRemotely?: (groupId: string) => void;
 }
@@ -31,10 +30,9 @@ export type SyncAfterConnectDeps = Pick<
   'mlsService' | 'userId' | 'pin' | 'processDeviceInvitationsLocally' | 'log' | 'onGroupMissing'
 > & {
   /**
-   * Called when sync detects that a group was deleted server-side
-   * (deletedAt set, no successor) and the conversation still exists locally.
-   * The callback must set deletedRemotely=true on the conversation so
-   * the UI shows the remote-deletion banner.
+   * Called when sync detects that a group was deleted server-side (deletedAt set) and the
+   * conversation still exists locally. The callback must set deletedRemotely=true on the
+   * conversation so the UI shows the remote-deletion banner.
    */
   onGroupDeletedRemotely?: (groupId: string) => void;
 };
@@ -91,13 +89,11 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
 /**
  * Post-WS-open: publish KeyPackages and reconcile group state with the server.
  *
- * Single pass over getUserGroups (no separate Bloc1/Bloc2).
- * For each group active on the server with no local WASM state:
- *   - if `onGroupMissing` is provided: calls it (sends welcome_request + arms 60 s reboot timer).
+ * Single pass over getUserGroups. For each group active on the server with no local WASM state:
+ *   - if `onGroupMissing` is provided: calls it (recovery seam - external join / welcome_request).
  *   - otherwise: sendWelcomeRequest alone (useChatSession watchdog takes over when available).
  *
- * Successors: when a group has a successor, the old group's WASM state is purged.
- * Deleted groups without a successor: WASM state purged.
+ * Deleted groups (tombstones): WASM state purged and the UI notified.
  */
 export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Promise<void> {
   const { mlsService, userId, pin, processDeviceInvitationsLocally, log } = deps;
@@ -128,7 +124,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // `getUserGroups` throws on HTTP errors (502/503/timeout during a CD redeploy).
   // Distinguish "fetch failed" from "0 real groups" to NEVER purge WASM state
   // based on a transient empty list - otherwise all groups would be forgotten,
-  // every conversation would become not-ready and SYNC_WATCHDOG would reboot them all.
+  // every conversation would become not-ready and SYNC_WATCHDOG would re-add them all.
   let serverFetchOk = false;
   try {
     groups = await mlsService.getUserGroups(userId);
@@ -142,24 +138,14 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   const localGroups = new Set(mlsService.getLocalGroups());
   let stateMutated = false;
 
-  // Dedup set: a group and its successor must trigger only one welcome_request
-  // (fix R3: no more duplicate Bloc1+Bloc2 calls).
-  const seen = new Set<string>();
-  // Tous les IDs de groupes connus du serveur (pour nettoyer les orphelins WASM)
+  // All group IDs known to the server (used to purge WASM orphans in step 3).
   const serverIds = new Set<string>();
 
   for (const g of groups) {
-    // Enregistrer tous les IDs connus (groupe + successeur)
     serverIds.add(g.groupId);
-    if (g.successorId) serverIds.add(g.successorId);
 
-    // The target group is the successor when present, otherwise the group itself.
-    const targetId = g.successorId ?? g.groupId;
-    if (seen.has(targetId)) continue;
-    seen.add(targetId);
-
-    // Group deleted without a successor → purge WASM state and notify the UI.
-    if (g.deletedAt && !g.successorId) {
+    // Group deleted server-side (tombstone) -> purge WASM state and notify the UI.
+    if (g.deletedAt) {
       if (localGroups.has(g.groupId)) {
         mlsService.forgetGroup(g.groupId);
         stateMutated = true;
@@ -169,61 +155,31 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       continue;
     }
 
-    // Forget the old group only if the successor is ALREADY in WASM
-    // (we already joined B in a previous session).
-    // If B has not been joined yet, keep A to decrypt its pending messages
-    // before purging - the purge will happen in handleWelcome() as soon as
-    // B is joined in this same session.
-    if (g.successorId && localGroups.has(g.groupId) && localGroups.has(targetId)) {
-      mlsService.forgetGroup(g.groupId);
-      stateMutated = true;
-      log(`[SYNC] WASM removed (successor already joined): ${g.groupId.slice(0, 8)}…`);
-    }
-
-    // Groupe cible absent du WASM.
-    if (!localGroups.has(targetId)) {
+    // Group absent from WASM -> drive recovery.
+    if (!localGroups.has(g.groupId)) {
       // Do not send a welcome_request if KPs are not published:
       // the host would not find our KP and could not invite us.
       if (!keyPackagePublished) {
-        log(`[SYNC] ${targetId.slice(0, 8)}… absent - welcome_request deferred (KP not published)`);
+        log(
+          `[SYNC] ${g.groupId.slice(0, 8)}… absent - welcome_request deferred (KP not published)`
+        );
         continue;
       }
-      const targetEntry = groups.find((x) => x.groupId === targetId);
-      if (targetEntry?.deletedAt && !targetEntry?.successorId) {
-        // Terminal successor soft-deleted without its own successor.
-        // deleteGroup erased dm_group_members → the server cannot forward to anyone.
-        // Still trigger onGroupMissing(targetId): requestReAdd arms a 60 s timer
-        // that calls reboot(targetId) → findAncestorWithMembers walks up the chain
-        // to g.groupId whose dm_group_members is intact (claimSuccessor does not purge it).
-        // The watchdog alone was insufficient: it would have called reboot(g.groupId)
-        // → joinSuccessor(g.groupId, targetId) → welcome_request for 0 members → stuck.
-        log(`[SYNC] Terminal group ${targetId.slice(0, 8)}… deleted - recovery via ancestor`);
-        if (deps.onGroupMissing) {
-          await deps.onGroupMissing(targetId).catch(() => {});
-        }
+      if (deps.onGroupMissing) {
+        await deps.onGroupMissing(g.groupId).catch(() => {});
+        // onGroupMissing (requestReAdd) handles its own logging based on the actual outcome.
       } else {
-        if (deps.onGroupMissing) {
-          await deps.onGroupMissing(targetId).catch(() => {});
-          // onGroupMissing (requestReAdd) handles its own logging based on the actual outcome.
-        } else {
-          await mlsService.sendWelcomeRequest(targetId).catch(() => {});
-          log(
-            g.successorId
-              ? `[SYNC] welcome_request → successeur ${targetId.slice(0, 8)}… (remplace ${g.groupId.slice(0, 8)}…)`
-              : `[SYNC] welcome_request → ${targetId.slice(0, 8)}…`
-          );
-        }
+        await mlsService.sendWelcomeRequest(g.groupId).catch(() => {});
+        log(`[SYNC] welcome_request → ${g.groupId.slice(0, 8)}…`);
       }
     }
   }
 
   // 3. Purge WASM state for groups no longer known to the server.
   // Uses the `localGroups` snapshot captured at the start of the function (same instant
-  // as `serverIds`): prevents purging groups created by REBOOT during the async
-  // operations in step 2, which would trigger an infinite loop (migrateConversation
-  // would point to a group absent from WASM).
+  // as `serverIds`): prevents purging groups joined during the async operations in step 2.
   //
-  // Anti-reboot-storm guard: NEVER purge if the server list is unreliable.
+  // Anti-purge-storm guard: NEVER purge if the server list is unreliable.
   //  - `serverFetchOk` false: getUserGroups failed (server unavailable during
   //    a redeploy) → serverIds is empty, all groups would be forgotten.
   //  - empty list while we hold local groups: almost certainly a transient empty

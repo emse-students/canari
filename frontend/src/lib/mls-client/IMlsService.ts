@@ -51,23 +51,21 @@ export interface BulkIngestObserver {
   onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
 }
 
-/** Row from `GET /api/mls/users/:id/groups` (includes successor routing when soft-deleted). */
+/** Row from `GET /api/mls/users/:id/groups`. */
 export type UserGroupRow = {
   groupId: string;
   name: string;
   isGroup: boolean;
   /** Media-service id of the group avatar; null when the group has no custom photo. */
   imageMediaId?: string | null;
-  successorId?: string | null;
   deletedAt?: string | null;
 };
 
-/** Metadata from `GET /api/mls/groups/:id` for recovery / successor checks. */
+/** Metadata from `GET /api/mls/groups/:id` for recovery checks (`deletedAt` = tombstone). */
 export type GroupMeta = {
   groupId: string;
   name?: string;
   isGroup?: boolean;
-  successorId?: string | null;
   deletedAt?: string | null;
 };
 
@@ -334,7 +332,7 @@ export interface IMlsService {
   getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
   /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<UserGroupRow[]>;
-  /** Fetches server metadata for one group (successor link, soft-delete). */
+  /** Fetches server metadata for one group (name, soft-delete tombstone). */
   getGroupMeta(groupId: string): Promise<GroupMeta | null>;
   /**
    * Statut serveur d'un groupe en distinguant l'absence CONFIRMEE (`'absent'` : ligne `dm_groups`

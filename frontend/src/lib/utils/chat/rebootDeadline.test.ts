@@ -1,29 +1,21 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  markGroupNotReady,
-  clearGroupNotReady,
-  groupNotReadyForMs,
-  enumerateNotReadyGroups,
-} from './rebootDeadline';
+import { markGroupNotReady, clearGroupNotReady, enumerateNotReadyGroups } from './rebootDeadline';
 
 beforeEach(() => {
   if (typeof localStorage !== 'undefined') localStorage.clear();
 });
 
 describe('rebootDeadline registry', () => {
-  it('marks a group not-ready and reports elapsed time, idempotently keeping the earliest instant', () => {
+  it('marks a group not-ready, idempotently', () => {
     markGroupNotReady('user-a', 'g1');
-    const first = groupNotReadyForMs('user-a', 'g1');
-    expect(first).not.toBeNull();
-    // A second mark must not reset the wall-clock deadline.
     markGroupNotReady('user-a', 'g1');
-    expect(groupNotReadyForMs('user-a', 'g1')).toBeGreaterThanOrEqual(first as number);
+    expect(enumerateNotReadyGroups('user-a')).toEqual(['g1']);
   });
 
   it('clears the marker', () => {
     markGroupNotReady('user-a', 'g1');
     clearGroupNotReady('user-a', 'g1');
-    expect(groupNotReadyForMs('user-a', 'g1')).toBeNull();
+    expect(enumerateNotReadyGroups('user-a')).toEqual([]);
   });
 
   it('enumerates only the current user groups, decoded back to bare groupIds', () => {

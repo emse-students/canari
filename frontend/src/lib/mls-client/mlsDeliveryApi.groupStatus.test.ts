@@ -54,7 +54,6 @@ describe('getGroupServerStatus', () => {
           id: 'g1',
           name: 'Equipe',
           isGroup: true,
-          successorId: null,
           deletedAt: null,
         }),
         { status: 200 }

@@ -141,7 +141,6 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
     });
     const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
     const log = vi.fn();
-    const recoverForkedGroup = vi.fn().mockResolvedValue(undefined);
 
     await processPendingInvitations({
       mlsService,
@@ -150,12 +149,10 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       pin: 'pin',
       conversations,
       log,
-      recoverForkedGroup,
     });
 
-    // No destructive fork recovery, and the group is not abandoned: both invitations are still
-    // attempted (a benign reject just retries next cycle).
-    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    // The group is not abandoned: both invitations are still attempted (a benign reject just
+    // retries next cycle).
     expect(mlsService.addMember).toHaveBeenCalledTimes(2);
   });
 
@@ -178,7 +175,6 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
     });
     const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
     const log = vi.fn();
-    const recoverForkedGroup = vi.fn().mockResolvedValue(undefined);
 
     await processPendingInvitations({
       mlsService,
@@ -187,10 +183,8 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       pin: 'pin',
       conversations,
       log,
-      recoverForkedGroup,
     });
 
-    expect(recoverForkedGroup).not.toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('invitation fulfilled'));

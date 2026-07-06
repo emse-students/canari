@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   buildUserGroupSyncIndex,
   isGroupEligibleForMlsRecovery,
-  resolveActiveGroupTarget,
   findActiveDirectGroupForPeer,
 } from './groupSyncEligibility';
 
@@ -25,46 +24,26 @@ describe('groupSyncEligibility', () => {
     expect(isGroupEligibleForMlsRecovery('any', null)).toBe(true);
   });
 
-  it('resolves successor from a deleted tombstone', () => {
-    const index = buildUserGroupSyncIndex([
-      {
-        groupId: 'old',
-        name: 'Old',
-        isGroup: true,
-        deletedAt: '2026-01-01',
-        successorId: 'new',
-      },
-      { groupId: 'new', name: 'New', isGroup: true },
-    ]);
-    expect(resolveActiveGroupTarget('old', index)).toBe('new');
-    expect(isGroupEligibleForMlsRecovery('old', index, vi.fn())).toBe(false);
-  });
-
-  it('resolves successor id even when successor is not yet in getUserGroups', () => {
-    const index = buildUserGroupSyncIndex([
-      {
-        groupId: 'old',
-        name: 'alice::bob',
-        isGroup: false,
-        deletedAt: '2026-01-01',
-        successorId: 'new',
-      },
-    ]);
-    expect(resolveActiveGroupTarget('old', index)).toBe('new');
+  it('finds the live direct group for a peer, ignoring deleted tombstones', () => {
     expect(
       findActiveDirectGroupForPeer(
         [
-          {
-            groupId: 'old',
-            name: 'alice::bob',
-            isGroup: false,
-            deletedAt: '2026-01-01',
-            successorId: 'new',
-          },
+          { groupId: 'dead', name: 'alice::bob', isGroup: false, deletedAt: '2026-01-01' },
+          { groupId: 'live', name: 'bob::alice', isGroup: false },
         ],
         'alice',
         'bob'
       )
-    ).toEqual({ groupId: 'new', tombstoneGroupId: 'old' });
+    ).toBe('live');
+  });
+
+  it('returns null when only a deleted tombstone matches the peer', () => {
+    expect(
+      findActiveDirectGroupForPeer(
+        [{ groupId: 'old', name: 'alice::bob', isGroup: false, deletedAt: '2026-01-01' }],
+        'alice',
+        'bob'
+      )
+    ).toBeNull();
   });
 });

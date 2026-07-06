@@ -36,44 +36,6 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
 }
 
 /**
- * Detects a rejected-commit error indicating the local MLS state is forked BEHIND the server
- * (the sent epoch is strictly less than the server `activeEpoch`).
- *
- * Recognised format (legacy `server epoch:.., sent:..` marker; retained for the successor/fork
- * recovery machinery pending its Phase 4 retirement):
- *   `Commit rejected: epoch_mismatch (server epoch: 23, sent: 7)`
- *
- * Returns `{ serverEpoch, sentEpoch }` if the device is behind, or `null`
- * (different error type, or server epoch <= sent epoch).
- */
-export function parseForkedEpoch(err: unknown): { serverEpoch: number; sentEpoch: number } | null {
-  const m = String(err).match(/server epoch:\s*(\d+),\s*sent:\s*(\d+)/);
-  if (!m) return null;
-  const serverEpoch = Number(m[1]);
-  const sentEpoch = Number(m[2]);
-  if (!Number.isFinite(serverEpoch) || !Number.isFinite(sentEpoch)) return null;
-  if (serverEpoch <= sentEpoch) return null;
-  return { serverEpoch, sentEpoch };
-}
-
-/**
- * Returns true if the rejected-commit error indicates THIS device forked by already merging its
- * own commit (SEND path: add/remove/kick followed by `sendCommit`). A single epoch gap suffices:
- * we lost a concurrent commit race, already advanced locally to N+1 on a divergent branch, and
- * the winning commit (N -> N+1 on the other branch) will be dropped as same-epoch benign (cf.
- * mls-core process_incoming) -> never adopted -> permanent fork. The only remedy is forget +
- * re-Welcome to adopt the winning branch. [[C7]]
- *
- * NOT to be confused with a receiver one epoch behind (which catches up on its own when the
- * missing commit arrives via the queue): here the local epoch has already been merged by OUR
- * commit. Since `parseForkedEpoch` returns non-null only for `serverEpoch > sentEpoch`, any
- * `epoch_mismatch` received AFTER a local merge (send path) is by definition a fork.
- */
-export function isSenderForkError(err: unknown): boolean {
-  return parseForkedEpoch(err) !== null;
-}
-
-/**
  * Deletes an MLS group:
  *  1. Broadcasts "groupDeleted" to all members BEFORE server deletion.
  *  2. Deletes the group server-side (DB + Redis).
@@ -402,17 +364,14 @@ export async function kickStaleLeaf(
   log: (msg: string) => void
 ): Promise<void> {
   const deviceIdentity = `${targetUserId}:${targetDeviceId}`;
-  // The remove generates a commit applied LOCALLY then validated server-side. If the server
-  // rejects it for epoch_mismatch (OUR state is forked), the error must NOT be swallowed:
-  // the commit already advanced the local epoch and retrying would only deepen the fork
-  // (kick/re-add storm). We surface the error so the caller triggers recovery (forget +
-  // welcome_request). We escalate at a gap of 1 (`isSenderForkError`): here the local epoch
-  // has already been merged, so even a gap of 1 is a real concurrent fork, not a simple
-  // receiver lag. Other errors (leaf already absent, etc.) remain best-effort. [[C7]]
+  // The remove is staged then validated server-side (runCommitTransaction): a server rejection
+  // clears the staged commit without advancing the local epoch, so there is no fork to surface -
+  // the remove is genuinely best-effort. Rung-1 replay heals any lag on the next sync. Other
+  // errors (leaf already absent, etc.) are equally best-effort.
   try {
     await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
-  } catch (e) {
-    if (isSenderForkError(e)) throw e;
+  } catch {
+    /* best-effort: no fork possible under the staged-commit regime */
   }
   await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
   log(`[KICK] Stale leaf ${targetUserId}:${targetDeviceId} removed from ${groupId}`);
@@ -445,15 +404,8 @@ function serializeForBundle(m: StoredMessage) {
  * Sends the full local history of `groupId` to active group members, encrypted under the
  * current MLS epoch, in chunks of `chunkSize` messages (default 200).
  *
- * Use cases:
- *  - New member invitation (handleWelcomeRequest, processPendingInvitations):
- *    the bundle arrives after the Welcome, guaranteed in-order by MLS.
- *  - CAS-won reboot: sent after inviteMembers so re-invited members get the history
- *    migrated from the dead group.
- *  - joinSuccessor: redistributes the freshly-migrated history to the successor creator
- *    who had an empty bundle (device with no local history at reboot time).
- *  - resumePendingCasBundles: resent at startup if the device crashed between writing
- *    the `cas_winner:{G}` key and deleting it.
+ * Used on new member invitation (handleWelcomeRequest, processPendingInvitations): the bundle
+ * arrives after the Welcome, guaranteed in-order by MLS.
  *
  * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
  * Stops at the first chunk error to avoid spamming the network.

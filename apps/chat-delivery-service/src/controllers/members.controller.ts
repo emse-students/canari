@@ -252,7 +252,7 @@ export class MembersController {
    * - MLS tree occupancy / stale-leaf detection (device-level identity required)
    * - Repopulating the Redis `group:members:` routing cache after a cache miss
    *
-   * Do NOT use this to determine which users to invite into a successor group.
+   * Do NOT use this to determine which users may be re-invited on recovery.
    * A group can have zero active device entries even though users still belong to it
    * (e.g. after a device fresh-start clears all DeviceGroupMembership rows). Use
    * `GET mls/groups/:groupId/user-members` (dm_group_members) for that purpose.

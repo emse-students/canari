@@ -414,8 +414,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   /**
    * Purge soft-deleted group tombstones (deletedAt != null) older than 90 days,
    * along with their GroupMember and DeviceGroupMembership rows.
-   * The tombstone is kept for 90 days so that lagging devices can still discover
-   * the successor chain; after that the data has no recovery value.
+   * The tombstone is kept for 90 days so that lagging devices can still observe the
+   * deletion (deletedAt) and converge; after that the data has no recovery value.
    */
   private async cleanupSoftDeletedGroups() {
     const TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;

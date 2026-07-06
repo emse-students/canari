@@ -43,7 +43,6 @@ function makeEncryptedStorage(stableSalt: Uint8Array): IStorage & { rows: Encryp
     getOutboxEntriesForConversation: vi.fn().mockResolvedValue([]),
     updateOutboxEntry: vi.fn().mockResolvedValue(undefined),
     deleteOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    reassignOutboxConversation: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),
   };
 }

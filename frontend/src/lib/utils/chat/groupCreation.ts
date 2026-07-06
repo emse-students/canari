@@ -484,15 +484,9 @@ export async function startNewConversation(
   // Names can be "alice::bob" or "bob::alice" - check both orderings.
   try {
     const serverGroups = await mlsService.getUserGroups(userId);
-    const resolved = findActiveDirectGroupForPeer(serverGroups, userId, contact);
-    if (resolved) {
-      const key = resolved.groupId;
-      const deadKey = resolved.tombstoneGroupId;
-      log(
-        deadKey
-          ? `[1v1] Active group ${key.slice(0, 8)}... (successor of ${deadKey.slice(0, 8)}...) - loading.`
-          : `[1v1] Existing server group found (${key}) - loading without re-creation.`
-      );
+    const key = findActiveDirectGroupForPeer(serverGroups, userId, contact);
+    if (key) {
+      log(`[1v1] Existing server group found (${key}) - loading without re-creation.`);
 
       const ensureDirectConvo = async (convoKey: string, ready: boolean) => {
         const existing = conversations.get(convoKey);
@@ -533,13 +527,9 @@ export async function startNewConversation(
 
       // MLS state missing locally - recover via the external-join / welcome_request seam.
       log(`[1v1] MLS state missing for ${key} - triggering recovery...`);
-      if (deadKey && conversations.has(deadKey) && !conversations.has(key)) {
-        await ensureDirectConvo(deadKey, false);
-      } else {
-        await ensureDirectConvo(key, false);
-      }
+      await ensureDirectConvo(key, false);
       try {
-        await requestReAdd(deadKey ?? key, {
+        await requestReAdd(key, {
           mlsService,
           storage: deps.storage,
           userId,

@@ -46,10 +46,8 @@ vi.mock('$lib/utils/chat/messageUtils', async (importOriginal) => {
 });
 
 vi.mock('$lib/utils/chat/recovery', () => ({
-  recoverDeadGroup: vi.fn().mockResolvedValue(undefined),
   requestReAdd: vi.fn().mockResolvedValue(undefined),
   cancelReAdd: vi.fn(),
-  reboot: vi.fn().mockResolvedValue(undefined),
   resetReAddCooldowns: vi.fn(),
 }));
 

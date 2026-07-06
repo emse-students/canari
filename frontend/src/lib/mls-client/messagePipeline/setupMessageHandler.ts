@@ -240,9 +240,8 @@ async function handleWelcome({
     return true;
   }
 
-  // Critical WASM section under the MLS lock. Terminal group resolution and the recovery
-  // checks above run outside the lock (pure network); only this contiguous WASM block
-  // (processWelcome → predecessor purge → replay) must be exclusive.
+  // Critical WASM section under the MLS lock. The recovery checks above run outside the lock
+  // (pure network); only this contiguous WASM block (processWelcome → replay) must be exclusive.
   // The drain does not auto-lock Welcomes (see MlsPerGroupScheduler.drain), which
   // avoids holding the mutex during the network preamble and blocking catch-up.
   await mlsService.runUnderMlsLock(async () => {
@@ -261,46 +260,14 @@ async function handleWelcome({
       // Persist immediately after Welcome (epoch initialised).
       statePersister.persistNow();
 
-      // Purge from WASM any predecessors whose successor is the group we just joined.
-      // Isolated in its own try/catch: an error here (e.g. forgetGroup on an already-absent group)
-      // must not fall into the processWelcome catch and trigger a spurious welcome_request.
-      try {
-        const otherLocalIds = mlsService.getLocalGroups().filter((id) => id !== joinedGroupId);
-        // Pre-fetch metas in parallel: sequential getGroupMeta calls would multiply
-        // round-trips held under the MLS lock.
-        const metas = await Promise.all(
-          otherLocalIds.map((predId) =>
-            mlsService.getGroupMeta(predId).then(
-              (m) => ({ predId, m }),
-              () => ({ predId, m: null })
-            )
-          )
-        );
-        let purgedAny = false;
-        for (const { predId, m } of metas) {
-          if (m?.successorId === joinedGroupId) {
-            mlsService.forgetGroup(predId);
-            purgedAny = true;
-            log(`[WELCOME] Predecessor ${predId.slice(0, 8)}… purged from WASM (successor joined)`);
-          }
-        }
-        // Single encrypted checkpoint (Argon2) for all purges, not one per predecessor.
-        if (purgedAny) statePersister.persistNow();
-      } catch (e) {
-        log(`[WELCOME] Predecessor purge error (non-blocking): ${String(e).slice(0, 80)}`);
-      }
-
-      // Purging the old group from the Map and IndexedDB is delegated:
-      // - Map: upsertConversation (below) removes the predecessor entry when it
-      //   finds the same DM peer under an old groupId, migrating its in-memory messages.
-      // - IndexedDB: mergeDirectConversationDuplicates on the next login (Fix 1).
-      //
-      // Deleting the predecessor's IndexedDB here would erase accumulated messages
-      // before upsertConversation can read and persist them in the successor,
-      // causing visible loss until the history bundle arrives.
+      // A stray in-memory duplicate for the same DM peer (independent group created concurrently)
+      // is reconciled elsewhere: upsertConversation (below) merges the Map entry, and
+      // mergeDirectConversationDuplicates merges the IndexedDB rows on the next login. We do not
+      // delete any IndexedDB row here - that would erase accumulated messages before they are
+      // migrated, causing visible loss until the history bundle arrives.
 
       // Server-side registration (idempotent - safety net if the inviter has not yet
-      // called registerMember for this userId, e.g. race in inviteMembers/reboot).
+      // called registerMember for this userId, e.g. race in inviteMembers).
       // Results unused: fire-and-forget to avoid holding the MLS lock during
       // two network round-trips (the group is already joined locally).
       void mlsService.registerMember(joinedGroupId, userId).catch(() => {});
@@ -425,8 +392,8 @@ interface UnknownGroupArgs {
  * Buffers a commit received for an unknown group (Welcome not yet received).
  *
  * On the FIRST frame for the group, fires one immediate recovery attempt through the single seam
- * `requestReAdd` (welcome_request + marks the group not-ready in the persistent registry). No
- * private timer: the SYNC_WATCHDOG owns the re-add cadence and reboot escalation from there.
+ * `requestReAdd` (external join / welcome_request + marks the group not-ready in the persistent
+ * registry). No private timer: the SYNC_WATCHDOG owns the re-add cadence from there.
  * Returns `false` to keep the message in the server queue (replay possible).
  */
 async function handleUnknownGroup({
@@ -437,30 +404,11 @@ async function handleUnknownGroup({
   pendingBuffer,
   recoveryTimers,
 }: UnknownGroupArgs): Promise<boolean> {
-  const { mlsService, log } = deps;
+  const { log } = deps;
 
   let buf = pendingBuffer.get(groupId);
   if (!buf) {
-    // Guard: dead group with a known successor - the message is at a dead epoch (undecryptable).
-    // Route recovery to the successor and ACK (do not buffer): avoids a spurious welcome_request
-    // for the dead group that would create a duplicate conversation on other devices.
-    const meta = await mlsService.getGroupMeta(groupId).catch(() => null);
-    if (meta?.successorId) {
-      const localGroups = mlsService.getLocalGroups();
-      if (localGroups.includes(meta.successorId)) {
-        log(
-          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… - successeur ${meta.successorId.slice(0, 8)}… en WASM - ACK silencieux`
-        );
-      } else {
-        log(
-          `[BUFFER] Msg groupe mort ${groupId.slice(0, 8)}… - requestReAdd vers successeur ${meta.successorId.slice(0, 8)}…`
-        );
-        await requestReAdd(meta.successorId, deps, recoveryTimers);
-      }
-      return true; // ACK: a dead group's message cannot be decrypted
-    }
-
-    // Live unknown group: one immediate recovery attempt through the seam, then buffer. The
+    // Unknown group: one immediate recovery attempt through the seam, then buffer. The
     // watchdog takes over the cadence (the group is now in the not-ready registry).
     await requestReAdd(groupId, deps, recoveryTimers);
     buf = { msgs: [] };
@@ -770,11 +718,12 @@ async function upsertConversation(
       lifecycle: 'active' as const,
     };
     if (newConvoKey !== joinedGroupId) {
-      // Predecessor → successor: update the groupId (e.g. MLS reboot).
+      // Same DM peer under a different groupId (an independent duplicate group): re-key the
+      // conversation onto the group we just joined.
       conversations.delete(newConvoKey);
       newConvoKey = joinedGroupId;
 
-      // Persist in-memory messages to the successor's IndexedDB.
+      // Persist in-memory messages to the new group's IndexedDB.
       // Without this, loadHistoryForConversation (which reads from the new groupId's IndexedDB)
       // would overwrite the in-memory list with an empty array, making messages disappear
       // until the next login where mergeDirectConversationDuplicates migrates them properly.
@@ -798,7 +747,7 @@ async function upsertConversation(
         if (toSave.length > 0) {
           await deps.storage.saveMessages(toSave, deps.pin).catch(() => {});
           deps.log(
-            `[WELCOME] ${toSave.length} message(s) from ${existing.id.slice(0, 8)}… persisted in ${joinedGroupId.slice(0, 8)}… (successor)`
+            `[WELCOME] ${toSave.length} message(s) from ${existing.id.slice(0, 8)}… persisted in ${joinedGroupId.slice(0, 8)}… (re-keyed)`
           );
         }
       }

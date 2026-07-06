@@ -30,7 +30,6 @@ describe('classifyServerStatus', () => {
 
 describe('decideAbsentGroupFate', () => {
   const base: AbsentGroupFateInput = {
-    isKnownSuccessor: false,
     lifecycle: 'active',
     serverStatus: { kind: 'absent' },
     isStillUserMember: null,
@@ -43,10 +42,6 @@ describe('decideAbsentGroupFate', () => {
   });
 
   // ── Gardes prioritaires (court-circuitent l'etat serveur) ──
-  it('successeur tombstone connu -> keep (meme si serveur absent)', () => {
-    expect(decideAbsentGroupFate(make({ isKnownSuccessor: true })).action).toBe('keep');
-  });
-
   it('deja removed -> keep (suppression manuelle, jamais re-purge)', () => {
     expect(decideAbsentGroupFate(make({ lifecycle: 'removed' })).action).toBe('keep');
   });

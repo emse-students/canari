@@ -214,9 +214,23 @@ groups that have no stored GroupInfo yet. Shipped as three green commits:
   existing 90-day cron). Docs updated.
 
 Data safety: no bespoke purge - the flatten was already done at claimSuccessor time; the column drop
-is idempotent (`DROP COLUMN IF EXISTS`) and dev `synchronize` mirrors it. Deferred (inert, harmless):
-`parseForkedEpoch`/`isSenderForkError` fork detection - the fork marker is no longer thrown (staged
-commits), so these never fire; a small follow-up can delete them.
+is idempotent (`DROP COLUMN IF EXISTS`) and dev `synchronize` mirrors it.
+
+**Phase 4c (dead-code sweep, done + verified):** removed the two inert residues left by Phases 1/4b.
+(1) Fork detection - `parseForkedEpoch`/`isSenderForkError` (groupActions.ts) deleted; the staged-commit
+regime never throws the `server epoch:.., sent:..` marker, so every caller branch (processPendingInvitations,
+handleWelcomeRequest, kickStaleLeaf) was dead. `recoverForkedGroup` is KEPT - it is still driven live by
+the STUCK_EPOCH_GAP watchdog branch; only the sessionAuth `makeRecoverForkedGroup` wiring into actions.ts
+went away. (2) `successorId` residue - the server dropped the column in 4b, so every client `g.successorId`
+was permanently null: deleted `resolveActiveGroupTarget`/`collectKnownSuccessorIds`, simplified
+`findActiveDirectGroupForPeer` to `string | null`, dropped `isKnownSuccessor` from `decideAbsentGroupFate`,
+collapsed the successor branches in `initializeConnection`/`setupMessageHandler`/`actions` discovery+pending,
+removed `successorId` from `UserGroupRow`/`GroupMeta` (+ the API mappers), and dropped the now-orphaned
+outbox `reassign`/`reassignOutboxConversation` (IStorage + sqlite + indexeddb) and `groupNotReadyForMs`
+(both orphaned when 4b removed `migrateConversation`/the reboot deadline). Stale reboot/successor comments
+across the recovery-flow files were corrected. Tests updated to the post-successor contract. Green gate:
+`bun run check` 0 errors, vitest 465, ESLint clean, server jest 41. No Rust, no DB migration, no i18n
+(TS + comments only).
 
 **The MLS re-architecture (Phases 0-4) is complete.** Root causes 1 (epoch regression) and 2 (ADD/REMOVE
 asymmetry) are closed; recovery is rung-1 commit replay + rung-2 self-service external join; the

@@ -109,7 +109,7 @@ export interface OutboxMediaPayload {
 export interface OutboxEntry {
   /** Stable message UUID, shared with the optimistic StoredMessage and the proto messageId. */
   id: string;
-  /** Logical conversation key (= MLS groupId); re-keyed to the successor on reboot. */
+  /** Logical conversation key (= MLS groupId); re-keyed on a duplicate-group merge. */
   conversationId: string;
   /** Compose time (Unix ms) - IMMUTABLE; the canonical ordering key, sent as proto sentAt. */
   sentAt: number;
@@ -212,8 +212,6 @@ export interface IStorage {
   updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void>;
   /** Remove a queued entry (after a confirmed send or a permanent failure). */
   deleteOutboxEntry(id: string): Promise<void>;
-  /** Re-key every queued entry from `fromId` to `toId` (MLS reboot G -> S migration). */
-  reassignOutboxConversation(fromId: string, toId: string): Promise<void>;
 
   /** Wipe all conversations, messages, and outbox entries from the local store (tests / account reset). */
   clear(): Promise<void>;

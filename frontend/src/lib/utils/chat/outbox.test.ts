@@ -42,9 +42,6 @@ function makeStorage(seed: OutboxEntry[] = []) {
     deleteOutboxEntry: vi.fn(async (id: string) => {
       map.delete(id);
     }),
-    reassignOutboxConversation: vi.fn(async (from: string, to: string) => {
-      for (const e of map.values()) if (e.conversationId === from) e.conversationId = to;
-    }),
   } as any;
 }
 
@@ -53,9 +50,7 @@ function makeMls(opts: { meta?: (id: string) => unknown; send?: () => Promise<vo
   return {
     getLocalGroups: vi.fn(() => []),
     getGroupMeta: vi.fn(async (id: string) =>
-      opts.meta
-        ? opts.meta(id)
-        : { groupId: id, name: '', isGroup: true, successorId: null, deletedAt: null }
+      opts.meta ? opts.meta(id) : { groupId: id, name: '', isGroup: true, deletedAt: null }
     ),
     sendMessage: vi.fn(opts.send ?? (async () => {})),
     waitForMessageQueueIdle: vi.fn(async () => {}),
@@ -267,14 +262,13 @@ describe('outbox flusher', () => {
     expect(storage._map.has('m1')).toBe(true);
   });
 
-  it('marks a deleted-lineage entry as a permanent error', async () => {
+  it('marks a deleted-group entry as a permanent error', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls({
       meta: (id) => ({
         groupId: id,
         name: '',
         isGroup: true,
-        successorId: null,
         deletedAt: '2020-01-01',
       }),
     });
@@ -392,18 +386,5 @@ describe('outbox flusher', () => {
     expect(uploadMedia).not.toHaveBeenCalled();
     expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', false);
     expect(storage._map.has('mm')).toBe(false);
-  });
-
-  it('reassign re-keys queued entries to the successor group', async () => {
-    const storage = makeStorage([textEntry('m1', 'gOld', 100)]);
-    const mlsService = makeMls();
-    const conversations = new SvelteMap<string, Conversation>();
-    const outbox = createOutbox(
-      makeDeps({ mlsService, storage, conversations, isGroupHealthy: () => false })
-    );
-
-    await outbox.reassign('gOld', 'gNew');
-
-    expect(storage._map.get('m1')!.conversationId).toBe('gNew');
   });
 });
