@@ -31,7 +31,7 @@
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build"
   },
-  "license": "MIT",
+  "license": "SEE LICENSE IN ../LICENSE",
   "dependencies": {
     "@fontsource-variable/fredoka": "^5.2.10",
     "@fontsource-variable/nunito": "^5.2.7",
