@@ -20,7 +20,6 @@ import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
-import { isAncestorInLineage, resolveTerminalGroup } from './groupSyncEligibility';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -381,16 +380,8 @@ export async function mergeDirectConversationDuplicates(
       continue;
     }
 
-    const resolved = mlsService
-      ? await Promise.all(
-          metas.map((m) =>
-            resolveTerminalGroup(mlsService, m.id).then((r) => ({
-              meta: m,
-              terminalId: r.terminalId,
-            }))
-          )
-        )
-      : metas.map((m) => ({ meta: m, terminalId: m.id }));
+    // No successor chains anymore: each conversation is its own terminal.
+    const resolved = metas.map((m) => ({ meta: m, terminalId: m.id }));
 
     const uniqueTerminals = new Set(resolved.map((r) => r.terminalId));
     let terminalId: string;
@@ -414,19 +405,9 @@ export async function mergeDirectConversationDuplicates(
 
     for (const meta of metas) {
       if (meta.id === canonical.id) continue;
-      let duplicateIsAncestor = false;
-      if (mlsService) {
-        duplicateIsAncestor = await isAncestorInLineage(mlsService, meta.id, terminalId);
-        if (!duplicateIsAncestor) {
-          const [a, b] = await Promise.all([
-            mlsService.getGroupMeta(meta.id).catch(() => null),
-            mlsService.getGroupMeta(canonical.id).catch(() => null),
-          ]);
-          duplicateIsAncestor =
-            a?.successorId === canonical.id || b?.successorId === meta.id || false;
-        }
-      }
-      duplicatesToMerge.push({ canonical, duplicate: meta, duplicateIsAncestor });
+      // No successor lineage anymore: independent duplicates are merged into the canonical (most
+      // recent), never treated as a predecessor to keep.
+      duplicatesToMerge.push({ canonical, duplicate: meta, duplicateIsAncestor: false });
     }
   }
 

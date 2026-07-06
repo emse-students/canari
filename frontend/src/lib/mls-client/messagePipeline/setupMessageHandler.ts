@@ -10,7 +10,6 @@ import {
 } from '$lib/utils/chat/epochGapRegistry';
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
-import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import {
@@ -198,34 +197,15 @@ async function handleWelcome({
     addMessageToChat,
   } = deps;
 
-  // Resolve the terminal group in the successor chain.
-  // Common case (no successor): 1 API call - replaces fetchGroupMeta.
-  // Chain of N reboots: N+1 calls, but we reach the terminal directly
-  // without ever joining a dead intermediate group.
-  const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(mlsService, groupId ?? '');
+  // The delivery envelope groupId IS the group (no successor chain anymore).
+  const terminalId = groupId ?? '';
+  const groupMeta = await mlsService.getGroupMeta(terminalId).catch(() => null);
 
-  // The entire successor chain is deleted - do not join a dead group.
+  // Group deleted server-side - do not join a dead group.
   if (groupMeta?.deletedAt) {
-    log(
-      `[WELCOME] Lineage ${(groupId ?? '').slice(0, 8)}…→${terminalId.slice(0, 8)}… deleted - Welcome ignored`
-    );
-    cancelReAdd(groupId ?? '', recoveryTimers);
+    log(`[WELCOME] ${terminalId.slice(0, 8)}… deleted server-side - Welcome ignored`);
+    cancelReAdd(terminalId, recoveryTimers);
     return true;
-  }
-
-  if (hasChain) {
-    // The envelope group is dead - target the terminal instead.
-    const from = (groupId ?? '').slice(0, 8);
-    const to = terminalId.slice(0, 8);
-    cancelReAdd(groupId ?? '', recoveryTimers);
-    if (mlsService.getLocalGroups().includes(terminalId)) {
-      log(`[WELCOME] ${from}… → ${to}… already in WASM - Welcome ignored`);
-    } else {
-      log(`[WELCOME] ${from}… has successor ${to}… - welcome_request to terminal group`);
-      await mlsService.registerMember(terminalId, userId).catch(() => {});
-      await requestReAdd(terminalId, deps, recoveryTimers);
-    }
-    return true; // ACKed - Welcome for dead group handled
   }
 
   // Welcome redelivered for a group we already hold locally (typically a server requeue
@@ -328,9 +308,9 @@ async function handleWelcome({
         .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
         .catch(() => {});
 
-      // groupMeta already fetched by resolveTerminalGroup - no second HTTP call.
-      // H3 : sous le verrou par-groupe pour ne pas s'entrelacer avec une migration concurrente
-      // (checkGroupSuccessors) sur le meme groupe (ecrasement des messages memoire).
+      // groupMeta already fetched above - no second HTTP call.
+      // H3: under the per-group lock so it does not interleave with a concurrent operation on the
+      // same group (in-memory message overwrite).
       await runExclusiveForGroup(joinedGroupId, () =>
         upsertConversation(joinedGroupId, groupMeta, sender, userId, deps)
       );

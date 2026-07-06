@@ -13,14 +13,6 @@ export type MlsDeliveryFetch = typeof fetch;
  */
 export const MLS_ADD_LOCK_TTL_MS = 30_000;
 
-/**
- * TTL du verrou reboot (exclusion mutuelle de la fork-resolution). Plus long que l'add-lock : un
- * reboot enchaine creation du candidat + CAS + invitation des membres + persist Argon2 + bundle
- * historique, ce qui peut depasser les 60 s d'origine sur mobile -> reboot concurrent -> pollution
- * serveur (le CAS converge mais apres degats). [[H1]]
- */
-export const MLS_REBOOT_LOCK_TTL_MS = 90_000;
-
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
@@ -446,43 +438,6 @@ export class MlsDeliveryApi {
     }
   }
 
-  /**
-   * Acquires the cross-device reboot lock for `groupId` (fork-resolution mutual exclusion).
-   * Returns `false` if another device already owns the reboot - the caller must then abstain
-   * and rely on the successor being joined via retries (watchdog / checkGroupSuccessors).
-   * TTL longer than add-lock: a reboot chains candidate creation + CAS + member invitations.
-   */
-  async acquireRebootLock(groupId: string, ttlMs = MLS_REBOOT_LOCK_TTL_MS): Promise<boolean> {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/reboot-lock`, {
-        method: 'POST',
-        headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
-      });
-      if (!res.ok) return false;
-      const data = await res.json();
-      return data.acquired === true;
-    } catch {
-      // Fail-safe: Redis unavailable → assume the lock was NOT acquired. The CAS remains
-      // the correctness guard (only one successor); this lock is just an optimisation
-      // against redundant reboots - better to abstain than risk an unprotected reboot.
-      return false;
-    }
-  }
-
-  /** Releases the reboot-lock previously acquired by {@link acquireRebootLock}. Best-effort. */
-  async releaseRebootLock(groupId: string): Promise<void> {
-    try {
-      await this.f(`${this.historyUrl}/api/mls/reboot-lock`, {
-        method: 'DELETE',
-        headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
-      });
-    } catch {
-      /* non-blocking */
-    }
-  }
-
   /** Creates a new group row on the delivery service and returns the assigned `groupId`. */
   async createRemoteGroup(name: string, isGroup: boolean): Promise<string> {
     try {
@@ -680,16 +635,7 @@ export class MlsDeliveryApi {
     if (!res.ok) throw new Error(`setGroupImage failed: ${res.status}`);
   }
 
-  /** Clears the pending `welcome_request` queue for `groupId` after a successful reboot. */
-  async clearPendingWelcomeRequests(groupId: string): Promise<void> {
-    const res = await this.f(
-      `${this.historyUrl}/api/mls/welcome-request/group/${encodeURIComponent(groupId)}`,
-      { method: 'DELETE', headers: await this.auth() }
-    );
-    if (!res.ok) throw new Error(`clearPendingWelcomeRequests failed: ${res.status}`);
-  }
-
-  /** Soft-deletes `groupId` (and its successor chain) on the server. Returns `false` if already absent (404). */
+  /** Soft-deletes `groupId` on the server. Returns `false` if already absent (404). */
   async deleteGroupOnServer(groupId: string): Promise<boolean> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
       method: 'DELETE',
@@ -877,44 +823,6 @@ export class MlsDeliveryApi {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * Atomic CAS: claims `successorId` as the replacement for dead group `deadGroupId`.
-   * Returns `{ claimed: true }` if this device won the race, or `{ claimed: false, successorId }` with the winner's ID if another device was faster.
-   * `claimedByDeviceId` is recorded server-side (diagnostic only) to attribute the reboot to the initiating device.
-   */
-  async claimGroupSuccessor(
-    deadGroupId: string,
-    successorId: string,
-    claimedByDeviceId?: string
-  ): Promise<{ claimed: boolean; successorId: string | null }> {
-    const res = await this.f(
-      `${this.historyUrl}/api/mls/groups/${encodeURIComponent(deadGroupId)}/successor`,
-      {
-        method: 'POST',
-        headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ successorId, claimedByDeviceId }),
-      }
-    );
-    const json: Record<string, unknown> = await res.json().catch(() => ({}));
-    if (res.ok) {
-      return {
-        claimed: json.claimed === true,
-        successorId: typeof json.successorId === 'string' ? json.successorId : successorId,
-      };
-    }
-    if (res.status === 409) {
-      const payload =
-        json.message && typeof json.message === 'object' && json.message !== null
-          ? (json.message as Record<string, unknown>)
-          : json;
-      return {
-        claimed: false,
-        successorId: typeof payload.successorId === 'string' ? payload.successorId : null,
-      };
-    }
-    throw new Error(`claimGroupSuccessor failed: ${res.status}`);
   }
 
   /** Returns outstanding Welcome invitations for a device (used by multi-device sync). */

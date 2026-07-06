@@ -39,15 +39,11 @@ function makeMlsService(getGroupMetaImpl: (id: string) => unknown): IMlsService 
 }
 
 describe('mergeDirectConversationDuplicates', () => {
-  it('ne supprime PAS deleteGroupOnServer quand le duplicate est un ancêtre du canonical (successorId relationship)', async () => {
-    // PRED → successorId → SUCC : le serveur a déjà soft-deleted PRED via claimSuccessor.
-    // Appeler deleteGroupOnServer(PRED) suivrait la chaîne et supprimerait aussi SUCC.
+  it('traite deux groupes du meme pair comme doublons independants (successeurs retires) - garde le plus recent', async () => {
+    // Successors are retired: even a former predecessor/successor pair is now merged as two
+    // independent duplicates, keeping the most recent and removing the older one everywhere.
     const storage = makeStorage();
-    const mls = makeMlsService((id) => {
-      if (id === PRED_ID) return { groupId: PRED_ID, successorId: SUCC_ID };
-      if (id === SUCC_ID) return { groupId: SUCC_ID, successorId: null };
-      return null;
-    });
+    const mls = makeMlsService(() => null);
 
     const result = await mergeDirectConversationDuplicates(
       [makeMeta(PRED_ID, 900), makeMeta(SUCC_ID, 1000)],
@@ -58,37 +54,12 @@ describe('mergeDirectConversationDuplicates', () => {
       mls
     );
 
-    // SUCC est conservé, PRED est retiré localement
+    // The most recent (SUCC) is kept, the older (PRED) is removed locally and on the server.
     expect(result.map((c) => c.id)).toContain(SUCC_ID);
     expect(result.map((c) => c.id)).not.toContain(PRED_ID);
     expect(storage.deleteConversation).toHaveBeenCalledWith(PRED_ID);
-
-    // Pas d'appel deleteGroupOnServer : le serveur a déjà supprimé PRED proprement
-    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
-  });
-
-  it('fusionne une chaîne multi-niveaux vers le terminal actif', async () => {
-    const MID_ID = 'mid00000-0000-0000-0000-000000000000';
-    const storage = makeStorage();
-    const mls = makeMlsService((id) => {
-      if (id === PRED_ID) return { groupId: PRED_ID, successorId: MID_ID };
-      if (id === MID_ID) return { groupId: MID_ID, successorId: SUCC_ID };
-      if (id === SUCC_ID) return { groupId: SUCC_ID, successorId: null };
-      return null;
-    });
-
-    const result = await mergeDirectConversationDuplicates(
-      [makeMeta(PRED_ID, 700), makeMeta(MID_ID, 800), makeMeta(SUCC_ID, 900)],
-      ME,
-      'pin',
-      storage,
-      () => {},
-      mls
-    );
-
-    expect(result.map((c) => c.id)).toEqual([SUCC_ID]);
-    expect(storage.deleteConversation).toHaveBeenCalledWith(PRED_ID);
-    expect(storage.deleteConversation).toHaveBeenCalledWith(MID_ID);
+    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(PRED_ID);
   });
 
   it('supprime bien deleteGroupOnServer pour un vrai doublon sans relation de succession', async () => {

@@ -21,10 +21,7 @@ import {
   decideAbsentGroupFate,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
-import {
-  collectKnownSuccessorIds,
-  resolveTerminalGroup,
-} from '$lib/utils/chat/groupSyncEligibility';
+import { collectKnownSuccessorIds } from '$lib/utils/chat/groupSyncEligibility';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -88,8 +85,7 @@ export async function processPendingInvitations(params: {
   let totalWelcomes = 0;
 
   for (const [origGroupId, invitations] of byGroup) {
-    // Resolve the terminal before processing (reboot may have extended the chain).
-    const { terminalId: groupId } = await resolveTerminalGroup(mlsService, origGroupId);
+    const groupId = origGroupId;
     const resolved = groupId;
 
     // "Ready to invite" = conversation active AND group present in local WASM.
@@ -359,26 +355,9 @@ export async function discoverMissingGroups(params: {
   log: (msg: string) => void;
   /** Optional: IndexedDB access to verify messages have been migrated before purge. */
   storage?: IStorage | null;
-  /**
-   * Optional migration callback (predecessor -> successor). Injected by the session layer
-   * (which owns the full recovery deps). When a soft-deleted group still holds un-migrated
-   * messages but its successor is already local, DISCOVERY actively migrates instead of merely
-   * keeping the zombie - otherwise the source lingers forever and the SYNC_WATCHDOG re-escalates
-   * welcome_request/reboot every 60 s for a group that can never become ready.
-   */
-  migrateConversation?: (fromGroupId: string, toGroupId: string) => Promise<void>;
 }) {
-  const {
-    mlsService,
-    userId,
-    pin,
-    conversations,
-    saveConversation,
-    deleteConversation,
-    log,
-    storage,
-    migrateConversation,
-  } = params;
+  const { mlsService, userId, pin, conversations, saveConversation, deleteConversation, log } =
+    params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
@@ -462,80 +441,6 @@ export async function discoverMissingGroups(params: {
         );
         void mlsService.undismissGroup(convo.id).catch(() => {});
         // On laisse le traitement normal continuer (groupe actif).
-      }
-
-      const { terminalId, hasChain } = await resolveTerminalGroup(mlsService, convo.id).catch(
-        () => ({ terminalId: convo.id, hasChain: false })
-      );
-      if (hasChain && terminalId !== convo.id && conversations.has(terminalId)) {
-        // Migration safety: do not delete the source if its messages are not yet
-        // in the terminal group (interrupted reboot/migration).
-        if (storage) {
-          const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
-          if (pendingMsgs.length > 0) {
-            if (migrateConversation) {
-              // Successor already local: actively migrate the pending messages instead of
-              // keeping the zombie (which the SYNC_WATCHDOG would re-escalate forever).
-              log(
-                `[DISCOVERY] ${convo.id.slice(0, 8)}... migrating ${pendingMsgs.length} msg(s) to terminal ${terminalId.slice(0, 8)}...`
-              );
-              await migrateConversation(convo.id, terminalId).catch((e) =>
-                log(`[DISCOVERY] migration ${convo.id.slice(0, 8)}... failed: ${String(e)}`)
-              );
-              continue;
-            }
-            log(
-              `[DISCOVERY] ${convo.id.slice(0, 8)}... kept - ${pendingMsgs.length} msg(s) not yet migrated to ${terminalId.slice(0, 8)}...`
-            );
-            continue;
-          }
-        }
-        log(
-          `[DISCOVERY] UI group "${convo.name || convo.id}" -> terminal ${terminalId.slice(0, 8)}... - removing`
-        );
-        await purgeLocalConversationRecord({
-          conversations,
-          contactKey: key,
-          groupId: convo.id,
-          deleteConversation,
-          log,
-        });
-        continue;
-      }
-
-      const serverEntry = uniqueServerGroups.find((g) => g.groupId === convo.id);
-      if (serverEntry?.successorId && conversations.has(serverEntry.successorId)) {
-        // Migration safety: do not delete the source if its messages are not yet
-        // in the successor group (interrupted reboot/migration).
-        if (storage) {
-          const pendingMsgs = await storage.getMessages(convo.id, pin).catch(() => []);
-          if (pendingMsgs.length > 0) {
-            if (migrateConversation) {
-              log(
-                `[DISCOVERY] ${convo.id.slice(0, 8)}... migrating ${pendingMsgs.length} msg(s) to successor ${serverEntry.successorId.slice(0, 8)}...`
-              );
-              await migrateConversation(convo.id, serverEntry.successorId).catch((e) =>
-                log(`[DISCOVERY] migration ${convo.id.slice(0, 8)}... failed: ${String(e)}`)
-              );
-              continue;
-            }
-            log(
-              `[DISCOVERY] ${convo.id.slice(0, 8)}... kept - ${pendingMsgs.length} msg(s) not yet migrated to ${serverEntry.successorId.slice(0, 8)}...`
-            );
-            continue;
-          }
-        }
-        log(
-          `[DISCOVERY] UI group "${convo.name || convo.id}" migrated to ${serverEntry.successorId} - removing`
-        );
-        await purgeLocalConversationRecord({
-          conversations,
-          contactKey: key,
-          groupId: convo.id,
-          deleteConversation,
-          log,
-        });
-        continue;
       }
 
       if (!serverGroupIds.has(convo.id)) {
@@ -884,12 +789,8 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
-  // Resolve the terminal group in the successor chain (max 10 hops).
-  const {
-    terminalId,
-    groupMeta: terminalMeta,
-    hasChain,
-  } = await resolveTerminalGroup(mlsService, requestedGroupId);
+  const terminalId = requestedGroupId;
+  const terminalMeta = await mlsService.getGroupMeta(requestedGroupId).catch(() => null);
 
   // Group not found on server.
   if (!terminalMeta) {
@@ -897,17 +798,12 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
-  // Entire lineage is deleted - refuse to invite into a dead group.
+  // Group is deleted - refuse to invite into a dead group.
   if (terminalMeta.deletedAt) {
-    log(`[WELCOME_REQ] Lineage of ${requestedGroupId.slice(0, 8)}... deleted - refusing`);
+    log(`[WELCOME_REQ] Group ${requestedGroupId.slice(0, 8)}... deleted - refusing`);
     return;
   }
 
-  if (hasChain) {
-    log(`[WELCOME_REQ] ${requestedGroupId.slice(0, 8)}… → terminal ${terminalId.slice(0, 8)}…`);
-  }
-
-  // groupId now points to the terminal of the lineage.
   const groupId = terminalId;
 
   // ── Membership guard (security) ─────────────────────────────────────────────

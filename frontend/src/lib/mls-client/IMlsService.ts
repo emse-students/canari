@@ -250,12 +250,6 @@ export interface IMlsService {
   acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
-  /** Acquires a distributed Redis lock serialising a dead group's reboot pipeline ACROSS devices.
-   *  Returns true if acquired, false if another device already owns the reboot (caller should
-   *  abort and let the successor be joined via the retry mechanisms). Longer TTL than add-lock. */
-  acquireRebootLock(groupId: string, ttlMs?: number): Promise<boolean>;
-  /** Releases the lock acquired via acquireRebootLock. */
-  releaseRebootLock(groupId: string): Promise<void>;
   /** Fetches the Redis Stream history for a group, optionally starting after a given stream entry ID. */
   fetchHistory(
     groupId: string,
@@ -355,16 +349,6 @@ export interface IMlsService {
   dismissGroup(groupId: string): Promise<void>;
   /** Leve le dismiss d'un groupe (re-ajout via Welcome). */
   undismissGroup(groupId: string): Promise<void>;
-  /**
-   * Atomically claims `successorId` as the replacement for a dead group (CAS).
-   * On conflict, returns `claimed: false` and the winning `successorId`.
-   * `claimedByDeviceId` is recorded server-side (diagnostic only) to attribute the reboot.
-   */
-  claimGroupSuccessor(
-    deadGroupId: string,
-    successorId: string,
-    claimedByDeviceId?: string
-  ): Promise<{ claimed: boolean; successorId: string | null }>;
 
   // DeviceGroupMembership tracking
   /** Get all pending device-group invitations in groups where this device is a full member */
@@ -488,13 +472,6 @@ export interface IMlsService {
    * Called once per pending group on connect, after KeyPackage publication.
    */
   sendWelcomeRequest(groupId: string): Promise<void>;
-
-  /**
-   * Clears the server-side pending welcome_request queue for `groupId`.
-   * Called by the reboot winner after claiming the successor to prevent stale
-   * welcome_requests from being re-delivered to members on reconnect.
-   */
-  clearPendingWelcomeRequests(groupId: string): Promise<void>;
 
   /**
    * Register a callback invoked when another device broadcasts a welcome_request

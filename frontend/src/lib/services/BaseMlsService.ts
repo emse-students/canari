@@ -6,12 +6,7 @@ import type {
   BulkIngestPhase,
   BulkIngestObserver,
 } from '$lib/mls-client';
-import {
-  MlsDeliveryApi,
-  resolveMlsPublicUrls,
-  MLS_ADD_LOCK_TTL_MS,
-  MLS_REBOOT_LOCK_TTL_MS,
-} from '$lib/mls-client';
+import { MlsDeliveryApi, resolveMlsPublicUrls, MLS_ADD_LOCK_TTL_MS } from '$lib/mls-client';
 import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
@@ -583,10 +578,6 @@ export abstract class BaseMlsService implements IMlsService {
     });
   }
 
-  async clearPendingWelcomeRequests(groupId: string): Promise<void> {
-    await this.delivery.clearPendingWelcomeRequests(groupId);
-  }
-
   /** Delivers a Welcome message to the target user/device. */
   async sendWelcome(
     welcomeBytes: Uint8Array,
@@ -750,14 +741,6 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.releaseAddLock(groupId);
   }
 
-  async acquireRebootLock(groupId: string, ttlMs = MLS_REBOOT_LOCK_TTL_MS): Promise<boolean> {
-    return this.delivery.acquireRebootLock(groupId, ttlMs);
-  }
-
-  async releaseRebootLock(groupId: string): Promise<void> {
-    return this.delivery.releaseRebootLock(groupId);
-  }
-
   async createRemoteGroup(name: string, isGroup = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
@@ -843,14 +826,6 @@ export abstract class BaseMlsService implements IMlsService {
 
   async undismissGroup(groupId: string): Promise<void> {
     return this.delivery.undismissGroup(groupId);
-  }
-
-  async claimGroupSuccessor(
-    deadGroupId: string,
-    successorId: string,
-    claimedByDeviceId?: string
-  ): Promise<{ claimed: boolean; successorId: string | null }> {
-    return this.delivery.claimGroupSuccessor(deadGroupId, successorId, claimedByDeviceId);
   }
 
   async getPendingInvitations(

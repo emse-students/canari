@@ -8,7 +8,6 @@ import {
   Param,
   Inject,
   BadRequestException,
-  ConflictException,
   UseGuards,
   Logger,
 } from '@nestjs/common';
@@ -147,161 +146,19 @@ export class GroupsController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId')
   /**
-   * Soft-deletes a group and every successor in its lineage, then hard-deletes
-   * all operational data for each.
-   *
-   * Following the full chain is essential: if the caller holds an old version of
-   * the group (before a reboot), deleting only that version leaves the terminal
-   * successor alive. On the next sync the delivery service would see the live
-   * terminal and trigger a welcome_request, effectively resurrecting the group.
+   * Soft-deletes a group, then hard-deletes all its operational data.
    */
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
 
-    // Collect the full successor chain (cycle-safe, max 10 hops).
-    const toDelete: string[] = [];
-    let current: string | null = safeGroupId;
-    const visited = new Set<string>();
-    while (current && !visited.has(current) && toDelete.length < 10) {
-      visited.add(current);
-      toDelete.push(current);
-      const g = await this.groupRepo.findOne({
-        where: { id: current },
-        select: { id: true, successorId: true },
-      });
-      current = g?.successorId ?? null;
-    }
-
-    const now = new Date();
-    for (const id of toDelete) {
-      await this.groupRepo.update({ id }, { deletedAt: now });
-      await this.groupMemberRepo.delete({ groupId: id });
-      await this.deviceGroupRepo.delete({ groupId: id });
-      await this.queuedMessageRepo.delete({ groupId: id });
-      await this.redis.del(`group:members:${id}`);
-      await this.redis.del(`history:${id}`);
-    }
-
-    this.logger.log(
-      `[DELETE_GROUP] ${toDelete.length} group(s) soft-deleted: ${toDelete.map((id) => id.slice(0, 8)).join(' → ')}…`,
-    );
-    return { status: 'deleted' };
-  }
-
-  @UseGuards(HeaderAuthGuard)
-  @Post('mls/groups/:groupId/successor')
-  /** Atomically claims a successor for a dead group (first writer wins).
-   *  Returns 200 with claimed=true if this device won the race,
-   *  or 409 with claimed=false and the real successorId if another device already claimed it. */
-  async claimSuccessor(
-    @Param('groupId') groupId: string,
-    @Body() body: { successorId: string; claimedByDeviceId?: string },
-  ) {
-    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    if (!body.successorId || typeof body.successorId !== 'string') {
-      throw new BadRequestException('successorId is required');
-    }
-    // Diagnostic-only: record which device triggered the reboot. Never gates the CAS.
-    const claimedByDeviceId =
-      typeof body.claimedByDeviceId === 'string'
-        ? body.claimedByDeviceId
-        : null;
-    // Atomic CAS: only update if no successor has been claimed yet AND the group
-    // has not been intentionally deleted. Without the deletedAt guard a reboot
-    // racing with deleteGroup would resurrect a group the user just removed.
-    const result = await this.groupRepo
-      .createQueryBuilder()
-      .update(Group)
-      .set({
-        successorId: body.successorId,
-        successorClaimedByDeviceId: claimedByDeviceId,
-        deletedAt: () => 'NOW()',
-      })
-      .where('id = :id AND "successorId" IS NULL AND "deletedAt" IS NULL', {
-        id: safeGroupId,
-      })
-      .execute();
-
-    if (result.affected === 0) {
-      // Another device won - return the real winner's successorId
-      const existing = await this.groupRepo.findOne({
-        where: { id: safeGroupId },
-      });
-      this.logger.log(
-        `[CLAIM_SUCCESSOR] group=${safeGroupId} LOST - real successor=${existing?.successorId}`,
-      );
-      throw new ConflictException({
-        claimed: false,
-        successorId: existing?.successorId ?? null,
-      });
-    }
-
-    const successorId = body.successorId;
-
-    // Propagate user-level members to the successor so getUserGroups resolves the
-    // lineage correctly.
-    //
-    // Do NOT delete GroupMembers from the source: the rebooting device must be able to
-    // read "who belongs to the dead group" via getGroupUserMembers(deadGroup) in order
-    // to invite them into the successor (inviteMembers/reboot). Deleting them here
-    // would leave inviteMembers with no one to invite, leaving the successor empty
-    // (split-brain: creator alone in the new group, others stuck on the old one).
-    // The soft-deleted tombstone and its GroupMembers are purged by the
-    // cleanupSoftDeletedGroups cron (90 days); getUserGroups/registerDevice already
-    // ignore groups with deletedAt, so no resurrection is possible in between.
-    const members = await this.groupMemberRepo.find({
-      where: { groupId: safeGroupId },
-    });
-    if (members.length > 0) {
-      await this.groupMemberRepo
-        .createQueryBuilder()
-        .insert()
-        .into(GroupMember)
-        .values(
-          members.map((m) => ({
-            groupId: successorId,
-            userId: m.userId,
-            role: m.role,
-          })),
-        )
-        .orIgnore()
-        .execute();
-    }
-
-    const deviceMemberships = await this.deviceGroupRepo.find({
-      where: { groupId: safeGroupId },
-    });
-    if (deviceMemberships.length > 0) {
-      // Migrate device memberships as `pending`, NOT preserving their old status,
-      // and do NOT seed the successor's Redis routing set. The successor was just
-      // created, so no device (except its creator, already marked active by
-      // createGroup) has processed a Welcome for it - none of these devices have MLS
-      // state yet. Copying them as `active` + adding them to routing would deliver
-      // ciphertext they cannot decrypt (wasted FCM, spurious welcome_request churn)
-      // and would violate the invariant that `active` must mean "has valid MLS state".
-      // The reboot winner's inviteMembers (and each device's own welcome_request)
-      // promotes them to active + adds them to Redis when they are actually welcomed.
-      await this.deviceGroupRepo
-        .createQueryBuilder()
-        .insert()
-        .into(DeviceGroupMembership)
-        .values(
-          deviceMemberships.map((dm) => ({
-            userId: dm.userId,
-            deviceId: dm.deviceId,
-            groupId: successorId,
-            status: 'pending' as const,
-          })),
-        )
-        .orIgnore()
-        .execute();
-      await this.deviceGroupRepo.delete({ groupId: safeGroupId });
-    }
+    await this.groupRepo.update({ id: safeGroupId }, { deletedAt: new Date() });
+    await this.groupMemberRepo.delete({ groupId: safeGroupId });
+    await this.deviceGroupRepo.delete({ groupId: safeGroupId });
+    await this.queuedMessageRepo.delete({ groupId: safeGroupId });
     await this.redis.del(`group:members:${safeGroupId}`);
+    await this.redis.del(`history:${safeGroupId}`);
 
-    this.logger.log(
-      `[CLAIM_SUCCESSOR] group=${safeGroupId} WON - successor=${successorId} claimedByDevice=${claimedByDeviceId ?? 'unknown'} members=${members.length} devices=${deviceMemberships.length}`,
-    );
-    return { claimed: true, successorId };
+    this.logger.log(`[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… soft-deleted`);
+    return { status: 'deleted' };
   }
 }

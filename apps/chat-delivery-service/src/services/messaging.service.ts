@@ -1320,7 +1320,6 @@ export class MessagingService {
    */
   async notifyWelcomeRequest(
     body: NotifyWelcomeRequestBody,
-    _depth = 0,
   ): Promise<{ status: string; target?: string }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
@@ -1332,23 +1331,6 @@ export class MessagingService {
       body.requesterDeviceId,
       'requesterDeviceId',
     );
-
-    // If this group has a successor, redirect to the terminal group (avoids dead-ends where
-    // active members have migrated to the successor and no longer respond on the old one).
-    if (_depth < 10) {
-      const groupMeta = await this.groupRepo.findOne({
-        where: { id: groupId },
-      });
-      if (groupMeta?.successorId) {
-        this.logger.log(
-          `[WELCOME_REQ][${traceId}] group=${groupId} has successor=${groupMeta.successorId} - redirecting`,
-        );
-        return this.notifyWelcomeRequest(
-          { ...body, groupId: groupMeta.successorId },
-          _depth + 1,
-        );
-      }
-    }
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
@@ -1513,23 +1495,6 @@ export class MessagingService {
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`,
     );
     return { status: 'no_peer_online' };
-  }
-
-  /**
-   * Clears the pending welcome_request queue for a group.
-   * Called by the reboot winner after claiming the successor so that stale
-   * welcome_requests stored while peers were offline are not re-delivered.
-   */
-  async clearPendingWelcomeRequests(
-    groupId: string,
-  ): Promise<{ cleared: boolean }> {
-    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    const pendingSetKey = `pending_welcome:${safeGroupId}`;
-    const deleted = await this.redis.del(pendingSetKey);
-    this.logger.log(
-      `[WELCOME_REQ] clearPendingWelcomeRequests group=${safeGroupId} deleted=${deleted}`,
-    );
-    return { cleared: deleted > 0 };
   }
 
   /**

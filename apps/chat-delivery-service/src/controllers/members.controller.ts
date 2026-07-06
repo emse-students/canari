@@ -46,52 +46,6 @@ export class MembersController {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
   }
 
-  /**
-   * Loads group rows for `seedIds` and follows successor links until all chain
-   * nodes are in memory (max 10 hops per seed).
-   */
-  private async loadGroupsWithSuccessorChains(
-    seedIds: string[],
-  ): Promise<Map<string, Group>> {
-    const byId = new Map<string, Group>();
-    let frontier = new Set(seedIds);
-
-    for (let hop = 0; hop < 10 && frontier.size > 0; hop++) {
-      const ids = [...frontier].filter((id) => !byId.has(id));
-      frontier = new Set();
-      if (ids.length === 0) break;
-
-      const batch = await this.groupRepo.find({ where: { id: In(ids) } });
-      for (const g of batch) {
-        byId.set(g.id, g);
-        if (g.successorId && !byId.has(g.successorId)) {
-          frontier.add(g.successorId);
-        }
-      }
-    }
-
-    return byId;
-  }
-
-  /** Resolves a group id to the active terminal of its successor lineage. */
-  private resolveActiveTerminal(
-    groupId: string,
-    byId: Map<string, Group>,
-  ): Group | null {
-    const visited = new Set<string>();
-    let current: string | null = groupId;
-
-    while (current && !visited.has(current)) {
-      visited.add(current);
-      const g = byId.get(current);
-      if (!g) return null;
-      if (!g.deletedAt) return g;
-      current = g.successorId ?? null;
-    }
-
-    return null;
-  }
-
   @UseGuards(HeaderAuthGuard)
   @Get('mls/users/:userId/groups')
   /**
@@ -118,15 +72,10 @@ export class MembersController {
       this.logger.log(`[USER_GROUPS] user=${safeUserId} groups=0`);
       return [];
     }
-    const byId = await this.loadGroupsWithSuccessorChains(groupIds);
-    const activeById = new Map<string, Group>();
-    for (const id of groupIds) {
-      const terminal = this.resolveActiveTerminal(id, byId);
-      if (terminal) activeById.set(terminal.id, terminal);
-    }
-    const activeGroups = [...activeById.values()].sort(
-      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-    );
+    const groups = await this.groupRepo.find({ where: { id: In(groupIds) } });
+    const activeGroups = groups
+      .filter((g) => !g.deletedAt)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
     this.logger.log(
       `[USER_GROUPS] user=${safeUserId} groups=${activeGroups.length} ids=${activeGroups.map((g) => g.id).join(',')}`,
     );
@@ -135,13 +84,6 @@ export class MembersController {
       name: g.name,
       isGroup: g.isGroup,
       imageMediaId: g.imageMediaId ?? null,
-      // N'exposer un successorId que s'il pointe vers une ligne dm_groups REELLE. Un terminal
-      // actif portant un successorId DANGLANT (la ligne successeur n'existe plus : hard-purge,
-      // base videe) faisait viser ce successeur fantome au client (`targetId = successorId`),
-      // qui le purgeait localement a chaque reload mais le serveur le re-exposait -> boucle
-      // infinie de purge/recovery. byId ne contient que les lignes reellement chargees.
-      successorId:
-        g.successorId && byId.has(g.successorId) ? g.successorId : null,
       deletedAt: g.deletedAt ?? null,
     }));
   }

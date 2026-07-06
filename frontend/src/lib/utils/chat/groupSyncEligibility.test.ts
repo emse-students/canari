@@ -4,7 +4,6 @@ import {
   isGroupEligibleForMlsRecovery,
   resolveActiveGroupTarget,
   findActiveDirectGroupForPeer,
-  isAncestorInLineage,
 } from './groupSyncEligibility';
 
 describe('groupSyncEligibility', () => {
@@ -67,19 +66,5 @@ describe('groupSyncEligibility', () => {
         'bob'
       )
     ).toEqual({ groupId: 'new', tombstoneGroupId: 'old' });
-  });
-
-  it('isAncestorInLineage détecte un ancêtre sur plusieurs hops', async () => {
-    const mlsService = {
-      getGroupMeta: vi.fn().mockImplementation((id: string) => {
-        if (id === 'a') return Promise.resolve({ successorId: 'b' });
-        if (id === 'b') return Promise.resolve({ successorId: 'c' });
-        if (id === 'c') return Promise.resolve({ successorId: null });
-        return Promise.resolve(null);
-      }),
-    };
-    await expect(isAncestorInLineage(mlsService as any, 'a', 'c')).resolves.toBe(true);
-    await expect(isAncestorInLineage(mlsService as any, 'b', 'c')).resolves.toBe(true);
-    await expect(isAncestorInLineage(mlsService as any, 'c', 'c')).resolves.toBe(false);
   });
 });

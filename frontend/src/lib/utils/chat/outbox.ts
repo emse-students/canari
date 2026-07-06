@@ -6,7 +6,6 @@ import type { MediaRef } from '$lib/media';
 import { encodeAppMessage, mkText, mkReply, mkMedia, mediaKindToType } from '$lib/proto/codec';
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
-import { resolveTerminalGroup } from '$lib/utils/chat/groupSyncEligibility';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
@@ -226,22 +225,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) return 'skip';
 
     // The MLS outbox is for DMs/groups only. A channel entry (server-authoritative, no MLS group)
-    // can only have leaked in through a bug: it would loop forever on resolveTerminalGroup and
-    // requestReAdd 500s. Drop it so a stale entry cannot storm the delivery service.
+    // can only have leaked in through a bug: it would loop forever on requestReAdd 500s. Drop it so
+    // a stale entry cannot storm the delivery service.
     if (isChannelConversationId(entry.conversationId)) {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… channel entry - dropped (channels do not use MLS)`);
       await storage?.deleteOutboxEntry(entry.id).catch(() => {});
       return 'error';
     }
 
-    const { terminalId, groupMeta, hasChain } = await resolveTerminalGroup(
-      mlsService,
-      entry.conversationId
-    );
+    const terminalId = entry.conversationId;
+    const groupMeta = await mlsService.getGroupMeta(terminalId).catch(() => null);
 
-    // Whole lineage deleted without a usable successor: the only permanent failure.
-    if (groupMeta?.deletedAt && !hasChain) {
-      log(`[OUTBOX] ${entry.id.slice(0, 8)}… groupe supprimé sans successeur - échec définitif`);
+    // Group deleted server-side: the only permanent failure.
+    if (groupMeta?.deletedAt) {
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… group deleted server-side - permanent failure`);
       patchStatus(entry.id, 'error');
       // A control event (reaction/read-receipt) must not be what raises the "conversation
       // deleted" banner; only a user-visible text/media send does.
@@ -251,8 +248,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return 'error';
     }
 
-    // Group not sendable yet: emit a soft welcome_request and retry later. NEVER reboot here -
-    // the persistent reboot deadline (sessionWatchdogs) owns escalation.
+    // Group not sendable yet: trigger recovery (external join / welcome_request) and retry later.
     if (!deps.isGroupHealthy(terminalId)) {
       await deps.requestReAdd(terminalId).catch(() => {});
       return 'retry';
