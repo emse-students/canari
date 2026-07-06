@@ -5,7 +5,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 **Living docs** (do not archive, actively updated):
 - `docs/AUDIT-MLS-2026-06.md` — ongoing audit pass, bugs tracked by ID
 - `docs/MLS_DESYNC_PREVENTION.md` — desync root causes and countermeasures
-- `docs/MLS_RECOVERY_LADDER.md` — step-by-step recovery ladder (welcome_request -> reboot)
+- `docs/MLS_RECOVERY_LADDER.md` — step-by-step recovery ladder (rung-1 commit replay -> rung-2 external join -> welcome_request fallback)
 
 ## Key properties
 
@@ -22,8 +22,9 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 1. `getLocalGroups()` is the sole source of truth for group state.
 2. Every message is ACK'd exactly once.
 3. No in-memory state machines (no recovery Sets/Maps).
-4. Single recovery path, two steps: `welcome_request` (30s timeout) → `reboot`.
-5. Successor claim is atomic (CAS). Unchanged from pre-rewrite.
+4. Recovery: rung-1 commit replay for epoch gaps; rung-2 self-service external-commit join for a
+   device lacking state (external join replaced the reboot/CAS/successor machinery in Phase 4b),
+   with `welcome_request` as the thin fallback when no GroupInfo is stored yet.
 
 ## Source files
 
@@ -81,7 +82,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 
 ```
 pending --(add commit + Welcome sent)--> active
-active --(device removed / reboot)--> removed
+active --(device removed / group deleted)--> removed
 removed --(re-add)--> pending
 ```
 
@@ -115,7 +116,6 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 | GET | `/api/mls/groups/:groupId/members` | List group members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove member |
 | POST | `/api/mls/groups/:groupId/reset` | Trigger group_reset broadcast |
-| POST | `/api/mls/groups/:groupId/reset-epoch` | Reset epoch counter |
 | GET | `/api/mls/users/:userId/groups` | List all groups for a user |
 
 ### Messaging
@@ -226,7 +226,7 @@ Triggered when `processIncomingMessage` fails with epoch-related errors:
 | `SenderDataDecryption` | Sender secrets diverged | `forgetGroup()` + `requestReAdd()` |
 | `WrongEpoch` | No epoch numbers | ACK silently |
 
-`requestReAdd(groupId)`: sends `welcome_request` -> 30s timer -> if no Welcome received -> `reboot()` (CAS + inviteMembers + migrateConversation).
+`requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
 ### Group reset
 

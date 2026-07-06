@@ -194,8 +194,33 @@ mls-core round-trip), `messaging.group-info.spec.ts` (7, server), `BaseMlsServic
 server jest green, cargo test/clippy green across mls-core/mls-wasm/src-tauri. Nginx unchanged
 (`/api/mls/*` wildcard). No user-facing strings -> no i18n change.
 
-Next: Phase 4b (retire the legacy machinery - reboot/CAS/successor/reset-epoch/reboot-lock/
-parseForkedEpoch - and flatten existing successor chains via a DB migration+purge, then hard break).
+**Phase 4b (done + verified):** the successor/reboot machinery is fully retired - external join
+(Phase 4a) is the sole self-service recovery, with welcome_request kept as a thin fallback for
+groups that have no stored GroupInfo yet. Shipped as three green commits:
+- **4b/1** (`c7004e92`): recovery.ts shrank ~950 -> ~230 lines. `requestReAdd` is now externalJoin ->
+  welcome_request fallback (no reboot, no successor creation, no per-group timer). Deleted reboot /
+  performReboot / joinSuccessor / inviteMembers / findAncestorWithMembers / checkGroupSuccessors /
+  migrateConversation + REBOOT_DEADLINE_MS + rebootsInFlight. Manual-repair callers (groupCreation,
+  useConversations) and the 5-min successor health-check (sessionWatchdogs/sessionAuth) rewired.
+- **4b/2** (`cd7cf1cf`): removed successor RESOLUTION and the reboot-lock/CAS plumbing across client
+  and server. Client: delete resolveTerminalGroup + isAncestorInLineage (call-sites - handleWelcome,
+  discovery, welcome_request handler, outbox, DM dedup - use the group id directly); remove the dead
+  acquireRebootLock / releaseRebootLock / claimGroupSuccessor / clearPendingWelcomeRequests plumbing.
+  Server: drop the reboot-lock endpoints, the claimSuccessor CAS endpoint, the getUserGroups
+  successor-chain resolution, the welcome_request successor redirect, and the
+  successorId/successorClaimedByDeviceId columns.
+- **4b/3** (this commit): migration `009` drops the two successor columns (the chains were already
+  flattened - predecessors are deletedAt tombstones with members on the terminal, purged by the
+  existing 90-day cron). Docs updated.
+
+Data safety: no bespoke purge - the flatten was already done at claimSuccessor time; the column drop
+is idempotent (`DROP COLUMN IF EXISTS`) and dev `synchronize` mirrors it. Deferred (inert, harmless):
+`parseForkedEpoch`/`isSenderForkError` fork detection - the fork marker is no longer thrown (staged
+commits), so these never fire; a small follow-up can delete them.
+
+**The MLS re-architecture (Phases 0-4) is complete.** Root causes 1 (epoch regression) and 2 (ADD/REMOVE
+asymmetry) are closed; recovery is rung-1 commit replay + rung-2 self-service external join; the
+reboot/CAS/successor machinery is gone.
 
 ## Phase 0 remaining - elaborated plan
 
