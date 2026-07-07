@@ -221,6 +221,14 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     location /api/public/ {\n\
+    if ($request_method = OPTIONS) {\n\
+    add_header Access-Control-Allow-Origin "*" always;\n\
+    add_header Access-Control-Allow-Methods "GET, OPTIONS" always;\n\
+    add_header Access-Control-Max-Age 3600 always;\n\
+    add_header Content-Length 0;\n\
+    return 204;\n\
+    }\n\
+    add_header Access-Control-Allow-Origin "*" always;\n\
     set $upstream_public social-service:3014;\n\
     proxy_pass http://$upstream_public;\n\
     proxy_set_header Host $host;\n\
