@@ -467,12 +467,16 @@ export async function discoverMissingGroups(params: {
     }
 
     const key = g.groupId; // map key = groupId
+    // A group already present in the local WASM (e.g. joined via an external commit before this
+    // discovery ran) is live: mark it active so the UI leaves the "syncing" placeholder state
+    // without a reload. Otherwise it stays pending until the Welcome is processed.
+    const joinedLocally = mlsService.getLocalGroups().includes(g.groupId);
     conversations.set(key, {
       id: g.groupId,
       contactName: displayName,
       name: displayName,
       messages: [],
-      lifecycle: 'pending', // placeholder until the Welcome is processed
+      lifecycle: joinedLocally ? 'active' : 'pending',
       mlsStateHex: null,
       conversationType: g.isGroup ? 'group' : 'direct',
       imageMediaId: g.imageMediaId ?? null,
@@ -923,4 +927,35 @@ export async function handleWelcomeRequest(params: {
     await mlsService.releaseAddLock(groupId).catch(() => {});
     welcomeRequestInProgress.delete(groupId);
   }
+}
+
+/**
+ * Handles an incoming history_request: a device that self-joined `groupId` via an external commit
+ * asks for the pre-join history it cannot decrypt on its own. We are already co-members (it is in
+ * the MLS tree), so we only resend the history bundle re-encrypted at the current epoch - no re-add,
+ * no commit. Guarded to active members holding the group locally; the delivery service already
+ * picks a single online responder, so no throttle is needed here.
+ */
+export async function handleHistoryRequest(params: {
+  mlsService: IMlsService;
+  storage: IStorage | null;
+  pin: string;
+  conversations: Map<string, Conversation>;
+  log: (msg: string) => void;
+  requesterUserId: string;
+  groupId: string;
+}): Promise<void> {
+  const { mlsService, storage, pin, conversations, log, requesterUserId, groupId } = params;
+  if (!mlsService.getLocalGroups().includes(groupId)) {
+    log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... not local - cannot serve history, skip`);
+    return;
+  }
+  if (conversations.get(groupId)?.lifecycle !== 'active') {
+    log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... not active locally - skip`);
+    return;
+  }
+  log(`[HISTORY_REQ] serving history bundle to ${requesterUserId} for ${groupId.slice(0, 8)}...`);
+  await sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+    log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
+  );
 }

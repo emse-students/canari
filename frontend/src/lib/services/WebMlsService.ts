@@ -426,6 +426,16 @@ export class WebMlsService extends BaseMlsService {
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
           }
+          if (msg.type === 'history_request') {
+            const requesterUserId = (msg.requesterUserId as string) || '';
+            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
+            const groupId = (msg.groupId as string) || '';
+            console.log(
+              `[WS RCV] history_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+            );
+            this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
           if (msg.type === 'epoch_rejected') {
             console.warn(
               `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`

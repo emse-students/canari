@@ -69,6 +69,10 @@ export abstract class BaseMlsService implements IMlsService {
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
 
+  protected historyRequestCallback:
+    | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
+    | null = null;
+
   protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
 
   // ── URLs & identity ───────────────────────────────────────────────────────
@@ -268,6 +272,12 @@ export abstract class BaseMlsService implements IMlsService {
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.welcomeRequestCallback = callback;
+  }
+
+  onHistoryRequest(
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+  ): void {
+    this.historyRequestCallback = callback;
   }
 
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
@@ -572,6 +582,18 @@ export abstract class BaseMlsService implements IMlsService {
   /** Announces to group members that this device needs a Welcome. */
   async sendWelcomeRequest(groupId: string): Promise<void> {
     await this.delivery.deliveryPost('welcome-request', {
+      groupId,
+      requesterUserId: this.userId,
+      requesterDeviceId: this.deviceId,
+    });
+  }
+
+  /**
+   * Asks one online member to resend the history bundle after this device self-joined `groupId`
+   * via an external commit. History-only (we are already a member): no re-add. Best-effort.
+   */
+  async sendHistoryRequest(groupId: string): Promise<void> {
+    await this.delivery.deliveryPost('history-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,

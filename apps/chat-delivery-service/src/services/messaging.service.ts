@@ -1314,6 +1314,82 @@ export class MessagingService {
   }
 
   /**
+   * Asks one online member to resend the history bundle to a device that self-joined `groupId` via
+   * an external commit (Phase 4). Unlike a welcome_request the requester is already a healthy member,
+   * so the responder only resends history (no re-add). Online-only and best-effort: if no member is
+   * online the joiner simply retries later - missing pre-join history is not urgent, so there is no
+   * durable FCM wake.
+   */
+  async notifyHistoryRequest(
+    body: NotifyWelcomeRequestBody,
+  ): Promise<{ status: string; target?: string }> {
+    const traceId = this.makeTraceId('history-req');
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const requesterUserId = sanitizeQueryValue(
+      body.requesterUserId,
+      'requesterUserId',
+    );
+    const requesterDeviceId = sanitizeQueryValue(
+      body.requesterDeviceId,
+      'requesterDeviceId',
+    );
+
+    let members: string[] = await this.redis.smembers(
+      `group:members:${groupId}`,
+    );
+    const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+    if (members.length === 0) {
+      const dbMembers = await this.deviceGroupRepo.find({
+        where: { groupId, status: 'active' as const },
+      });
+      if (dbMembers.length > 0) {
+        members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
+        await this.redis.sadd(`group:members:${groupId}`, ...members);
+      }
+    }
+
+    const notification = JSON.stringify({
+      type: 'history_request',
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+    });
+
+    for (const member of members) {
+      if (member === senderKey) continue;
+      const [memberUserId, memberDeviceId] = member.split(':');
+      if (!memberUserId || !memberDeviceId) continue;
+      const isOnline = await this.redis.exists(
+        `user:online:${memberUserId}:${memberDeviceId}`,
+      );
+      if (isOnline) {
+        await this.redis.publish(
+          'chat:messages',
+          JSON.stringify({
+            recipientId: memberUserId,
+            deviceId: memberDeviceId,
+            // isWelcomeRequest is the gateway's generic "relay this base64 JSON control frame to the
+            // device" flag; the inner `type` (history_request) drives the client behaviour.
+            proto: Buffer.from(notification).toString('base64'),
+            isWelcomeRequest: true,
+            groupId,
+            senderId: requesterUserId,
+            senderDeviceId: requesterDeviceId,
+          }),
+        );
+        this.logger.log(
+          `[HISTORY_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
+        );
+        return { status: 'forwarded', target: member };
+      }
+    }
+    this.logger.log(
+      `[HISTORY_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey}`,
+    );
+    return { status: 'no_peer_online' };
+  }
+
+  /**
    * Broadcasts a welcome_request signal to one online group member to trigger
    * a re-invite for the requesting device.  Falls back to the DB to repopulate
    * the Redis routing cache when the set is empty after a service restart.

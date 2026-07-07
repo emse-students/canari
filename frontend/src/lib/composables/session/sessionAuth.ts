@@ -50,7 +50,11 @@ import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerg
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
-import { handleWelcomeRequest, processPendingInvitations } from '$lib/utils/chat/actions';
+import {
+  handleWelcomeRequest,
+  handleHistoryRequest,
+  processPendingInvitations,
+} from '$lib/utils/chat/actions';
 import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import {
   registerOutbox,
@@ -688,6 +692,29 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         } catch (e) {
           cb.log(
             `[WARN] Echec handleWelcomeRequest: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+      }
+    );
+
+    mlsService.onHistoryRequest(
+      async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
+        cb.log(
+          `[SYNC] history_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}`
+        );
+        try {
+          await handleHistoryRequest({
+            mlsService: ctx.ensureMls(),
+            storage: ctx.getStorage(),
+            pin: ctx.getPin(),
+            conversations: cb.conversations,
+            log: cb.log,
+            requesterUserId,
+            groupId,
+          });
+        } catch (e) {
+          cb.log(
+            `[WARN] Echec handleHistoryRequest: ${e instanceof Error ? e.message : String(e)}`
           );
         }
       }

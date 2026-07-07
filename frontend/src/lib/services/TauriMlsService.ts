@@ -267,6 +267,16 @@ export class TauriMlsService extends BaseMlsService {
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
           }
+          if (msgType === 'history_request') {
+            const requesterUserId = (parsed.requesterUserId as string) || '';
+            const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
+            const groupId = (parsed.groupId as string) || '';
+            console.log(
+              `[WS RCV] history_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+            );
+            this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
           if (msgType === 'epoch_rejected') {
             console.warn(
               `[WS RCV] Epoch rejected for group ${parsed.groupId} (server epoch: ${parsed.currentEpoch})`

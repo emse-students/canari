@@ -149,6 +149,19 @@ export class MessagingController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Post('mls/history-request')
+  async notifyHistoryRequest(
+    @Body()
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+    },
+  ) {
+    return this.messagingService.notifyHistoryRequest(body);
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/history/batch')
   async getHistoryBatch(
     @Body()

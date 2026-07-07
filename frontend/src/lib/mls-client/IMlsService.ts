@@ -480,6 +480,20 @@ export interface IMlsService {
   ): void;
 
   /**
+   * Ask one online member to resend the history bundle after this device self-joined a group via an
+   * external commit. History-only (already a member), never a re-add. Best-effort, online-only.
+   */
+  sendHistoryRequest(groupId: string): Promise<void>;
+
+  /**
+   * Register a callback invoked when a member device receives a history_request for a group it
+   * belongs to (the requester joined via external commit and wants the pre-join history).
+   */
+  onHistoryRequest(
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+  ): void;
+
+  /**
    * Send a `disconnect` control frame over the WebSocket so the gateway
    * removes the presence key immediately (instead of waiting for TTL / heartbeat
    * miss). Call this in `beforeunload` or when the app is intentionally closed.

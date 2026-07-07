@@ -142,6 +142,7 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
 | POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/history-request` | Ask one online member to resend the history bundle (after an external-commit self-join) |
 | POST | `/api/mls/add-lock` | Acquire distributed add-lock |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
 
@@ -227,6 +228,8 @@ Triggered when `processIncomingMessage` fails with epoch-related errors:
 | `WrongEpoch` | No epoch numbers | ACK silently |
 
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
+
+On a successful external join the device also marks its conversation `active` (external join does not go through the Welcome path that normally promotes it) and sends a `history_request`: an external join lands at the current epoch WITHOUT the peer-driven history bundle a Welcome delivers, so it asks one online member (picked server-side, single responder) to resend the history re-encrypted at the current epoch via the shared `sendFullHistoryBundle`. History-only, never a re-add.
 
 ### Group reset
 

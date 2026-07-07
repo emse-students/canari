@@ -24,6 +24,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'mock-group', deletedAt: null }),
     getLocalGroups: vi.fn().mockReturnValue([]),
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    sendHistoryRequest: vi.fn().mockResolvedValue(undefined),
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
     externalJoin: vi.fn().mockResolvedValue(false),
     forgetGroup: vi.fn(),
@@ -64,6 +65,9 @@ describe('requestReAdd', () => {
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    // External join lands at the current epoch without the peer-driven history bundle, so we
+    // solicit it explicitly from one online member.
+    expect(deps.mlsService.sendHistoryRequest).toHaveBeenCalledWith('g1');
     // Not-ready marker cleared on success.
     expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).toBeNull();
   });

@@ -236,6 +236,25 @@ across the recovery-flow files were corrected. Tests updated to the post-success
 asymmetry) are closed; recovery is rung-1 commit replay + rung-2 self-service external join; the
 reboot/CAS/successor machinery is gone.
 
+**Follow-up (2026-07-07) - external-join UX gaps found in the 2-device validation.** The core desync
+is fixed (no forks / forget / re-add loops; bidirectional messaging works; the fresh device self-joined
+via external commit). Two gaps in the external-join path were then fixed:
+- Bug 1: external join did not promote the conversation `lifecycle` to `active`, so the UI sat in
+  "syncing" until a reload. Fixed in `recovery.ts` (external-join success) + `actions.ts`
+  `discoverMissingGroups` (a group already present in the local WASM is created `active`).
+- Bug 2: external join delivered no pre-join history (the history bundle only fired on the
+  welcome_request / add path that external join bypasses; the joiner's catch-up cannot decrypt
+  pre-join epochs). New `history_request` control frame mirrors the welcome_request transport
+  (delivery `POST /api/mls/history-request` -> single online responder picked server-side, relayed
+  via the gateway's generic `isWelcomeRequest` control flag, inner `type` drives behaviour) -> the
+  member resends the shared `sendFullHistoryBundle` (history-only, no re-add); the joiner sends it
+  after a successful external join. No gateway change. `handleHistoryRequest` guards to active local
+  members. The two history mechanisms stay distinct and non-competing: self catch-up (decrypt what
+  the current keys allow, for reconnection) vs peer history bundle (re-encrypt pre-join history for a
+  newcomer, single shared sender, now triggered on both the external-join and welcome_request paths,
+  which are mutually exclusive per join).
+Gates green: `bun run check` (0 errors), vitest 468, chat-delivery `tsc` + jest 41.
+
 ## Phase 0 remaining - elaborated plan
 
 **KEY INSIGHT:** the mls-lock critical section == the validate-then-merge unit (stage -> validate on

@@ -155,6 +155,18 @@ export async function requestReAdd(
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId, timers);
+    // External join does not go through the Welcome path that normally promotes the conversation:
+    // the group is now live in WASM, so mark it active here so the UI leaves the "syncing" state
+    // without waiting for a page reload.
+    const convo = deps.conversations.get(groupId);
+    if (convo && convo.lifecycle !== 'active') {
+      deps.conversations.set(groupId, { ...convo, lifecycle: 'active' });
+      await deps.saveConversation(groupId).catch(() => {});
+    }
+    // Solicit the pre-join history from one online member: an external join lands at the current
+    // epoch WITHOUT the peer-driven history bundle the Welcome path delivers, so we ask for it
+    // explicitly. Best-effort; the delivery service picks a single responder.
+    await deps.mlsService.sendHistoryRequest(groupId).catch(() => {});
     return;
   }
 
