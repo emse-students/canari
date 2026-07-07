@@ -30,7 +30,11 @@ async function bootstrap() {
         callback(null, true);
         return;
       }
-      callback(new Error(`CORS: origin not allowed: ${origin}`));
+      // Deny CORS for unknown origins WITHOUT erroring: an Error here makes the
+      // whole request 500 (even public GETs). `false` just omits the CORS
+      // headers, so credentialed routes stay blocked while the public read-only
+      // API (/api/public) is exposed cross-origin via nginx's own ACAO header.
+      callback(null, false);
     },
     credentials: true,
   });
