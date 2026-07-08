@@ -95,13 +95,20 @@ export async function recordCallEnded(
   const msg = convo.messages[idx];
   const env = parseEnvelope(msg.content);
   if (env.kind !== 'system' || !env.callEvent) return;
-  if (env.text.includes('qui a duré')) return;
+  // Already finalized: the structured `endedAt` flag (not the display text) guards
+  // against re-processing a duplicate hangup, so it survives text translation.
+  if (env.callEvent.endedAt) return;
 
-  const durationMs = Date.now() - env.callEvent.startedAt;
+  const endedAt = Date.now();
+  const durationMs = endedAt - env.callEvent.startedAt;
   const getName = await resolveDisplayNames([env.callEvent.starterId]);
   const starterName = getName(env.callEvent.starterId);
   const nextText = buildCallEndedText(starterName, durationMs);
-  const nextContent = serializeEnvelope({ ...env, text: nextText });
+  const nextContent = serializeEnvelope({
+    ...env,
+    text: nextText,
+    callEvent: { ...env.callEvent, endedAt },
+  });
 
   const msgs = [...convo.messages];
   msgs[idx] = { ...msg, content: nextContent };

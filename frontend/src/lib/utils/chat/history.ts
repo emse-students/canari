@@ -7,6 +7,7 @@ import type { MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import { applyReplaySystemEvent, type PendingHistoryMessage } from './historySystemEvents';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { chat_system_message_deleted } from '$lib/paraglide/messages';
 import {
   appMsgToEnvelope,
   isOwnMessage,
@@ -413,7 +414,7 @@ export async function replayConversationHistory(params: {
           // reflètent les suppressions/éditions sans avoir rejoué les events MLS.
           content:
             prev?.isDeleted || pm.isDeleted
-              ? 'Ce message a été supprimé.'
+              ? chat_system_message_deleted()
               : prev?.isEdited
                 ? prev.content
                 : pm.content,
@@ -474,7 +475,7 @@ export async function replayConversationHistory(params: {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
               isDeleted: true,
-              content: 'Ce message a été supprimé.',
+              content: chat_system_message_deleted(),
             });
           } else if (editedMessages.has(m.id)) {
             const edit = editedMessages.get(m.id)!;

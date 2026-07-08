@@ -16,6 +16,7 @@ import type {
   ChatMessage,
 } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { chat_system_removed_from_group } from '$lib/paraglide/messages';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import {
@@ -717,8 +718,7 @@ export function useConversations() {
           // Recovery failed - fall through to show removal notice
         }
       }
-      const notice =
-        'Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer ni recevoir de nouveaux messages.';
+      const notice = chat_system_removed_from_group();
       console.warn(`[VERIFY] User no longer member of ${convo.id} - showing removal notice`);
       if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
         await ctx.addMessageToChat('system', notice, contactName, { isSystem: true });

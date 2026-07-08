@@ -13,6 +13,7 @@ import type { MediaRef } from '$lib/media';
 import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, isGifUrl } from '$lib/utils/chat/messageDisplay';
+import { m } from '$lib/paraglide/messages';
 
 // ---------------------------------------------------------------------------
 // Variants
@@ -47,6 +48,12 @@ export interface SystemEnvelope {
     callId: string;
     starterId: string;
     startedAt: number;
+    /**
+     * Set once the call has ended and its duration has been baked into `text`.
+     * Presence of this field (not the display text) is what marks a call message
+     * as finalized, so the "ended" state survives translation of `text`.
+     */
+    endedAt?: number;
   };
 }
 
@@ -83,11 +90,13 @@ export function getPreviewText(env: MessageEnvelope): string {
     case 'text':
       return previewForTextMessage(env.text);
     case 'media':
-      return env.caption ? `[Media] ${formatMentionsForPreview(env.caption)}` : '[Media]';
+      return env.caption
+        ? `${m.chat_preview_media()} ${formatMentionsForPreview(env.caption)}`
+        : m.chat_preview_media();
     case 'system':
-      return `[Info] ${formatMentionsForPreview(env.text)}`;
+      return `${m.chat_preview_info()} ${formatMentionsForPreview(env.text)}`;
     case 'poll':
-      return `[Sondage] ${env.question}`;
+      return `${m.chat_preview_poll()} ${env.question}`;
   }
 }
 
@@ -101,11 +110,11 @@ function previewForTextMessage(text: string): string {
   const trimmed = text.trim();
   const url = extractFirstUrl(trimmed);
   if (url && trimmed === url) {
-    if (isGifUrl(url)) return '[GIF]';
+    if (isGifUrl(url)) return m.chat_preview_gif();
     try {
-      return `[Lien] ${new URL(url).hostname.replace(/^www\./, '')}`;
+      return `${m.chat_preview_link()} ${new URL(url).hostname.replace(/^www\./, '')}`;
     } catch {
-      return '[Lien]';
+      return m.chat_preview_link();
     }
   }
   return formatMentionsForPreview(text);
@@ -173,6 +182,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 callId: ce.callId,
                 starterId: ce.starterId,
                 startedAt: ce.startedAt,
+                ...(typeof ce.endedAt === 'number' ? { endedAt: ce.endedAt } : {}),
               }
             : undefined;
         return {
@@ -294,7 +304,7 @@ export function mkChannelInviteEnvelope(
 ): SystemEnvelope {
   return {
     kind: 'system',
-    text: `Invitation à rejoindre #${channelName}`,
+    text: m.chat_system_channel_invite({ channel: channelName }),
     channelInvite: { channelId, channelName, workspaceName },
   };
 }
@@ -308,20 +318,23 @@ export function mkCallStartedEnvelope(
 ): SystemEnvelope {
   return {
     kind: 'system',
-    text: `${starterName} a démarré un appel`,
+    text: m.chat_system_call_started({ starter: starterName }),
     callEvent: { callId, starterId, startedAt },
   };
 }
 
 /** Returns the system text after a call ends, including its duration. */
 export function buildCallEndedText(starterName: string, durationMs: number): string {
-  return `${starterName} a démarré un appel qui a duré ${formatCallDuration(durationMs)}`;
+  return m.chat_system_call_ended({
+    starter: starterName,
+    duration: formatCallDuration(durationMs),
+  });
 }
 
-/** Formats a call duration for display in French. */
+/** Formats a call duration for display, localized to the active locale. */
 export function formatCallDuration(durationMs: number): string {
   const minutes = Math.floor(Math.max(0, durationMs) / 60_000);
-  if (minutes < 1) return "moins d'une minute";
-  if (minutes === 1) return '1 minute';
-  return `${minutes} minutes`;
+  if (minutes < 1) return m.chat_system_call_duration_under_minute();
+  if (minutes === 1) return m.chat_system_call_duration_one_minute();
+  return m.chat_system_call_duration_minutes({ count: minutes });
 }

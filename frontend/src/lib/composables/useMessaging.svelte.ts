@@ -37,6 +37,7 @@ import {
   toggleMessageReaction,
 } from '$lib/utils/chat/messageReactions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { chat_system_message_deleted } from '$lib/paraglide/messages';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
@@ -815,7 +816,7 @@ export function useMessaging() {
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
-      msgs[idx] = { ...msgs[idx], isDeleted: true, content: 'Ce message a ete supprime.' };
+      msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
     }
   }

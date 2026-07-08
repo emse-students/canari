@@ -6,6 +6,7 @@ import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
 import { applyPin } from '$lib/stores/pinStore.svelte';
+import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
 
 /**
@@ -123,7 +124,7 @@ export async function handleSystemEvent(
     const getName = await resolveDisplayNames([senderNorm]);
     await addMessageToChat(
       'system',
-      `${getName(senderNorm)} renamed the group to "${data.newName}"`,
+      m.chat_system_group_renamed({ sender: getName(senderNorm), name: data.newName }),
       convoKey,
       { isSystem: true }
     );
@@ -140,8 +141,8 @@ export async function handleSystemEvent(
     await addMessageToChat(
       'system',
       imageMediaId
-        ? `${getName(senderNorm)} changed the group photo`
-        : `${getName(senderNorm)} removed the group photo`,
+        ? m.chat_system_group_photo_changed({ sender: getName(senderNorm) })
+        : m.chat_system_group_photo_removed({ sender: getName(senderNorm) }),
       convoKey,
       { isSystem: true }
     );
@@ -166,7 +167,10 @@ export async function handleSystemEvent(
     } else {
       await addMessageToChat(
         'system',
-        `${getName(senderNorm)} removed ${getName(data.targetUser)} from the group`,
+        m.chat_system_member_removed({
+          sender: getName(senderNorm),
+          target: getName(data.targetUser),
+        }),
         convoKey,
         { isSystem: true }
       );
@@ -186,7 +190,7 @@ export async function handleSystemEvent(
     if (added) {
       await addMessageToChat(
         'system',
-        `${getName(senderNorm)} added ${added} to the group`,
+        m.chat_system_member_added({ sender: getName(senderNorm), members: added }),
         convoKey,
         { isSystem: true }
       );
@@ -214,9 +218,12 @@ export async function handleSystemEvent(
     } else {
       // Deleted by another participant: add a visible message and set the
       // conversation to `removed` so the user can read the history before closing.
-      await addMessageToChat('system', `${senderName} deleted this conversation.`, convoKey, {
-        isSystem: true,
-      });
+      await addMessageToChat(
+        'system',
+        m.chat_system_conversation_deleted({ sender: senderName }),
+        convoKey,
+        { isSystem: true }
+      );
       const updated = conversations.get(convoKey);
       if (updated) conversations.set(convoKey, { ...updated, lifecycle: 'removed' });
       await saveConversation(convoKey).catch(() => {});
@@ -300,7 +307,7 @@ export async function handleSystemEvent(
         const deletedMsg = {
           ...orig,
           isDeleted: true,
-          content: 'This message has been deleted.',
+          content: m.chat_system_message_deleted(),
         };
         conversations.set(convoKey, {
           ...c,

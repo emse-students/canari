@@ -2,6 +2,7 @@ import { canari } from '$lib/proto/canari.js';
 import type { AddMessageToChatOptions, Conversation, MessageReaction } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { chat_system_message_deleted } from '$lib/paraglide/messages';
 
 /** One Redis-stream history row as returned by `IMlsService.fetchHistory`. */
 export type HistoryRow = { id?: string; sender_id: string; content: string; timestamp: string };
@@ -133,7 +134,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           newMsgs[idx] = {
             ...newMsgs[idx],
             isDeleted: true,
-            content: 'Ce message a été supprimé.',
+            content: chat_system_message_deleted(),
           };
           setConversation(contactName, { ...convo, messages: newMsgs });
         }

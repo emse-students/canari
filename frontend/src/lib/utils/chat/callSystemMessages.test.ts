@@ -38,4 +38,19 @@ describe('call system envelopes', () => {
   it('builds the ended call text', () => {
     expect(buildCallEndedText('Bob', 120_000)).toBe('Bob a démarré un appel qui a duré 2 minutes');
   });
+
+  it('round-trips the endedAt finalization flag', () => {
+    const env = mkCallStartedEnvelope('Alice', 'room-1', 'user-1', 1_700_000_000_000);
+    if (env.kind !== 'system' || !env.callEvent) throw new Error('expected system call envelope');
+    // A fresh "started" envelope carries no endedAt (call still ongoing).
+    expect(env.callEvent.endedAt).toBeUndefined();
+
+    const ended = serializeEnvelope({
+      ...env,
+      callEvent: { ...env.callEvent, endedAt: 1_700_000_120_000 },
+    });
+    const parsed = parseEnvelope(ended);
+    if (parsed.kind !== 'system') throw new Error('expected system envelope');
+    expect(parsed.callEvent?.endedAt).toBe(1_700_000_120_000);
+  });
 });

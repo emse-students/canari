@@ -208,8 +208,11 @@ inline string literals.
 
 ### Text characters (apostrophes, quotes, dashes)
 
-Normalize all text to ASCII characters from the French keyboard, everywhere (code, visible strings,
-comments, documentation, translation files):
+Normalize typographic **punctuation** to its ASCII form, everywhere (code, visible strings,
+comments, documentation, translation files). This targets punctuation characters ONLY - accented
+French letters (`é è ê à ù ç î ô` ...) are ALWAYS preserved. "ASCII" here never means "French
+without accents": writing "evenement" or "privee" instead of "évènement" / "privée" is a bug, not a
+normalization. Only the three punctuation classes below change:
 
 - Straight apostrophe `'` - never a curly apostrophe (`'` U+2019, `'` U+2018).
 - Straight quote `"` - never a curly quote (`"` U+201C, `"` U+201D) nor French guillemets
