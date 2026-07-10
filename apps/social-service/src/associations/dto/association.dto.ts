@@ -17,6 +17,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
 
 export class ReorderMembersDto {
@@ -556,4 +557,33 @@ export class GrantTagDto {
   @IsDateString()
   @IsOptional()
   expiresAt?: string;
+}
+
+/** Query params for GET :id/cotisants (roster search + offset pagination). */
+export class ListCotisantsQueryDto {
+  /** Case-insensitive substring match on first/last name. */
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  offset?: number;
+
+  /** Capped at 200 by the service regardless of the value requested here. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+}
+
+/** Body for manually adding a cotisant (grants the association's canonical cotisation tag). */
+export class GrantCotisantDto {
+  @IsString()
+  @IsNotEmpty()
+  userId: string;
 }

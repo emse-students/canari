@@ -34,8 +34,10 @@ import {
   UpdateAssociationNotesDto,
   CreateAssociationCalendarEventDto,
   CreateProductDto,
+  GrantCotisantDto,
   GrantProductPurchaseDto,
   GrantTagDto,
+  ListCotisantsQueryDto,
   RejectCalendarEventDto,
   ReorderMembersDto,
   UpdateAssociationDto,
@@ -771,6 +773,65 @@ export class AssociationsController {
   @Delete(':id/tags/:tagId')
   revokeTag(@Param('tagId') tagId: string) {
     return this.userTagService.revoke(tagId);
+  }
+
+  /**
+   * Returns a searchable, paginated, promo-sorted page of the association's active
+   * cotisant roster (D9). Requires MANAGE_MEMBERS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/cotisants')
+  listCotisants(@Param('id') id: string, @Query() query: ListCotisantsQueryDto) {
+    return this.userTagService.listCotisants(id, {
+      search: query.search,
+      offset: query.offset,
+      limit: query.limit,
+    });
+  }
+
+  /**
+   * Manually adds a cotisant: grants the association's canonical cotisation tag to a user
+   * (D10, tag only - no payment recorded). The tag is derived server-side. Requires MANAGE_MEMBERS.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/cotisants')
+  grantCotisant(
+    @Param('id') id: string,
+    @Headers('x-user-id') grantedBy: string,
+    @Body() dto: GrantCotisantDto
+  ) {
+    return this.userTagService.grantCotisant(id, dto.userId, grantedBy);
+  }
+
+  /**
+   * Exports the association's full active cotisant roster as an XLSX download (D8).
+   * Requires MANAGE_MEMBERS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/cotisants/export')
+  async exportCotisants(@Param('id') id: string, @Res() res: Response) {
+    const { buffer, title } = await this.userTagService.exportCotisants(id);
+
+    // ASCII fallback (strips accents) + RFC 5987 UTF-8 encoded filename for modern browsers
+    const asciiName =
+      title
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9_\- ]/g, '')
+        .trim()
+        .replace(/\s+/g, '_') || 'cotisants';
+    const encodedName = encodeURIComponent(title);
+
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${asciiName}.xlsx"; filename*=UTF-8''${encodedName}.xlsx`,
+      'Content-Length': buffer.byteLength,
+    });
+
+    res.send(Buffer.from(buffer));
   }
 
   // ── Boutique (products) ───────────────────────────────────────────────────

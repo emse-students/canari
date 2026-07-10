@@ -1,7 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
+import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
 
 /** Data required to grant or renew a membership tag. */
 export interface GrantTagData {
@@ -11,6 +13,59 @@ export interface GrantTagData {
   grantedBy: string;
   expiresAt?: Date | null;
   metadata?: Record<string, unknown>;
+}
+
+/** One row of an association's active cotisant roster, enriched with shared-`users`-table fields. */
+export interface CotisantRosterItem {
+  /** `user_tags` primary key - used to revoke the cotisant from the roster. */
+  tagId: string;
+  userId: string;
+  tagName: string;
+  grantedAt: Date;
+  expiresAt: Date | null;
+  firstName: string | null;
+  lastName: string | null;
+  promo: number | null;
+}
+
+/** Paginated result of `UserTagService.listCotisants`. */
+export interface CotisantRosterPage {
+  items: CotisantRosterItem[];
+  total: number;
+  hasMore: boolean;
+}
+
+/** Raw row shape returned by the roster/export SQL (both use the same columns). */
+interface RawCotisantRow {
+  id: string;
+  userId: string;
+  tagName: string;
+  grantedAt: Date | string;
+  expiresAt: Date | string | null;
+  firstName: string | null;
+  lastName: string | null;
+  promo: number | null;
+}
+
+const DEFAULT_ROSTER_LIMIT = 50;
+const MAX_ROSTER_LIMIT = 200;
+
+/** Maps a raw SQL row to a `CotisantRosterItem`, normalizing date fields. */
+function toRosterItem(row: RawCotisantRow): CotisantRosterItem {
+  return {
+    tagId: row.id,
+    userId: row.userId,
+    tagName: row.tagName,
+    grantedAt: row.grantedAt instanceof Date ? row.grantedAt : new Date(row.grantedAt),
+    expiresAt: row.expiresAt
+      ? row.expiresAt instanceof Date
+        ? row.expiresAt
+        : new Date(row.expiresAt)
+      : null,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    promo: row.promo,
+  };
 }
 
 /**
@@ -52,6 +107,30 @@ export class UserTagService {
     const saved = await this.repo.save(tag);
     this.logger.log(`[UserTag] Granted ${data.tagName} to ${data.userId} by ${data.grantedBy}`);
     return saved;
+  }
+
+  /**
+   * Grants (or renews) the association's canonical cotisation tag to a user - the manual
+   * "add a cotisant" action (D10: tag only, no payment recorded). The tag name and expiry are
+   * derived server-side from the association's slug and validity mode (see `deriveCotisationTag`),
+   * so the frontend never needs to know the tag convention.
+   */
+  async grantCotisant(assocId: string, userId: string, grantedBy: string): Promise<UserTag> {
+    const rows: { slug: string; cotisationMode: CotisationMode | null }[] =
+      await this.repo.manager.query(
+        `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+        [assocId]
+      );
+    const asso = rows[0];
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!asso.cotisationMode) {
+      throw new BadRequestException('Cotisation is not enabled for this association');
+    }
+    const { tagName, expiresAt } = deriveCotisationTag(asso.slug, asso.cotisationMode);
+    this.logger.debug(
+      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tag=${tagName}`
+    );
+    return this.grantOrRenew({ userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt });
   }
 
   /** Returns true when the user has an active (non-expired) tag with the given name. */
@@ -106,5 +185,111 @@ export class UserTagService {
       .orderBy('t.tagName', 'ASC')
       .getRawMany<{ tagName: string }>();
     return rows.map((r) => r.tagName).filter(Boolean);
+  }
+
+  /**
+   * Returns a search+offset-paginated page of the association's active cotisant roster
+   * (D9: active tags only, i.e. `expiresAt IS NULL OR expiresAt > NOW()`), enriched with
+   * `firstName`/`lastName`/`promo` from the shared `users` table.
+   * Sorted `promo ASC NULLS LAST, lastName ASC, firstName ASC` so cotisants without a promo
+   * (externals, staff) land in a "Sans promo" block at the end.
+   */
+  async listCotisants(
+    assocId: string,
+    opts: { search?: string; offset?: number; limit?: number } = {}
+  ): Promise<CotisantRosterPage> {
+    const search = opts.search?.trim() || null;
+    const offset = Math.max(0, Math.trunc(opts.offset ?? 0));
+    const limit = Math.min(
+      Math.max(1, Math.trunc(opts.limit ?? DEFAULT_ROSTER_LIMIT)),
+      MAX_ROSTER_LIMIT
+    );
+    this.logger.debug(
+      `[UserTag] listCotisants assoc=${assocId} search=${search ?? '-'} offset=${offset} limit=${limit}`
+    );
+
+    // $1=assocId, $2=search (nullable), $3=limit, $4=offset - parameterized, no string concatenation of user input.
+    const searchClause = `AND ($2::text IS NULL OR u."firstName" ILIKE '%' || $2 || '%' OR u."lastName" ILIKE '%' || $2 || '%')`;
+    const baseFrom = `FROM user_tags t
+       INNER JOIN users u ON u.id = t."userId"
+       WHERE t."issuingAssocId" = $1
+         AND (t."expiresAt" IS NULL OR t."expiresAt" > NOW())
+         ${searchClause}`;
+
+    const countRows: { count: string }[] = await this.repo.manager.query(
+      `SELECT COUNT(*)::text AS count ${baseFrom}`,
+      [assocId, search]
+    );
+    const total = Number(countRows[0]?.count ?? 0);
+
+    const rows: RawCotisantRow[] = await this.repo.manager.query(
+      `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
+              t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",
+              u.promo AS "promo"
+       ${baseFrom}
+       ORDER BY u.promo ASC NULLS LAST, u."lastName" ASC, u."firstName" ASC
+       LIMIT $3 OFFSET $4`,
+      [assocId, search, limit, offset]
+    );
+
+    const items = rows.map(toRosterItem);
+    const hasMore = offset + items.length < total;
+    this.logger.debug(
+      `[UserTag] listCotisants assoc=${assocId} returned ${items.length}/${total} (hasMore=${hasMore})`
+    );
+    return { items, total, hasMore };
+  }
+
+  /**
+   * Builds an XLSX export of the association's full active cotisant roster (no pagination),
+   * same active-only filter and sort as `listCotisants`. Columns (D8): Nom, Prenom, Promo,
+   * Cotisation, Date, Echeance - no email (PII, per the rework plan).
+   */
+  async exportCotisants(assocId: string): Promise<{ buffer: Buffer; title: string }> {
+    this.logger.debug(`[UserTag] exportCotisants assoc=${assocId}`);
+
+    const nameRows: { name: string }[] = await this.repo.manager.query(
+      `SELECT name FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    const assocName = nameRows[0]?.name ?? 'cotisants';
+
+    const rows: RawCotisantRow[] = await this.repo.manager.query(
+      `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
+              t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",
+              u.promo AS "promo"
+       FROM user_tags t
+       INNER JOIN users u ON u.id = t."userId"
+       WHERE t."issuingAssocId" = $1
+         AND (t."expiresAt" IS NULL OR t."expiresAt" > NOW())
+       ORDER BY u.promo ASC NULLS LAST, u."lastName" ASC, u."firstName" ASC`,
+      [assocId]
+    );
+    const items = rows.map(toRosterItem);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Cotisants');
+    sheet.columns = [
+      { header: 'Nom', key: 'lastName', width: 20 },
+      { header: 'Prénom', key: 'firstName', width: 20 },
+      { header: 'Promo', key: 'promo', width: 10 },
+      { header: 'Cotisation', key: 'tagName', width: 30 },
+      { header: 'Date', key: 'grantedAt', width: 14, style: { numFmt: 'dd/mm/yyyy' } },
+      { header: 'Échéance', key: 'expiresAt', width: 14, style: { numFmt: 'dd/mm/yyyy' } },
+    ];
+
+    items.forEach((item) => {
+      sheet.addRow({
+        lastName: item.lastName ?? '',
+        firstName: item.firstName ?? '',
+        promo: item.promo ?? '',
+        tagName: item.tagName,
+        grantedAt: item.grantedAt,
+        expiresAt: item.expiresAt ?? '',
+      });
+    });
+
+    const buffer = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
+    return { buffer, title: `cotisants_${assocName}` };
   }
 }
