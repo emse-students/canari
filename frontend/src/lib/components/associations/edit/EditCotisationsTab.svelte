@@ -6,7 +6,10 @@
     exportCotisants,
     revokeAssociationTag,
     updateAssociation,
+    listAssociationProductsForManage,
+    updateProduct,
     type Association,
+    type AssociationProduct,
     type CotisantRosterItem,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -38,6 +41,17 @@
   let configMode = $state<'lifetime' | 'dated'>('lifetime');
   let configSaving = $state(false);
   let configError = $state('');
+
+  // ── Cotisation price (canonical membership product) ────────────────────────
+  let membershipProduct = $state<AssociationProduct | null>(null);
+  let membershipLoading = $state(false);
+  let membershipError = $state('');
+  let membershipSaving = $state(false);
+  let membershipSaved = $state(false);
+  let editMembershipName = $state('');
+  let editMembershipPriceEuros = $state<number | ''>('');
+  /** Tracks the last association we loaded the membership product for, to avoid refetch loops. */
+  let membershipLoadedForAssoId: string | null = null;
 
   // ── Roster ────────────────────────────────────────────────────────────────
   let search = $state('');
@@ -102,6 +116,14 @@
     }, SEARCH_DEBOUNCE_MS);
   });
 
+  /** Loads the canonical membership product once per association, whenever cotisation is enabled. */
+  $effect(() => {
+    if (!asso.cotisationEnabled || !canManageProducts) return;
+    if (membershipLoadedForAssoId === asso.id) return;
+    membershipLoadedForAssoId = asso.id;
+    void loadMembershipProduct();
+  });
+
   // Infinite scroll: fetch the next page once the sentinel enters the viewport.
   $effect(() => {
     if (!sentinel) return;
@@ -147,7 +169,9 @@
   async function handleActivate() {
     activating = true;
     activateError = '';
-    console.log(`[Cotisations] Enabling cotisation - asso=${asso.id.slice(0, 8)} mode=${activateMode}`);
+    console.log(
+      `[Cotisations] Enabling cotisation - asso=${asso.id.slice(0, 8)} mode=${activateMode}`
+    );
     try {
       const updated = await updateAssociation(asso.id, {
         cotisationEnabled: true,
@@ -187,11 +211,61 @@
     }
   }
 
+  /** Fetches the association's products and picks the auto-provisioned canonical membership one. */
+  async function loadMembershipProduct() {
+    membershipLoading = true;
+    membershipError = '';
+    console.log(`[Cotisations] Loading membership product - asso=${asso.id.slice(0, 8)}`);
+    try {
+      const productsList = await listAssociationProductsForManage(asso.id);
+      const found = productsList.find((p) => p.type === 'membership') ?? null;
+      membershipProduct = found;
+      if (found) {
+        editMembershipName = found.name;
+        editMembershipPriceEuros = found.amountCents != null ? found.amountCents / 100 : '';
+      }
+    } catch (e) {
+      membershipError = e instanceof Error ? e.message : m.asso_cotisations_membership_load_error();
+      console.error('[Cotisations] Failed to load membership product:', e);
+    } finally {
+      membershipLoading = false;
+    }
+  }
+
+  /** Saves the cotisation's editable label and price onto the canonical membership product. */
+  async function handleSaveMembership() {
+    if (!membershipProduct || !editMembershipName.trim()) return;
+    membershipSaving = true;
+    membershipError = '';
+    membershipSaved = false;
+    console.log(
+      `[Cotisations] Saving membership price - asso=${asso.id.slice(0, 8)} product=${membershipProduct.id.slice(0, 8)}`
+    );
+    try {
+      const updated = await updateProduct(asso.id, membershipProduct.id, {
+        name: editMembershipName.trim(),
+        amountCents:
+          editMembershipPriceEuros !== ''
+            ? Math.round(Number(editMembershipPriceEuros) * 100)
+            : null,
+      });
+      membershipProduct = updated;
+      membershipSaved = true;
+    } catch (e) {
+      membershipError = e instanceof Error ? e.message : m.asso_cotisations_membership_save_error();
+      console.error('[Cotisations] Failed to save membership price:', e);
+    } finally {
+      membershipSaving = false;
+    }
+  }
+
   async function handleRevoke(item: CotisantRosterItem) {
-    if (!(await showConfirm(m.asso_cotisations_revoke_confirm({ name: cotisantName(item) }), {
-      danger: true,
-      confirmLabel: m.asso_cotisations_revoke_button(),
-    })))
+    if (
+      !(await showConfirm(m.asso_cotisations_revoke_confirm({ name: cotisantName(item) }), {
+        danger: true,
+        confirmLabel: m.asso_cotisations_revoke_button(),
+      }))
+    )
       return;
     try {
       await revokeAssociationTag(asso.id, item.tagId);
@@ -236,7 +310,9 @@
 </script>
 
 <div class="space-y-6">
-  <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-1 shadow-sm">
+  <div
+    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-1 shadow-sm"
+  >
     <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
@@ -246,7 +322,9 @@
 
   {#if !asso.cotisationEnabled}
     {#if canManageProducts}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
+      >
         <div>
           <h3 class="text-sm font-bold text-text-main">{m.asso_cotisations_activate_title()}</h3>
           <p class="text-xs text-text-muted mt-1">{m.asso_cotisations_activate_desc()}</p>
@@ -293,7 +371,9 @@
     {/if}
   {:else}
     <!-- Config summary -->
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm">
+    <div
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
+    >
       <div class="flex items-start justify-between gap-3 flex-wrap">
         <h3 class="text-sm font-bold text-text-main">{m.asso_cotisations_config_title()}</h3>
         {#if canManageProducts && !editingConfig}
@@ -364,13 +444,83 @@
         </p>
       {/if}
 
-      <p class="text-xs text-text-muted border-t border-cn-border pt-3">
-        {m.asso_cotisations_price_hint()}
-      </p>
+      {#if canManageProducts}
+        <div class="border-t border-cn-border pt-4 space-y-3">
+          <h4 class="text-xs font-bold text-text-main uppercase tracking-wide">
+            {m.asso_cotisations_price_title()}
+          </h4>
+          {#if membershipLoading}
+            <div class="flex items-center gap-2 text-sm text-text-muted">
+              <div
+                class="h-4 w-4 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent"
+              ></div>
+              {m.common_loading_label()}
+            </div>
+          {:else if membershipError}
+            <p class="text-sm text-red-600">{membershipError}</p>
+          {:else if !membershipProduct}
+            <p class="text-sm text-text-muted">{m.asso_cotisations_membership_missing()}</p>
+          {:else}
+            <form
+              class="grid gap-3 sm:grid-cols-2"
+              onsubmit={(e) => {
+                e.preventDefault();
+                void handleSaveMembership();
+              }}
+            >
+              <div class="space-y-1">
+                <label for="membership-name" class="text-xs font-semibold text-text-muted"
+                  >{m.asso_cotisations_price_name_label()}</label
+                >
+                <input
+                  id="membership-name"
+                  type="text"
+                  bind:value={editMembershipName}
+                  required
+                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                />
+              </div>
+              <div class="space-y-1">
+                <label for="membership-price" class="text-xs font-semibold text-text-muted"
+                  >{m.asso_cotisations_price_amount_label()}</label
+                >
+                <input
+                  id="membership-price"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  bind:value={editMembershipPriceEuros}
+                  placeholder="10.00"
+                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                />
+              </div>
+              <div class="sm:col-span-2 flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={membershipSaving || !editMembershipName.trim()}
+                  class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+                >
+                  {membershipSaving ? m.common_saving_label() : m.common_save_button()}
+                </button>
+                {#if membershipSaved}
+                  <span class="text-xs font-semibold text-emerald-600"
+                    >{m.common_saved_label()}</span
+                  >
+                {/if}
+              </div>
+            </form>
+            {#if membershipProduct.amountCents == null}
+              <p class="text-xs text-amber-700">{m.asso_cotisations_price_unset_hint()}</p>
+            {/if}
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <!-- Roster -->
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm">
+    <div
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
+    >
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h3 class="text-sm font-bold text-text-main">{m.asso_cotisations_roster_title()}</h3>
         {#if canManageMembers}

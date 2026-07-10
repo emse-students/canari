@@ -224,5 +224,10 @@ committable on `main`.
 - **Phase 3 note**: enabling cotisations provisions the canonical product with `amountCents = null`
   (unpurchasable, inert) - the Cotisations tab config block MUST let the admin set the price when
   enabling, so the cotisation is actually buyable.
+- **Follow-up (client tag mirror)**: the shop derives cotisant status client-side via
+  `deriveCotisationTagName` (a hand-kept mirror of backend `cotisation-tag.util.ts`) to show member
+  prices / members-only badges. Display-only (the server stays authoritative for gating/pricing), but
+  it duplicates the tag formula. Cleaner later: have the shop product-list endpoint return per-product
+  `memberPriceApplies` / `lockedForMe` computed server-side, and drop the frontend mirror.
 - **Decision deferred**: a dedicated `MANAGE_COTISATION` flag later (rejected now in favor of reusing
   `MANAGE_MEMBERS`, D5).

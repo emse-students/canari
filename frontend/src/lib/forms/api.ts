@@ -71,6 +71,7 @@ export interface Form extends CreateFormPayload {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import type { UserTag } from '$lib/associations/api';
 
 export async function createForm(payload: CreateFormPayload): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms`, {
@@ -289,6 +290,18 @@ export async function cancelPendingSubmission(submissionId: string): Promise<{ o
   );
   if (!res.ok) throw new Error('Cancellation failed');
   return res.json();
+}
+
+/**
+ * Returns the calling user's active cotisation/membership tags across all associations
+ * (non-expired only). Reuses the existing purchases-summary endpoint so the shop can gate/label
+ * members-only products without a dedicated backend endpoint.
+ */
+export async function getMyActiveTags(): Promise<UserTag[]> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/me/purchases`);
+  if (!res.ok) throw new Error('Failed to fetch active tags');
+  const data = (await res.json()) as { activeTags?: UserTag[] };
+  return data.activeTags ?? [];
 }
 
 export async function submitForm(

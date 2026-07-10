@@ -826,6 +826,32 @@ export async function revokeAssociationTag(associationId: string, tagId: string)
   );
 }
 
+/**
+ * Returns the current academic year label (e.g. `"2026-2027"`) for a given date.
+ * Frontend mirror of `getAcademicYear` in
+ * `apps/social-service/src/associations/cotisation-tag.util.ts` - keep in sync.
+ */
+function getAcademicYear(now: Date = new Date()): string {
+  const year = now.getFullYear();
+  const startYear = now.getMonth() >= 8 ? year : year - 1; // month 8 = September (0-indexed)
+  return `${startYear}-${startYear + 1}`;
+}
+
+/**
+ * Derives the canonical cotisation tag name for an association from its slug and validity mode.
+ * Frontend mirror of `deriveCotisationTag` (backend `cotisation-tag.util.ts`) - only the tag name
+ * is needed client-side since active-tag listings already exclude expired tags. Used to determine
+ * cotisant status for members-only/member-priced products without a dedicated endpoint.
+ */
+export function deriveCotisationTagName(
+  slug: string,
+  mode: 'lifetime' | 'dated',
+  now: Date = new Date()
+): string {
+  if (mode === 'lifetime') return `cotisant:${slug}`;
+  return `cotisant:${slug}-${getAcademicYear(now)}`;
+}
+
 // ── Cotisant roster ──────────────────────────────────────────────────────────
 
 /** A single row of the association's active cotisant roster (promo-sorted, "Sans promo" last). */
@@ -918,6 +944,10 @@ export interface AssociationProduct {
   type: 'membership' | 'balance_topup' | 'other';
   grantedTagName: string | null;
   tagExpiresAt: string | null;
+  /** Reserved to holders of the association's active cotisation tag. */
+  membersOnly: boolean;
+  /** Reduced price in cents for cotisants; null = same as amountCents. */
+  amountCentsMember: number | null;
   allowCustomAmount: boolean;
   customAmountMinCents: number | null;
   customAmountMaxCents: number | null;
@@ -957,6 +987,10 @@ export interface CreateProductPayload {
   type: 'membership' | 'balance_topup' | 'other';
   grantedTagName?: string;
   tagExpiresAt?: string;
+  /** Reserved to holders of the association's active cotisation tag. */
+  membersOnly?: boolean;
+  /** Reduced price in cents for cotisants (defaults to `amountCents` when omitted). */
+  amountCentsMember?: number;
   allowCustomAmount?: boolean;
   customAmountMinCents?: number;
   customAmountMaxCents?: number;
@@ -969,9 +1003,16 @@ export interface CreateProductPayload {
   maxPurchasesTotal?: number | null;
 }
 
-export type UpdateProductPayload = Partial<CreateProductPayload> & {
+export type UpdateProductPayload = Omit<
+  Partial<CreateProductPayload>,
+  'amountCents' | 'amountCentsMember'
+> & {
   maxPurchasesPerUser?: number | null;
   maxPurchasesTotal?: number | null;
+  /** Pass null to clear the fixed price (custom-amount-only products). */
+  amountCents?: number | null;
+  /** Pass null to charge cotisants the same as everyone. */
+  amountCentsMember?: number | null;
 };
 
 /** Returns all active products across all associations (login required). */

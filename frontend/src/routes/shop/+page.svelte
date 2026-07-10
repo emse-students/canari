@@ -5,9 +5,11 @@
   import {
     listAllProducts,
     listAssociations,
+    deriveCotisationTagName,
     type AssociationProduct,
     type Association,
   } from '$lib/associations/api';
+  import { getMyActiveTags } from '$lib/forms/api';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
@@ -19,6 +21,8 @@
   let loading = $state(true);
   let error = $state('');
   let customAmounts = $state<Record<string, number>>({});
+  /** Tag names the current user actively holds, used to gate/label members-only products. */
+  let myTagNames = $state<Set<string>>(new Set());
 
   const isLoggedIn = $derived(!!currentUserId());
 
@@ -39,9 +43,17 @@
       return;
     }
     try {
-      const [prods, assos] = await Promise.all([listAllProducts(), listAssociations()]);
+      const [prods, assos, activeTags] = await Promise.all([
+        listAllProducts(),
+        listAssociations(),
+        getMyActiveTags().catch((e) => {
+          console.error('[Shop] Failed to load active tags:', e);
+          return [];
+        }),
+      ]);
       products = prods;
       assos.forEach((a) => associations.set(a.id, a));
+      myTagNames = new Set(activeTags.map((t) => t.tagName));
     } catch (err) {
       error = err instanceof Error ? err.message : m.shop_load_error_fallback();
     } finally {
@@ -78,6 +90,23 @@
         ? m.shop_type_topup()
         : m.shop_type_other();
   }
+
+  /** Returns the reduced cotisant price label, or null when the product has no member pricing. */
+  function memberPriceLabel(p: AssociationProduct): string | null {
+    if (p.amountCentsMember == null) return null;
+    return `${(p.amountCentsMember / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
+  }
+
+  /**
+   * True when the current user holds the product's association active cotisation tag.
+   * Mirrors the backend's `isBuyerCotisant` (products.service.ts) using the already-fetched
+   * active tags, so members-only products can be gated/labeled without a dedicated endpoint.
+   */
+  function isCotisant(product: AssociationProduct): boolean {
+    const asso = associations.get(product.associationId);
+    if (!asso?.cotisationMode) return false;
+    return myTagNames.has(deriveCotisationTagName(asso.slug, asso.cotisationMode));
+  }
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
@@ -106,7 +135,9 @@
     </div>
   {:else if loading}
     <div class="flex justify-center py-16">
-      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-border border-t-cn-accent"></div>
+      <div
+        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-border border-t-cn-accent"
+      ></div>
     </div>
   {:else if error}
     <p class="text-red-500 text-sm">{error}</p>
@@ -142,18 +173,41 @@
                 class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 flex flex-col gap-3"
               >
                 <!-- Type badge -->
-                <div class="flex items-center justify-between gap-2">
-                  <span
-                    class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
-                    'membership'
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                      : product.type === 'balance_topup'
-                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                        : 'bg-cn-surface-alt text-text-muted'}"
-                  >
-                    {typeLabel(product.type)}
-                  </span>
-                  <span class="text-sm font-bold text-cn-accent">{priceLabel(product)}</span>
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span
+                      class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
+                      'membership'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                        : product.type === 'balance_topup'
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                          : 'bg-cn-surface-alt text-text-muted'}"
+                    >
+                      {typeLabel(product.type)}
+                    </span>
+                    {#if product.membersOnly}
+                      <span
+                        class="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                      >
+                        {m.shop_members_only_badge()}
+                      </span>
+                    {/if}
+                  </div>
+                  {#if memberPriceLabel(product)}
+                    <span class="text-sm font-bold text-right">
+                      <span class="line-through text-text-muted font-normal"
+                        >{priceLabel(product)}</span
+                      >
+                      <span class="text-emerald-600 dark:text-emerald-400"
+                        >{memberPriceLabel(product)}</span
+                      >
+                      <span class="text-xs text-text-muted font-normal block sm:inline"
+                        >{m.shop_member_price_suffix()}</span
+                      >
+                    </span>
+                  {:else}
+                    <span class="text-sm font-bold text-cn-accent">{priceLabel(product)}</span>
+                  {/if}
                 </div>
 
                 <div>
@@ -186,8 +240,14 @@
                 <ProductPurchaseButton
                   {product}
                   customAmountEuros={customAmounts[product.id]}
+                  disabled={product.membersOnly && !isCotisant(product)}
                   class="w-full"
                 />
+                {#if product.membersOnly && !isCotisant(product)}
+                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                    {m.shop_members_only_hint()}
+                  </p>
+                {/if}
               </div>
             {/each}
           </div>

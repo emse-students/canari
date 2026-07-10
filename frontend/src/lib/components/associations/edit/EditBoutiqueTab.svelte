@@ -15,7 +15,6 @@
   import { Plus, Trash2, ChevronDown, AlertTriangle, RefreshCw, ShoppingBag } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
-  import AssociationTagAutocomplete from '$lib/components/shared/AssociationTagAutocomplete.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -42,19 +41,20 @@
   let newProductName = $state('');
   let newProductDescription = $state('');
   let newProductAmountCents = $state<number | ''>('');
-  let newProductType = $state<'membership' | 'balance_topup' | 'other'>('other');
-  let newProductGrantedTag = $state('');
-  let newProductTagExpires = $state('');
   let newProductAllowCustom = $state(false);
   let newProductMinCents = $state<number | ''>('');
   let newProductMaxCents = $state<number | ''>('');
-  let newProductWebhookUrl = $state('');
-  let newProductWebhookSecret = $state('');
+  let newProductMembersOnly = $state(false);
+  let newProductAmountCentsMember = $state<number | ''>('');
   let newProductAllowRepeat = $state(false);
   let newProductMaxPerUser = $state<number | ''>('');
   let newProductMaxTotal = $state<number | ''>('');
   let expandedProductSettingsId = $state<string | null>(null);
   let savingProductSettings = $state<string | null>(null);
+
+  /** This tab manages boutique products only (`type === 'other'`); membership is managed in the
+   * Cotisations tab and balance_topup moves to platform admin. */
+  let otherProducts = $derived(products.filter((p) => p.type === 'other'));
 
   onMount(loadProducts);
 
@@ -79,14 +79,11 @@
     newProductName = '';
     newProductDescription = '';
     newProductAmountCents = '';
-    newProductType = 'other';
-    newProductGrantedTag = '';
-    newProductTagExpires = '';
     newProductAllowCustom = false;
     newProductMinCents = '';
     newProductMaxCents = '';
-    newProductWebhookUrl = '';
-    newProductWebhookSecret = '';
+    newProductMembersOnly = false;
+    newProductAmountCentsMember = '';
     newProductAllowRepeat = false;
     newProductMaxPerUser = '';
     newProductMaxTotal = '';
@@ -102,14 +99,17 @@
         name: newProductName.trim(),
         description: newProductDescription.trim() || undefined,
         amountCents: newProductAmountCents !== '' ? Number(newProductAmountCents) * 100 : undefined,
-        type: newProductType,
-        grantedTagName: newProductGrantedTag.trim() || undefined,
-        tagExpiresAt: newProductTagExpires.trim() || undefined,
+        type: 'other',
+        membersOnly: newProductMembersOnly,
+        amountCentsMember:
+          newProductAmountCentsMember !== ''
+            ? Number(newProductAmountCentsMember) * 100
+            : undefined,
         allowCustomAmount: newProductAllowCustom,
-        customAmountMinCents: newProductMinCents !== '' ? Number(newProductMinCents) * 100 : undefined,
-        customAmountMaxCents: newProductMaxCents !== '' ? Number(newProductMaxCents) * 100 : undefined,
-        webhookUrl: newProductWebhookUrl.trim() || undefined,
-        webhookSecret: newProductWebhookSecret.trim() || undefined,
+        customAmountMinCents:
+          newProductMinCents !== '' ? Number(newProductMinCents) * 100 : undefined,
+        customAmountMaxCents:
+          newProductMaxCents !== '' ? Number(newProductMaxCents) * 100 : undefined,
         allowRepeatPurchase: newProductAllowRepeat,
         maxPurchasesPerUser: newProductMaxPerUser !== '' ? Number(newProductMaxPerUser) : undefined,
         maxPurchasesTotal: newProductMaxTotal !== '' ? Number(newProductMaxTotal) : undefined,
@@ -146,10 +146,14 @@
       const allowRepeat = fd.get('allowRepeat') === 'on';
       const maxPerUserRaw = String(fd.get('maxPerUser') ?? '').trim();
       const maxTotalRaw = String(fd.get('maxTotal') ?? '').trim();
+      const membersOnly = fd.get('membersOnly') === 'on';
+      const memberPriceRaw = String(fd.get('memberPriceEuros') ?? '').trim();
       const updated = await updateProduct(asso.id, product.id, {
         allowRepeatPurchase: allowRepeat,
         maxPurchasesPerUser: maxPerUserRaw ? Number(maxPerUserRaw) : null,
         maxPurchasesTotal: maxTotalRaw ? Number(maxTotalRaw) : null,
+        membersOnly,
+        amountCentsMember: memberPriceRaw ? Math.round(Number(memberPriceRaw) * 100) : null,
       });
       products = products.map((p) => (p.id === product.id ? updated : p));
     } catch (e) {
@@ -241,34 +245,18 @@
     >
       <h3 class="font-bold text-sm text-text-main">{m.asso_boutique_form_title()}</h3>
 
-      <div class="grid gap-4 sm:grid-cols-2">
-        <div class="space-y-1">
-          <label for="new-product-name" class="text-xs font-semibold text-text-muted"
-            >{m.asso_boutique_name_label()}</label
-          >
-          <input
-            id="new-product-name"
-            type="text"
-            bind:value={newProductName}
-            placeholder="Cotisation BDE 2026-2027"
-            required
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-          />
-        </div>
-        <div class="space-y-1">
-          <label for="new-product-type" class="text-xs font-semibold text-text-muted"
-            >{m.asso_boutique_type_label()}</label
-          >
-          <select
-            id="new-product-type"
-            bind:value={newProductType}
-            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
-          >
-            <option value="membership">{m.asso_boutique_type_membership()}</option>
-            <option value="balance_topup">{m.asso_boutique_type_topup()}</option>
-            <option value="other">{m.asso_boutique_type_other()}</option>
-          </select>
-        </div>
+      <div class="space-y-1">
+        <label for="new-product-name" class="text-xs font-semibold text-text-muted"
+          >{m.asso_boutique_name_label()}</label
+        >
+        <input
+          id="new-product-name"
+          type="text"
+          bind:value={newProductName}
+          placeholder="T-shirt promo"
+          required
+          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+        />
       </div>
 
       <div class="space-y-1">
@@ -343,66 +331,35 @@
         maxEuros={newProductAllowCustom ? newProductMaxCents : ''}
       />
 
-      {#if newProductType === 'membership'}
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="space-y-1">
-            <label for="new-product-tag" class="text-xs font-semibold text-text-muted"
-              >{m.asso_boutique_tag_label()}</label
-            >
-            <AssociationTagAutocomplete
-              associationId={asso.id}
-              value={newProductGrantedTag}
-              onValueChange={(v) => (newProductGrantedTag = v)}
-              inputId="new-product-tag"
-              placeholder={m.asso_boutique_tag_search_placeholder()}
-              allowCreate={true}
-            />
-          </div>
-          <div class="space-y-1">
-            <label for="new-product-tag-expires" class="text-xs font-semibold text-text-muted"
-              >{m.asso_boutique_tag_expiry_label()}</label
-            >
-            <input
-              id="new-product-tag-expires"
-              type="date"
-              bind:value={newProductTagExpires}
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-            />
-          </div>
+      <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
+        <p class="text-xs font-bold text-text-main uppercase tracking-wide">
+          {m.asso_boutique_cotisant_pricing_title()}
+        </p>
+        <label class="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" bind:checked={newProductMembersOnly} class="rounded" />
+          {m.asso_boutique_members_only_label()}
+        </label>
+        <div class="space-y-1">
+          <label for="new-product-member-price" class="text-xs font-semibold text-text-muted"
+            >{m.asso_boutique_member_price_label()}</label
+          >
+          <input
+            id="new-product-member-price"
+            type="number"
+            min="0"
+            step="0.01"
+            bind:value={newProductAmountCentsMember}
+            placeholder={m.asso_boutique_member_price_placeholder()}
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+          />
         </div>
-      {/if}
-
-      {#if newProductType === 'balance_topup'}
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="space-y-1">
-            <label for="new-product-webhook-url" class="text-xs font-semibold text-text-muted"
-              >{m.asso_boutique_webhook_url_label()}</label
-            >
-            <input
-              id="new-product-webhook-url"
-              type="url"
-              bind:value={newProductWebhookUrl}
-              placeholder="https://cercle.example.com/webhooks/canari"
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-            />
-          </div>
-          <div class="space-y-1">
-            <label for="new-product-webhook-secret" class="text-xs font-semibold text-text-muted"
-              >{m.asso_boutique_webhook_secret_label()}</label
-            >
-            <input
-              id="new-product-webhook-secret"
-              type="password"
-              bind:value={newProductWebhookSecret}
-              placeholder={m.asso_boutique_webhook_secret_placeholder()}
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-            />
-          </div>
-        </div>
-      {/if}
+        <p class="text-xs text-text-muted">{m.asso_boutique_member_price_hint()}</p>
+      </div>
 
       <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
-        <p class="text-xs font-bold text-text-main uppercase tracking-wide">{m.asso_boutique_limits_title()}</p>
+        <p class="text-xs font-bold text-text-main uppercase tracking-wide">
+          {m.asso_boutique_limits_title()}
+        </p>
         <label class="flex items-center gap-2 text-sm cursor-pointer">
           <input type="checkbox" bind:checked={newProductAllowRepeat} class="rounded" />
           {m.asso_boutique_allow_repeat_label()}
@@ -465,13 +422,15 @@
   <!-- Product list -->
   {#if productsLoading}
     <div class="flex justify-center py-6">
-      <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
-  {:else if products.length === 0}
+  {:else if otherProducts.length === 0}
     <p class="text-sm text-text-muted text-center py-6">{m.asso_boutique_no_products()}</p>
   {:else}
     <ul class="space-y-3">
-      {#each products as product (product.id)}
+      {#each otherProducts as product (product.id)}
         <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 overflow-hidden">
           <div class="flex items-center gap-3 px-4 py-3">
             <div class="min-w-0 flex-1">
@@ -482,15 +441,30 @@
                     ? 'bg-emerald-100 text-emerald-700'
                     : 'bg-cn-surface-alt text-text-muted'}"
                 >
-                  {product.isActive ? m.asso_boutique_product_active() : m.asso_boutique_product_inactive()}
+                  {product.isActive
+                    ? m.asso_boutique_product_active()
+                    : m.asso_boutique_product_inactive()}
                 </span>
-                <span class="text-xs text-text-muted">{product.type}</span>
+                {#if product.membersOnly}
+                  <span
+                    class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800"
+                  >
+                    {m.asso_boutique_members_only_label()}
+                  </span>
+                {/if}
               </div>
               <p class="text-xs text-text-muted mt-0.5">
                 {product.amountCents != null
                   ? `${(product.amountCents / 100).toFixed(2)} €`
                   : m.asso_boutique_product_free()}
-                {product.grantedTagName ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}` : ''}
+                {product.grantedTagName
+                  ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}`
+                  : ''}
+                {#if product.amountCentsMember != null}
+                  · {m.asso_boutique_product_member_price_label({
+                    price: (product.amountCentsMember / 100).toFixed(2),
+                  })}
+                {/if}
                 {#if product.allowRepeatPurchase}
                   · {m.asso_boutique_product_repeat_label()}
                 {/if}
@@ -518,7 +492,9 @@
                 onclick={() => handleToggleProduct(product)}
                 class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
               >
-                {product.isActive ? m.asso_boutique_deactivate_button() : m.asso_boutique_activate_button()}
+                {product.isActive
+                  ? m.asso_boutique_deactivate_button()
+                  : m.asso_boutique_activate_button()}
               </button>
               <button
                 type="button"
@@ -540,6 +516,32 @@
                   void handleSaveProductSettings(product, e.currentTarget);
                 }}
               >
+                <label class="flex items-center gap-2 text-sm cursor-pointer sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    name="membersOnly"
+                    checked={product.membersOnly}
+                    class="rounded"
+                  />
+                  {m.asso_boutique_members_only_label()}
+                </label>
+                <div class="space-y-1 sm:col-span-2">
+                  <label
+                    for="member-price-{product.id}"
+                    class="text-xs font-semibold text-text-muted"
+                    >{m.asso_boutique_member_price_label()}</label
+                  >
+                  <input
+                    id="member-price-{product.id}"
+                    name="memberPriceEuros"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={product.amountCentsMember != null ? product.amountCentsMember / 100 : ''}
+                    placeholder={m.asso_boutique_member_price_placeholder()}
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
                 <label class="flex items-center gap-2 text-sm cursor-pointer sm:col-span-2">
                   <input
                     type="checkbox"
@@ -603,15 +605,22 @@
       </h3>
       <ul class="space-y-2">
         {#each webhookFailures as delivery (delivery.id)}
-          <li class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+          <li
+            class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3"
+          >
             <div class="min-w-0 flex-1">
               <p class="text-xs font-semibold text-text-main">
-                {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(0, 20)}…
+                {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(
+                  0,
+                  20
+                )}…
               </p>
               <p class="text-xs text-text-muted">
                 {m.asso_boutique_webhook_attempts({ count: delivery.attemptCount })} ·
                 {delivery.lastAttemptAt
-                  ? new Date(delivery.lastAttemptAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')
+                  ? new Date(delivery.lastAttemptAt).toLocaleString(
+                      getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                    )
                   : '-'}
               </p>
               {#if delivery.lastError}
