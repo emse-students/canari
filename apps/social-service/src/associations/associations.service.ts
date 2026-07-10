@@ -23,6 +23,7 @@ import {
   AssociationCalendarEventStatus,
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
+import { deriveCotisationTag } from './cotisation-tag.util';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import {
@@ -191,7 +192,7 @@ export class AssociationsService {
 
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
-    await this.findById(id);
+    const asso = await this.findById(id);
     const patch = { ...dto } as unknown as Partial<Association>;
     if (dto.description !== undefined && dto.description.trim() === '') {
       patch.description = null;
@@ -219,10 +220,13 @@ export class AssociationsService {
     if (patch.documentQuotaBytes !== undefined) {
       patch.documentQuotaBytes = Number(patch.documentQuotaBytes);
     }
-    // cotisationExpiresAt comes in as an ISO string (DTO) but the column is a Date
-    if (dto.cotisationExpiresAt !== undefined) {
+    // Cotisation expiry is derived server-side from the mode (dated -> 31/08 of the current
+    // academic year; lifetime -> never), never chosen by the client, so it always matches the
+    // granted tag (see deriveCotisationTag). Any client-sent cotisationExpiresAt is ignored.
+    delete patch.cotisationExpiresAt;
+    if (dto.cotisationMode !== undefined) {
       patch.cotisationExpiresAt =
-        dto.cotisationExpiresAt === null ? null : new Date(dto.cotisationExpiresAt);
+        dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
     await this.assoRepo.update(id, patch);
     await this.invalidatePostListCaches();

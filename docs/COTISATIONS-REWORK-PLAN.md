@@ -101,7 +101,10 @@ Rework how associations manage membership dues ("cotisations") and boutique prod
 ### 5.2 `Association` (new columns)
 - `cotisationEnabled: boolean` (default `false`) - reveals the Cotisations tab and cotisation config.
 - `cotisationMode: 'lifetime' | 'dated' | null` - validity mode (null when disabled).
-- `cotisationExpiresAt: timestamptz | null` - deadline for `dated` mode.
+- `cotisationExpiresAt: timestamptz | null` - deadline for `dated` mode, **derived server-side**
+  from the mode (dated -> 31/08 of the current academic year, lifetime -> null) in
+  `associations.service.update`; never chosen by the client, so it always matches the granted tag.
+  The admin only picks the mode; there is no expiry date picker in the UI.
 - (Price/label live on the canonical membership product, not duplicated here.)
 
 ### 5.3 Migrations
