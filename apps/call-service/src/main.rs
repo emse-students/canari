@@ -56,9 +56,14 @@ struct RoomClaims {
 }
 
 /// Query parameters for the WebSocket upgrade endpoint.
-/// `token` is NOT accepted as a query param - authentication uses the `canari_ws_token` cookie only.
+///
+/// `token`: JWT access token fallback for Tauri Android/mobile, where the WebView
+/// cookie is not sent on cross-origin WebSocket upgrades. Used only when the
+/// `canari_ws_token` cookie is absent (same pattern as chat-gateway).
 #[derive(Deserialize)]
-struct AuthParams {}
+struct AuthParams {
+    token: Option<String>,
+}
 
 struct AppState {
     rooms: DashMap<RoomId, Arc<Room>>,
@@ -304,7 +309,7 @@ fn extract_cookie_value(headers: &HeaderMap, key: &str) -> Option<String> {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    Query(_params): Query<AuthParams>,
+    Query(params): Query<AuthParams>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
@@ -312,8 +317,18 @@ async fn ws_handler(
         return (StatusCode::INTERNAL_SERVER_ERROR, "JWT not configured").into_response();
     }
 
-    // Token must come from the HttpOnly `canari_ws_token` cookie only - never from query params.
-    let Some(token) = extract_cookie_value(&headers, "canari_ws_token") else {
+    // Cookie is preferred (same-origin web); query param is the Tauri mobile fallback.
+    let token = extract_cookie_value(&headers, "canari_ws_token").or_else(|| {
+        params.token.as_deref().map(|t| {
+            info!(
+                "[ws] Using ?token= fallback (Tauri mobile), prefix={}…",
+                t.chars().take(8).collect::<String>()
+            );
+            t.to_string()
+        })
+    });
+
+    let Some(token) = token else {
         return (StatusCode::UNAUTHORIZED, "Missing auth token").into_response();
     };
 

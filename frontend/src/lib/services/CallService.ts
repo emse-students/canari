@@ -6,6 +6,7 @@ import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { getToken } from '$lib/stores/auth';
 import {
   buildCallAudioConstraints,
   configureCallAudioSenders,
@@ -480,9 +481,26 @@ export class CallService {
       import.meta.env.VITE_CALL_URL ||
       (typeof window !== 'undefined' ? window.location.origin : '');
 
-    // Auth via cookie canari_ws_token only (no query param to avoid token leakage in logs).
-    const wsUrl = callBaseUrl.replace(/^http/, 'ws') + '/api/call';
-    appendLog('[Call] connecting SFU WebSocket');
+    const wsBase = callBaseUrl.replace(/^https?:/, (m: string) =>
+      m === 'https:' ? 'wss:' : 'ws:'
+    );
+
+    // Same-origin web can use the canari_ws_token cookie; Tauri mobile needs ?token=
+    // (cross-origin WebSocket cannot send WebView cookies - parity with chat-gateway).
+    let tokenParam = '';
+    try {
+      const token = await getToken();
+      if (token) {
+        tokenParam = `?token=${encodeURIComponent(token)}`;
+      }
+    } catch {
+      appendLog('[Call] SFU WS: no in-memory token, relying on canari_ws_token cookie');
+    }
+
+    const wsUrl = `${wsBase}/api/call${tokenParam}`;
+    appendLog(
+      `[Call] connecting SFU WebSocket${tokenParam ? ' (token in query)' : ' (cookie auth)'}`
+    );
 
     return new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
