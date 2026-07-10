@@ -5,18 +5,14 @@
     createProduct,
     updateProduct,
     deleteProduct,
-    listWebhookFailures,
-    retryWebhookDelivery,
     type Association,
     type AssociationProduct,
-    type WebhookDelivery,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { Plus, Trash2, ChevronDown, AlertTriangle, RefreshCw, ShoppingBag } from '@lucide/svelte';
+  import { Plus, Trash2, ChevronDown, ShoppingBag } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     asso: Association;
@@ -33,10 +29,8 @@
   let products = $state<AssociationProduct[]>([]);
   let productsLoading = $state(false);
   let productsError = $state('');
-  let webhookFailures = $state<WebhookDelivery[]>([]);
   let showProductForm = $state(false);
   let savingProduct = $state(false);
-  let retryingDelivery = $state<string | null>(null);
 
   let newProductName = $state('');
   let newProductDescription = $state('');
@@ -62,12 +56,7 @@
     productsLoading = true;
     productsError = '';
     try {
-      const [prods, failures] = await Promise.all([
-        listAssociationProductsForManage(asso.id),
-        listWebhookFailures(asso.id),
-      ]);
-      products = prods;
-      webhookFailures = failures;
+      products = await listAssociationProductsForManage(asso.id);
     } catch (e) {
       productsError = e instanceof Error ? e.message : 'Error';
     } finally {
@@ -176,18 +165,6 @@
       products = products.filter((p) => p.id !== product.id);
     } catch (e) {
       productsError = e instanceof Error ? e.message : 'Error';
-    }
-  }
-
-  async function handleRetryDelivery(delivery: WebhookDelivery) {
-    retryingDelivery = delivery.id;
-    try {
-      await retryWebhookDelivery(asso.id, delivery.id);
-      await loadProducts();
-    } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Error';
-    } finally {
-      retryingDelivery = null;
     }
   }
 </script>
@@ -594,51 +571,5 @@
         </li>
       {/each}
     </ul>
-  {/if}
-
-  <!-- Webhook failures -->
-  {#if webhookFailures.length > 0}
-    <div class="border-t border-cn-border pt-5 space-y-3">
-      <h3 class="text-sm font-bold text-text-main flex items-center gap-2 text-amber-700">
-        <AlertTriangle size={16} />
-        {m.asso_boutique_webhook_failures_title({ count: webhookFailures.length })}
-      </h3>
-      <ul class="space-y-2">
-        {#each webhookFailures as delivery (delivery.id)}
-          <li
-            class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3"
-          >
-            <div class="min-w-0 flex-1">
-              <p class="text-xs font-semibold text-text-main">
-                {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(
-                  0,
-                  20
-                )}…
-              </p>
-              <p class="text-xs text-text-muted">
-                {m.asso_boutique_webhook_attempts({ count: delivery.attemptCount })} ·
-                {delivery.lastAttemptAt
-                  ? new Date(delivery.lastAttemptAt).toLocaleString(
-                      getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                    )
-                  : '-'}
-              </p>
-              {#if delivery.lastError}
-                <p class="text-xs text-red-600 truncate">{delivery.lastError}</p>
-              {/if}
-            </div>
-            <button
-              type="button"
-              disabled={retryingDelivery === delivery.id}
-              onclick={() => handleRetryDelivery(delivery)}
-              class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
-            >
-              <RefreshCw size={13} class={retryingDelivery === delivery.id ? 'animate-spin' : ''} />
-              {m.common_retry_button()}
-            </button>
-          </li>
-        {/each}
-      </ul>
-    </div>
   {/if}
 </div>

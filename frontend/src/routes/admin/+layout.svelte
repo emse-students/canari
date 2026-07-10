@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
-  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench, Building2 } from '@lucide/svelte';
+  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench, Building2, Wallet } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -38,7 +38,7 @@
     const items: {
       href: string;
       label: string;
-      icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform' | 'associations';
+      icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform' | 'associations' | 'cercle';
     }[] = [{ href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: 'agenda' }];
     if (isGlobalAdminUser) {
       items.push(
@@ -46,6 +46,7 @@
         { href: '/admin/associations', label: m.admin_associations_label(), icon: 'associations' },
         { href: '/admin/status', label: m.admin_presence_connections_label(), icon: 'status' },
         { href: '/admin/platform', label: m.admin_platform_label(), icon: 'platform' },
+        { href: '/admin/cercle', label: m.admin_cercle_label(), icon: 'cercle' },
         { href: '/admin/users', label: m.admin_admins_label(), icon: 'users' }
       );
     }
@@ -110,6 +111,8 @@
             <Building2 size={15} />
           {:else if item.icon === 'platform'}
             <Wrench size={15} />
+          {:else if item.icon === 'cercle'}
+            <Wallet size={15} />
           {:else}
             <Activity size={15} />
           {/if}

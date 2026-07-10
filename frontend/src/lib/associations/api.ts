@@ -1005,7 +1005,7 @@ export interface CreateProductPayload {
 
 export type UpdateProductPayload = Omit<
   Partial<CreateProductPayload>,
-  'amountCents' | 'amountCentsMember'
+  'amountCents' | 'amountCentsMember' | 'customAmountMinCents' | 'customAmountMaxCents'
 > & {
   maxPurchasesPerUser?: number | null;
   maxPurchasesTotal?: number | null;
@@ -1013,6 +1013,10 @@ export type UpdateProductPayload = Omit<
   amountCents?: number | null;
   /** Pass null to charge cotisants the same as everyone. */
   amountCentsMember?: number | null;
+  /** Pass null to clear the custom-amount minimum. */
+  customAmountMinCents?: number | null;
+  /** Pass null to clear the custom-amount maximum. */
+  customAmountMaxCents?: number | null;
 };
 
 /** Returns all active products across all associations (login required). */
