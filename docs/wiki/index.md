@@ -39,6 +39,10 @@
 - [Kafka](infrastructure/kafka.md) — Topics, producers, consumers
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 
+### Features
+
+- [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
+
 ### Protocols
 
 - [MLS protocol](mls-protocol.md) — RFC 9420 integration, epochs, forward secrecy, device sync

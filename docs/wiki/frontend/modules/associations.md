@@ -14,6 +14,7 @@
 - Forms with payment (see forms module for form execution; this module handles form management within an association).
 - Stripe Connect onboarding for receiving online payments.
 - Tag-based autocomplete for association tagging on posts.
+- Cotisant (membership dues) management - see [Cotisations](../../cotisations.md).
 
 ## Key components
 
