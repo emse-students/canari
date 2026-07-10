@@ -108,6 +108,21 @@ export class Association {
   @Column({ type: 'varchar', length: 255, nullable: true })
   contactEmail: string | null;
 
+  /** Whether the association takes membership dues, revealing the Cotisations admin tab. */
+  @Column({ default: false })
+  cotisationEnabled: boolean;
+
+  /**
+   * Validity mode of the cotisation: `lifetime` (buy once, never expires) or `dated`
+   * (renewed every academic year, expiring 31 August). Null while `cotisationEnabled` is false.
+   */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  cotisationMode: 'lifetime' | 'dated' | null;
+
+  /** Deadline for the current `dated` cotisation period. Null for `lifetime` mode or when disabled. */
+  @Column({ type: 'timestamptz', nullable: true })
+  cotisationExpiresAt: Date | null;
+
   @Column({ type: 'varchar', length: 255 })
   @Index()
   createdBy: string;

@@ -45,6 +45,14 @@ export class AssociationProduct {
   @Column({ type: 'timestamptz', nullable: true })
   tagExpiresAt: Date | null;
 
+  /** Reserved to holders of the association's active cotisation tag (see `cotisation-tag.util.ts`). */
+  @Column({ default: false })
+  membersOnly: boolean;
+
+  /** Reduced price in cents for cotisants (null = same as `amountCents`). Mirrors forms' `basePriceMember`. */
+  @Column({ type: 'int', nullable: true })
+  amountCentsMember: number | null;
+
   /** Whether the buyer may choose a custom amount (useful for topups). */
   @Column({ default: false })
   allowCustomAmount: boolean;

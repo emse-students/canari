@@ -162,6 +162,23 @@ export class UpdateAssociationDto {
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
   logoMediaId2?: string | null;
+
+  /** Reveals the Cotisations admin tab. Requires MANAGE_PRODUCTS (enforced by the controller). */
+  @IsBoolean()
+  @IsOptional()
+  cotisationEnabled?: boolean;
+
+  /** Validity mode of the cotisation. Required when enabling; pass `null` to clear when disabling. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn(['lifetime', 'dated'])
+  cotisationMode?: 'lifetime' | 'dated' | null;
+
+  /** Deadline for the current `dated` period. Pass `null` to clear. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsDateString()
+  cotisationExpiresAt?: string | null;
 }
 
 export class AddMemberDto {
@@ -363,6 +380,17 @@ export class CreateProductDto {
   @IsOptional()
   tagExpiresAt?: string;
 
+  /** Reserved to holders of the association's active cotisation tag. */
+  @IsBoolean()
+  @IsOptional()
+  membersOnly?: boolean;
+
+  /** Reduced price in cents for cotisants (defaults to `amountCents` when omitted). */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  amountCentsMember?: number;
+
   @IsBoolean()
   @IsOptional()
   allowCustomAmount?: boolean;
@@ -442,6 +470,17 @@ export class UpdateProductDto {
   @IsDateString()
   @IsOptional()
   tagExpiresAt?: string | null;
+
+  /** Reserved to holders of the association's active cotisation tag. */
+  @IsBoolean()
+  @IsOptional()
+  membersOnly?: boolean;
+
+  /** Reduced price in cents for cotisants. Pass `null` to charge cotisants the same as everyone. */
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  amountCentsMember?: number | null;
 
   @IsBoolean()
   @IsOptional()

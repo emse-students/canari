@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,6 +19,7 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
+import { deriveCotisationTag } from './cotisation-tag.util';
 
 /** Delays used between Cercle webhook delivery attempts (ms). */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
@@ -64,8 +71,26 @@ export class ProductsService {
   /**
    * Creates a product for an association.
    * If Stripe Connect onboarding is incomplete the product is created but forced inactive.
+   * `balance_topup` (Cercle) products require the caller to be a platform global admin,
+   * even though the endpoint is otherwise reachable with `MANAGE_PRODUCTS` (D7).
    */
-  async create(associationId: string, dto: CreateProductDto): Promise<AssociationProduct> {
+  async create(
+    associationId: string,
+    dto: CreateProductDto,
+    isGlobalAdmin: boolean
+  ): Promise<AssociationProduct> {
+    this.logger.debug(
+      `[SHOP] create product: association=${associationId.slice(0, 8)} type=${dto.type} isGlobalAdmin=${isGlobalAdmin}`
+    );
+    if (dto.type === 'balance_topup' && !isGlobalAdmin) {
+      this.logger.debug(
+        `[CERCLE] rejected balance_topup creation by non-global-admin for association=${associationId.slice(0, 8)}`
+      );
+      throw new ForbiddenException(
+        'Only platform global admins may create Cercle balance_topup products'
+      );
+    }
+
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
 
@@ -91,16 +116,31 @@ export class ProductsService {
     return this.productRepo.save(product);
   }
 
-  /** Updates mutable fields of a product. Ignores webhookSecret if not provided. */
+  /**
+   * Updates mutable fields of a product. Ignores webhookSecret if not provided.
+   * Updating an existing `balance_topup` (Cercle) product requires the caller to be a
+   * platform global admin, even though the endpoint is otherwise reachable with
+   * `MANAGE_PRODUCTS` (D7).
+   */
   async update(
     associationId: string,
     productId: string,
-    dto: UpdateProductDto
+    dto: UpdateProductDto,
+    isGlobalAdmin: boolean
   ): Promise<AssociationProduct> {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
     if (!product) throw new NotFoundException('Product not found');
+
+    if (product.type === 'balance_topup' && !isGlobalAdmin) {
+      this.logger.debug(
+        `[CERCLE] rejected balance_topup update by non-global-admin for product=${productId.slice(0, 8)}`
+      );
+      throw new ForbiddenException(
+        'Only platform global admins may modify Cercle balance_topup products'
+      );
+    }
 
     const minCents = dto.customAmountMinCents ?? product.customAmountMinCents;
     const maxCents = dto.customAmountMaxCents ?? product.customAmountMaxCents;
@@ -125,6 +165,56 @@ export class ProductsService {
     });
     if (!product) throw new NotFoundException('Product not found');
     await this.productRepo.remove(product);
+  }
+
+  // ── Cotisation config ─────────────────────────────────────────────────────
+
+  /**
+   * Upserts the single canonical `membership` product for an association whose cotisations
+   * are enabled (D1): derives `grantedTagName`/`tagExpiresAt` from `deriveCotisationTag` so the
+   * granted tag always matches the association's current slug/mode. Called after
+   * `PATCH /associations/:id` when `cotisationEnabled` is true.
+   *
+   * The product's `name` (editable label) and `amountCents` (price) are preserved across calls
+   * once set, so this never overwrites admin edits made through the regular product endpoints -
+   * it only ever (re)synchronizes the derived tag fields.
+   */
+  async provisionCotisationProduct(asso: Association): Promise<AssociationProduct> {
+    this.logger.debug(
+      `[COTISATION] provisioning canonical product: association=${asso.id.slice(0, 8)} mode=${asso.cotisationMode}`
+    );
+    if (!asso.cotisationMode) {
+      throw new BadRequestException('cotisationMode is required when cotisationEnabled is true');
+    }
+
+    const { tagName, expiresAt } = deriveCotisationTag(asso.slug, asso.cotisationMode);
+
+    let product = await this.productRepo.findOne({
+      where: { associationId: asso.id, type: 'membership' },
+    });
+
+    if (!product) {
+      this.logger.log(
+        `[COTISATION] creating canonical membership product for association=${asso.id.slice(0, 8)} tag=${tagName}`
+      );
+      product = this.productRepo.create({
+        associationId: asso.id,
+        name: 'Cotisation',
+        currency: 'eur',
+        type: 'membership',
+        grantedTagName: tagName,
+        tagExpiresAt: expiresAt,
+        isActive: asso.stripeOnboardingComplete,
+      });
+    } else {
+      this.logger.log(
+        `[COTISATION] updating canonical membership product tag for association=${asso.id.slice(0, 8)} tag=${tagName}`
+      );
+      product.grantedTagName = tagName;
+      product.tagExpiresAt = expiresAt;
+    }
+
+    return this.productRepo.save(product);
   }
 
   // ── Stripe Checkout ───────────────────────────────────────────────────────
@@ -264,11 +354,19 @@ export class ProductsService {
       throw new BadRequestException('Association has not completed Stripe Connect onboarding');
     }
 
-    await this.assertCanPurchase(product, userId);
+    const isCotisant = await this.isBuyerCotisant(asso, userId);
+    await this.assertCanPurchase(product, userId, isCotisant);
 
     let amountCents: number;
     if (product.amountCents !== null) {
-      amountCents = product.amountCents;
+      if (isCotisant && product.amountCentsMember != null) {
+        amountCents = product.amountCentsMember;
+        this.logger.debug(
+          `[SHOP] member price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+        );
+      } else {
+        amountCents = product.amountCents;
+      }
     } else if (product.allowCustomAmount && customAmountCents !== undefined) {
       const min = product.customAmountMinCents ?? 0;
       const max = product.customAmountMaxCents ?? Infinity;
@@ -372,8 +470,33 @@ export class ProductsService {
     }));
   }
 
-  /** Enforces per-user and global purchase limits and membership renewal rules. */
-  private async assertCanPurchase(product: AssociationProduct, userId: string): Promise<void> {
+  /**
+   * Returns true when the user holds the association's current active cotisation tag
+   * (see `deriveCotisationTag`). Always false when the association has no cotisation
+   * mode configured (`cotisationMode` null), regardless of `cotisationEnabled`.
+   */
+  private async isBuyerCotisant(asso: Association, userId: string): Promise<boolean> {
+    if (!asso.cotisationMode) return false;
+    const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode);
+    return this.userTagService.hasActiveTag(userId, tagName);
+  }
+
+  /** Enforces member-gating, per-user/global purchase limits, and membership renewal rules. */
+  private async assertCanPurchase(
+    product: AssociationProduct,
+    userId: string,
+    isCotisant: boolean
+  ): Promise<void> {
+    this.logger.debug(
+      `[SHOP] assertCanPurchase: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} membersOnly=${product.membersOnly} isCotisant=${isCotisant}`
+    );
+    if (product.membersOnly && !isCotisant) {
+      this.logger.debug(
+        `[SHOP] rejected: product=${product.id.slice(0, 8)} is reserved to cotisants, user=${userId.slice(0, 8)} is not one`
+      );
+      throw new ForbiddenException("This product is reserved to the association's cotisants");
+    }
+
     const paidCount = await this.purchaseRecordService.countPaidByUserAndProduct(
       userId,
       product.id
@@ -396,8 +519,14 @@ export class ProductsService {
     if (paidCount === 0) return;
 
     if (product.type === 'membership' && product.grantedTagName) {
-      const hasTag = await this.userTagService.hasActiveTag(userId, product.grantedTagName);
-      if (!hasTag) return;
+      // Renewal: allow re-buying once the CURRENT tag has expired. Resolve the effective tag
+      // (derived per academic year for cotisation-mode associations) rather than the stored one,
+      // so the check stays correct across a yearly rollover.
+      const grant = await this.resolveGrantTag(product);
+      if (grant) {
+        const hasTag = await this.userTagService.hasActiveTag(userId, grant.tagName);
+        if (!hasTag) return;
+      }
     }
 
     throw new BadRequestException('You have already purchased this product');
@@ -508,6 +637,26 @@ export class ProductsService {
     );
   }
 
+  /**
+   * Resolves the tag name and expiry to grant for a product purchase.
+   * Returns null for non-membership products or membership products with no tag configured.
+   * For an association with an active cotisation mode, the tag is derived fresh from the current
+   * academic year (see `deriveCotisationTag`), so a purchase always grants the current period's
+   * tag even when the stored product tag has not been re-provisioned since the last yearly
+   * rollover. Falls back to the product's stored tag for membership products without a cotisation
+   * mode (arbitrary/legacy tags).
+   */
+  private async resolveGrantTag(
+    product: AssociationProduct
+  ): Promise<{ tagName: string; expiresAt: Date | null } | null> {
+    if (product.type !== 'membership' || !product.grantedTagName) return null;
+    const asso = await this.assoRepo.findOne({ where: { id: product.associationId } });
+    if (asso?.cotisationMode) {
+      return deriveCotisationTag(asso.slug, asso.cotisationMode);
+    }
+    return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
+  }
+
   /** Grants tags, optionally dispatches webhooks, and persists the purchase record. */
   private async fulfillProductPurchase(params: {
     product: AssociationProduct;
@@ -528,22 +677,21 @@ export class ProductsService {
       dispatchWebhook,
     } = params;
 
-    if (product.type === 'membership' && product.grantedTagName) {
+    const grant = await this.resolveGrantTag(product);
+    if (grant) {
       await this.userTagService.grantOrRenew({
         userId,
-        tagName: product.grantedTagName,
+        tagName: grant.tagName,
         issuingAssocId: product.associationId,
         grantedBy,
-        expiresAt: product.tagExpiresAt ?? null,
+        expiresAt: grant.expiresAt,
         metadata: {
           productId: product.id,
           paymentIntentId: stripePaymentIntentId,
           manualGrant: paymentMethod === 'cash',
         },
       });
-      this.logger.log(
-        `[SHOP] tag "${product.grantedTagName}" granted to user=${userId.slice(0, 8)}`
-      );
+      this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
     }
 
     if (

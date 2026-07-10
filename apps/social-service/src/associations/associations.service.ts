@@ -192,7 +192,7 @@ export class AssociationsService {
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
     await this.findById(id);
-    const patch = { ...dto } as Partial<Association>;
+    const patch = { ...dto } as unknown as Partial<Association>;
     if (dto.description !== undefined && dto.description.trim() === '') {
       patch.description = null;
     }
@@ -218,6 +218,11 @@ export class AssociationsService {
     // documentQuotaBytes comes in as bigint but must stay a number in TypeORM
     if (patch.documentQuotaBytes !== undefined) {
       patch.documentQuotaBytes = Number(patch.documentQuotaBytes);
+    }
+    // cotisationExpiresAt comes in as an ISO string (DTO) but the column is a Date
+    if (dto.cotisationExpiresAt !== undefined) {
+      patch.cotisationExpiresAt =
+        dto.cotisationExpiresAt === null ? null : new Date(dto.cotisationExpiresAt);
     }
     await this.assoRepo.update(id, patch);
     await this.invalidatePostListCaches();

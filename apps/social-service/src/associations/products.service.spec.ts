@@ -1,0 +1,255 @@
+import { ForbiddenException } from '@nestjs/common';
+import { Repository } from 'typeorm';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { ProductsService } from './products.service';
+import { AssociationProduct } from './entities/association-product.entity';
+import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { Association } from './entities/association.entity';
+import { UserTagService } from '../users/user-tag.service';
+import { PurchaseRecordService } from '../users/purchase-record.service';
+
+describe('ProductsService cotisation gating/pricing and Cercle re-gating', () => {
+  function makeService() {
+    const productRepo = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      create: jest.fn((x: unknown) => x),
+      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      manager: { query: jest.fn(() => Promise.resolve([])) },
+    };
+    const deliveryRepo = {};
+    const assoRepo = {
+      findOne: jest.fn(),
+    };
+    const httpService = {} as HttpService;
+    const config = { get: jest.fn() } as unknown as ConfigService;
+    const userTagService = {
+      hasActiveTag: jest.fn(),
+    };
+    const purchaseRecordService = {
+      countPaidByUserAndProduct: jest.fn(() => Promise.resolve(0)),
+      countPaidByProduct: jest.fn(() => Promise.resolve(0)),
+      create: jest.fn((x: unknown) => Promise.resolve(x)),
+    };
+
+    const service = new ProductsService(
+      productRepo as unknown as Repository<AssociationProduct>,
+      deliveryRepo as Repository<WebhookDelivery>,
+      assoRepo as unknown as Repository<Association>,
+      httpService,
+      config,
+      userTagService as unknown as UserTagService,
+      purchaseRecordService as unknown as PurchaseRecordService
+    );
+
+    return { service, productRepo, assoRepo, userTagService, purchaseRecordService };
+  }
+
+  const asso = (overrides: Partial<Association> = {}): Association =>
+    ({
+      id: 'asso1',
+      slug: 'bde',
+      stripeOnboardingComplete: true,
+      stripeAccountId: 'acct_1',
+      cotisationEnabled: true,
+      cotisationMode: 'lifetime',
+      cotisationExpiresAt: null,
+      ...overrides,
+    }) as Association;
+
+  const product = (overrides: Partial<AssociationProduct> = {}): AssociationProduct =>
+    ({
+      id: 'prod1',
+      associationId: 'asso1',
+      amountCents: 1000,
+      currency: 'eur',
+      type: 'other',
+      isActive: true,
+      allowRepeatPurchase: false,
+      membersOnly: false,
+      amountCentsMember: null,
+      allowCustomAmount: false,
+      customAmountMinCents: null,
+      customAmountMaxCents: null,
+      ...overrides,
+    }) as AssociationProduct;
+
+  it('rejects a members-only purchase when the buyer is not a cotisant', async () => {
+    const { service, productRepo, assoRepo, userTagService } = makeService();
+    assoRepo.findOne.mockResolvedValue(asso());
+    productRepo.findOne.mockResolvedValue(product({ membersOnly: true }));
+    userTagService.hasActiveTag.mockResolvedValue(false);
+
+    await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
+      ForbiddenException
+    );
+    expect(userTagService.hasActiveTag).toHaveBeenCalledWith('user1', 'cotisant:bde');
+  });
+
+  it('allows a members-only purchase when the buyer holds the cotisation tag', async () => {
+    const { service, productRepo, assoRepo, userTagService } = makeService();
+    assoRepo.findOne.mockResolvedValue(asso());
+    productRepo.findOne.mockResolvedValue(product({ membersOnly: true }));
+    userTagService.hasActiveTag.mockResolvedValue(true);
+
+    const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    expect(result.amountCents).toBe(1000);
+  });
+
+  it('charges the reduced member price when the buyer is a cotisant and amountCentsMember is set', async () => {
+    const { service, productRepo, assoRepo, userTagService } = makeService();
+    assoRepo.findOne.mockResolvedValue(asso());
+    productRepo.findOne.mockResolvedValue(product({ amountCentsMember: 500 }));
+    userTagService.hasActiveTag.mockResolvedValue(true);
+
+    const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    expect(result.amountCents).toBe(500);
+  });
+
+  it('charges the full price when the buyer is not a cotisant even if amountCentsMember is set', async () => {
+    const { service, productRepo, assoRepo, userTagService } = makeService();
+    assoRepo.findOne.mockResolvedValue(asso());
+    productRepo.findOne.mockResolvedValue(product({ amountCentsMember: 500 }));
+    userTagService.hasActiveTag.mockResolvedValue(false);
+
+    const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    expect(result.amountCents).toBe(1000);
+  });
+
+  it('derives the dated cotisation tag for member pricing/gating checks', async () => {
+    const { service, productRepo, assoRepo, userTagService } = makeService();
+    assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated' }));
+    productRepo.findOne.mockResolvedValue(product({ membersOnly: true }));
+    userTagService.hasActiveTag.mockResolvedValue(true);
+
+    await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+    const [, tagName] = userTagService.hasActiveTag.mock.calls[0];
+    expect(tagName).toMatch(/^cotisant:bde-\d{4}-\d{4}$/);
+  });
+
+  describe('cotisation config provisioning', () => {
+    it('creates the canonical membership product when none exists', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(null);
+
+      const created = await service.provisionCotisationProduct(asso());
+
+      expect(productRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          associationId: 'asso1',
+          type: 'membership',
+          grantedTagName: 'cotisant:bde',
+          tagExpiresAt: null,
+        })
+      );
+      expect(created).toBeDefined();
+    });
+
+    it('re-syncs the tag on an existing canonical product without touching its name/price', async () => {
+      const { service, productRepo } = makeService();
+      const existing = product({
+        type: 'membership',
+        name: 'Cotisation BDE annuelle',
+        amountCents: 2000,
+        grantedTagName: 'cotisant:old-tag',
+      });
+      productRepo.findOne.mockResolvedValue(existing);
+
+      const result = await service.provisionCotisationProduct(asso());
+
+      expect(result.grantedTagName).toBe('cotisant:bde');
+      expect(result.name).toBe('Cotisation BDE annuelle');
+      expect(result.amountCents).toBe(2000);
+    });
+
+    it('throws when cotisationMode is not set', async () => {
+      const { service } = makeService();
+      await expect(
+        service.provisionCotisationProduct(asso({ cotisationMode: null }))
+      ).rejects.toThrow('cotisationMode is required');
+    });
+  });
+
+  describe('granted-tag rollover (dated mode)', () => {
+    it('grants the freshly derived current-year tag, not the stored stale one', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated' }));
+      const stale = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:bde-2000-2001',
+        tagExpiresAt: new Date('2001-08-31'),
+      });
+
+      const grant = await (service as any).resolveGrantTag(stale);
+      expect(grant.tagName).toMatch(/^cotisant:bde-\d{4}-\d{4}$/);
+      expect(grant.tagName).not.toBe('cotisant:bde-2000-2001');
+      expect(grant.expiresAt).toBeInstanceOf(Date);
+    });
+
+    it('falls back to the stored tag for a membership product without a cotisation mode', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+      const legacy = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:legacy',
+        tagExpiresAt: null,
+      });
+
+      const grant = await (service as any).resolveGrantTag(legacy);
+      expect(grant.tagName).toBe('cotisant:legacy');
+      expect(grant.expiresAt).toBeNull();
+    });
+
+    it('returns null for a non-membership product', async () => {
+      const { service } = makeService();
+      const grant = await (service as any).resolveGrantTag(product({ type: 'other' }));
+      expect(grant).toBeNull();
+    });
+  });
+
+  describe('Cercle balance_topup re-gating', () => {
+    it('rejects creating a balance_topup product for a non-global-admin', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+
+      await expect(
+        service.create('asso1', { name: 'Recharge', type: 'balance_topup' }, false)
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows a global admin to create a balance_topup product', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+
+      await service.create('asso1', { name: 'Recharge', type: 'balance_topup' }, true);
+      expect(productRepo.save).toHaveBeenCalled();
+    });
+
+    it('rejects updating an existing balance_topup product for a non-global-admin', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));
+
+      await expect(service.update('asso1', 'prod1', { name: 'New name' }, false)).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('allows a global admin to update an existing balance_topup product', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));
+
+      await service.update('asso1', 'prod1', { name: 'New name' }, true);
+      expect(productRepo.save).toHaveBeenCalled();
+    });
+
+    it('does not require global admin for non-balance_topup product updates', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ type: 'other' }));
+
+      await expect(
+        service.update('asso1', 'prod1', { name: 'New name' }, false)
+      ).resolves.toBeDefined();
+    });
+  });
+});

@@ -358,22 +358,47 @@ export class AssociationsController {
   /**
    * Updates association details.
    * `isBDE` and `documentQuotaBytes` are silently ignored unless the caller is a global admin.
+   * Cotisation config fields (`cotisationEnabled`/`cotisationMode`/`cotisationExpiresAt`) require
+   * MANAGE_PRODUCTS (D5), stricter than this endpoint's baseline MANAGE_MEMBERS. When enabling,
+   * the canonical cotisation product is provisioned/synced (see `provisionCotisationProduct`).
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
-  update(
+  async update(
     @Param('id') id: string,
+    @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: UpdateAssociationDto
   ) {
     const patch = { ...dto };
-    if (ga !== 'true') {
+    const isGlobalAdmin = ga === 'true';
+    if (!isGlobalAdmin) {
       // Only global admins may toggle BDE status or adjust document quota
       delete patch.isBDE;
       delete patch.documentQuotaBytes;
     }
-    return this.service.update(id, patch);
+
+    const touchesCotisation =
+      patch.cotisationEnabled !== undefined ||
+      patch.cotisationMode !== undefined ||
+      patch.cotisationExpiresAt !== undefined;
+    if (touchesCotisation && !isGlobalAdmin) {
+      const canManageProducts =
+        (await this.service.isAssociationSuperAdmin(userId)) ||
+        (await this.service.callerHasFlag(userId, id, AssociationPermissionFlag.MANAGE_PRODUCTS));
+      if (!canManageProducts) {
+        throw new ForbiddenException(
+          'MANAGE_PRODUCTS permission required to edit cotisation settings'
+        );
+      }
+    }
+
+    const updated = await this.service.update(id, patch);
+    if (touchesCotisation && updated.cotisationEnabled) {
+      await this.productsService.provisionCotisationProduct(updated);
+    }
+    return updated;
   }
 
   /** Uploads and sets a new logo for the association. */
@@ -806,24 +831,35 @@ export class AssociationsController {
   /**
    * Creates a new product in the association's boutique.
    * Requires MANAGE_PRODUCTS flag. Product is inactive until Stripe Connect onboarding is complete.
+   * `balance_topup` (Cercle) products additionally require a platform global admin (D7) -
+   * enforced in the service, not just this guard.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/products')
-  createProduct(@Param('id') id: string, @Body() dto: CreateProductDto) {
-    return this.productsService.create(id, dto);
+  createProduct(
+    @Param('id') id: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: CreateProductDto
+  ) {
+    return this.productsService.create(id, dto, ga === 'true');
   }
 
-  /** Updates a product in the association's boutique. Requires MANAGE_PRODUCTS flag. */
+  /**
+   * Updates a product in the association's boutique. Requires MANAGE_PRODUCTS flag.
+   * Updating an existing `balance_topup` (Cercle) product additionally requires a platform
+   * global admin (D7) - enforced in the service, not just this guard.
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id/products/:productId')
   updateProduct(
     @Param('id') id: string,
     @Param('productId') productId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: UpdateProductDto
   ) {
-    return this.productsService.update(id, productId, dto);
+    return this.productsService.update(id, productId, dto, ga === 'true');
   }
 
   /** Removes a product from the association's boutique. Requires MANAGE_PRODUCTS flag. */
