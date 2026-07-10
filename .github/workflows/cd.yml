@@ -543,6 +543,8 @@ jobs:
             echo "::warning::SKY_API_KEY is not set - Sky parrainage tree on profiles will be empty"
           fi
 
+          upsert_env_var "CALL_E2E_ENCRYPTION" "false"
+
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"
