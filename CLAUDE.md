@@ -1,276 +1,78 @@
-# CLAUDE.md
-
-Guidance for Claude Code (claude.ai/code) when working in this repository.
-
-## Model / agent delegation (cost)
-
-To avoid burning expensive tokens, **reserve Opus for reasoning tasks** (architecture, design decisions, filtering/judging findings, tricky fixes). **Delegate everything else to cheaper models** via subagents: **Haiku** for crawling/auditing/searching the codebase, mechanical edits, running commands, commits/pushes; **Sonnet** only if a task is too hard for Haiku but does not need Opus-level reasoning. Spawn Haiku subagents to read/crawl large files and report findings, then have Opus decide and either fix the delicate parts itself or hand mechanical fixes back to Haiku. Never use Opus to read thousands of lines just to locate issues.
-
-## Project Overview
-
-**Canari** is a secure messaging platform for EMSE with end-to-end encryption using the
-**MLS protocol** (RFC 9420). It is a microservices monorepo with a SvelteKit frontend, a Rust WASM
-MLS client, and NestJS/Rust backend services.
-
-### Stack
-
-- **Frontend**: SvelteKit 5 + TailwindCSS 4 + Tauri 2
-- **MLS client**: Rust (openmls) compiled to WASM
-- **Backend**: 5 services - chat-gateway (Rust/Axum) + chat-delivery, core, media, social (NestJS)
-- **Infra**: Docker, PostgreSQL, MongoDB, Redis, Kafka, MinIO
-
-### Repository structure
-
-```
-canari/
-├── apps/                     # Backend services
-│   ├── chat-gateway/         # WebSocket gateway (Rust, port 3000)
-│   ├── chat-delivery-service/# MLS API (port 3010)
-│   ├── core-service/         # Auth + users + payments (port 3012)
-│   ├── media-service/        # Encrypted blobs (port 3011)
-│   └── social-service/       # Posts + forms + channels + associations (port 3014)
-├── frontend/                 # SvelteKit app + WASM + Tauri
-├── libs/                     # Shared code (protobufs, shared types)
-├── infrastructure/           # Docker compose + configs
-├── docs/                     # Documentation (see "Documentation" below)
-└── Makefile                  # Common commands
-```
-
-## Documentation
-
-- **`docs/wiki/`** - Technical wiki (English), organised by feature/module. This is the canonical,
-  in-progress source of truth for how the system works. Start at `docs/wiki/index.md`.
-- **`docs/NORMALIZATION-PLAN.md`** - Master plan and task list for the ongoing normalization effort
-  (i18n FR/EN + English wiki + English code comments). Read it before doing normalization work.
-- **`docs/`** (top-level topical files) - Older docs, some French, being consolidated into the wiki.
-  Living MLS docs are kept: `AUDIT-MLS-2026-06.md`, `MLS_DESYNC_PREVENTION.md`,
-  `MLS_RECOVERY_LADDER.md`, `TESTS-DEVICE-PENDING.md`.
-
-## Quick Commands
-
-```bash
-# Setup (first time)
-./scripts/setup-env.sh      # Generate env files with random secrets
-make install                # Install all deps (Node, Bun, Rust, wasm-pack)
-
-# Development
-make run-services           # Start Docker services
-make reload-services        # Restart services
-make reset-services         # Restart + clear DBs
-cd frontend && bun run dev  # Frontend dev server -> http://localhost:1420
-
-# Testing
-make test                   # All tests (Rust + NestJS + Vitest)
-make test-frontend          # Frontend only
-make test-gateway           # Rust gateway only
-make run-ci                 # Full CI pipeline
-
-# Build
-make build-frontend         # WASM + SvelteKit production build
-
-# Frontend lint/format
-bun run check               # paraglide:compile + svelte-kit sync + svelte-check (must be 0 errors)
-npm run lint:fix            # ESLint auto-fix
-npm run format              # Prettier
-
-# Rust (any service)
-cargo clippy
-cargo test
-```
-
-## Architecture
-
-### Nginx routing (source of truth: `infrastructure/local/Dockerfile.frontend`)
-
-Nginx is the single public entry point. It authenticates each protected request via
-`auth_request /internal/auth/verify` (calls core-service). On success it injects headers
-`X-User-Id`, `X-Logged-In`, `X-Global-Admin`. Full detail in `docs/wiki/architecture.md`.
-
-| Route                       | Upstream            | Auth | Notes                                                             |
-| --------------------------- | ------------------- | ---- | ----------------------------------------------------------------- |
-| `/api/ws`                   | chat-gateway:3000   | yes  | WebSocket upgrade                                                 |
-| `/api/presence`             | chat-gateway:3000   | yes  | Online presence                                                   |
-| `/api/mls/*`                | chat-delivery:3010  | yes  | MLS API, device sync, push, Redis history at `/api/mls/history/*` |
-| `/api/chat-delivery-health` | chat-delivery:3010  | no   | Liveness probe only -> `GET /api/health` (no JWT)                 |
-| `/api/media/*`              | media-service:3011  | yes  | Encrypted blob storage                                            |
-| `/api/posts/*`              | social-service:3014 | yes  | Posts, polls, reactions                                           |
-| `/api/forms/*`              | social-service:3014 | yes  | Forms with payments                                               |
-| `/api/associations/*`       | social-service:3014 | yes  | Associations/Stripe Connect                                       |
-| `/api/channels/*`           | social-service:3014 | yes  | Workspaces, channels                                              |
-| `/api/auth/*`               | core-service:3012   | no   | OIDC login, refresh, logout                                       |
-| `/api/users/*`              | core-service:3012   | yes  | User profiles, search                                             |
-| `/api/payments/*`           | core-service:3012   | yes  | Stripe payments                                                   |
+# **Canari \- Rules & Session State**
 
-### Service summary
+## **AGENT DIRECTIVES (CRITICAL)**
 
-- **chat-gateway** (Rust/Axum, 3000): WebSocket routing, presence (Redis `user:online:{userId}:{deviceId}`),
-  subscribes to Redis `chat:messages` / `chat:channel_events` and Kafka `post.created`.
-- **chat-delivery-service** (NestJS, 3010): ~40-endpoint MLS API (devices, groups, messaging, sync
-  engine, push). History via Redis Streams (`history:{groupId}`).
-- **core-service** (NestJS, 3012): OIDC auth via Authentik (JWT HS256, 15 min) + refresh cookie (7 d);
-  user profiles/search; Stripe payments.
-- **social-service** (NestJS, 3014): Markdown posts (polls, reactions, comments); channels (role-based,
-  HKDF-derived keys, server-assisted encryption); dynamic forms with optional Stripe payments.
+* NO BLIND GREP: Never run generic grep or find across the monorepo. Check SESSION STATE or ask for paths.  
+* THINK BEFORE CODING: State assumptions. Ask questions during planning. If multiple interpretations exist, surface them.  
+* SIMPLICITY FIRST: Write minimum viable code. No speculative features. No abstractions for single-use code.  
+* SURGICAL EDITS: Touch ONLY requested code. Do not refactor adjacent unbroken code. Remove unused imports/vars caused by your changes.  
+* GOAL-DRIVEN: Define success criteria. Write/update tests to reproduce bugs or validate inputs, then make them pass.  
+* MODEL DELEGATION: Opus \= reasoning/architecture. Haiku/Sonnet \= crawling, massive edits.  
+* WIKI & CLEANLINESS: Documentation goes EXCLUSIVELY in docs/wiki/. Delete unused/legacy code immediately.  
+* PROD ACCESS: You can connect to production via SSH using ssh canari (or ssh mitv for Canari-related systems).  
+* SAVE TOKENS: After completing a Work Package, output exactly: "Task done. Please git add to clear diff context, then run /compact."  
+* UPDATE STATE: You MUST update the SESSION STATE at the bottom of this file before finishing a Work Package.
 
-### Key patterns
+## **ARCHITECTURE & CONSTRAINTS**
 
-- **MLS**: all encryption/decryption in WASM (openmls); server stores only ciphertexts. Keys derived
-  per epoch (forward secrecy via epoch transitions). Device sync uses ECDH key exchange (SyncEngine).
-- **Auth**: access token in memory only (never localStorage); refresh token in HttpOnly cookie;
-  WebSocket auth via cookie `canari_ws_token`.
-- **Media**: client generates a CEK (AES-256-GCM) before upload; key travels in the MLS ciphertext;
-  media-service sees only opaque blobs.
+* Stack: SvelteKit 5 \+ Tailwind 4 \+ Tauri 2 (Front) | Rust WASM openmls | NestJS \+ Rust Axum (Back).  
+* Nginx: Single public entry point. Source of truth is infrastructure/local/Dockerfile.frontend. If adding API routes, update this config.  
+* MLS Protocol (RFC 9420): All encryption in WASM. Server stores ciphertexts. NEVER modify keys manually.  
+* Build requirements: Rebuild WASM after MLS changes (cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm; core logic lives in frontend/mls-core/). Regenerate protobufs after .proto changes (cd frontend && bun run proto:gen).  
+* Auth: Access tokens in memory ONLY (never localStorage). Refresh tokens in HttpOnly cookie. WS auth via canari\_ws\_token.  
+* Media: Client generates CEK (AES-256-GCM) before upload. Backend sees opaque blobs.  
+* Infra Truth: Keep infrastructure/MIGRATION.md synced with any new secrets, services, or bootstrap steps.
 
-## Critical Do's and Don'ts
+## **CODING STANDARDS**
 
-1. **Never modify MLS encryption keys manually** - breaks all DMs.
-2. **Don't add new API routes without updating the Nginx config** - they won't be reachable.
-3. **Always rebuild WASM after changes** to `frontend/mls-core/` or `mls-wasm/`.
-4. **Regenerate protobuf bindings** after changes to `libs/proto/canari.proto` (`npm run proto:gen`).
-5. **No localStorage for tokens** - use memory stores.
-6. **Keep `infrastructure/MIGRATION.md` in sync** - update it whenever the new-server procedure changes
-   (a GitHub secret added/renamed, a service/stack added to CD, backup/offsite setup changed, a
-   bootstrap step added/removed). It is the source of truth for cloning the server.
+* Logs: Mandatory (Log.d, appendLog, log::debug\!) at function entry, decisions, and error branches.  
+* Docs & Comments: JSDoc/Rustdoc required for exports. Explain WHAT and WHY, do not restate types.  
+* Factorization: Extract and export reusable logic. Zero duplication.  
+* Language: Code, comments, docs, and dev-strings MUST be English. User-visible strings use Paraglide (FR/EN).  
+* Punctuation: Normalize to ASCII (', ", \-) everywhere. Preserve French accents (é, à) in localized strings and text. Escape strings in code (\\', \\") instead of using typographic quotes.  
+* Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.
 
-## Environment
+## **KEY COMMANDS**
 
-```bash
-./scripts/setup-env.sh    # Generates .env files with random secrets
-```
+* Package manager: frontend uses bun (committed bun.lock, CI --frozen-lockfile); the Makefile shells out to npm on the same package.json - both work. Prefer bun locally.  
+* Setup/Dev: make install, make run-services, cd frontend && bun run dev  
+* Tests: make test (All), make test-frontend, cargo test  
+* Frontend gates (before every commit): bun run check (svelte-check, MUST be 0 errors), bun run lint (eslint), bun run format (prettier --write .). cargo clippy for Rust. The pre-commit hook runs prettier+eslint+check across the WHOLE frontend (~2-3 min) and re-stages - isolate unrelated dirty files before committing. make run-ci runs the full local pipeline.
 
-Key env vars: `JWT_SECRET` (strong random, `openssl rand -hex 32`), `POSTGRES_PASSWORD`, `DOMAIN`
-(production), `FRONTEND_URL`, `AUTHENTIK_*` (auth integration).
+## **SESSION STATE (Active Memory)**
 
-## Testing
+State lives HERE (canonical - single source of truth). Full cotisations design + decisions D1-D10: docs/COTISATIONS-REWORK-PLAN.md. Feature wiki: docs/wiki/cotisations.md.
 
-- **Rust**: `cargo test` (tarpaulin for coverage if installed)
-- **NestJS**: `npm test -- --coverage` (Jest)
-- **Frontend**: `vitest` with `happy-dom`
+**Current WIP: Cotisations & Boutique rework**
 
-**Changing a file usually means changing its test.** When you modify a component, util, or service,
-update the associated test in the same change - a stale test assertion (e.g. a translated log string
-or a renamed key) will fail CI.
+* Status: Phases 1-3b DONE - reviewed, tested (backend 54/54, frontend check 0 errors), pushed to main. HEAD after 3b = 3a8241c2.  
+* Next step: Phase 4 (i18n completeness + docs + final CI). Breakdown under "Remaining" below.  
+* Branch: main only (never feature branches).
 
-## Files to Read First
+**Locked design (condensed - full detail in plan doc):**
 
-1. `README.md` - Quick start
-2. This file - Architecture overview and rules
-3. `docs/wiki/index.md` - Technical wiki entry point
-4. `Makefile` - Available commands
-5. `infrastructure/local/Dockerfile.frontend` - Nginx config (source of truth)
-6. `apps/chat-gateway/src/main.rs` - Gateway entry
-7. `apps/chat-delivery-service/src/app.controller.ts` - Full MLS API surface
+* Cotisant status = UserTag rows, NOT a boolean. Lifetime tag `cotisant:<slug>`; dated tag `cotisant:<slug>-<academicYear>` (academic year: month >= Aug -> year, else year-1; expiry 31 Aug). `association_members` = staff roster, a separate concept.  
+* One cotisation per asso = a single canonical `membership` product. Tag auto-derived by deriveCotisationTag() in apps/social-service/src/associations/cotisation-tag.util.ts (the ONLY source of truth). Expiry derived server-side from the mode, never admin-picked.  
+* Product `type` dropdown replaced by tabs: Produits (`other`) + Cotisations (`membership`). Cercle recharge (`balance_topup`) moved to /admin/cercle (global-admin only, beneficiary-asso selector).  
+* Products gate/price on cotisant status: `membersOnly` (gate) + `amountCentsMember` (member price; null = same price for everyone).  
+* Permissions: reuse MANAGE_MEMBERS (roster) / MANAGE_PRODUCTS (price); NO new flag. balance_topup create/update additionally require global admin - enforced in products.service.ts (lines ~85, ~136), not just client-side.  
+* Roster = active tags only, promo-sorted (NULLS LAST), searchable, offset-paginated (infinite scroll), xlsx export (headers Nom, Prenom-with-accent, Promo, Cotisation, Date, Echeance-with-accent). Manual add = grant tag only, no payment.
 
-## Non-Negotiable Code Quality Rules
+**Done (pushed to main):**
 
-These apply to every file, every function, every PR - no exceptions.
+* \[x\] Phase 1 backend: migration 016_cotisations.sql; cotisation-tag.util.ts; product member gating/pricing; balance_topup global-admin gate; resolveGrantTag (derives granted tag at FULFILLMENT time - fixes academic-year rollover).  
+* \[x\] Phase 2a backend: GET/POST :id/cotisants (roster) + GET :id/cotisants/export (xlsx) in user-tag.service.ts.  
+* \[x\] Phase 2b frontend: EditCotisationsTab.svelte (enable/mode config, roster infinite-scroll, add, revoke, export); expiry derived server-side in associations.service.update.  
+* \[x\] Phase 3a frontend: EditBoutiqueTab type-dropdown removed + membersOnly/amountCentsMember controls; membership price editor; /shop member price + members-only gating.  
+* \[x\] Phase 3b frontend: /admin/cercle page (balance_topup + beneficiary selector + webhook-failure retry moved out of EditBoutiqueTab). Commit 3a8241c2.
 
-### Logs
+**Remaining:**
 
-Always add debug logs in new code:
+* \[ \] Phase 4: (a) i18n FR/EN completeness - no hardcoded user-visible strings in the new tabs/pages, both locales present; (b) docs - finish docs/wiki/cotisations.md + cross-links in associations/social-service/admin wiki + a "cotiser" section in docs/user-guide/membre.md; (c) `make run-ci` green; (d) plan follow-up: expose per-product member flags server-side to drop the client-side deriveCotisationTagName mirror in frontend/src/lib/associations/api.ts.
 
-- Kotlin: `Log.d(TAG, "…")`
-- TypeScript: `appendLog("…")` (chat/session code) or `console.log(…)` (elsewhere)
-- Rust: `log::debug!(…)` or `eprintln!(…)` for Android JNI
+**Memory Gotchas (do not repeat):**
 
-Logs must be present at: function entry for non-trivial paths, after key decisions, and on every
-error/fallback branch. They are essential for diagnosing issues on real devices where a debugger is
-unavailable.
-
-### Factorisation
-
-- Export the maximum - functions, types, constants. If it could be reused, export it.
-- Never duplicate logic. Before writing something a second time, extract it to a composable / util /
-  shared function.
-- No two mechanisms that do the same thing. Consolidate before adding.
-
-### Documentation and comments
-
-Every exported function, class, interface, and non-trivial constant must have a JSDoc comment
-(TypeScript/JavaScript) or a doc comment (Rust `///`, Kotlin `/**`). Match the existing style.
-
-Write:
-
-- **What** the thing does (one sentence is enough for simple functions).
-- **Why** it exists or works a certain way, when non-obvious.
-- Key constraints, side-effects, or invariants that would surprise a reader.
-
-Do not write:
-
-- Restatements of the type signature ("Takes a string and returns a boolean").
-- References to the current task, issue number, or callers.
-- Temporal language ("added for…", "now handles…").
-
-Inline comments (`//`) inside function bodies: only for non-obvious logic, workarounds, or subtle
-invariants. Not for every line.
-
-**Language**: all comments (`//`, `/* */`, `/** */`, Rust `///`) **and all developer-facing string
-literals** (`console.log`, `console.error`, `log::debug!`, `eprintln!`, internally thrown error
-messages) must be **English** - no French, no mixed languages. Concise but complete enough for a
-language model to grasp the intent. User-visible strings go through Paraglide i18n (FR and EN), never
-inline string literals.
-
-### Text characters (apostrophes, quotes, dashes)
-
-Normalize typographic **punctuation** to its ASCII form, everywhere (code, visible strings,
-comments, documentation, translation files). This targets punctuation characters ONLY - accented
-French letters (`é è ê à ù ç î ô` ...) are ALWAYS preserved. "ASCII" here never means "French
-without accents": writing "evenement" or "privee" instead of "évènement" / "privée" is a bug, not a
-normalization. Only the three punctuation classes below change:
-
-- Straight apostrophe `'` - never a curly apostrophe (`'` U+2019, `'` U+2018).
-- Straight quote `"` - never a curly quote (`"` U+201C, `"` U+201D) nor French guillemets
-  (`«` U+00AB, `»` U+00BB).
-- Hyphen `-` - never an em dash (`—` U+2014) nor an en dash (`–` U+2013).
-- **Exception**: the ellipsis character `…` is intentionally kept everywhere.
-
-In code, escape an apostrophe inside a single-quoted string as `\'`, and a quote inside a
-double-quoted string as `\"` - never reintroduce a typographic character to avoid escaping.
-
-This rule applies to every file in the project (TypeScript, Svelte, Rust, Kotlin, Markdown,
-translation JSON). It avoids encoding divergence and keeps text consistent and searchable.
-
-## General Coding Behavior
-
-### 1. Think before coding
-
-Don't assume. Don't hide confusion. Surface tradeoffs.
-
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop, name what's confusing, and ask.
-
-### 2. Simplicity first
-
-Minimum code that solves the problem. Nothing speculative.
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No flexibility or configurability that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-### 3. Surgical changes
-
-Touch only what you must. Clean up only your own mess.
-
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it (unless asked).
-- Remove imports/variables/functions that YOUR changes made unused.
-
-The test: every changed line should trace directly to the request.
-
-### 4. Goal-driven execution
-
-Define success criteria. Loop until verified.
-
-- "Add validation" -> "Write tests for invalid inputs, then make them pass".
-- "Fix the bug" -> "Write a test that reproduces it, then make it pass".
-- "Refactor X" -> "Ensure tests pass before and after".
-
-For multi-step tasks, state a brief plan with a verification step each, and loop until it holds.
+* Bash-tool commit messages: use a heredoc or `git commit -F file`, NOT PowerShell `@'...'@` (Git Bash takes it literally and prefixes the subject with `@`).  
+* Pre-commit hook sweeps the WHOLE frontend and re-stages; isolate unrelated dirty files (e.g. CLAUDE.md) before committing a feature.  
+* Before push: `rm -rf apps/*/dist` (pre-push replays compiled specs) then `git pull --rebase --autostash origin main`.  
+* Client-side deriveCotisationTagName (api.ts) is display-only; the server is authoritative for tag + price.
