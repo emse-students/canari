@@ -14,12 +14,17 @@
 
   const pathname = $derived(page.url.pathname);
   const resolved = $derived(
-    mergeSeo(resolveSeoForPath(pathname), seoOverride ?? (page.data?.seo as Partial<SeoMeta> | undefined))
+    mergeSeo(
+      resolveSeoForPath(pathname),
+      seoOverride ?? (page.data?.seo as Partial<SeoMeta> | undefined)
+    )
   );
 
   const documentTitle = $derived(formatDocumentTitle(resolved.title));
   const canonicalPath = $derived(resolved.path ?? pathname);
-  const canonicalUrl = $derived(`${siteOrigin()}${canonicalPath.startsWith('/') ? canonicalPath : `/${canonicalPath}`}`);
+  const canonicalUrl = $derived(
+    `${siteOrigin()}${canonicalPath.startsWith('/') ? canonicalPath : `/${canonicalPath}`}`
+  );
   const ogImage = $derived(
     resolved.image?.startsWith('http')
       ? resolved.image
@@ -34,6 +39,10 @@
 
 <svelte:head>
   <title>{documentTitle}</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  />
   <meta name="description" content={resolved.description} />
   <meta name="robots" content={robotsContent} />
   <link rel="canonical" href={canonicalUrl} />
@@ -56,6 +65,8 @@
   <meta name="twitter:image:alt" content={SITE.defaultOgImageAlt} />
 
   {#if showSiteJsonLd}
-    <script type="application/ld+json">{jsonLd}</script>
+    <script type="application/ld+json">
+{jsonLd}
+    </script>
   {/if}
 </svelte:head>
