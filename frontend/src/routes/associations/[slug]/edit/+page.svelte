@@ -32,6 +32,7 @@
     Wallet,
     ArrowUpRight,
     Users as UsersIcon,
+    HandCoins,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -40,6 +41,7 @@
   import EditBoutiqueTab from '$lib/components/associations/edit/EditBoutiqueTab.svelte';
   import EditAchatsTab from '$lib/components/associations/edit/EditAchatsTab.svelte';
   import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
+  import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import { m } from '$lib/paraglide/messages';
 
   let asso = $state<Association | null>(null);
@@ -68,6 +70,7 @@
     | 'members'
     | 'documents'
     | 'achats'
+    | 'cotisations'
     | 'payments'
     | 'formulaires'
     | 'danger'
@@ -371,6 +374,19 @@
             {m.asso_edit_tab_achats()}
           </button>
         {/if}
+        {#if (canManageMembers || canManageProducts) && asso}
+          <button
+            type="button"
+            onclick={() => (editSection = 'cotisations')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'cotisations'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <HandCoins size={17} />
+            {m.asso_edit_tab_cotisations()}
+          </button>
+        {/if}
         {#if canManageForms}
           <button
             type="button"
@@ -575,6 +591,10 @@
 
     {#if editSection === 'achats' && canManageProducts && asso}
       <EditAchatsTab {asso} />
+    {/if}
+
+    {#if editSection === 'cotisations' && (canManageMembers || canManageProducts) && asso}
+      <EditCotisationsTab bind:asso {canManageMembers} {canManageProducts} />
     {/if}
 
     {#if editSection === 'payments' && canManagePaymentsSection && asso && canManageProducts}

@@ -96,6 +96,12 @@ export interface Association {
   archived: boolean;
   /** Public contact e-mail, shown on the trombinoscope and the association page. */
   contactEmail?: string | null;
+  /** Reveals the Cotisations admin tab and cotisation config. */
+  cotisationEnabled?: boolean;
+  /** Validity mode of the cotisation: buy-once (`lifetime`) or renewed yearly (`dated`). Null when disabled. */
+  cotisationMode?: 'lifetime' | 'dated' | null;
+  /** Deadline for the current `dated` period (31/08 of the academic year). Null for `lifetime` or when disabled. */
+  cotisationExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -142,6 +148,12 @@ export interface UpdateAssociationPayload {
   name2?: string | null;
   /** Lists only: optional second theme logo. Pass `""`/null to clear. */
   logoMediaId2?: string | null;
+  /** Reveals the Cotisations admin tab (requires MANAGE_PRODUCTS server-side). */
+  cotisationEnabled?: boolean;
+  /** Validity mode of the cotisation. Required when enabling; pass `null` to clear when disabling. */
+  cotisationMode?: 'lifetime' | 'dated' | null;
+  /** Deadline for the current `dated` period, as an ISO string. Pass `null` to clear. */
+  cotisationExpiresAt?: string | null;
 }
 
 export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected';
@@ -812,6 +824,85 @@ export async function revokeAssociationTag(associationId: string, tagId: string)
     `/api/associations/${encodeURIComponent(associationId)}/tags/${encodeURIComponent(tagId)}`,
     { method: 'DELETE' }
   );
+}
+
+// ── Cotisant roster ──────────────────────────────────────────────────────────
+
+/** A single row of the association's active cotisant roster (promo-sorted, "Sans promo" last). */
+export interface CotisantRosterItem {
+  tagId: string;
+  userId: string;
+  tagName: string;
+  grantedAt: string;
+  expiresAt: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  /** Promotion year, or null for cotisants without one (externals, staff) - grouped last. */
+  promo: number | null;
+}
+
+/** One paginated page of the cotisant roster. */
+export interface CotisantRosterPage {
+  items: CotisantRosterItem[];
+  total: number;
+  hasMore: boolean;
+}
+
+/** Lists the active cotisant roster for an association, paginated and searchable (requires MANAGE_MEMBERS). */
+export async function listCotisants(
+  associationId: string,
+  opts: { search?: string; offset?: number; limit?: number } = {}
+): Promise<CotisantRosterPage> {
+  const params = new URLSearchParams();
+  if (opts.search?.trim()) params.set('search', opts.search.trim());
+  if (opts.offset != null) params.set('offset', String(opts.offset));
+  if (opts.limit != null) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  return request<CotisantRosterPage>(
+    `/api/associations/${encodeURIComponent(associationId)}/cotisants${qs ? `?${qs}` : ''}`
+  );
+}
+
+/**
+ * Manually grants the association's canonical cotisation tag to a user (D10: tag only, no
+ * purchase/amount recorded). The tag name is derived server-side. Requires MANAGE_MEMBERS.
+ */
+export async function grantCotisant(associationId: string, userId: string): Promise<UserTag> {
+  return request<UserTag>(`/api/associations/${encodeURIComponent(associationId)}/cotisants`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+}
+
+/**
+ * Downloads the association's cotisant roster as an .xlsx file and triggers a browser download.
+ * Requires MANAGE_MEMBERS. The filename is read from the response's `Content-Disposition` header
+ * (falls back to `cotisants.xlsx` if absent).
+ */
+export async function exportCotisants(associationId: string): Promise<void> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/associations/${encodeURIComponent(associationId)}/cotisants/export`
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to export cotisants (${res.status})`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const asciiMatch = /filename="?([^";]+)"?/i.exec(disposition);
+  const filename = utf8Match
+    ? decodeURIComponent(utf8Match[1])
+    : asciiMatch
+      ? asciiMatch[1]
+      : 'cotisants.xlsx';
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 // ── Boutique products ───────────────────────────────────────────────────────
