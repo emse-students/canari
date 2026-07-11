@@ -2,7 +2,6 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::path::Path;
 use std::slice;
 
 use super::background::{
@@ -19,6 +18,16 @@ fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
 fn err_json_to_c_string(err: String) -> *mut c_char {
     let value = serde_json::json!({ "ok": false, "error": err });
     json_to_c_string(value)
+}
+
+/// Decode une chaine C null-terminated en `PathBuf` possede (duree de vie FFI).
+unsafe fn path_from_c_str(ptr: *const c_char) -> std::path::PathBuf {
+    std::path::PathBuf::from(CStr::from_ptr(ptr).to_string_lossy().into_owned())
+}
+
+/// Decode une chaine C null-terminated en `String` possedee.
+unsafe fn str_from_c_str(ptr: *const c_char) -> String {
+    CStr::from_ptr(ptr).to_string_lossy().into_owned()
 }
 
 /// Libere une chaine allouee par les fonctions `canari_*` de ce module.
@@ -56,10 +65,10 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
 
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
     let ciphertext = slice::from_raw_parts(cipher_ptr, cipher_len);
-    let pin_str = CStr::from_ptr(pin).to_string_lossy();
-    let user_id_str = CStr::from_ptr(user_id).to_string_lossy();
-    let device_id_str = CStr::from_ptr(device_id).to_string_lossy();
-    let group_id_str = CStr::from_ptr(group_id).to_string_lossy();
+    let pin_str = str_from_c_str(pin);
+    let user_id_str = str_from_c_str(user_id);
+    let device_id_str = str_from_c_str(device_id);
+    let group_id_str = str_from_c_str(group_id);
 
     match decrypt_push_message(
         state_bytes,
@@ -97,16 +106,16 @@ pub unsafe extern "C" fn canari_native_create_welcome_background(
         return json_to_c_string(serde_json::json!({ "ok": false }));
     }
 
-    let files_dir = Path::new(CStr::from_ptr(files_dir).to_string_lossy().as_ref());
+    let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
     match create_welcome_background(
-        files_dir,
+        &files_dir,
         state_bytes,
-        &CStr::from_ptr(pin).to_string_lossy(),
-        &CStr::from_ptr(user_id).to_string_lossy(),
-        &CStr::from_ptr(device_id).to_string_lossy(),
-        &CStr::from_ptr(group_id).to_string_lossy(),
-        &CStr::from_ptr(key_package_b64).to_string_lossy(),
+        &str_from_c_str(pin),
+        &str_from_c_str(user_id),
+        &str_from_c_str(device_id),
+        &str_from_c_str(group_id),
+        &str_from_c_str(key_package_b64),
     ) {
         Ok(v) => json_to_c_string(v),
         Err(e) => err_json_to_c_string(e),
@@ -136,16 +145,16 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
         return 0;
     }
 
-    let files_dir = Path::new(CStr::from_ptr(files_dir).to_string_lossy().as_ref());
+    let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
     match process_welcome_background(
-        files_dir,
+        &files_dir,
         state_bytes,
-        &CStr::from_ptr(pin).to_string_lossy(),
-        &CStr::from_ptr(user_id).to_string_lossy(),
-        &CStr::from_ptr(device_id).to_string_lossy(),
-        &CStr::from_ptr(welcome_b64).to_string_lossy(),
-        &CStr::from_ptr(ratchet_tree_b64).to_string_lossy(),
+        &str_from_c_str(pin),
+        &str_from_c_str(user_id),
+        &str_from_c_str(device_id),
+        &str_from_c_str(welcome_b64),
+        &str_from_c_str(ratchet_tree_b64),
     ) {
         Ok(()) => 1,
         Err(e) => {
@@ -178,16 +187,16 @@ pub unsafe extern "C" fn canari_native_send_message_background(
         return json_to_c_string(serde_json::json!({ "ok": false }));
     }
 
-    let files_dir = Path::new(CStr::from_ptr(files_dir).to_string_lossy().as_ref());
+    let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
     match send_message_background(
-        files_dir,
+        &files_dir,
         state_bytes,
-        &CStr::from_ptr(pin).to_string_lossy(),
-        &CStr::from_ptr(user_id).to_string_lossy(),
-        &CStr::from_ptr(device_id).to_string_lossy(),
-        &CStr::from_ptr(group_id).to_string_lossy(),
-        &CStr::from_ptr(proto_b64).to_string_lossy(),
+        &str_from_c_str(pin),
+        &str_from_c_str(user_id),
+        &str_from_c_str(device_id),
+        &str_from_c_str(group_id),
+        &str_from_c_str(proto_b64),
     ) {
         Ok(v) => json_to_c_string(v),
         Err(e) => err_json_to_c_string(e),
@@ -200,8 +209,8 @@ pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_ch
     if files_dir.is_null() {
         return 0;
     }
-    let files_dir = Path::new(CStr::from_ptr(files_dir).to_string_lossy().as_ref());
-    match cleanup_pending_db(files_dir) {
+    let files_dir = path_from_c_str(files_dir);
+    match cleanup_pending_db(&files_dir) {
         Ok(()) => 1,
         Err(e) => {
             log::error!("[PushBG] cleanup_pending_db: {e}");
