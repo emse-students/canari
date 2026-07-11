@@ -75,6 +75,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "iOS": {
+      "developmentTeam": "4CLNB8SR6L"
+    }
   }
 }

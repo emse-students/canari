@@ -19,7 +19,7 @@ static NSString *const kMlsBinFileName = @"mls.bin";
 static NSString *const kFcmCacheFileName = @"fcm_message_cache.ndjson";
 static const NSUInteger kMaxFcmCacheEntries = 50;
 static const int kWelcomeRaceRetries = 3;
-static const useconds_t kWelcomeRaceRetryDelayUs = 1_800_000;
+static const useconds_t kWelcomeRaceRetryDelayUs = 1800000;
 static NSString *const kOutboxPendingFileName = @"outbox_pending.ndjson";
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
 static const int kPendingSyncNotifId = 9998;
@@ -255,7 +255,7 @@ static NSString *_Nullable CanariFetchProtoFromBackend(NSString *queuedMessageId
       NSLog(@"[CanariPush] fetchProto exception: %@", ex.reason);
     }
     if (attempt == 0) {
-      usleep(1_000_000);
+      usleep(1000000);
     }
   }
   return nil;
@@ -902,7 +902,7 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
     if (lockAcquired) {
       break;
     }
-    usleep(2_000_000);
+    usleep(2000000);
   }
   if (!lockAcquired) {
     NSLog(@"[CanariPush] processWelcomeRequestBackground: verrou Redis non acquis");
