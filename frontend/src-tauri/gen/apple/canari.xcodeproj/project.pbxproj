@@ -13,7 +13,6 @@
 		6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3416F9F4A8BD192DF6A921B4 /* QuartzCore.framework */; };
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
 		A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6012345678ABCD /* canari_ios.mm */; };
-		E5F6012345678ABCDEF02 /* canari_push.mm in Sources */ = {isa = PBXBuildFile; fileRef = F6012345678ABCDEF0123 /* canari_push.mm */; };
 		BDCC40B62FED454100576E30 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 43EC3C6D309DFBDAB0387C31 /* WebKit.framework */; };
 		BDCC40B92FED454500576E30 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
 		C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
@@ -21,6 +20,7 @@
 		D12281421027684D406D14E6 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 366E8C028B4E6CE070877F28 /* main.mm */; };
 		D58951ACC99D4C771311695B /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41BB032BCA6FE9823617B71A /* MetalKit.framework */; };
 		DA41E4ADF45E623DF4770CEF /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BDF257BC19D5AF44226720EA /* Metal.framework */; };
+		E5F6012345678ABCDEF02 /* canari_push.mm in Sources */ = {isa = PBXBuildFile; fileRef = F6012345678ABCDEF0123 /* canari_push.mm */; };
 		EB4C666589AF7B0EDEBED1B6 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 686315A99C66DB3616192FD2 /* assets */; };
 /* End PBXBuildFile section */
 
@@ -202,8 +202,8 @@
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				Base,
 				en,
+				Base,
 			);
 			mainGroup = AA23298C67DF22384563D03F;
 			minimizedProjectReferenceProxies = 1;
@@ -335,7 +335,10 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = canari_iOS/canari_iOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = KQGNZTY5CQ;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -365,7 +368,9 @@
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari;
-				PRODUCT_NAME = "Canari";
+				PRODUCT_NAME = Canari;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "Canari-Prod";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = "arm64  x86_64";
@@ -446,7 +451,10 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = canari_iOS/canari_iOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = KQGNZTY5CQ;
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
 				ENABLE_BITCODE = NO;
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -476,7 +484,9 @@
 					"$(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari;
-				PRODUCT_NAME = "Canari";
+				PRODUCT_NAME = Canari;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "Canari-Prod";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = "arm64  x86_64";
