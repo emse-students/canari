@@ -86,9 +86,23 @@ jobs:
           npm audit --audit-level=moderate
         continue-on-error: true
 
-      - name: Audit auth-service dependencies
+      - name: Audit core-service dependencies
         run: |
-          cd apps/auth-service
+          cd apps/core-service
+          npm ci
+          npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Audit social-service dependencies
+        run: |
+          cd apps/social-service
+          npm ci
+          npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Audit media-service dependencies
+        run: |
+          cd apps/media-service
           npm ci
           npm audit --audit-level=moderate
         continue-on-error: true
@@ -96,13 +110,6 @@ jobs:
       - name: Audit chat-delivery-service dependencies
         run: |
           cd apps/chat-delivery-service
-          npm ci
-          npm audit --audit-level=moderate
-        continue-on-error: true
-
-      - name: Audit user-service dependencies
-        run: |
-          cd apps/user-service
           npm ci
           npm audit --audit-level=moderate
         continue-on-error: true

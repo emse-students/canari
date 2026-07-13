@@ -30,6 +30,7 @@ import {
   fetchYouTubeOEmbed,
   fetchMiGalleryPreview,
   buildLinkPreviewPayload,
+  ssrfSafeDispatcher,
 } from '../utils/url-guard';
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
@@ -302,17 +303,20 @@ export class SecurityController {
           method: 'GET',
           redirect: 'manual', // prevent automatic redirects
           signal: abortController.signal,
+          // Pin the connection to a re-validated, public-only IP at connect time
+          // (defends against DNS-rebinding between the check above and this fetch).
+          dispatcher: ssrfSafeDispatcher,
           headers: {
             'user-agent': 'CanariLinkPreview/1.0',
             accept: 'text/html,application/xhtml+xml',
           },
-        });
+        } as RequestInit & { dispatcher: typeof ssrfSafeDispatcher });
 
         // Manually handle redirects.
         if (response.status >= 300 && response.status <= 399) {
           const location = response.headers.get('location');
           if (!location) break;
-          // 🔒 Valider la nouvelle URL cible contre les attaques SSRF (ex: redirection vers localhost)
+          // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
           currentUrl = await assertSafeExternalUrl(
             new URL(location, currentUrl.href).toString(),
           );

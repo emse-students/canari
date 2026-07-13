@@ -41,9 +41,9 @@ updates:
         update-types:
           - 'patch'
 
-  # Auth Service npm dependencies
+  # Core Service npm dependencies
   - package-ecosystem: 'npm'
-    directory: '/apps/auth-service'
+    directory: '/apps/core-service'
     rebase-strategy: auto
     schedule:
       interval: 'weekly'
@@ -54,7 +54,39 @@ updates:
     labels:
       - 'dependencies'
       - 'npm'
-      - 'auth-service'
+      - 'core-service'
+    open-pull-requests-limit: 5
+
+  # Social Service npm dependencies
+  - package-ecosystem: 'npm'
+    directory: '/apps/social-service'
+    rebase-strategy: auto
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'npm'
+      - 'social-service'
+    open-pull-requests-limit: 5
+
+  # Media Service npm dependencies
+  - package-ecosystem: 'npm'
+    directory: '/apps/media-service'
+    rebase-strategy: auto
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    commit-message:
+      prefix: 'chore(deps):'
+      include: 'scope'
+    labels:
+      - 'dependencies'
+      - 'npm'
+      - 'media-service'
     open-pull-requests-limit: 5
 
   # Chat Delivery Service npm dependencies
@@ -73,9 +105,9 @@ updates:
       - 'chat-delivery-service'
     open-pull-requests-limit: 5
 
-  # User Service npm dependencies
+  # Shared TS library npm dependencies
   - package-ecosystem: 'npm'
-    directory: '/apps/user-service'
+    directory: '/libs/shared-ts'
     rebase-strategy: auto
     schedule:
       interval: 'weekly'
@@ -86,10 +118,10 @@ updates:
     labels:
       - 'dependencies'
       - 'npm'
-      - 'user-service'
+      - 'shared-ts'
     open-pull-requests-limit: 5
 
-  # Cargo dependencies
+  # Cargo dependencies (workspace root: shared lib, call-service, chat-gateway, mls-*)
   - package-ecosystem: 'cargo'
     directory: '/'
     rebase-strategy: auto

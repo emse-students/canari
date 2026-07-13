@@ -1,6 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
+import {
+  lookup as dnsLookup,
+  type LookupAddress,
+  type LookupOptions,
+} from 'node:dns';
 import { isIP } from 'node:net';
+import { Agent } from 'undici';
 
 /**
  * Returns true if `ip` is a loopback, link-local, or RFC-1918 private address
@@ -68,15 +74,79 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
   if (resolved.length === 0) {
     throw new BadRequestException('Host cannot be resolved');
   }
+  assertPublicAddresses(resolved);
 
-  for (const entry of resolved) {
+  return parsed;
+}
+
+/**
+ * Throws `BadRequestException` if any resolved address is a private/loopback IP.
+ * Shared by the pre-fetch URL check ({@link assertSafeExternalUrl}) and the
+ * connect-time dispatcher guard ({@link ssrfSafeLookup}).
+ */
+export function assertPublicAddresses(
+  addresses: readonly Pick<LookupAddress, 'address'>[],
+): void {
+  for (const entry of addresses) {
     if (isPrivateIpAddress(entry.address)) {
       throw new BadRequestException('Private network URLs are not allowed');
     }
   }
-
-  return parsed;
 }
+
+/**
+ * A `dns.lookup` drop-in that additionally rejects any resolution to a
+ * private/loopback address. Used as the undici connector's `lookup` so the IP
+ * the socket actually connects to is the one validated - closing the
+ * DNS-rebinding TOCTOU window between the pre-fetch check and the socket
+ * connect (SSRF / CWE-918). It faithfully honours both `dns.lookup` callback
+ * shapes (`all: true` -> address array, otherwise `(address, family)`).
+ */
+export function ssrfSafeLookup(
+  hostname: string,
+  options: LookupOptions,
+  callback: (
+    err: NodeJS.ErrnoException | null,
+    address: string | LookupAddress[],
+    family?: number,
+  ) => void,
+): void {
+  dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) {
+      callback(err, '', 0);
+      return;
+    }
+    for (const entry of addresses) {
+      if (isPrivateIpAddress(entry.address)) {
+        callback(
+          Object.assign(
+            new Error(
+              `Blocked connection to private address for host ${hostname}`,
+            ),
+            { code: 'ESSRFBLOCKED' },
+          ),
+          '',
+          0,
+        );
+        return;
+      }
+    }
+    if (options.all) {
+      callback(null, addresses);
+    } else {
+      callback(null, addresses[0].address, addresses[0].family);
+    }
+  });
+}
+
+/**
+ * Shared undici dispatcher for outbound link-preview fetches. Pins every
+ * connection to a validated, public-only resolved address via
+ * {@link ssrfSafeLookup}. Pass it as the `dispatcher` of a global `fetch` call.
+ */
+export const ssrfSafeDispatcher = new Agent({
+  connect: { lookup: ssrfSafeLookup },
+});
 
 /**
  * Decodes a safe subset of HTML entities (`&amp;`, `&quot;`, `&apos;`, `&#39;`, `&#x27;`)

@@ -164,6 +164,11 @@ export class UsersService implements OnModuleInit {
     query: string,
     excludeUserId?: string,
   ): Promise<Pick<User, 'id' | 'displayName'>[]> {
+    // `query` is typed `string`, but Express query parsing can yield an array or
+    // object at runtime (e.g. `?q=a&q=b` -> string[], `?q[x]=1` -> object). Re-check
+    // the runtime type before any string operation to prevent parameter-tampering
+    // type confusion (CWE-843) from flowing into the fuzzy SQL matcher.
+    if (typeof query !== 'string') return [];
     if (!query || query.length < 1) return [];
     if (query.length > 200)
       throw new BadRequestException('Search query too long (max 200 chars)');

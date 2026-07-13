@@ -1609,7 +1609,10 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
-    member.notifLevels = { ...(member.notifLevels ?? {}), [channelId]: level };
+    // Use the DB-canonical `channel.id` (loaded above) rather than the raw request
+    // param as the map key, so a remote-controlled value never becomes an object
+    // property name (remote property injection, CWE-250/915).
+    member.notifLevels = { ...(member.notifLevels ?? {}), [channel.id]: level };
     await this.memberRepo.save(member);
     this.logger.log(`[CHANNEL_PUSH] level set channel=${channelId} user=${userId} level=${level}`);
     return { channelId, level };
@@ -1628,7 +1631,7 @@ export class ChannelService {
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const level: ChannelNotificationLevel = member.notifLevels?.[channelId] ?? 'all';
+    const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
     return { channelId, level };
   }
 

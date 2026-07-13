@@ -22,6 +22,15 @@ import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
 
 /**
+ * Strips CR/LF and control characters (and truncates) from a remote-controlled
+ * value before it is interpolated into a log line, preventing log forging
+ * (CWE-117): a crafted userId/deviceId/groupId cannot inject fake log entries.
+ */
+function sanitizeForLog(value: string): string {
+  return value.replace(/[\r\n\t\p{Cc}]/gu, ' ').slice(0, 200);
+}
+
+/**
  * Worker result for key package generation done off the main thread.
  * Buffers are transferred back to avoid an additional clone cost.
  */
@@ -421,7 +430,7 @@ export class WebMlsService extends BaseMlsService {
             const requesterDeviceId = (msg.requesterDeviceId as string) || '';
             const groupId = (msg.groupId as string) || '';
             console.log(
-              `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+              `[WS RCV] welcome_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
             );
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
@@ -431,7 +440,7 @@ export class WebMlsService extends BaseMlsService {
             const requesterDeviceId = (msg.requesterDeviceId as string) || '';
             const groupId = (msg.groupId as string) || '';
             console.log(
-              `[WS RCV] history_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+              `[WS RCV] history_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
             );
             this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;

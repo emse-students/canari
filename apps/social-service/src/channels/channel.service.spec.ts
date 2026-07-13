@@ -584,4 +584,34 @@ describe('ChannelService security hardening', () => {
       global.fetch = prevFetch;
     }
   });
+
+  it('setNotificationLevel keys the map by the DB-canonical channel.id, not the raw param (no property injection)', async () => {
+    const { service, channelRepo, memberRepo } = makeService();
+    // The client sends a hostile channelId, but the row is looked up and its
+    // canonical id is what must be used as the object key.
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: false,
+      allowedRoles: [],
+    });
+    const member: {
+      workspaceId: string;
+      userId: string;
+      roleIds: string[];
+      notifLevels?: Record<string, string>;
+    } = {
+      workspaceId: 'ws1',
+      userId: 'u1',
+      roleIds: [],
+    };
+    memberRepo.findOne.mockResolvedValue(member);
+
+    await service.setNotificationLevel('__proto__', 'u1', 'none');
+
+    // The stored key is the canonical channel.id, never the raw '__proto__' param.
+    expect(member.notifLevels).toEqual({ ch1: 'none' });
+    expect(Object.prototype.hasOwnProperty.call(member.notifLevels, '__proto__')).toBe(false);
+    expect(memberRepo.save).toHaveBeenCalledWith(member);
+  });
 });
