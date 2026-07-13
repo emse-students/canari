@@ -140,7 +140,9 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       // Read back the workbook to check header labels (no email column - PII).
       const ExcelJS = await import('exceljs');
       const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(buffer as any);
+      // Cast bridges the Node `Buffer<ArrayBufferLike>` vs exceljs `Buffer`
+      // typing mismatch without resorting to `any` (keeps no-unsafe-argument happy).
+      await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
       const sheet = workbook.worksheets[0];
       const headerRow = sheet.getRow(1).values as unknown[];
       const headers = headerRow.slice(1) as string[];
