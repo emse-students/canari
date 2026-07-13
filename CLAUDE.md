@@ -54,34 +54,29 @@ Deep-dive design docs referenced inline. Legend: \[x\] done+pushed, \[ \] todo, 
 
 ---
 
-### CROSS-PROJECT: Quality & Security cleanup (asked 2026-07-11, AWAITING "depart")
+### CROSS-PROJECT: Quality & Security cleanup (started 2026-07-14, IN PROGRESS)
 
-Goal: clean all 4 repos - CodeQuality/CodeQL alerts, security warnings, Dependabot, Node 20->22 EOL, wiki + English-comments audit (our CLAUDE.md base standards). Investigation done via `gh`; execution NOT started (user gates it).
+Goal: clean all 4 repos - CodeQL alerts, Dependabot hygiene, Node EOL, wiki + English-comment audit. Decisions (2026-07-14): **align ALL repos to Node 24** (not 22); fix Canari's broken dependabot.yml; close Portail's stale PRs and let Dependabot recreate.
 
-**Findings (gh, 2026-07-11):**
-* Dependabot: ENABLED on all 4 repos; **0 open security alerts** everywhere. (Still TODO tomorrow: check for open Dependabot version-update PRs + presence/quality of each repo's `.github/dependabot.yml`.)
-* CodeQL / code scanning OPEN alerts:
-  * Canari: 20 total = 2 critical + 1 high + 1 medium security, +16 quality. Security ones:
-    * critical js/request-forgery (SSRF): apps/chat-delivery-service/src/controllers/security.controller.ts:301
-    * critical js/type-confusion-through-parameter-tampering: apps/core-service/src/users/users.service.ts:168
-    * high js/remote-property-injection: apps/social-service/src/channels/channel.service.ts:1612
-    * medium js/log-injection: frontend/src/lib/services/WebMlsService.ts:434
-  * MiGallery: 7 total = 2 high + 4 medium + 1 quality. Notable:
-    * high js/file-system-race: src/routes/api/albums/[id]/og-cover/+server.ts:100 (real runtime path)
-    * high js/clear-text-logging: scripts/migrate-export-db.cjs:175 (script only)
-    * medium js/missing-origin-check: static/mitm.html:34 & :69 (postMessage; verify if mitm.html is shipped)
-    * medium js/log-injection: scripts/mock-immich.js:14 & :29 (dev mock only)
-  * Sky: 3 quality alerts (no security-severity).
-  * Portail-etu: 1 quality alert.
-* Node 20 EOL: NOT yet verified (classifier outage interrupted the sweep). TODO tomorrow: grep `node-version:` in every repo's .github/workflows + `engines.node` in package.json; bump 20 -> 22 (LTS) and matching Docker base images.
+**Verified findings (2026-07-14):**
+* Node: only MiGallery still had real 20 (`release.yml` matrix `[20,22]` + `engines>=20`). Canari already 24 (workflows+Docker). Sky CI 22 but `engines>=18`. Portail = Bun runtime (no node-version, n/a). Target = 24 everywhere.
+* Dependabot: enabled + configured on all 4, **0 security alerts**. PRs green everywhere EXCEPT Portail (5 PRs all 2026-12-22, `CONFLICTING/DIRTY` -> close, Dependabot recreates). Canari config was perime (referenced nonexistent auth/user-service, skipped core/social/media) - FIXED.
 
-**Plan when GO given (order = severity first):**
-1. Canari 2 criticals (SSRF + type-confusion) then high (property-injection) then medium (log-injection). Real fixes, not suppressions; add/adjust tests.
-2. MiGallery file-system-race (runtime) first; triage script/mock/mitm.html alerts (fix or dismiss-with-reason if non-shipping).
-3. Node 20->22 bump across all 4 (workflows + engines + Docker), each repo its own commit, CI green before push.
-4. Wiki + English-comment audit per repo (our base standards), fold into the touched files.
-5. Sky/Portail quality alerts (low sev) last.
-Each repo = its own commits on main; run that repo's full local CI gate before pushing.
+**Status (order = severity first):**
+1. **Canari - DONE + pushed** (da6607db security + eda360d0 test):
+   * SSRF #2460: undici `ssrfSafeDispatcher` re-validates resolved IP at connect (DNS-rebinding TOCTOU); alert dismissed "won't fix" (endpoint fetches arbitrary user URL by design, mitigated). url-guard.spec.ts.
+   * type-confusion #2461: `typeof query!=='string'` guard in users.search + spec.
+   * property-injection #2462: notifLevels keyed by DB `channel.id` not raw param + spec.
+   * log-injection #2463: `sanitizeForLog()` on WS fields (welcome/history_request).
+   * 16 quality (generated `proto/canari.js`): CodeQL `paths-ignore`.
+   * dependabot.yml + code-analysis.yml audit job: real services (core/social/media/chat-delivery + shared-ts), ghost dirs removed.
+   * DEFERRED: media.controller.ts:96 `no-unsafe-argument` warning - pre-existing, rooted in media-service missing `@types/express` (eslint sees `req` error-typed though tsc passes); needs a deps/tsconfig pass, unrelated to security scope.
+2. MiGallery CodeQL: file-system-race #26 og-cover (runtime, first) + #27 scripts/ci-local.mjs:123 (NEW since 07-11); triage mitm.html #24/#25 missing-origin-check, migrate-export-db.cjs #22 clear-text-logging, mock-immich.js #10/#23 log-injection (fix or dismiss-justified if non-shipping).
+3. Node -> 24: MiGallery (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`), Sky (`engines>=18`->`24`, CI `22.x`->`24`).
+4. Portail: enrich dependabot.yml (prefix/labels/groups) + close 5 conflicting PRs (#26-30).
+5. Wiki + English-comment audit per repo, folded into touched files.
+6. Sky (3) + Portail (1) low-sev quality CodeQL alerts last.
+Each repo = its own commits on main; full local CI gate before push.
 
 ---
 
