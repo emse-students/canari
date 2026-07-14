@@ -56,6 +56,11 @@ export interface ChatSessionCallbacks {
    * When provided, the redirect to /login is suppressed - the caller handles the error.
    * When absent, the default redirect to /login takes place. */
   onLoginFailed?: (error: string) => void;
+  /** Called when the session is definitively dead (refresh cookie expired/revoked, a
+   * SessionExpiredError). Distinct from onLoginFailed: this is not a retryable error
+   * shown in the PIN modal but an authentication loss - the caller should log the user
+   * out and redirect straight to /login rather than surface a message in the modal. */
+  onSessionExpired?: () => void;
   log: (msg: string) => void;
   messageReactions: SvelteMap<string, any[]>;
   getSelectedContact: () => string | null;

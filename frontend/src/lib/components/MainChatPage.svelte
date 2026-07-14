@@ -1,3 +1,12 @@
+<script module lang="ts">
+  // Last routeMode ('chat' | 'communities') that MainChatPage mounted under. Module-scoped so it
+  // survives the component remount that happens when navigating between the /chat and /communities
+  // routes (each is a distinct +page.svelte rendering its own MainChatPage). A component-local
+  // $state would reset to null on every mount, so a mode switch could never be detected and the
+  // previous discussion's content leaked across tabs.
+  let lastActiveRouteMode: 'chat' | 'communities' | null = null;
+</script>
+
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
@@ -492,17 +501,17 @@
   });
 
   // ─── Reset selection when switching between /chat and /communities ─────────
-  // Only on routeMode change (not on mount/remount) so returning to /chat keeps the open thread.
-  let lastRouteModeForReset = $state<string | null>(null);
+  // The selection lives in global singletons (globalConvs/globalChannels) that outlive this
+  // component, and /chat and /communities are separate route components, so navigating between
+  // them remounts MainChatPage. Comparing against the module-scoped lastActiveRouteMode (which
+  // survives that remount) lets us clear the stale thread on a genuine tab switch while still
+  // preserving a deep-linked selection on the very first mount.
   $effect.pre(() => {
     const mode = routeMode;
-    if (lastRouteModeForReset === null) {
-      lastRouteModeForReset = mode;
-      return;
-    }
-    if (lastRouteModeForReset === mode) return;
-    lastRouteModeForReset = mode;
     untrack(() => {
+      const previous = lastActiveRouteMode;
+      lastActiveRouteMode = mode;
+      if (previous === null || previous === mode) return;
       if (readReceiptTimer) {
         clearTimeout(readReceiptTimer);
         readReceiptTimer = null;

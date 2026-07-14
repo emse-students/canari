@@ -15,7 +15,7 @@ import {
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
-import { getToken, clearAuth } from '$lib/stores/auth';
+import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
@@ -271,10 +271,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     let accessToken: string;
     try {
       accessToken = await getToken();
-    } catch {
+    } catch (err) {
+      ctx.setIsLoginInProgress(false);
+      // A SessionExpiredError means the refresh cookie is dead - the session cannot be
+      // recovered by re-entering the PIN. Surface it as a session loss (logout + redirect
+      // to /login) rather than a retryable message stuck in the PIN modal. Any other error
+      // (transient network failure) stays retryable in the modal.
+      if (err instanceof SessionExpiredError && cb.onSessionExpired) {
+        cb.onSessionExpired();
+        return;
+      }
       const msg = 'Session expired. Please sign in again.';
       ctx.setLoginError(msg);
-      ctx.setIsLoginInProgress(false);
       // Notify the caller so a PIN-modal spinner does not hang forever.
       cb.onLoginFailed?.(msg);
       return;
@@ -815,7 +823,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     ctx.resetMls();
     clearUserLocally();
     clearPin();
-    if (cb.onLoginFailed) {
+    // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
+    // hand it to onSessionExpired so the caller logs out and redirects to /login.
+    if (_e instanceof SessionExpiredError && cb.onSessionExpired) {
+      cb.onSessionExpired();
+    } else if (cb.onLoginFailed) {
       cb.onLoginFailed(msg);
     } else {
       const cur = window.location.pathname + window.location.search + window.location.hash;

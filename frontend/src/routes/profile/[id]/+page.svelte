@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
@@ -43,51 +42,80 @@
   let parrainage = $state<SkyEntourage | null>(null);
   let extrasLoading = $state(false);
 
-  onMount(async () => {
+  // Monotonic token guarding against out-of-order async results: when the user navigates
+  // between two profiles quickly, a slower earlier fetch must not overwrite the newer one.
+  let loadToken = 0;
+
+  /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
+  async function loadProfile(userId: string, token: number) {
+    try {
+      const [prof, status] = await Promise.all([
+        fetchUserProfile(userId),
+        getUserFollowStatus(userId).catch(() => ({ following: false })),
+      ]);
+      if (token !== loadToken) return;
+      profile = prof;
+      following = status.following;
+      extrasLoading = true;
+      try {
+        const rows = await fetchUserMemberships(userId);
+        if (token === loadToken) memberships = rows;
+      } catch {
+        if (token === loadToken) memberships = [];
+      }
+      try {
+        const rows = await fetchUserRoleHistory(userId);
+        if (token === loadToken) roleHistory = rows;
+      } catch {
+        if (token === loadToken) roleHistory = [];
+      }
+      try {
+        const entourage = await fetchUserParrainage(userId);
+        if (token === loadToken) parrainage = entourage;
+      } catch {
+        if (token === loadToken) parrainage = null;
+      } finally {
+        if (token === loadToken) extrasLoading = false;
+      }
+    } catch (err) {
+      if (token !== loadToken) return;
+      error = err instanceof Error ? err.message : m.profile_public_load_error();
+    } finally {
+      if (token === loadToken) loading = false;
+    }
+  }
+
+  // Reactively (re)load whenever the [id] route param changes. onMount would only fire on the
+  // first mount - navigating /profile/[a] -> /profile/[b] reuses this same component instance,
+  // so an effect on page.params.id is what makes the page actually re-render on the new user.
+  $effect(() => {
     const userId = page.params.id;
+
+    // A new target invalidates any in-flight load and resets the visible state so the previous
+    // profile's content is never shown while the new one loads.
+    const token = ++loadToken;
+    profile = null;
+    error = '';
+    memberships = [];
+    roleHistory = [];
+    parrainage = null;
+    extrasLoading = false;
+    loading = true;
+
     if (!userId) {
       error = m.profile_public_missing_id();
       loading = false;
       return;
     }
 
-    // Redirect to own profile page if viewing self
+    // Redirect to own profile page if viewing self.
     const currentUserId = getSavedUserId();
     if (currentUserId && userId === currentUserId) {
       goto('/profile', { replaceState: true });
       return;
     }
 
-    try {
-      const [prof, status] = await Promise.all([
-        fetchUserProfile(userId),
-        getUserFollowStatus(userId).catch(() => ({ following: false })),
-      ]);
-      profile = prof;
-      following = status.following;
-      extrasLoading = true;
-      try {
-        memberships = await fetchUserMemberships(userId);
-      } catch {
-        memberships = [];
-      }
-      try {
-        roleHistory = await fetchUserRoleHistory(userId);
-      } catch {
-        roleHistory = [];
-      }
-      try {
-        parrainage = await fetchUserParrainage(userId);
-      } catch {
-        parrainage = null;
-      } finally {
-        extrasLoading = false;
-      }
-    } catch (err) {
-      error = err instanceof Error ? err.message : m.profile_public_load_error();
-    } finally {
-      loading = false;
-    }
+    void loadProfile(userId, token);
   });
 
   function formatYear(year: number | null): string {

@@ -15,7 +15,7 @@
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin } from '$lib/utils/pinVault';
-  import { getToken } from '$lib/stores/auth';
+  import { getToken, clearAuth } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
   import { currentUserId } from '$lib/stores/user';
   import {
@@ -263,6 +263,22 @@
     showPinModal = true;
   }
 
+  /**
+   * Called when the session is definitively dead (refresh cookie expired/revoked). Rather
+   * than leave a "Session expired" message stuck in the PIN modal - which strands the user
+   * with no clear action - close the modal, clear the auth state, and redirect straight to
+   * the login page so they can sign in again.
+   */
+  async function handleSessionExpired() {
+    appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
+    dismissAuthPrompts();
+    pinError = '';
+    _loginInProgress = false;
+    globalSession.isLoginInProgress = false;
+    await clearAuth().catch(() => {});
+    void goto('/login', { replaceState: true });
+  }
+
   /** Called when a stored PIN is rejected; resets state and shows the PIN modal. */
   function onSavedPinFailed(msg: string) {
     pinError = msg;
@@ -507,8 +523,14 @@
         checkSiblingCallWarning();
         overrides.onMlsReady?.();
       },
+      onSessionExpired: handleSessionExpired,
     };
-    return { ...base, ...overrides, onMlsReady: base.onMlsReady };
+    return {
+      ...base,
+      ...overrides,
+      onMlsReady: base.onMlsReady,
+      onSessionExpired: base.onSessionExpired,
+    };
   }
 
   // ── Post-login: load channel workspaces ───────────────────────────────────
