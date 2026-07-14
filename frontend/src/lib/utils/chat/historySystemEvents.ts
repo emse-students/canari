@@ -2,7 +2,14 @@ import { canari } from '$lib/proto/canari.js';
 import type { AddMessageToChatOptions, Conversation, MessageReaction } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { chat_system_message_deleted } from '$lib/paraglide/messages';
+import {
+  chat_system_message_deleted,
+  chat_system_group_renamed,
+  chat_system_member_removed,
+  chat_system_member_left,
+  chat_system_member_added,
+  chat_system_conversation_deleted,
+} from '$lib/paraglide/messages';
 
 /** One Redis-stream history row as returned by `IMlsService.fetchHistory`. */
 export type HistoryRow = { id?: string; sender_id: string; content: string; timestamp: string };
@@ -78,13 +85,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         setConversation(contactName, { ...convo, name: data.newName });
       }
       const getName = await resolveDisplayNames([senderNorm]);
-      systemText = `${getName(senderNorm)} a renommé le groupe en "${data.newName}"`;
+      systemText = chat_system_group_renamed({ sender: getName(senderNorm), name: data.newName });
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
       const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
-      systemText = `${getName(senderNorm)} a retiré ${getName(data.targetUser)} du groupe`;
+      systemText = chat_system_member_removed({
+        sender: getName(senderNorm),
+        target: getName(data.targetUser),
+      });
     } else if (parsed.system.event === 'memberLeft' && data.userId) {
       const getName = await resolveDisplayNames([data.userId]);
-      systemText = `${getName(data.userId)} a quitté le groupe`;
+      systemText = chat_system_member_left({ user: getName(data.userId) });
     } else if (parsed.system.event === 'memberAdded') {
       const newUserIds: string[] =
         data.newUsers && Array.isArray(data.newUsers)
@@ -94,10 +104,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             : [];
       const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
       const added = newUserIds.map((u: string) => getName(u)).join(', ');
-      if (added) systemText = `${getName(senderNorm)} a ajouté ${added} au groupe`;
+      if (added)
+        systemText = chat_system_member_added({ sender: getName(senderNorm), members: added });
     } else if (parsed.system.event === 'groupDeleted') {
       const getName = await resolveDisplayNames([senderNorm]);
-      systemText = `${getName(senderNorm)} a supprimé le groupe`;
+      systemText = chat_system_conversation_deleted({ sender: getName(senderNorm) });
     } else if (parsed.system.event === 'read_receipt') {
       const msgIds: string[] = data.messageIds ?? [];
       const convo = getConversation(contactName);
@@ -165,9 +176,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       messageReactions.set(data.messageId, trimmed);
       reactionUpdates.set(data.messageId, trimmed);
     } else if (parsed.system.event === 'history_bundle') {
-      // Le bundle est livré via la queue de messages; le traiter ici garantit qu'un
-      // device arrivant en ligne après l'expiration de la queue (7 jours) récupère
-      // quand même l'historique depuis Redis Streams.
+      // The bundle is delivered via the message queue; handling it here guarantees that a
+      // device coming online after the queue TTL (7 days) still recovers the history
+      // from Redis Streams.
       const bundleData = data.messages;
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         const existingIds = new Set(
@@ -181,11 +192,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
               content: String(m.content),
               messageId: String(m.id),
               timestamp: typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
-              // Préserver le serverTimestamp original de chaque message (tri stable).
-              // Fallback sur serverMs (timestamp du bundle) seulement si absent.
+              // Preserve each message's original serverTimestamp (stable ordering).
+              // Fall back on serverMs (bundle timestamp) only when absent.
               serverTimestamp: typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
-              // Métadonnées transférées du device source : réactions, accusés,
-              // suppressions et éditions - état complet au moment de la migration.
+              // Metadata transferred from the source device: reactions, receipts,
+              // deletions and edits - full state at migration time.
               ...(Array.isArray(m.reactions) && m.reactions.length > 0
                 ? { reactions: m.reactions }
                 : {}),
@@ -196,8 +207,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             });
           }
         }
-        // Seed messageReactions depuis le bundle pour que les stream events de
-        // réaction ultérieurs s'appliquent par-dessus, et non depuis un tableau vide.
+        // Seed messageReactions from the bundle so later reaction stream events
+        // apply on top of it, rather than onto an empty array.
         for (const m of bundleData) {
           if (m?.id && Array.isArray(m.reactions) && m.reactions.length > 0) {
             const msgId = String(m.id);

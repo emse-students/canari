@@ -164,7 +164,7 @@
         <label
           class="flex cursor-pointer select-none items-center justify-between rounded-xl bg-black/5 px-4 py-3 dark:bg-white/5"
         >
-          <span class="text-sm font-semibold text-text-main">Autoriser plusieurs réponses</span>
+          <span class="text-sm font-semibold text-text-main">{m.post_poll_allow_multiple_label()}</span>
           <input type="checkbox" bind:checked={multipleChoice} class="h-5 w-5 accent-cn-yellow" />
         </label>
 

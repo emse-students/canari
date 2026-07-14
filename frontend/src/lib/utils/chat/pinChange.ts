@@ -18,6 +18,7 @@ import { savePin } from '$lib/utils/pinVault';
 import { getToken } from '$lib/stores/auth';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { m } from '$lib/paraglide/messages';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { IMlsService } from '$lib/mls-client';
 
@@ -105,7 +106,7 @@ export async function reencryptLocalMessages(
         isEdited: payload.isEdited === true ? true : undefined,
       });
     } catch {
-      console.warn('[PIN_CHANGE] Impossible de déchiffrer le message', row.id);
+      console.warn('[PIN_CHANGE] Failed to decrypt message', row.id);
     }
 
     if (onProgress && (i % REENCRYPT_PROGRESS_INTERVAL === 0 || i === rows.length - 1)) {
@@ -123,14 +124,12 @@ export async function reencryptLocalMessages(
   }
 
   if (decrypted.length === 0) {
-    throw new Error(
-      "Impossible de déchiffrer les messages locaux avec l'ancien PIN. Vérifiez le PIN saisi."
-    );
+    throw new Error(m.profile_pin_error_local_decrypt());
   }
 
   if (decrypted.length < rows.length) {
     log(
-      `[PIN_CHANGE] Avertissement: ${rows.length - decrypted.length} message(s) ignoré(s) (déchiffrement impossible).`
+      `[PIN_CHANGE] Warning: ${rows.length - decrypted.length} message(s) skipped (decryption failed).`
     );
   }
 
@@ -150,7 +149,7 @@ export async function reencryptLocalMessages(
     if (batchIdx < batchCount) await yieldToMainThread();
   }
 
-  log(`[PIN_CHANGE] ${decrypted.length} message(s) re-chiffré(s) avec le nouveau PIN.`);
+  log(`[PIN_CHANGE] ${decrypted.length} message(s) re-encrypted with the new PIN.`);
   return decrypted.length;
 }
 
@@ -166,7 +165,7 @@ export async function applyNewPinLocally(
   await savePin(newPin).catch(() => {});
   if (isTauriRuntime() && (await BiometricService.isConfigured().catch(() => false))) {
     await BiometricService.enableBiometric(newPin).catch((e) =>
-      log(`[PIN] Ré-enrôlement biométrique échoué: ${e instanceof Error ? e.message : String(e)}`)
+      log(`[PIN] Biometric re-enrolment failed: ${e instanceof Error ? e.message : String(e)}`)
     );
   }
 }
@@ -185,8 +184,8 @@ export interface PinChangeOptions {
 }
 
 /**
- * Performs the full PIN change. Throws with a user-facing message on failure
- * (e.g. wrong current PIN → "PIN actuel incorrect.").
+ * Performs the full PIN change. Throws with a user-facing (localized) message on
+ * failure (e.g. wrong current PIN).
  *
  * Server-first ordering: the verifier rotation is the operation gated on the old
  * PIN, so it runs first; the local re-encryption follows. If the local step were
@@ -198,7 +197,7 @@ export async function performPinChange(
   newPin: string
 ): Promise<void> {
   const { userId, mlsService, setPin, log, onProgress } = opts;
-  log('[PIN_CHANGE] Démarrage du changement de PIN…');
+  log('[PIN_CHANGE] Starting PIN change…');
   reportProgress(onProgress, { percent: 5, stage: 'server' });
 
   const [oldVerifier, newVerifier, token] = await Promise.all([
@@ -212,13 +211,13 @@ export async function performPinChange(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, oldVerifier, newVerifier }),
   });
-  if (res.status === 403) throw new Error('PIN actuel incorrect.');
-  if (!res.ok) throw new Error('Échec du changement de PIN côté serveur.');
+  if (res.status === 403) throw new Error(m.profile_pin_error_wrong_current());
+  if (!res.ok) throw new Error(m.profile_pin_error_server_failed());
 
   reportProgress(onProgress, { percent: 20, stage: 'mls' });
   // Verifier rotated - re-encrypt MLS state and local message DB under the new PIN.
   await mlsService.changePIN(newPin);
-  log('[PIN_CHANGE] État MLS re-chiffré avec le nouveau PIN.');
+  log('[PIN_CHANGE] MLS state re-encrypted with the new PIN.');
 
   const storage = await getStorage(userId);
   await reencryptLocalMessages(storage, currentPin, newPin, log, onProgress, {
@@ -232,5 +231,5 @@ export async function performPinChange(
   // Refresh this device's stored PIN + biometric so silent re-login keeps working.
   await applyNewPinLocally(newPin, log);
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
-  log('[PIN_CHANGE] Terminé.');
+  log('[PIN_CHANGE] Done.');
 }

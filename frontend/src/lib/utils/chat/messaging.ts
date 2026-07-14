@@ -10,6 +10,7 @@ import {
   isChannelConversationId,
 } from '$lib/utils/chat/channelCrypto';
 import { extractMentionUserIds } from '$lib/utils/mentions';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -61,7 +62,7 @@ export async function sendChatMessage(
   );
 
   if (!text.trim()) {
-    deps.log('[SEND] Abort: texte vide');
+    deps.log('[SEND] Abort: empty text');
     return { success: false };
   }
 
@@ -76,8 +77,8 @@ export async function sendChatMessage(
       replyEnv.kind === 'text' || replyEnv.kind === 'system'
         ? replyEnv.text.slice(0, 100)
         : replyEnv.kind === 'media'
-          ? (replyEnv.caption?.slice(0, 100) ?? '[media]')
-          : `[Sondage] ${replyEnv.question}`.slice(0, 100);
+          ? (replyEnv.caption?.slice(0, 100) ?? m.chat_preview_media())
+          : `${m.chat_preview_poll()} ${replyEnv.question}`.slice(0, 100);
     replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
   }
 
@@ -107,13 +108,16 @@ export async function sendChatMessage(
       );
       return { success: true };
     } catch (error: any) {
-      return { success: false, error: `Échec de l'envoi : ${error.message || String(error)}` };
+      return {
+        success: false,
+        error: m.chat_send_error({ reason: error.message || String(error) }),
+      };
     }
   }
 
   // Group deleted/excluded server-side: the only hard block (deletion banner is shown).
   if (conversation.lifecycle === 'removed') {
-    return { success: false, error: 'Cette conversation a été supprimée.' };
+    return { success: false, error: m.chat_conversation_deleted_message() };
   }
 
   // Optimistic echo (status pending, persisted so it survives reload), then enqueue.
@@ -197,8 +201,8 @@ export async function notifyReaction(params: {
     targetSenderId: params.targetSenderId.slice(0, 8),
     emoji: params.emoji,
   });
-  // apiFetch attache le Bearer token (en memoire, jamais en cookie) et rejoue une fois sur 401
-  // apres refresh. Un fetch brut partait sans Authorization -> nginx auth_request echouait -> 401.
+  // apiFetch attaches the Bearer token (in memory, never in a cookie) and replays once on 401
+  // after refresh. A raw fetch went out without Authorization -> nginx auth_request failed -> 401.
   try {
     const resp = await apiFetch('/api/mls/notify-reaction', {
       method: 'POST',
@@ -206,13 +210,13 @@ export async function notifyReaction(params: {
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
-      console.warn(`[notifyReaction] Échec HTTP ${resp.status}:`, text.slice(0, 200));
+      console.warn(`[notifyReaction] HTTP error ${resp.status}:`, text.slice(0, 200));
     } else {
-      console.log('[notifyReaction] Notification réaction envoyée avec succès');
+      console.log('[notifyReaction] Reaction notification sent successfully');
     }
   } catch (e) {
-    // Fire-and-forget : une session expiree ne doit pas remonter une erreur a l'appelant.
-    console.warn(`[notifyReaction] Échec: ${e instanceof Error ? e.message : String(e)}`);
+    // Fire-and-forget: an expired session must not surface an error to the caller.
+    console.warn(`[notifyReaction] Failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
