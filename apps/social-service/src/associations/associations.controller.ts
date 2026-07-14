@@ -839,8 +839,8 @@ export class AssociationsController {
   /** Returns all active products across all associations (requires login). Used on /shop. */
   @UseGuards(NginxAuthGuard)
   @Get('products/all')
-  listAllProducts() {
-    return this.productsService.listAllActive();
+  listAllProducts(@Headers('x-user-id') userId: string) {
+    return this.productsService.listAllActive(userId);
   }
 
   /** Returns active products for this association (shown on the public association page). */

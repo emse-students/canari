@@ -1,12 +1,13 @@
 # Cotisations (membership dues)
 
-**Backend**: `apps/social-service/` (associations, forms, user tags)
-**Frontend**: `frontend/src/lib/components/associations/edit/`, `frontend/src/lib/components/forms/`, `frontend/src/routes/shop/`
+**Backend**: `apps/social-service/` (associations, user tags, products)
+**Frontend**: `frontend/src/lib/components/associations/edit/`, `frontend/src/routes/shop/`,
+`frontend/src/routes/admin/cercle/`
 **Payments**: routed through `core-service` (Stripe Connect)
 
-Cotisation is how an association records that a user has paid their membership dues for a period.
-Canari does not store this as a boolean on the user or the association. Instead it is modelled as a
-time-bounded **tag** granted to the user by the issuing association.
+Cotisation is how an association records that a user has paid their membership dues. Canari does not
+store this as a boolean on the user or the association: it is modelled as a (possibly time-bounded)
+**tag** granted to the user by the issuing association.
 
 > **Do not confuse two "member" concepts.** `association_members` is the association's *staff /
 > bureau roster* (roles + permission bitmask, shown in the trombinoscope). It is unrelated to dues.
@@ -21,7 +22,7 @@ Table `user_tags`, entity `UserTag` (`apps/social-service/src/users/entities/use
 | Field | Purpose |
 |---|---|
 | `userId` | Tag holder |
-| `tagName` | Convention `"<category>:<issuer-slug>-<year>"`, e.g. `"cotisant:bde-2026-2027"` |
+| `tagName` | Canonical cotisation tag, see below |
 | `issuingAssocId` | Association that granted the tag |
 | `grantedBy` | Admin (or system) who granted it |
 | `expiresAt` | Expiry instant; `null` means permanent |
@@ -30,61 +31,111 @@ Table `user_tags`, entity `UserTag` (`apps/social-service/src/users/entities/use
 Unique on `(userId, tagName)`. A user "is a cotisant" of an association when they hold an **active**
 (non-expired) tag issued by that association.
 
-`UserTagService` (`apps/social-service/src/users/user-tag.service.ts`) is the single entry point:
+### The canonical cotisation tag (single source of truth)
 
-- `grantOrRenew` - idempotent upsert; extends `expiresAt` on renewal.
-- `hasActiveTag` - membership check used by form pricing.
-- `revoke` - remove a tag.
-- `listByAssoc` / `listByUser` / `listDistinctNamesForAssoc` - admin panel queries.
+`deriveCotisationTag(slug, mode)` in `apps/social-service/src/associations/cotisation-tag.util.ts`
+is the **only** place the tag string is built. It MUST be used both when provisioning the membership
+product and when checking gating/pricing, so everything stays aligned. An association's cotisation
+has a `cotisationMode`:
 
-### Boutique products
+- **`lifetime`** - buy once, never expires. Tag `cotisant:<slug>`, `expiresAt = null`.
+- **`dated`** - renewed each academic year. Tag `cotisant:<slug>-<academicYear>` (e.g.
+  `cotisant:bde-2026-2027`), `expiresAt = 31 August` of the end year. The academic year is derived by
+  `getAcademicYear()`: from August (month >= 8) onward it is `<year>-<year+1>`, otherwise
+  `<year-1>-<year>`. Rolling the tag over per year keeps each year's roster clean.
 
-A cotisation is sold as a boutique product of `type: 'membership'`
-(`apps/social-service/src/associations/entities/association-product.entity.ts`) carrying:
+Expiry is **always derived server-side**, never picked by an admin. `associations.service` sets
+`cotisationExpiresAt` when the `dated` mode is enabled/saved. Because the tag is re-derived at
+**fulfillment time** (`resolveGrantTag` in `products.service.ts`), a purchase that lands after the
+academic-year rollover grants the new year's tag, not a stale one.
 
-- `grantedTagName` - the tag granted on successful purchase.
-- `tagExpiresAt` - expiry applied to the granted tag.
+### The membership product
+
+Each cotisation is sold as **one canonical boutique product** of `type: 'membership'`
+(`apps/social-service/src/associations/entities/association-product.entity.ts`). Its granted tag is
+derived by `deriveCotisationTag` at fulfillment - admins never type a `tagName` or expiry for it.
+Enabling a cotisation auto-provisions this product; the Cotisations tab only edits its label/price.
+
+### Product member gating & pricing
+
+Any boutique product (not just membership) can gate or discount on cotisant status:
+
+- `membersOnly` - reserved to holders of the association's active cotisation tag.
+- `amountCentsMember` - reduced price in cents for cotisants (`null` = same as `amountCents`).
+
+Both are enforced server-side in `products.service.ts` (`isBuyerCotisant` +
+`assertCanPurchase`); the client only mirrors the *display*.
 
 ### Form pricing fields
 
-Forms (`apps/social-service/src/forms/entities/form.entity.ts`) support member pricing and can
-themselves grant a tag:
+Forms (`apps/social-service/src/forms/entities/form.entity.ts`) support member pricing and can grant
+a tag: `pricingTagName` (checked at submit for the reduced rate), `basePriceMember` (`null` = same as
+`basePrice`), and `grantedTagName` + `tagExpiresAt` for adhesion-style forms. Prefer the membership
+product for selling dues; the form path exists for adhesion forms.
 
-- `pricingTagName` - tag checked at submit time; holders get the reduced rate.
-- `basePriceMember` - reduced base price in cents (`null` = same as `basePrice`).
-- `grantedTagName` + `tagExpiresAt` - a paid submission can grant/renew a cotisant tag. Prefer
-  boutique membership products for this; the form path exists for adhesion-style forms.
+## Where it lives in the UI
 
-Per-option reduced surcharges also exist (`priceModifierMember` on option items), surfaced in the
-form builder when a `pricingTagName` is set.
+Association admin panel: **`/associations/[slug]/edit`** (the yellow "Gerer" button). Tabbed,
+single-page. The rework split cotisations into their own tab and moved Cercle top-ups to platform
+admin:
+
+| Task | Tab / page | Component | Permission |
+|---|---|---|---|
+| Enable cotisation, pick `lifetime`/`dated`, edit membership label & price, manage the roster | **Cotisations** | `edit/EditCotisationsTab.svelte` | config = `MANAGE_PRODUCTS`; roster = `MANAGE_MEMBERS` |
+| Sell/gate ordinary products (`type: 'other'`), set `membersOnly` + member price | **Paiements** (boutique) | `edit/EditBoutiqueTab.svelte` | `MANAGE_PRODUCTS` |
+| Create/edit `balance_topup` (Cercle) products + retry failed webhooks | **`/admin/cercle`** | `routes/admin/cercle/+page.svelte` | **global admin only** |
+| Set member pricing on a form | form create/edit | `routes/forms/create/+page.svelte` | `MANAGE_FORMS` |
+
+The **product `type` dropdown was removed** from the boutique: membership is managed in the
+Cotisations tab, `balance_topup` moved to `/admin/cercle` (with a beneficiary-association selector,
+since a global admin recharges on behalf of an association), and the boutique itself only handles
+`type: 'other'`.
+
+### The Cotisations tab roster
+
+`EditCotisationsTab.svelte` shows the association's **active** cotisants (D9: `expiresAt IS NULL OR
+expiresAt > NOW()`), enriched with `firstName`/`lastName`/`promo` from the shared `users` table.
+It is promo-sorted (**NULLS LAST** - "Sans promo" grouped last), searchable, offset-paginated
+(infinite scroll), and exportable to `.xlsx` (headers: Nom, Prenom, Promo, Cotisation, Date,
+Echeance). Manual add grants the canonical tag only (D10: no payment/amount recorded); revoke
+deletes the tag.
+
+End-user (paying) surfaces:
+
+- **`/shop`** - buy a membership product (Stripe Checkout; returns to `/shop?purchase_success=1`).
+  Members-only products are disabled with a hint, and member pricing is shown struck-through next to
+  the reduced price. Gating/labeling uses the per-product `viewerIsCotisant` flag returned by
+  `/products/all` (computed server-side; no client-side tag derivation).
+- **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller
+  holds the form's `pricingTagName`.
 
 ## How a user becomes a cotisant
 
-There are two paid flows and two manual (cash / override) flows. All money moves through
-core-service using the association's **Stripe Connect** account; social-service never calls Stripe
-directly. The association must have completed Stripe Connect onboarding before online sales work.
+All money moves through core-service using the association's **Stripe Connect** account;
+social-service never calls Stripe directly. Online sales require completed Stripe Connect onboarding.
 
-### A. Boutique membership product (recommended)
+### A. Membership product (recommended)
 
 1. User opens `/shop`, buys the membership product (`ProductPurchaseButton` -> Stripe Checkout).
-2. `products.service.ts#createCheckoutSession` calls core-service
-   `POST /api/payments/create-checkout-session` with the association's `stripeConnectAccountId`.
-3. On Stripe success, the webhook reaches core-service, then social-service
-   `fulfillProductPurchase` -> `userTagService.grantOrRenew(...)` posts the cotisant tag.
+2. `products.service.ts#createProductCheckout` calls core-service with the association's
+   `stripeConnectAccountId`.
+3. On Stripe success the webhook reaches core-service, then social-service `fulfillProductPurchase`
+   -> `resolveGrantTag` derives the current tag -> `userTagService.grantOrRenew(...)`.
 4. `assertCanPurchase` blocks re-buying while the tag is still active.
 
 ### B. Paid form with `grantedTagName`
 
-`forms.service.ts#markPaid` (after Stripe) or `#validateCashPayment` (cash) call
-`grantOrRenew(...)` to grant/renew the tag on submission.
+`forms.service.ts#markPaid` (after Stripe) or `#validateCashPayment` (cash) call `grantOrRenew(...)`.
 
-### C. Manual grant (cash payment / retroactive)
+### C. Manual grant from the Cotisations tab (cash / retroactive)
 
+- `POST /api/associations/:id/cotisants` -> `userTagService.grantCotisant`: grants the canonical tag
+  only, no purchase recorded (D10). Tag + expiry derived server-side. Requires `MANAGE_MEMBERS`.
 - `POST /api/associations/:id/products/:productId/grant` -> `grantProductPurchase`: records a
-  purchase and grants the membership tag like a real sale (no Cercle webhook). Requires
-  `MANAGE_PRODUCTS`. This is the recommended manual path (leaves an audit trail in "Achats").
-- `POST /api/associations/:id/tags` -> `grantTag`: raw tag grant with an admin-supplied `tagName` /
-  `expiresAt`. Requires `MANAGE_MEMBERS`. `DELETE /api/associations/:id/tags/:tagId` revokes.
+  purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
+  `MANAGE_PRODUCTS`.
+- `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
+  (`MANAGE_MEMBERS`); `DELETE /api/associations/:id/tags/:tagId` revokes.
 
 ## Member (reduced) pricing on forms
 
@@ -95,45 +146,38 @@ memberPricing = userId && form.pricingTagName && hasActiveTag(userId, pricingTag
 baseCents     = memberPricing && form.basePriceMember != null ? basePriceMember : basePrice
 ```
 
-The same check runs in the submission-status endpoint so the public form page can display the
-reduced total before payment (`forms.service.ts`). A member who fills a paid form pays the reduced
-rate automatically; no coupon or code is involved.
-
-## Where it lives in the UI
-
-Association admin panel: **`/associations/[slug]/edit`** (the yellow "Gerer" button on the
-association detail page). Tabbed, single-page.
-
-| Task | Tab | Component |
-|---|---|---|
-| See active cotisants (read-only) | **Membres** | `edit/EditMembersTab.svelte` ("Statuts cotisants actifs" section) |
-| Create a membership product | **Paiements** (boutique) | `edit/EditBoutiqueTab.svelte` (type "Cotisation", `grantedTagName` + expiry) |
-| Grant a tag manually (cash / retroactive) | **Achats** | `edit/EditAchatsTab.svelte` (pick user + product -> grant) |
-| Set member pricing on a form | form create/edit | `routes/forms/create/+page.svelte` payment section (`pricingTagName`, `basePriceMember`) |
-
-> **UX note**: the "Membres" tab is read-only for tags; manual granting lives under "Achats", not
-> "Membres". A user looking to "add a cotisant" may expect it under "Membres".
-
-End-user (paying) surfaces:
-
-- **`/shop`** - buy a membership product (Stripe Checkout; returns to `/shop?purchase_success=1`).
-- **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller
-  holds the form's `pricingTagName`.
+The same check runs in the submission-status endpoint so the public form page can show the reduced
+total before payment. No coupon or code is involved.
 
 ## Permissions
 
-- `MANAGE_MEMBERS` - grant/revoke tags directly (`/tags` endpoints), manage the staff roster.
-- `MANAGE_PRODUCTS` - create boutique products, manual `grant` purchases, Stripe Connect setup.
-- Global admin - all of the above.
+- `MANAGE_MEMBERS` - grant/revoke tags (`/tags`, `/cotisants`), read/export the roster, manage the
+  staff roster.
+- `MANAGE_PRODUCTS` - enable cotisation, edit the membership product, create boutique products,
+  manual `grant` purchases, Stripe Connect setup.
+- **Global admin** - all of the above, **plus** `balance_topup` (Cercle) product create/update,
+  which is enforced server-side (D7), not merely gated by the `/admin/cercle` route.
 
 ## Relevant endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/associations/:id/tags` | List tags issued by the association (admin "Cotisants") |
-| POST | `/api/associations/:id/tags` | Manually grant a tag (`MANAGE_MEMBERS`) |
+| GET | `/api/associations/:id/tags` | List active tags issued by the association (`MANAGE_MEMBERS`) |
+| POST | `/api/associations/:id/tags` | Manually grant a raw tag (`MANAGE_MEMBERS`) |
 | DELETE | `/api/associations/:id/tags/:tagId` | Revoke a tag |
-| POST | `/api/associations/:id/products` | Create a boutique product (incl. `type: 'membership'`) |
+| GET | `/api/associations/:id/cotisants` | Paginated, searchable active roster (`MANAGE_MEMBERS`) |
+| POST | `/api/associations/:id/cotisants` | Grant the canonical tag only, no payment (`MANAGE_MEMBERS`) |
+| GET | `/api/associations/:id/cotisants/export` | Roster as `.xlsx` (`MANAGE_MEMBERS`) |
+| GET | `/api/associations/products/all` | All active products + per-product `viewerIsCotisant` (shop) |
+| POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
-| POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (cash) |
+| POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |
+
+## See also
+
+- [frontend/modules/associations.md](frontend/modules/associations.md) - association model, permission flags, admin panel tabs.
+- [services/social-service.md](services/social-service.md) - service boundaries (associations, user tags, forms).
+- [frontend/modules/admin.md](frontend/modules/admin.md) - platform admin surfaces, including `/admin/cercle` (Cercle top-ups).
+- [frontend/modules/payments.md](frontend/modules/payments.md) - Stripe Connect and the shop/checkout flow.
+- [../user-guide/membre.md](../user-guide/membre.md) - "Cotiser a une association" (end-user guide).

@@ -5,11 +5,9 @@
   import {
     listAllProducts,
     listAssociations,
-    deriveCotisationTagName,
     type AssociationProduct,
     type Association,
   } from '$lib/associations/api';
-  import { getMyActiveTags } from '$lib/forms/api';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
@@ -21,8 +19,6 @@
   let loading = $state(true);
   let error = $state('');
   let customAmounts = $state<Record<string, number>>({});
-  /** Tag names the current user actively holds, used to gate/label members-only products. */
-  let myTagNames = $state<Set<string>>(new Set());
 
   const isLoggedIn = $derived(!!currentUserId());
 
@@ -43,17 +39,9 @@
       return;
     }
     try {
-      const [prods, assos, activeTags] = await Promise.all([
-        listAllProducts(),
-        listAssociations(),
-        getMyActiveTags().catch((e) => {
-          console.error('[Shop] Failed to load active tags:', e);
-          return [];
-        }),
-      ]);
+      const [prods, assos] = await Promise.all([listAllProducts(), listAssociations()]);
       products = prods;
       assos.forEach((a) => associations.set(a.id, a));
-      myTagNames = new Set(activeTags.map((t) => t.tagName));
     } catch (err) {
       error = err instanceof Error ? err.message : m.shop_load_error_fallback();
     } finally {
@@ -95,17 +83,6 @@
   function memberPriceLabel(p: AssociationProduct): string | null {
     if (p.amountCentsMember == null) return null;
     return `${(p.amountCentsMember / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
-  }
-
-  /**
-   * True when the current user holds the product's association active cotisation tag.
-   * Mirrors the backend's `isBuyerCotisant` (products.service.ts) using the already-fetched
-   * active tags, so members-only products can be gated/labeled without a dedicated endpoint.
-   */
-  function isCotisant(product: AssociationProduct): boolean {
-    const asso = associations.get(product.associationId);
-    if (!asso?.cotisationMode) return false;
-    return myTagNames.has(deriveCotisationTagName(asso.slug, asso.cotisationMode));
   }
 </script>
 
@@ -240,10 +217,10 @@
                 <ProductPurchaseButton
                   {product}
                   customAmountEuros={customAmounts[product.id]}
-                  disabled={product.membersOnly && !isCotisant(product)}
+                  disabled={product.membersOnly && !product.viewerIsCotisant}
                   class="w-full"
                 />
-                {#if product.membersOnly && !isCotisant(product)}
+                {#if product.membersOnly && !product.viewerIsCotisant}
                   <p class="text-xs text-amber-700 dark:text-amber-400">
                     {m.shop_members_only_hint()}
                   </p>

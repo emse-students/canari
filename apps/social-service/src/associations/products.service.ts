@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
@@ -23,6 +23,13 @@ import { deriveCotisationTag } from './cotisation-tag.util';
 
 /** Delays used between Cercle webhook delivery attempts (ms). */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
+
+/**
+ * A shop product annotated with whether the requesting user is an active cotisant of its
+ * association. Lets the client gate/label members-only products without mirroring the
+ * cotisation-tag derivation client-side (the flag is computed authoritatively server-side).
+ */
+export type ShopProduct = AssociationProduct & { viewerIsCotisant: boolean };
 
 /** Boutique CRUD, Stripe Checkout creation, and Cercle webhook dispatch for association products. */
 @Injectable()
@@ -44,12 +51,47 @@ export class ProductsService {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
-  /** Returns all active products across all associations (login required, listed on /shop). */
-  async listAllActive(): Promise<AssociationProduct[]> {
-    return this.productRepo.find({
+  /**
+   * Returns all active products across all associations (login required, listed on /shop), each
+   * annotated with `viewerIsCotisant` for `userId` so the client can gate/label members-only
+   * products without mirroring the cotisation-tag derivation.
+   */
+  async listAllActive(userId: string): Promise<ShopProduct[]> {
+    const products = await this.productRepo.find({
       where: { isActive: true },
       order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
     });
+    const cotisantAssocIds = await this.cotisantAssocIdsFor(userId, [
+      ...new Set(products.map((p) => p.associationId)),
+    ]);
+    return products.map((p) => ({
+      ...p,
+      viewerIsCotisant: cotisantAssocIds.has(p.associationId),
+    }));
+  }
+
+  /**
+   * Given a user and a set of association ids, returns the subset for which the user holds the
+   * association's current active cotisation tag (`deriveCotisationTag`). Loads the user's active
+   * tags once and matches them locally, so annotating N products costs a single tag query.
+   */
+  private async cotisantAssocIdsFor(userId: string, assocIds: string[]): Promise<Set<string>> {
+    if (assocIds.length === 0) return new Set();
+    const [assos, activeTags] = await Promise.all([
+      this.assoRepo.find({
+        where: { id: In(assocIds) },
+        select: { id: true, slug: true, cotisationMode: true },
+      }),
+      this.userTagService.listByUser(userId),
+    ]);
+    const activeTagNames = new Set(activeTags.map((t) => t.tagName));
+    const result = new Set<string>();
+    for (const asso of assos) {
+      if (!asso.cotisationMode) continue;
+      const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode);
+      if (activeTagNames.has(tagName)) result.add(asso.id);
+    }
+    return result;
   }
 
   /** Returns active products for a single association ordered by sortOrder. */

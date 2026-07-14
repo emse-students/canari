@@ -826,32 +826,6 @@ export async function revokeAssociationTag(associationId: string, tagId: string)
   );
 }
 
-/**
- * Returns the current academic year label (e.g. `"2026-2027"`) for a given date.
- * Frontend mirror of `getAcademicYear` in
- * `apps/social-service/src/associations/cotisation-tag.util.ts` - keep in sync.
- */
-function getAcademicYear(now: Date = new Date()): string {
-  const year = now.getFullYear();
-  const startYear = now.getMonth() >= 8 ? year : year - 1; // month 8 = September (0-indexed)
-  return `${startYear}-${startYear + 1}`;
-}
-
-/**
- * Derives the canonical cotisation tag name for an association from its slug and validity mode.
- * Frontend mirror of `deriveCotisationTag` (backend `cotisation-tag.util.ts`) - only the tag name
- * is needed client-side since active-tag listings already exclude expired tags. Used to determine
- * cotisant status for members-only/member-priced products without a dedicated endpoint.
- */
-export function deriveCotisationTagName(
-  slug: string,
-  mode: 'lifetime' | 'dated',
-  now: Date = new Date()
-): string {
-  if (mode === 'lifetime') return `cotisant:${slug}`;
-  return `cotisant:${slug}-${getAcademicYear(now)}`;
-}
-
 // ── Cotisant roster ──────────────────────────────────────────────────────────
 
 /** A single row of the association's active cotisant roster (promo-sorted, "Sans promo" last). */
@@ -948,6 +922,11 @@ export interface AssociationProduct {
   membersOnly: boolean;
   /** Reduced price in cents for cotisants; null = same as amountCents. */
   amountCentsMember: number | null;
+  /**
+   * True when the requesting user holds this product association's active cotisation tag.
+   * Set only by `listAllProducts` (`/products/all`, shop); undefined on admin/public listings.
+   */
+  viewerIsCotisant?: boolean;
   allowCustomAmount: boolean;
   customAmountMinCents: number | null;
   customAmountMaxCents: number | null;

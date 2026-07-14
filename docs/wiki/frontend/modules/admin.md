@@ -21,6 +21,16 @@ All admin routes check `isGlobalAdmin()` (derived from `X-Global-Admin` header i
 | `/admin/platform` | Platform configuration |
 | `/admin/moderation` | Content moderation queue |
 | `/admin/users` | User list with admin flag management |
+| `/admin/cercle` | Cercle (`balance_topup`) products, per beneficiary association |
+
+## Cercle top-ups (`/admin/cercle`)
+
+`balance_topup` (Cercle recharge) products are managed here, not in an association's boutique. The
+page has a beneficiary-association selector (a global admin recharges on behalf of an association),
+creates/edits the top-up products, and retries failed Cercle webhook deliveries. Creating or
+updating a `balance_topup` product requires a **global admin** - enforced server-side in
+`products.service.ts` (D7), not merely by this route's `isGlobalAdmin()` guard. See
+[Cotisations](../../cotisations.md) for the product model.
 
 ## Platform configuration (`/admin/platform`)
 

@@ -119,6 +119,32 @@ Cliquez sur une association pour voir sa fiche : description, membres, evenement
 Sur la fiche d'une association, cliquez sur **"Suivre"**. Ses publications apparaitront dans
 votre onglet "Suivis" du fil d'actualites.
 
+### Cotiser a une association
+
+"Cotiser", c'est payer votre adhesion (cotisation) a une association pour une periode donnee.
+Une fois cotisant, vous pouvez beneficier de tarifs reduits et acceder a des produits reserves
+aux membres.
+
+**Comment cotiser :**
+
+1. Ouvrez la page **Boutique** (`/shop`).
+2. Reperez le produit de type **"Cotisation"** de l'association qui vous interesse.
+3. Cliquez pour payer : vous etes redirige vers Stripe Checkout (carte bancaire securisee).
+4. Apres le paiement, votre statut de cotisant est enregistre automatiquement.
+
+Une cotisation peut etre **a vie** (payee une seule fois) ou **annuelle** (a renouveler chaque
+annee scolaire ; elle expire le 31 aout). Le type est indique par l'association.
+
+**Si vous payez en especes :** un responsable de l'association peut enregistrer votre cotisation
+manuellement apres avoir recu votre paiement. Vous n'avez alors rien a faire dans la Boutique.
+
+**Les avantages cotisant :**
+
+- Certains produits de la Boutique sont **reserves aux cotisants** (indiques par un badge) ou
+  proposes a un **prix reduit** : le tarif membre s'applique automatiquement.
+- Sur les **formulaires payants**, le tarif reduit membre est applique automatiquement si votre
+  cotisation est active, sans code ni coupon.
+
 ---
 
 ## 6. Formulaires

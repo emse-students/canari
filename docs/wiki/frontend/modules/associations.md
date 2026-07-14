@@ -30,6 +30,8 @@
 | `edit/EditMembersTab.svelte` | Manage members and roles |
 | `edit/EditFormsTab.svelte` | Manage forms, view pending cash submissions |
 | `edit/EditPaymentsTab.svelte` | Stripe Connect setup and status |
+| `edit/EditBoutiqueTab.svelte` | Boutique products (`type: 'other'`), members-only + member pricing - see [Cotisations](../../cotisations.md) |
+| `edit/EditCotisationsTab.svelte` | Enable cotisation, membership price, cotisant roster (search, export, manual grant/revoke) - see [Cotisations](../../cotisations.md) |
 
 ## Routes
 
@@ -37,7 +39,7 @@
 |---|---|
 | `/associations` | Public association directory |
 | `/associations/[id]` | Association detail page |
-| `/associations/[id]/edit` | Admin edit (profile, members, forms, payments) |
+| `/associations/[id]/edit` | Admin edit (profile, members, forms, payments, boutique, cotisations) |
 | `/dashboard` | Association admin dashboard |
 | `/lists/[slug]` | Member list public page |
 | `/lists/[slug]/edit` | Edit member list |
