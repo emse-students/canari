@@ -149,7 +149,7 @@ export async function sendChatMessage(
     createdAt: sentAt,
   };
   await enqueueOutboxMessage(entry);
-  deps.log(`[SEND] ${messageId.slice(0, 8)}… mis en file (pending)`);
+  deps.log(`[SEND] ${messageId.slice(0, 8)}… queued (pending)`);
   return { success: true };
 }
 
