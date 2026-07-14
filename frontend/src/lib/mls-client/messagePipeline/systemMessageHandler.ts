@@ -5,6 +5,7 @@ import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
+import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -380,6 +381,8 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
+    // A bundle arrived: stop any in-flight solicitation retries for this group (idempotent).
+    noteHistoryBundleReceived(convoKey);
     try {
       const msgs: Array<{
         id: string;

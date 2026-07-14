@@ -142,7 +142,7 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
 | POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
-| POST | `/api/mls/history-request` | Ask one online member to resend the history bundle (after an external-commit self-join) |
+| POST | `/api/mls/history-request` | Ask one RANDOM online member to resend the history bundle (after a fresh join); `no_peer_online` if none |
 | POST | `/api/mls/add-lock` | Acquire distributed add-lock |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
 
@@ -229,7 +229,9 @@ Triggered when `processIncomingMessage` fails with epoch-related errors:
 
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
-On a successful external join the device also marks its conversation `active` (external join does not go through the Welcome path that normally promotes it) and sends a `history_request`: an external join lands at the current epoch WITHOUT the peer-driven history bundle a Welcome delivers, so it asks one online member (picked server-side, single responder) to resend the history re-encrypted at the current epoch via the shared `sendFullHistoryBundle`. History-only, never a re-add.
+On a successful external join the device also marks its conversation `active` (external join does not go through the Welcome path that normally promotes it) and solicits a `history_request`: a fresh join lands at the current epoch WITHOUT the pre-join history it cannot decrypt on its own, so it asks one online member (picked server-side, single responder) to resend the history re-encrypted at the current epoch via the shared `sendFullHistoryBundle`. History-only, never a re-add.
+
+The **Welcome** join path solicits history the same way (`solicitHistory` in `historySolicit.ts`, called from the joiner's `onWelcomeProcessed` for a genuinely new local conversation). The inviter pushes a bundle on the foreground add path, but its background twin (`send-welcome-and-commit`) does not, so the joiner also asks for it. Solicitation is bounded and receipt-driven: it re-sends on a short backoff (cancelled the moment a `history_bundle` arrives), and the server forwards each call to a RANDOM online member so retries rotate past a backgrounded Android that holds its WebSocket open but cannot process the frame (frozen-online). Inherent limit: if the only other member stays offline for the whole window, history arrives only once a member is genuinely online again.
 
 ### Group reset
 

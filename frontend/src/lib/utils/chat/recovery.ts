@@ -5,6 +5,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
 import { classifyServerStatus } from './groupLifecycle';
 import { markGroupNotReady, clearGroupNotReady } from './notReadyRegistry';
+import { solicitHistory } from './historySolicit';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -164,9 +165,9 @@ export async function requestReAdd(
       await deps.saveConversation(groupId).catch(() => {});
     }
     // Solicit the pre-join history from one online member: an external join lands at the current
-    // epoch WITHOUT the peer-driven history bundle the Welcome path delivers, so we ask for it
-    // explicitly. Best-effort; the delivery service picks a single responder.
-    await deps.mlsService.sendHistoryRequest(groupId).catch(() => {});
+    // epoch WITHOUT the peer-driven history bundle, so we ask for it explicitly. Bounded,
+    // receipt-driven retries rotate past a frozen-online peer; cancelled when the bundle arrives.
+    solicitHistory(deps.mlsService, groupId, deps.log);
     return;
   }
 

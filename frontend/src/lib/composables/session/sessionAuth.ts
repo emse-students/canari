@@ -18,6 +18,7 @@ import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { solicitHistory, cancelAllHistorySolicit } from '$lib/utils/chat/historySolicit';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -661,6 +662,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             await cb
               .loadAndRestoreConversations()
               .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
+            // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
+            // inviter pushes a bundle on the foreground add path, but its background twin
+            // (send-welcome-and-commit) does not, so we also solicit it ourselves (idempotent,
+            // receipt-driven retries). Only for a genuinely new local conversation.
+            solicitHistory(mlsService, groupId, cb.log);
           }
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
@@ -991,6 +997,7 @@ export async function recoverPinImpl(
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   unregisterOutbox();
+  cancelAllHistorySolicit();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();
     unregisterMlsStatePersister();

@@ -1355,6 +1355,15 @@ export class MessagingService {
       requesterDeviceId,
     });
 
+    // Forward to a RANDOM online member rather than always the first. A backgrounded Android holds
+    // its WebSocket TCP open, so `user:online` can be true while the app cannot process the frame
+    // (frozen-online). The requester re-solicits on a bounded backoff; randomizing the responder
+    // each call lets those retries rotate past a frozen peer to a genuinely reachable one.
+    for (let i = members.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [members[i], members[j]] = [members[j], members[i]];
+    }
+
     for (const member of members) {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');

@@ -6,6 +6,7 @@ vi.mock('$lib/utils/hex', () => ({
 
 import { requestReAdd, cancelReAdd, recoverForkedGroup, resetReAddCooldowns } from './recovery';
 import { saveMlsState } from '$lib/utils/hex';
+import { cancelAllHistorySolicit } from './historySolicit';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -13,6 +14,9 @@ beforeEach(() => {
   if (typeof localStorage !== 'undefined') localStorage.clear();
   // The recovery cooldown is module-global - reset it so throttling never leaks between cases.
   resetReAddCooldowns();
+  // External-join success solicits history with bounded retry timers - clear them so they do not
+  // leak across cases (or keep the test runner's event loop alive).
+  cancelAllHistorySolicit();
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

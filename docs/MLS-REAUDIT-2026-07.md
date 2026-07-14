@@ -255,6 +255,30 @@ via external commit). Two gaps in the external-join path were then fixed:
   which are mutually exclusive per join).
 Gates green: `bun run check` (0 errors), vitest 468, chat-delivery `tsc` + jest 41.
 
+**Follow-up (2026-07-14) - fresh-device on a never-opened mobile (WP-C).** Two independent symptoms
+when a freshly-added device sends to an existing member whose mobile has not been opened:
+- **(B) the new device never got pre-join history.** Confirmed root cause: the Welcome-join path
+  NEVER solicited history (only the external-join path did, `recovery.ts`), and the inviter's
+  BACKGROUND add path (`push.controller.ts` `sendWelcomeAndCommitPush`) sends Welcome + commit but
+  no bundle - so a device added by a killed/backgrounded inviter got membership and no history.
+  Fixed: new `historySolicit.ts` (`solicitHistory` / `noteHistoryBundleReceived` /
+  `cancelAllHistorySolicit`) - bounded, receipt-driven re-solicitation cancelled when a
+  `history_bundle` arrives. Wired into BOTH join paths (external join `recovery.ts`, Welcome join
+  `sessionAuth.onWelcomeProcessed` for a new local conversation) and cancelled on logout. Server
+  `notifyHistoryRequest` now forwards to a RANDOM online member (Fisher-Yates) so retries rotate
+  past a frozen-online Android (holds its WebSocket, `user:online` true, cannot process the frame).
+  Inherent liveness limit documented: sole-offline-peer -> history on next online window. Tests:
+  `historySolicit.test.ts` (5), `messaging.history-request.spec.ts` (4, server). No i18n (silent
+  system frames). `bun run check` 0 errors; chat-delivery `tsc` + jest green.
+- **(A) the mobile's push for that message would not decrypt.** The membership commit advanced the
+  epoch N->N+1; the never-opened mobile only has the read-only background decrypt
+  (`mobile/background.rs` `decrypt_push_message`, no persist, no commit apply), so it stays at N and
+  the newcomer's first message at N+1 is an epoch gap -> generic fallback. Fix = read-only in-memory
+  commit catch-up before the background decrypt (fetch ordered commits via the Phase-2
+  `GET /api/mls/commits/:groupId?sinceEpoch=N`, apply in memory to reach the message epoch, decrypt,
+  discard - never persist, respecting the background no-persist invariant). Sibling commit;
+  on-device (APK) verification required.
+
 ## Phase 0 remaining - elaborated plan
 
 **KEY INSIGHT:** the mls-lock critical section == the validate-then-merge unit (stage -> validate on
