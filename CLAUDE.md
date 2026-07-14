@@ -60,28 +60,22 @@ Deep-dive design docs referenced inline. Legend: \[x\] done+pushed, \[ \] todo, 
 
 ---
 
-### CROSS-PROJECT: Quality & Security cleanup (started 2026-07-14, IN PROGRESS)
+### CROSS-PROJECT: Quality & Security cleanup (started 2026-07-14)
 
-Goal: clean all 4 repos - CodeQL alerts, Dependabot hygiene, Node EOL, wiki + English-comment audit. Decisions (2026-07-14): **align ALL repos to Node 24** (not 22); fix Canari's broken dependabot.yml; close Portail's stale PRs and let Dependabot recreate.
+Goal: clean all 4 repos - CodeQL alerts, Dependabot hygiene, Node EOL, wiki + English-comment audit.
 
-**Verified findings (2026-07-14):**
-* Node: only MiGallery still had real 20 (`release.yml` matrix `[20,22]` + `engines>=20`). Canari already 24 (workflows+Docker). Sky CI 22 but `engines>=18`. Portail = Bun runtime (no node-version, n/a). Target = 24 everywhere.
-* Dependabot: enabled + configured on all 4, **0 security alerts**. PRs green everywhere EXCEPT Portail (5 PRs all 2026-12-22, `CONFLICTING/DIRTY` -> close, Dependabot recreates). Canari config was perime (referenced nonexistent auth/user-service, skipped core/social/media) - FIXED.
+**Dependabot auto-merge - DONE all 4 repos (2026-07-14).** `.github/workflows/dependabot-auto-merge.yml` on each of Canari/MiGallery/Sky/Portail: `workflow_run`-triggered (on their CI/analysis workflows), re-verifies EVERY check-run on the head SHA via `gh api .../commits/<sha>/check-runs`, then `gh pr merge --squash --delete-branch` only when all complete + none failed. NO branch protection (so direct pushes to main still work); `allow_auto_merge=true` set on all 4 repos but unused by this design. New Dependabot PRs now self-merge on green with zero involvement. Backlog (43 open PRs) flushed 2026-07-14 via `@dependabot rebase`: greens auto-merge, majors that fail CI stay open (see below). Portail `dependabot.yml` upgraded: bun dev/prod groups + github-actions ecosystem. See [[reference_dependabot_automerge]].
 
-**Status (order = severity first):**
-1. **Canari - DONE + pushed** (da6607db security + eda360d0 test):
-   * SSRF #2460: undici `ssrfSafeDispatcher` re-validates resolved IP at connect (DNS-rebinding TOCTOU); alert dismissed "won't fix" (endpoint fetches arbitrary user URL by design, mitigated). url-guard.spec.ts.
-   * type-confusion #2461: `typeof query!=='string'` guard in users.search + spec.
-   * property-injection #2462: notifLevels keyed by DB `channel.id` not raw param + spec.
-   * log-injection #2463: `sanitizeForLog()` on WS fields (welcome/history_request).
-   * 16 quality (generated `proto/canari.js`): CodeQL `paths-ignore`.
-   * dependabot.yml + code-analysis.yml audit job: real services (core/social/media/chat-delivery + shared-ts), ghost dirs removed.
-   * DEFERRED: media.controller.ts:96 `no-unsafe-argument` warning - pre-existing, rooted in media-service missing `@types/express` (eslint sees `req` error-typed though tsc passes); needs a deps/tsconfig pass, unrelated to security scope.
-2. **MiGallery CodeQL - DONE (committed 6a10f39, NOT pushed).** Fixed shipping file-system-race (#26/#28/#29 og-cover + face-crop) via shared race-free `src/lib/server/disk-cache.ts` (idempotent mkdir, ENOENT-catch read, atomic temp+rename write) + `tests/disk-cache.test.ts` (4 green). mock-immich dev server: dropped unused `os` (#17) + `safeLog()` strips control chars from method/url (#10). Dismissed non-shipping/FP: #22 (logs api-key COUNT not material), #24/#25 (mitm.html removed in 01f41ff), #27 (serial pre-push tooling), #23 (logs boundary.length, a number). Fixed-code alerts auto-close on next scan. Gated check+lint+format+unit; full integration CI (test-with-server) NOT run. NEXT: push (own decision) + item 3 Node bump.
-3. Node -> 24: MiGallery (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Sky DONE+pushed (5d750f5: engines>=24, CI 24.x, Dockerfile build+runtime node:24).
-4. Portail: enrich dependabot.yml (prefix/labels/groups) + close 5 conflicting PRs (#26-30).
-5. Wiki + English-comment audit per repo, folded into touched files.
-6. Sky (3) + Portail (1) low-sev quality CodeQL alerts last.
+**Majors left OPEN (fail CI or need manual upgrade) - decide fix-vs-close:**
+* Canari TS 6->7 (#168/#163/#162): `Test TS Backend` FAILS (breaking compiler jump). Real upgrade work if wanted.
+* Watch after flush settles: prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
+
+**Still TODO (order = severity first):**
+1. **Canari security CodeQL - DONE + pushed** (da6607db + eda360d0): SSRF/type-confusion/property-injection/log-injection + generated-proto paths-ignore. DEFERRED gotcha: media.controller.ts:96 `no-unsafe-argument` warning (media-service missing `@types/express`; needs a deps/tsconfig pass).
+2. **MiGallery CodeQL - DONE + pushed (6a10f39).** file-system-race TOCTOU via shared `src/lib/server/disk-cache.ts` + tests.
+3. **Node -> 24: MiGallery still pending** (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Canari/Sky done.
+4. Wiki + English-comment audit per repo, folded into touched files.
+5. Sky (3) + Portail (1) low-sev quality CodeQL alerts last.
 Each repo = its own commits on main; full local CI gate before push.
 
 ---
