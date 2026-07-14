@@ -1,0 +1,68 @@
+name: Dependabot auto-merge
+
+# Automatically squash-merges Dependabot pull requests once the full check
+# suite on the PR head commit is green. Triggered when a PR-gating workflow
+# completes, then independently verifies EVERY check-run on the head SHA so it
+# is robust to path-filtered matrix jobs and to repos with several CI
+# workflows: the merge only fires on the completion that leaves nothing
+# pending and nothing failed. No branch protection required.
+
+on:
+  workflow_run:
+    workflows: ["CI", "Code Analysis"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Only act on Dependabot PR runs. Fail-closed on everything else.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]'
+    steps:
+      - name: Merge when the whole check suite is green
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # Resolve the open Dependabot PR whose head is this commit.
+          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                 --jq '.[] | select(.state=="open") | .number' | head -n1)
+          if [ -z "${pr:-}" ]; then
+            echo "No open PR for $HEAD_SHA; nothing to do."
+            exit 0
+          fi
+          echo "Evaluating checks for PR #$pr ($HEAD_SHA)"
+
+          # Inspect every check-run on the head commit. Merge only if at least
+          # one exists, all are completed, and none reported a bad conclusion.
+          runs=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
+                   --jq '.check_runs[] | "\(.name)|\(.status)|\(.conclusion // "")"')
+
+          total=0; pending=0; bad=0
+          while IFS='|' read -r name status conclusion; do
+            [ -z "$name" ] && continue
+            # Ignore this workflow's own run if it ever surfaces as a check.
+            case "$name" in "Dependabot auto-merge"*) continue ;; esac
+            total=$((total + 1))
+            [ "$status" != "completed" ] && pending=$((pending + 1))
+            case "$conclusion" in
+              success|skipped|neutral|"") ;;
+              *) bad=$((bad + 1)); echo "  FAIL: $name -> $conclusion" ;;
+            esac
+          done <<< "$runs"
+
+          echo "checks: total=$total pending=$pending bad=$bad"
+          if [ "$total" -eq 0 ]; then echo "No checks yet; skip."; exit 0; fi
+          if [ "$bad" -ne 0 ]; then echo "A check failed; not merging."; exit 0; fi
+          if [ "$pending" -ne 0 ]; then echo "Checks still running; will re-evaluate on next completion."; exit 0; fi
+
+          echo "All checks green -> merging PR #$pr"
+          gh pr merge "$pr" --repo "$REPO" --squash --delete-branch
