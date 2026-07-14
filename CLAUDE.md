@@ -108,14 +108,14 @@ Locked design (condensed - the model, still current): Cotisant status = UserTag 
 
 ---
 
-### SKY (../Sky)
+### SKY (../Sky) - COMPLETE (all roadmap items DONE + PUSHED, HEAD 174a8bd)
 
-Family = connected component (isSameFamily gates edits). Conventions: [[project_sky_conventions]], accents rule [[feedback_sky_french_accents]].
+Family = connected component (isSameFamily gates edits). Conventions: [[project_sky_conventions]], accents rule [[feedback_sky_french_accents]]. Node `level` = a person's promo (entry year); promoMatches allows level===promo or promo+3.
 
-* \[x\] Parrainage rules (DONE + committed, HEAD 452d427; NOT pushed). Enforced in `addParrainage` (single choke point, src/lib/server/database.ts): fillot strictly more recent than parrain + gap <= MAX_PROMO_GAP (3), both promos required (unknown blocks). Applies to BOTH kinds (parrainage+adoption, user-confirmed). Pure validators `checkPromoPair` + `isValidPromo` (promo null-or-int >= MIN_PROMO 1816) with unit tests in database.test.ts. isValidPromo guards create/edit routes (relationships POST, relatives PUT, admin people POST/PUT) -> localized 400. New RelationError codes PROMO_UNKNOWN/ORDER/GAP + FR/EN msgs; errors surface via AddRelativeModal showError. Gotcha: vitest include = `src/**` only (tests/api.test.ts is orphaned) -> co-locate tests in src/. A 2nd commit (452d427) is pure prettier drift on untouched files.
-* \[ \] Promo color gradient (NEW, nice-to-have): tint nodes by promo so a branch's direction reads visually - lighter = more recent. Compute from the min/max promo bounds across the displayed graph.
-* \[ \] i18n: pages + all user-facing errors localized; remaining = French code comments in server layer ([[project_sky_i18n_progress]]).
-* \[ \] Cleanup (see cross-project): 3 quality CodeQL alerts, ~~Node bump~~ (DONE 5d750f5), wiki/comment audit (Dockerfile comments still FR).
+* \[x\] Parrainage rules (e63e55a): choke point `addParrainage` (src/lib/server/database.ts) - fillot strictly more recent + gap <= MAX_PROMO_GAP (3), both promos required. Pure `checkPromoPair` + `isValidPromo` (>= MIN_PROMO 1816). Gotcha: vitest include = `src/**` only -> co-locate tests in src/.
+* \[x\] Cleanup (e63e55a): 3 quality CodeQL alerts fixed + English comments (Dockerfile, pack-bun.js, update-positions.js). Node 24 (5d750f5). Wiki done.
+* \[x\] Promo color gradient (174a8bd): nodes tinted by promo along a blue-hue lightness ramp (darker=older, lighter=recent), normalised to displayed min/max; unknown promo -> neutral tint; selected/hovered highlights unchanged. Pure `promoColor`/`computePromoBounds` (src/lib/utils/promoColor.ts) + 7 unit tests. NOTE: gated (vitest+lint+check), NOT runtime-verified in a live browser.
+* No color legend was added (out of scope) - possible future nice-to-have.
 
 ---
 
