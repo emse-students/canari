@@ -28,7 +28,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^25.6.0",
     "@types/uuid": "^10.0.0",
-    "eslint": "^10.4.0",
+    "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
     "globals": "^17.6.0",
