@@ -875,16 +875,15 @@ export async function grantCotisant(associationId: string, userId: string): Prom
 }
 
 /**
- * Downloads the association's cotisant roster as an .xlsx file and triggers a browser download.
- * Requires MANAGE_MEMBERS. The filename is read from the response's `Content-Disposition` header
- * (falls back to `cotisants.xlsx` if absent).
+ * Fetches an XLSX endpoint and triggers a browser download. The filename is taken from the
+ * response's `Content-Disposition` header (RFC 5987 `filename*` preferred, ASCII `filename`
+ * fallback), or `fallbackName` when the header is absent. Requires the caller to be authorized
+ * for the endpoint.
  */
-export async function exportCotisants(associationId: string): Promise<void> {
-  const res = await apiFetch(
-    `${socialUrl()}/api/associations/${encodeURIComponent(associationId)}/cotisants/export`
-  );
+async function downloadXlsxFromApi(path: string, fallbackName: string): Promise<void> {
+  const res = await apiFetch(`${socialUrl()}${path}`);
   if (!res.ok) {
-    throw new Error(`Failed to export cotisants (${res.status})`);
+    throw new Error(`Failed to export (${res.status})`);
   }
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition') ?? '';
@@ -894,7 +893,7 @@ export async function exportCotisants(associationId: string): Promise<void> {
     ? decodeURIComponent(utf8Match[1])
     : asciiMatch
       ? asciiMatch[1]
-      : 'cotisants.xlsx';
+      : fallbackName;
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -903,6 +902,28 @@ export async function exportCotisants(associationId: string): Promise<void> {
   a.click();
   a.remove();
   window.URL.revokeObjectURL(url);
+}
+
+/**
+ * Downloads the association's cotisant roster as an .xlsx file and triggers a browser download.
+ * Requires MANAGE_MEMBERS.
+ */
+export async function exportCotisants(associationId: string): Promise<void> {
+  await downloadXlsxFromApi(
+    `/api/associations/${encodeURIComponent(associationId)}/cotisants/export`,
+    'cotisants.xlsx'
+  );
+}
+
+/**
+ * Downloads the association's completed purchases (boutique + paid forms) as an .xlsx file.
+ * Requires MANAGE_PRODUCTS.
+ */
+export async function exportAssociationPurchases(associationId: string): Promise<void> {
+  await downloadXlsxFromApi(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/export`,
+    'achats.xlsx'
+  );
 }
 
 // ── Boutique products ───────────────────────────────────────────────────────
@@ -1059,6 +1080,115 @@ export async function listProductPurchases(
 ): Promise<AssociationPurchase[]> {
   return request<AssociationPurchase[]>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/purchases`
+  );
+}
+
+// ── Payment delegation (MANAGE_PRODUCTS) ─────────────────────────────────────
+
+/**
+ * A club association's payment-delegation state: whether it routes its online payments to a
+ * parent association's Stripe Connect account and, if so, the lifecycle status and whether the
+ * chosen parent can currently receive payments.
+ */
+export interface PaymentDelegationState {
+  /** `pending` awaiting parent approval, `approved` when routing is live, `null` when not delegating. */
+  status: 'pending' | 'approved' | null;
+  parentAssociationId: string | null;
+  /** Display name of the chosen parent, resolved server-side. */
+  parentName: string | null;
+  /** True when the parent has completed its own Stripe Connect onboarding (can receive payments). */
+  parentReady: boolean;
+}
+
+/** A child association appearing in a parent's delegation queue (pending or approved). */
+export interface DelegatedChild {
+  associationId: string;
+  name: string;
+  slug: string;
+  status: 'pending' | 'approved';
+}
+
+/** Returns this association's payment-delegation state (requires MANAGE_PRODUCTS). */
+export async function getPaymentDelegation(associationId: string): Promise<PaymentDelegationState> {
+  return request<PaymentDelegationState>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation`
+  );
+}
+
+/**
+ * Requests payment delegation from this association to `parentAssociationId`. The parent must
+ * approve before routing goes live. Requires MANAGE_PRODUCTS.
+ */
+export async function requestPaymentDelegation(
+  associationId: string,
+  parentAssociationId: string
+): Promise<PaymentDelegationState> {
+  return request<PaymentDelegationState>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation`,
+    { method: 'POST', body: JSON.stringify({ parentAssociationId }) }
+  );
+}
+
+/** Cancels this association's own delegation link (pending or approved). Requires MANAGE_PRODUCTS. */
+export async function cancelPaymentDelegation(
+  associationId: string
+): Promise<PaymentDelegationState> {
+  return request<PaymentDelegationState>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Lists associations delegating (pending or approved) to this parent. Requires MANAGE_PRODUCTS. */
+export async function listDelegatedChildren(associationId: string): Promise<DelegatedChild[]> {
+  return request<DelegatedChild[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation/children`
+  );
+}
+
+/** Approves a child's pending delegation request (`associationId` is the parent). Requires MANAGE_PRODUCTS. */
+export async function approveDelegatedChild(
+  associationId: string,
+  childId: string
+): Promise<{ associationId: string; status: 'approved' }> {
+  return request<{ associationId: string; status: 'approved' }>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation/children/${encodeURIComponent(childId)}/approve`,
+    { method: 'POST' }
+  );
+}
+
+/**
+ * Rejects a child's pending request or revokes an approved delegation (`associationId` is the
+ * parent). Requires MANAGE_PRODUCTS.
+ */
+export async function rejectDelegatedChild(
+  associationId: string,
+  childId: string
+): Promise<{ associationId: string; status: null }> {
+  return request<{ associationId: string; status: null }>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation/children/${encodeURIComponent(childId)}/reject`,
+    { method: 'POST' }
+  );
+}
+
+/**
+ * Lists a delegated child's completed purchases for the parent's accounting view (`associationId`
+ * is the parent). Requires MANAGE_PRODUCTS and an approved delegation link.
+ */
+export async function listChildPurchases(
+  associationId: string,
+  childId: string
+): Promise<AssociationPurchase[]> {
+  return request<AssociationPurchase[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation/children/${encodeURIComponent(childId)}/purchases`
+  );
+}
+
+/** Downloads a delegated child's purchases as .xlsx (`associationId` is the parent). Requires MANAGE_PRODUCTS. */
+export async function exportChildPurchases(associationId: string, childId: string): Promise<void> {
+  await downloadXlsxFromApi(
+    `/api/associations/${encodeURIComponent(associationId)}/payment-delegation/children/${encodeURIComponent(childId)}/purchases/export`,
+    'achats.xlsx'
   );
 }
 

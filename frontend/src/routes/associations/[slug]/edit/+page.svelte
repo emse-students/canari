@@ -33,6 +33,7 @@
     ArrowUpRight,
     Users as UsersIcon,
     HandCoins,
+    Share2,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -42,6 +43,7 @@
   import EditAchatsTab from '$lib/components/associations/edit/EditAchatsTab.svelte';
   import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
+  import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
   import { m } from '$lib/paraglide/messages';
 
   let asso = $state<Association | null>(null);
@@ -72,6 +74,7 @@
     | 'achats'
     | 'cotisations'
     | 'payments'
+    | 'delegation'
     | 'formulaires'
     | 'danger'
   >('profile');
@@ -387,6 +390,19 @@
             {m.asso_edit_tab_cotisations()}
           </button>
         {/if}
+        {#if canManageProducts}
+          <button
+            type="button"
+            onclick={() => (editSection = 'delegation')}
+            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'delegation'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+          >
+            <Share2 size={17} />
+            {m.asso_edit_tab_delegation()}
+          </button>
+        {/if}
         {#if canManageForms}
           <button
             type="button"
@@ -604,6 +620,10 @@
         stripePending={stripeConnectStatus?.status === 'pending'}
         {canManageStripeConnect}
       />
+    {/if}
+
+    {#if editSection === 'delegation' && canManageProducts && asso}
+      <EditDelegationTab {asso} />
     {/if}
 
     {#if editSection === 'formulaires' && canManageForms && asso}

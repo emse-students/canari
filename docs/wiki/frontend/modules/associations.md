@@ -32,6 +32,7 @@
 | `edit/EditPaymentsTab.svelte` | Stripe Connect setup and status |
 | `edit/EditBoutiqueTab.svelte` | Boutique products (`type: 'other'`), members-only + member pricing - see [Cotisations](../../cotisations.md) |
 | `edit/EditCotisationsTab.svelte` | Enable cotisation, membership price, cotisant roster (search, export, manual grant/revoke) - see [Cotisations](../../cotisations.md) |
+| `edit/EditDelegationTab.svelte` | Route payments to a parent association + parent-side approval/accounting - see [Payments](payments.md#payment-delegation-parent-association-routing) |
 
 ## Routes
 
