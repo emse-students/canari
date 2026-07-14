@@ -182,6 +182,13 @@ export class UpdateAssociationDto {
   cotisationExpiresAt?: string | null;
 }
 
+export class RequestPaymentDelegationDto {
+  /** Parent association whose Stripe account should receive this association's payments. */
+  @IsUUID()
+  @IsNotEmpty()
+  parentAssociationId: string;
+}
+
 export class AddMemberDto {
   @IsString()
   @IsNotEmpty()

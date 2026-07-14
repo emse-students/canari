@@ -128,6 +128,75 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(tagName).toMatch(/^cotisant:bde-\d{4}-\d{4}$/);
   });
 
+  describe('parent-payment delegation routing', () => {
+    it('routes a delegating club purchase to the approved parent Stripe account', async () => {
+      const { service, productRepo, assoRepo, userTagService } = makeService();
+      const club = asso({
+        id: 'club1',
+        stripeOnboardingComplete: false,
+        stripeAccountId: null,
+        paymentParentAssociationId: 'parent1',
+        paymentDelegationStatus: 'approved',
+      });
+      const parent = asso({
+        id: 'parent1',
+        stripeOnboardingComplete: true,
+        stripeAccountId: 'acct_parent',
+      });
+      assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+        Promise.resolve(id === 'parent1' ? parent : club)
+      );
+      productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
+      userTagService.hasActiveTag.mockResolvedValue(false);
+
+      const result = await (service as any).resolvePurchase('club1', 'prod1', 'user1');
+      expect(result.paymentTarget.stripeAccountId).toBe('acct_parent');
+      expect(result.paymentTarget.delegated).toBe(true);
+    });
+
+    it('rejects a delegating club purchase when the parent has not completed onboarding', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      const club = asso({
+        id: 'club1',
+        stripeOnboardingComplete: false,
+        stripeAccountId: null,
+        paymentParentAssociationId: 'parent1',
+        paymentDelegationStatus: 'approved',
+      });
+      const parent = asso({
+        id: 'parent1',
+        stripeOnboardingComplete: false,
+        stripeAccountId: null,
+      });
+      assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+        Promise.resolve(id === 'parent1' ? parent : club)
+      );
+      productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
+
+      await expect((service as any).resolvePurchase('club1', 'prod1', 'user1')).rejects.toThrow(
+        /delegates payments/
+      );
+    });
+
+    it('ignores a pending (unapproved) delegation and uses the club own account', async () => {
+      const { service, productRepo, assoRepo, userTagService } = makeService();
+      const club = asso({
+        id: 'club1',
+        stripeOnboardingComplete: true,
+        stripeAccountId: 'acct_club',
+        paymentParentAssociationId: 'parent1',
+        paymentDelegationStatus: 'pending',
+      });
+      assoRepo.findOne.mockResolvedValue(club);
+      productRepo.findOne.mockResolvedValue(product({ associationId: 'club1' }));
+      userTagService.hasActiveTag.mockResolvedValue(false);
+
+      const result = await (service as any).resolvePurchase('club1', 'prod1', 'user1');
+      expect(result.paymentTarget.stripeAccountId).toBe('acct_club');
+      expect(result.paymentTarget.delegated).toBe(false);
+    });
+  });
+
   describe('cotisation config provisioning', () => {
     it('creates the canonical membership product when none exists', async () => {
       const { service, productRepo } = makeService();

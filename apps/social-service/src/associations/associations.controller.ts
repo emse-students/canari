@@ -40,6 +40,7 @@ import {
   ListCotisantsQueryDto,
   RejectCalendarEventDto,
   ReorderMembersDto,
+  RequestPaymentDelegationDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
   UpdateMemberRoleDto,
@@ -966,6 +967,62 @@ export class AssociationsController {
   @Post(':id/webhook-failures/:deliveryId/retry')
   retryWebhookDelivery(@Param('deliveryId') deliveryId: string) {
     return this.productsService.retryWebhookDelivery(deliveryId);
+  }
+
+  // ── Payment delegation (parent-association Stripe routing) ─────────────────
+
+  /** Returns this association's payment-delegation state. Requires MANAGE_PRODUCTS flag. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/payment-delegation')
+  getPaymentDelegation(@Param('id') id: string) {
+    return this.service.getPaymentDelegation(id);
+  }
+
+  /**
+   * Requests that this association's payments route to a parent association's Stripe account.
+   * Creates a `pending` link the parent must approve. Requires MANAGE_PRODUCTS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/payment-delegation')
+  requestPaymentDelegation(@Param('id') id: string, @Body() dto: RequestPaymentDelegationDto) {
+    return this.service.requestPaymentDelegation(id, dto.parentAssociationId);
+  }
+
+  /** Clears this association's payment delegation (cancel pending or drop approved). Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/payment-delegation')
+  cancelPaymentDelegation(@Param('id') id: string) {
+    return this.service.cancelPaymentDelegation(id);
+  }
+
+  /**
+   * Lists associations requesting or granted delegation to this one (the parent's approval queue).
+   * `:id` is the parent; the guard proves the caller administers it. Requires MANAGE_PRODUCTS.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/payment-delegation/children')
+  listDelegatedChildren(@Param('id') id: string) {
+    return this.service.listDelegatedChildren(id);
+  }
+
+  /** Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/payment-delegation/children/:childId/approve')
+  approvePaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
+    return this.service.approvePaymentDelegation(id, childId);
+  }
+
+  /** Rejects a pending request or revokes an approved child's delegation. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/payment-delegation/children/:childId/reject')
+  rejectPaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
+    return this.service.rejectPaymentDelegation(id, childId);
   }
 
   // ── Internal (called by core-service, bypass nginx auth in Docker network) ─

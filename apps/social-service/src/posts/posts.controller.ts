@@ -174,8 +174,8 @@ export class PostsController {
       }
     }
     if (body.paymentAssociationId) {
-      const asso = await this.associationsService.findById(body.paymentAssociationId);
-      if (!asso.stripeOnboardingComplete) {
+      // Honors approved parent-payment delegation: a club with no own account but a ready parent passes.
+      if (!(await this.associationsService.isStripePaymentsReady(body.paymentAssociationId))) {
         throw new BadRequestException('This association has not completed Stripe onboarding');
       }
     }

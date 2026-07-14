@@ -24,6 +24,7 @@ import {
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
+import { isDelegating, resolvePaymentTarget, type PaymentTarget } from './payment-delegation.util';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import {
@@ -1723,35 +1724,215 @@ export class AssociationsService {
     await this.invalidatePostListCaches();
   }
 
-  /** Returns the Stripe connected-account ID for an association, or null if none is set. */
-  async getStripeAccountId(id: string): Promise<string | null> {
-    const asso = await this.assoRepo.findOne({ where: { id } });
-    return asso?.stripeAccountId ?? null;
-  }
-
-  /** True when Stripe Connect onboarding is complete and the association can receive online payments. */
-  async isStripePaymentsReady(associationId: string): Promise<boolean> {
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-    return !!asso?.stripeOnboardingComplete && !!asso?.stripeAccountId;
+  /**
+   * Resolves where an association's payments route, honoring an approved parent delegation.
+   * Loads the parent only when the association delegates (approved). Central resolver used by
+   * every payment path so delegation is applied uniformly.
+   */
+  async resolvePaymentTarget(asso: Association): Promise<PaymentTarget> {
+    const parent = isDelegating(asso)
+      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
+      : null;
+    return resolvePaymentTarget(asso, parent);
   }
 
   /**
-   * Ensures the association finished Stripe Connect onboarding before accepting paid forms.
-   * @throws BadRequestException when onboarding is incomplete
+   * Returns the Stripe connected-account ID an association's payments route to, or null if none.
+   * Follows an approved parent delegation to the parent's account.
+   */
+  async getStripeAccountId(id: string): Promise<string | null> {
+    const asso = await this.assoRepo.findOne({ where: { id } });
+    if (!asso) return null;
+    return (await this.resolvePaymentTarget(asso)).stripeAccountId;
+  }
+
+  /** True when the association can receive online payments (via its own account or an approved parent). */
+  async isStripePaymentsReady(associationId: string): Promise<boolean> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) return false;
+    return (await this.resolvePaymentTarget(asso)).ready;
+  }
+
+  /**
+   * Ensures payments can be taken (own account onboarded, or an approved parent's account ready)
+   * before accepting paid forms/purchases.
+   * @throws BadRequestException when neither the association nor its approved parent can receive payments
    */
   async assertStripePaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {
       throw new NotFoundException('Association not found');
     }
+    const target = await this.resolvePaymentTarget(asso);
+    if (target.ready) return;
+    if (target.delegated) {
+      throw new BadRequestException(
+        'The parent association this club delegates payments to has not finished Stripe Connect onboarding.'
+      );
+    }
     if (!asso.stripeOnboardingComplete) {
       throw new BadRequestException(
         'This association has not yet enabled Stripe Connect to receive payments.'
       );
     }
-    if (!asso.stripeAccountId) {
-      throw new BadRequestException('No Stripe Connect account linked to this association.');
+    throw new BadRequestException('No Stripe Connect account linked to this association.');
+  }
+
+  // ── Payment delegation (parent-association Stripe routing) ─────────────────
+
+  /**
+   * Returns this association's payment-delegation state for its own management UI: the chosen
+   * parent (if any), the lifecycle status, and whether that parent can currently receive payments.
+   */
+  async getPaymentDelegation(associationId: string): Promise<{
+    status: 'pending' | 'approved' | null;
+    parentAssociationId: string | null;
+    parentName: string | null;
+    parentReady: boolean;
+  }> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!asso.paymentParentAssociationId || !asso.paymentDelegationStatus) {
+      return { status: null, parentAssociationId: null, parentName: null, parentReady: false };
     }
+    const parent = await this.assoRepo.findOne({
+      where: { id: asso.paymentParentAssociationId },
+    });
+    return {
+      status: asso.paymentDelegationStatus,
+      parentAssociationId: asso.paymentParentAssociationId,
+      parentName: parent?.name ?? null,
+      parentReady: !!parent?.stripeOnboardingComplete && !!parent?.stripeAccountId,
+    };
+  }
+
+  /**
+   * Requests payment delegation from `associationId` to `parentAssociationId`, setting status
+   * `pending` until the parent approves. Rejects self-delegation, unknown parents, delegation
+   * chains (a parent that itself delegates), and requesters that are themselves a parent to
+   * other associations.
+   */
+  async requestPaymentDelegation(associationId: string, parentAssociationId: string) {
+    this.logger.debug(
+      `[DELEGATION] request assoc=${associationId.slice(0, 8)} -> parent=${parentAssociationId.slice(0, 8)}`
+    );
+    if (associationId === parentAssociationId) {
+      throw new BadRequestException('An association cannot delegate payments to itself');
+    }
+    const [asso, parent] = await Promise.all([
+      this.assoRepo.findOne({ where: { id: associationId } }),
+      this.assoRepo.findOne({ where: { id: parentAssociationId } }),
+    ]);
+    if (!asso) throw new NotFoundException('Association not found');
+    if (!parent) throw new NotFoundException('Parent association not found');
+
+    // No chains: the parent must not itself route its payments to a further association.
+    if (parent.paymentParentAssociationId) {
+      throw new BadRequestException(
+        'The chosen parent association itself delegates its payments and cannot be a parent'
+      );
+    }
+    // The requester must not already be receiving delegated payments from other associations.
+    const childCount = await this.assoRepo.count({
+      where: { paymentParentAssociationId: associationId },
+    });
+    if (childCount > 0) {
+      throw new BadRequestException(
+        'This association already receives delegated payments from others and cannot delegate its own'
+      );
+    }
+
+    await this.assoRepo.update(associationId, {
+      paymentParentAssociationId: parentAssociationId,
+      paymentDelegationStatus: 'pending',
+    });
+    return this.getPaymentDelegation(associationId);
+  }
+
+  /** Clears this association's payment delegation (the association cancels a pending/approved link). */
+  async cancelPaymentDelegation(associationId: string) {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) throw new NotFoundException('Association not found');
+    await this.assoRepo.update(associationId, {
+      paymentParentAssociationId: null,
+      paymentDelegationStatus: null,
+    });
+    await this.invalidatePostListCaches();
+    this.logger.log(`[DELEGATION] cancelled assoc=${associationId.slice(0, 8)}`);
+    return { status: null, parentAssociationId: null, parentName: null, parentReady: false };
+  }
+
+  /**
+   * Lists associations that requested or were granted delegation to `parentAssociationId`
+   * (the parent's approval queue plus its active children).
+   */
+  async listDelegatedChildren(
+    parentAssociationId: string
+  ): Promise<
+    Array<{ associationId: string; name: string; slug: string; status: 'pending' | 'approved' }>
+  > {
+    const children = await this.assoRepo.find({
+      where: { paymentParentAssociationId: parentAssociationId },
+      order: { name: 'ASC' },
+    });
+    return children
+      .filter(
+        (c) => c.paymentDelegationStatus === 'pending' || c.paymentDelegationStatus === 'approved'
+      )
+      .map((c) => ({
+        associationId: c.id,
+        name: c.name,
+        slug: c.slug,
+        status: c.paymentDelegationStatus,
+      }));
+  }
+
+  /**
+   * Approves a pending delegation request from `childId` to `parentAssociationId`. Requires the
+   * parent to have completed its own Stripe Connect onboarding, since it becomes the receiver.
+   */
+  async approvePaymentDelegation(parentAssociationId: string, childId: string) {
+    const [parent, child] = await Promise.all([
+      this.assoRepo.findOne({ where: { id: parentAssociationId } }),
+      this.assoRepo.findOne({ where: { id: childId } }),
+    ]);
+    if (!parent) throw new NotFoundException('Parent association not found');
+    if (!child) throw new NotFoundException('Association not found');
+    if (
+      child.paymentParentAssociationId !== parentAssociationId ||
+      child.paymentDelegationStatus !== 'pending'
+    ) {
+      throw new BadRequestException('No pending delegation request from this association');
+    }
+    if (!parent.stripeOnboardingComplete || !parent.stripeAccountId) {
+      throw new BadRequestException(
+        'Complete your Stripe Connect onboarding before accepting delegated payments'
+      );
+    }
+    await this.assoRepo.update(childId, { paymentDelegationStatus: 'approved' });
+    await this.invalidatePostListCaches();
+    this.logger.log(
+      `[DELEGATION] approved parent=${parentAssociationId.slice(0, 8)} child=${childId.slice(0, 8)}`
+    );
+    return { associationId: childId, status: 'approved' as const };
+  }
+
+  /** Rejects a pending request or revokes an approved delegation from `childId`, clearing its link. */
+  async rejectPaymentDelegation(parentAssociationId: string, childId: string) {
+    const child = await this.assoRepo.findOne({ where: { id: childId } });
+    if (!child) throw new NotFoundException('Association not found');
+    if (child.paymentParentAssociationId !== parentAssociationId) {
+      throw new BadRequestException('This association does not delegate payments to you');
+    }
+    await this.assoRepo.update(childId, {
+      paymentParentAssociationId: null,
+      paymentDelegationStatus: null,
+    });
+    await this.invalidatePostListCaches();
+    this.logger.log(
+      `[DELEGATION] rejected parent=${parentAssociationId.slice(0, 8)} child=${childId.slice(0, 8)}`
+    );
+    return { associationId: childId, status: null };
   }
 
   // ── Post authorship check ─────────────────────────────────────────────────

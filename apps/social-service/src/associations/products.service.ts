@@ -20,6 +20,7 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import { deriveCotisationTag } from './cotisation-tag.util';
+import { isDelegating, resolvePaymentTarget, type PaymentTarget } from './payment-delegation.util';
 
 /** Delays used between Cercle webhook delivery attempts (ms). */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
@@ -48,6 +49,17 @@ export class ProductsService {
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService
   ) {}
+
+  /**
+   * Resolves the Stripe target for an association, following an approved parent-payment delegation
+   * to the parent's account. Loads the parent only when the association actually delegates.
+   */
+  private async resolvePaymentTargetFor(asso: Association): Promise<PaymentTarget> {
+    const parent = isDelegating(asso)
+      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
+      : null;
+    return resolvePaymentTarget(asso, parent);
+  }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -146,14 +158,17 @@ export class ProductsService {
 
     const { webhookUrl, webhookSecret, ...rest } = dto;
 
+    // Payments may be served by an approved parent's account (delegation), so gate on the
+    // resolved target's readiness rather than this association's own onboarding flag.
+    const paymentTarget = await this.resolvePaymentTargetFor(asso);
     const product = this.productRepo.create({
       ...rest,
       currency: 'eur',
       associationId,
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
-      // Product is inactive until Stripe Connect onboarding is complete
-      isActive: asso.stripeOnboardingComplete ? (dto.isActive ?? true) : false,
+      // Product is inactive until payments can be taken (own or delegated Stripe account ready).
+      isActive: paymentTarget.ready ? (dto.isActive ?? true) : false,
     });
     return this.productRepo.save(product);
   }
@@ -246,7 +261,8 @@ export class ProductsService {
         type: 'membership',
         grantedTagName: tagName,
         tagExpiresAt: expiresAt,
-        isActive: asso.stripeOnboardingComplete,
+        // Active once payments can be taken - own account or an approved parent's (delegation).
+        isActive: (await this.resolvePaymentTargetFor(asso)).ready,
       });
     } else {
       this.logger.log(
@@ -272,7 +288,7 @@ export class ProductsService {
     customAmountCents?: number,
     callbackUrls?: { successUrl?: string; cancelUrl?: string }
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
-    const { asso, product, amountCents } = await this.resolvePurchase(
+    const { product, amountCents, paymentTarget } = await this.resolvePurchase(
       associationId,
       productId,
       userId,
@@ -327,7 +343,7 @@ export class ProductsService {
           successUrl,
           cancelUrl,
           metadata: { productId: product.id, userId },
-          stripeConnectAccountId: asso.stripeAccountId,
+          stripeConnectAccountId: paymentTarget.stripeAccountId,
           customerId,
         },
         { maxRedirects: 0 }
@@ -360,7 +376,7 @@ export class ProductsService {
     currency: string;
     stripeAccountId: string;
   }> {
-    const { asso, product, amountCents } = await this.resolvePurchase(
+    const { product, amountCents, paymentTarget } = await this.resolvePurchase(
       associationId,
       productId,
       userId,
@@ -374,7 +390,8 @@ export class ProductsService {
       userId,
       amountCents,
       currency: product.currency,
-      stripeAccountId: asso.stripeAccountId,
+      // resolvePurchase guarantees paymentTarget.ready + non-null stripeAccountId.
+      stripeAccountId: paymentTarget.stripeAccountId,
     };
   }
 
@@ -384,7 +401,12 @@ export class ProductsService {
     productId: string,
     userId: string,
     customAmountCents?: number
-  ): Promise<{ asso: Association; product: AssociationProduct; amountCents: number }> {
+  ): Promise<{
+    asso: Association;
+    product: AssociationProduct;
+    amountCents: number;
+    paymentTarget: PaymentTarget;
+  }> {
     const [asso, product] = await Promise.all([
       this.assoRepo.findOne({ where: { id: associationId } }),
       this.productRepo.findOne({ where: { id: productId, associationId } }),
@@ -392,8 +414,15 @@ export class ProductsService {
 
     if (!asso) throw new NotFoundException('Association not found');
     if (!product || !product.isActive) throw new NotFoundException('Product not found or inactive');
-    if (!asso.stripeOnboardingComplete || !asso.stripeAccountId) {
-      throw new BadRequestException('Association has not completed Stripe Connect onboarding');
+
+    // Route to the association's own account, or an approved parent's when delegating.
+    const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    if (!paymentTarget.ready || !paymentTarget.stripeAccountId) {
+      throw new BadRequestException(
+        paymentTarget.delegated
+          ? 'The parent association this club delegates payments to has not completed Stripe Connect onboarding'
+          : 'Association has not completed Stripe Connect onboarding'
+      );
     }
 
     const isCotisant = await this.isBuyerCotisant(asso, userId);
@@ -420,7 +449,7 @@ export class ProductsService {
       throw new BadRequestException('No amount provided for this product');
     }
 
-    return { asso, product, amountCents };
+    return { asso, product, amountCents, paymentTarget };
   }
 
   /**

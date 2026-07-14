@@ -41,6 +41,24 @@ export class Association {
   stripeOnboardingComplete: boolean;
 
   /**
+   * Parent association whose Stripe Connect account receives this association's payments when
+   * delegation is approved. Distinct from `parentAssociationId` (a promo list's owning BDE):
+   * this one is purely financial routing + accounting access. Null when no delegation is set.
+   * @see paymentDelegationStatus
+   */
+  @Column({ type: 'uuid', nullable: true })
+  @Index()
+  paymentParentAssociationId: string | null;
+
+  /**
+   * Lifecycle of the payment delegation link: `pending` (this association requested it, awaiting
+   * the parent's approval) or `approved` (routing + accounting access are live). Null when no
+   * delegation is set. A rejection/cancellation clears this and `paymentParentAssociationId`.
+   */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  paymentDelegationStatus: 'pending' | 'approved' | null;
+
+  /**
    * When true, members of this association may use BDE-only flags
    * (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE). Set only by global admins.
    */
