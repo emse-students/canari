@@ -36,13 +36,10 @@
 - Logs: Mandatory (`Log.d`, `appendLog`, `log::debug!`) at function entry, decisions, and error branches.  
 - Docs & Comments: JSDoc/Rustdoc required for exports. Explain WHAT and WHY, do not restate types.  
 - Factorization: Extract and export reusable logic. Zero duplication.  
-- Language: Code, comments, docs, and dev-strings MUST be English. User-visible strings use Paraglide (FR/EN).  
-- Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere. Preserve French accents (`é`, `à`) in localized strings and text. Escape strings in code (`\'`, `\"`) instead of using typographic quotes.  
-- Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.
-- English Only: Code, comments, docs, and dev-facing strings (`console.log`, errors) MUST be English.
-- I18N: User-visible strings use Paraglide (`messages/fr.json`, `en.json`). No inline string literals.
-- ASCII Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere. Preserve French accents (`é`, `à`) ONLY in localized strings/French comments.
-- UI: Single source of truth is `src/app.css` (tokens, `--radius-*`). Use `.btn-glass` with modifiers. Dark-first glassmorphism. Avoid raw hex/px. `lucide-svelte` only (no aliases).
+- Language: Code, comments, docs, and dev-facing strings (`console.log`, errors) MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline string literals.  
+- Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere; escape quotes in code (`\'`, `\"`). Preserve French accents (`é`, `à`) ONLY in localized strings/French comments.  
+- Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.  
+- UI: Single source of truth is `src/app.css` (tokens, `--radius-*`). Use `.btn-glass` with modifiers. Dark-first glassmorphism. Avoid raw hex/px. `lucide-svelte` only (no aliases).  
 - Husky: Pre-commit runs ESLint \+ Prettier \+ svelte-check. Fix errors; do not bypass.
 
 ## **KEY COMMANDS**
@@ -62,54 +59,32 @@ Deep-dive design docs referenced inline. Legend: \[x\] done+pushed, \[ \] todo, 
 
 ### CROSS-PROJECT: Quality & Security cleanup (started 2026-07-14)
 
-Goal: clean all 4 repos - CodeQL alerts, Dependabot hygiene, Node EOL, wiki + English-comment audit.
+Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): green PRs self-merge, no involvement. Each repo = its own commits on main; full local CI gate before push.
 
-**Dependabot auto-merge - DONE all 4 repos (2026-07-14).** `.github/workflows/dependabot-auto-merge.yml` on each of Canari/MiGallery/Sky/Portail: `workflow_run`-triggered (on their CI/analysis workflows), re-verifies EVERY check-run on the head SHA via `gh api .../commits/<sha>/check-runs`, then `gh pr merge --squash --delete-branch` only when all complete + none failed. NO branch protection (so direct pushes to main still work); `allow_auto_merge=true` set on all 4 repos but unused by this design. New Dependabot PRs now self-merge on green with zero involvement. Backlog (43 open PRs) flushed 2026-07-14 via `@dependabot rebase`: greens auto-merge, majors that fail CI stay open (see below). Portail `dependabot.yml` upgraded: bun dev/prod groups + github-actions ecosystem. See [[reference_dependabot_automerge]].
-
-**Majors left OPEN (fail CI or need manual upgrade) - decide fix-vs-close:**
-* Canari TS 6->7 (#168/#163/#162): `Test TS Backend` FAILS (breaking compiler jump). Real upgrade work if wanted.
-* Watch after flush settles: prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
-
-**Still TODO (order = severity first):**
-1. **Canari security CodeQL - DONE + pushed** (da6607db + eda360d0): SSRF/type-confusion/property-injection/log-injection + generated-proto paths-ignore. DEFERRED gotcha: media.controller.ts:96 `no-unsafe-argument` warning (media-service missing `@types/express`; needs a deps/tsconfig pass).
-2. **MiGallery CodeQL - DONE + pushed (6a10f39).** file-system-race TOCTOU via shared `src/lib/server/disk-cache.ts` + tests.
-3. **Node -> 24: MiGallery still pending** (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Canari/Sky done.
-4. Wiki + English-comment audit per repo, folded into touched files.
-5. Sky (3) + Portail (1) low-sev quality CodeQL alerts last.
-Each repo = its own commits on main; full local CI gate before push.
+**Open items:**
+* **Canari TS 6->7 majors (#168/#163/#162):** `Test TS Backend` FAILS (breaking compiler jump) - decide fix-vs-close.
+* **Watch (majors that may fail CI):** prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
+* **Node -> 24: MiGallery pending** (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Canari/Sky done.
+* Wiki + English-comment audit per repo, folded into touched files. Sky (3) + Portail (1) low-sev CodeQL alerts last.
 
 ---
 
 ### CANARI
 
-**A. Cotisations & Boutique rework (DONE + PUSHED, Phases 1-4, last 4e205ef).** Design + decisions D1-D10: docs/COTISATIONS-REWORK-PLAN.md. Wiki: docs/wiki/cotisations.md.
+Recently shipped + pushed (details in docs/wiki + commits, not repeated here): Cotisations & Boutique rework (docs/COTISATIONS-REWORK-PLAN.md, wiki cotisations.md), Parent-association Stripe delegation (wiki payments.md/associations.md), UI/UX bug fixes, chat i18n Paraglide migration, security CodeQL pass.
 
-Locked design (condensed - the model, still current): Cotisant status = UserTag rows, NOT a boolean - lifetime `cotisant:<slug>`, dated `cotisant:<slug>-<academicYear>` (academic year: month >= Aug -> year, else year-1; expiry 31 Aug). `association_members` = staff roster (separate concept). One cotisation/asso = a single canonical `membership` product; tag auto-derived by deriveCotisationTag() in apps/social-service/src/associations/cotisation-tag.util.ts (ONLY source of truth); expiry derived server-side, never admin-picked. Grant derived at FULFILLMENT time via resolveGrantTag (fixes academic-year rollover). Product `type`: tabs Produits (`other`) + Cotisations (`membership`); `balance_topup` lives in /admin/cercle (global-admin only, beneficiary-asso selector, enforced server-side in products.service.ts ~L85/~L136). Products gate/price via `membersOnly` + `amountCentsMember` (null = same price). Permissions: reuse MANAGE_MEMBERS / MANAGE_PRODUCTS, NO new flag. Roster = active tags only, promo-sorted NULLS LAST, searchable, offset-paginated, xlsx export (Nom, Prenom, Promo, Cotisation, Date, Echeance). Manual add = grant tag only, no payment. Cotisant status server-authoritative: `/products/all` returns per-product `viewerIsCotisant` (no client tag derivation). NOTE: full `make run-ci` never run - only touched surfaces gated.
-
-**B. Parent-association Stripe delegation (feature, DONE + PUSHED, HEAD 8dc42c1a).** A club routes online payments to a PARENT association's Stripe Connect account + grants read access to its accounting ("association" wording in UI, never "club"). Single decision point = pure `resolvePaymentTarget()` in payment-delegation.util.ts (fails closed). Backend (41fdff8f + 208a0a5a): migration 017, `paymentParentAssociationId`/`paymentDelegationStatus` fields, lifecycle + rerouted stripe getters, checkout/charge/isActive + paid-post gates, `exportAssociationPurchases` xlsx, parent-scoped child purchase/export endpoints (all MANAGE_PRODUCTS). Frontend (31df2bf5): `EditDelegationTab.svelte` + Delegation tab, `downloadXlsxFromApi`, `asso_deleg_*` fr+en, payments.md/associations.md wiki. Tests green (util 6 + delegation 14 + routing 3 + jest 43). NOTE: full `make run-ci` not run (only touched surfaces gated).
-
-**C. MLS on a fresh device - notification decrypt + history bundle (DONE + PUSHED, ce9d99f1 history + 3aa3bf5a background-decrypt, HEAD 40d2579b).** Two root causes: (B) join paths never solicited a history bundle from a random online member -> `historySolicit.ts` (bounded receipt-driven retry) wired into both join paths + Fisher-Yates responder pick; (A) a never-opened mobile stays at the old epoch (background decrypt is read-only, applies no commit) so the newcomer's 1st msg is an epoch gap -> read-only in-memory commit catch-up (`decrypt_push_message_with_commits` + `POST /api/mls/push/commits` PushSecret endpoint, Android JNI/Kotlin + iOS FFI/Swift). Never persists mls.bin. **STILL OPEN - verification gap:** mobile Rust/Kotlin/Swift are compile-UNVERIFIED (no NDK/Xcode; host `cargo check` skips `cfg(android/ios)`); crypto validated by `mls-core/tests/commit_catchup.rs`. `nativeProcessBackgroundTasks` remains a pure janitor ([[project_notif_decrypt_readonly_limit]]). Next: on-device APK/TestFlight end-to-end check (fresh device -> backgrounded mobile decrypts + gets history).
-
-**D. MLS + Communautes audit (track).** Ladder: docs/AUDIT-MLS-2026-06.md. Open findings: C1/C2 (Android dual MLS engine - WebView vs JNI both write mls.bin, foreground never reloads on resume; needs on-device diagnosis), C4/C5 (mls-core), H1-H5 (recovery/backend), strictness pass. Confirm scope of the deferred "correction de..." ask before starting.
-
-**E. UI/UX bugs - DONE (committed 6d93dfad, not pushed).** All 3 fixed. Root causes worth remembering: (1) tab-switch stale content = /chat and /communities are separate route components (remount) but selection lives in global singletons; MainChatPage reset used a component-local $state that re-nulled on mount -> now a module-scoped `lastActiveRouteMode` survives the remount. (2) /profile filleul link didn't re-render = data loaded in onMount, which never re-runs on same-component `[id]` param change -> now an `$effect` on `page.params.id` with a monotonic race guard. (3) PIN "Session expired" now distinguishes `SessionExpiredError` via a new `onSessionExpired` session callback -> ChatBackgroundService clears auth + redirects to /login instead of showing it in the modal. NOTE: gated (check/lint/format), not runtime-verified (needs full stack).
-
-**F. i18n(chat) - DONE.** \[x\] Hardcoded FR/EN chat system messages (group events, deletions, removal notice, channel invite, call texts, previews) migrated to Paraglide. Call finalization guarded by a structured `endedAt` flag on SystemEnvelope.callEvent (survives translation), NEVER `text.includes(...)`. Gotcha: callSystemMessages.test.ts still asserts the FR literal (default test locale = FR).
-
-**G. Device/APK verification backlog.** keyboard-GIF commitContent (chat + comments), channel push #2, channel_read cross-device dismissal, mobile keyboard-open off-screen scroll.
-
-**H. Normalization sweep (ongoing).** Paraglide FR/EN + English comments + docs/wiki across remaining chat/community modules.
+**Open work:**
+* **C. MLS fresh-device - VERIFY on-device.** Code shipped (history solicit + read-only commit catch-up, `POST /api/mls/push/commits`); crypto validated by `mls-core/tests/commit_catchup.rs`. But mobile Rust/Kotlin/Swift are compile-UNVERIFIED (no NDK/Xcode). NEXT: APK/TestFlight end-to-end (fresh device -> backgrounded mobile decrypts + gets history). [[project_notif_decrypt_readonly_limit]]
+* **D. MLS + Communautes audit.** docs/AUDIT-MLS-2026-06.md. Open: C1/C2 (Android dual MLS engine - WebView vs JNI both write mls.bin, foreground never reloads on resume; needs on-device diagnosis), C4/C5 (mls-core), H1-H5 (recovery/backend), strictness pass. Confirm scope before starting.
+* **G. Device/APK verification backlog.** keyboard-GIF commitContent (chat + comments), channel push #2, channel_read cross-device dismissal, mobile keyboard-open off-screen scroll.
+* **H. Normalization sweep (ongoing).** Paraglide FR/EN + English comments + wiki across remaining chat/community modules.
+* **Cleanup:** TS 6->7 decision (above); deferred `media.controller.ts:96` `no-unsafe-argument` warning (media-service missing `@types/express`; needs deps/tsconfig pass).
 
 ---
 
 ### SKY (../Sky) - COMPLETE (all roadmap items DONE + PUSHED, HEAD 174a8bd)
 
-Family = connected component (isSameFamily gates edits). Conventions: [[project_sky_conventions]], accents rule [[feedback_sky_french_accents]]. Node `level` = a person's promo (entry year); promoMatches allows level===promo or promo+3.
-
-* \[x\] Parrainage rules (e63e55a): choke point `addParrainage` (src/lib/server/database.ts) - fillot strictly more recent + gap <= MAX_PROMO_GAP (3), both promos required. Pure `checkPromoPair` + `isValidPromo` (>= MIN_PROMO 1816). Gotcha: vitest include = `src/**` only -> co-locate tests in src/.
-* \[x\] Cleanup (e63e55a): 3 quality CodeQL alerts fixed + English comments (Dockerfile, pack-bun.js, update-positions.js). Node 24 (5d750f5). Wiki done.
-* \[x\] Promo color gradient (174a8bd): nodes tinted by promo along a blue-hue lightness ramp (darker=older, lighter=recent), normalised to displayed min/max; unknown promo -> neutral tint; selected/hovered highlights unchanged. Pure `promoColor`/`computePromoBounds` (src/lib/utils/promoColor.ts) + 7 unit tests. NOTE: gated (vitest+lint+check), NOT runtime-verified in a live browser.
-* No color legend was added (out of scope) - possible future nice-to-have.
+Nothing open. Conventions/gotchas in memory: [[project_sky_conventions]], accents [[feedback_sky_french_accents]] (vitest include = `src/**` only -> co-locate tests in src/). Possible future nice-to-have: promo color legend (was out of scope).
 
 ---
 
@@ -122,18 +97,13 @@ Family = connected component (isSameFamily gates edits). Conventions: [[project_
 
 ### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA
 
-Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false` because deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Standards target = MiGallery/Sky/Canari level.
+Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false` because deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, CI integrity, Tailwind cleanup, license, docs = DONE ([[project_portail_vitrine_migration]]).
 
-* \[x\] Redesign v2 (A1-A4): brand "Portail Etudiant ICM" (src/lib/site.ts), Tailwind + dark-mode glassmorphism, hero v2 + stats, `reveal` IntersectionObserver (honors prefers-reduced-motion).
-* \[x\] Avatar photos: same-origin proxy src/routes/api/users/[userId]/avatar/+server.ts -> MiGallery (x-api-key, key in server .env). userId = Authentik uid; MemberCard falls back to initials on 404.
-* \[x\] N1 CI integrity: .husky/pre-push mirrors full CI (lint+format:check+check+test+build, blocks dirty index); test.yml pins Bun 1.3.14 + --frozen-lockfile + build.
-* \[x\] N2 Tailwind + dead code: 10 dead files removed, `<style>` -> Tailwind, `@tailwindcss/typography` wired.
-* \[x\] N4 License: PolyForm Noncommercial 1.0.0 + "Required Notice:" CREDIT line (Les ROOTZ / Jolan Boudin, Leon Muselli, Mathieu Daussin) - credit only, NO copyright assertion.
-* \[x\] N5 Docs: README rewritten (English); docs/wiki/{index,architecture,deployment}.md; GitHub-docs deleted.
-* \[~\] N3 i18n Paraglide (infra committed+pushed 8395c61; .prettierignore fix 877d2bb ignores generated inlang/paraglide files): infra done (messages/{fr,en}.json ~59 keys, vite plugin strategy localStorage->preferredLanguage->baseLocale, /src/lib/paraglide gitignored). Converted: Header, Footer, new LocaleToggle. REMAINING to swap: +page.svelte (home), associations/+page.svelte, lists/+page.svelte, liens/+page.svelte, AssociationCard, EntityDetail, MemberCard (m.member_fallback), FeaturedLinks+links.ts (add id -> m.link_*_tagline), associations/[handle] & lists/[handle] (titles via pageTitle, meta descriptions, backLabel -> m.detail_back_*), ThemeToggle aria. Then recompile paraglide + check/lint/build + commit/push.
-* \[ \] N8 Le markdown semble ne pas être supporté pour l'affichage des descriptions d'association notamment (https://portail-etu.emse.fr/associations/[id]). Il faut voir ça.
-* \[ \] N6 English-only comments: sweep remaining FR comments (e.g. ThemeToggle observer), fold in as files are touched.
-* \[ \] N7 CD via GitHub Secrets (the big "a la fin"): inject ALL secrets via GitHub Secrets, rotate keys, DROP the server .env dependency (user has no server .env access). Clean deploy.yml leftovers (sharp install / rollup external in vite.config.ts). Replicable on a fresh machine.
+**Open work:**
+* \[~\] **N3 i18n Paraglide** (infra done+pushed 8395c61): messages/{fr,en}.json ~59 keys, vite strategy localStorage->preferredLanguage->baseLocale. Converted: Header, Footer, LocaleToggle. REMAINING swaps: +page.svelte (home), associations/+page.svelte, lists/+page.svelte, liens/+page.svelte, AssociationCard, EntityDetail, MemberCard (m.member_fallback), FeaturedLinks+links.ts (id -> m.link_*_tagline), associations/[handle] & lists/[handle] (pageTitle, meta descriptions, backLabel -> m.detail_back_*), ThemeToggle aria. Then recompile paraglide + check/lint/build + commit/push.
+* \[ \] **N8** Markdown not rendered in association descriptions (portail-etu.emse.fr/associations/[id]) - investigate.
+* \[ \] **N6** English-only comments: sweep remaining FR comments (e.g. ThemeToggle observer), fold in as files are touched.
+* \[ \] **N7 CD via GitHub Secrets** (the big "a la fin"): inject ALL secrets via GitHub Secrets, rotate keys, DROP server .env dependency (user has no server .env access). Clean deploy.yml leftovers (sharp install / rollup external in vite.config.ts). Replicable on a fresh machine.
 * \[ \] Cleanup (see cross-project): 1 quality CodeQL alert, Node bump.
 
 ---
