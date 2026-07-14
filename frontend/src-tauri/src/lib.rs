@@ -1227,6 +1227,105 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
 
+/// Returns the current MLS epoch of `group_id` in the persisted state, or -1 if unknown / the state
+/// cannot be loaded. The background push path calls this to compute the `sinceEpoch` to fetch for
+/// the in-memory commit catch-up (`nativeDecryptMessageWithCommits`). Read-only, never persists.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeGroupEpoch<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    pin: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+) -> jni::sys::jlong {
+    let epoch = (|| -> Option<u64> {
+        let state_vec = env.convert_byte_array(&state_bytes).ok()?;
+        let pin_str: String = env.get_string(&pin).ok()?.into();
+        let user_id_str: String = env.get_string(&user_id).ok()?.into();
+        let device_id_str: String = env.get_string(&device_id).ok()?.into();
+        let group_id_str: String = env.get_string(&group_id).ok()?.into();
+        mobile::background::background_group_epoch(
+            &state_vec,
+            &pin_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+        )
+    })();
+    // u64 epochs are tiny in practice (< 2^53); the i64 cast never truncates a real epoch.
+    epoch.map(|e| e as jni::sys::jlong).unwrap_or(-1)
+}
+
+/// Read-only in-memory commit catch-up decrypt: applies the ordered `commits_json` (JSON array of
+/// base64 commit bytes) to an ephemeral manager to reach the message epoch, then decrypts
+/// `ciphertext`. Returns the same metadata JSON as `nativeDecryptMessage`, or `{"ok":false}`. Never
+/// writes mls.bin - the durable state is caught up later by the foreground commit-log replay.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessageWithCommits<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    pin: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    commits_json: jni::objects::JString<'a>,
+    ciphertext: jni::objects::JByteArray<'a>,
+) -> jni::objects::JString<'a> {
+    let result = (|| -> serde_json::Value {
+        let state_vec = match env.convert_byte_array(&state_bytes) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let pin_str: String = match env.get_string(&pin) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let user_id_str: String = match env.get_string(&user_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let device_id_str: String = match env.get_string(&device_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let group_id_str: String = match env.get_string(&group_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let commits_json_str: String = match env.get_string(&commits_json) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let cipher_vec = match env.convert_byte_array(&ciphertext) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+
+        let commits = mobile::background::decode_commits_b64_json(&commits_json_str);
+        mobile::background::decrypt_push_message_with_commits(
+            &state_vec,
+            &pin_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+            &commits,
+            &cipher_vec,
+        )
+        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+    })();
+
+    let json_str = result.to_string();
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
 /// Decrypts a channel-message push (AES-256-GCM) and returns its metadata JSON.
 /// Inputs are base64: the raw 32-byte epoch key (looked up by Kotlin in `channel_keys.json`),
 /// the 12-byte nonce, and the `ciphertext||tag`. Returns `{"ok":false}` on any failure.

@@ -5,8 +5,9 @@ use std::os::raw::c_char;
 use std::slice;
 
 use super::background::{
-    cleanup_pending_db, create_welcome_background, decrypt_push_message,
-    process_welcome_background, send_message_background,
+    background_group_epoch, cleanup_pending_db, create_welcome_background, decode_commits_b64_json,
+    decrypt_push_message, decrypt_push_message_with_commits, process_welcome_background,
+    send_message_background,
 };
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
@@ -76,6 +77,95 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
         &user_id_str,
         &device_id_str,
         &group_id_str,
+        ciphertext,
+    ) {
+        Some(v) => json_to_c_string(v),
+        None => json_to_c_string(serde_json::json!({ "ok": false })),
+    }
+}
+
+/// Retourne l'epoch MLS courant du groupe dans l'etat persiste, ou -1 si inconnu / etat illisible.
+/// Le chemin push background l'appelle pour calculer le `sinceEpoch` a recuperer avant le rattrapage
+/// de commits en memoire. Lecture seule, ne persiste jamais.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_group_epoch(
+    state_ptr: *const u8,
+    state_len: usize,
+    pin: *const c_char,
+    user_id: *const c_char,
+    device_id: *const c_char,
+    group_id: *const c_char,
+) -> i64 {
+    if state_ptr.is_null()
+        || pin.is_null()
+        || user_id.is_null()
+        || device_id.is_null()
+        || group_id.is_null()
+    {
+        return -1;
+    }
+
+    let state_bytes = slice::from_raw_parts(state_ptr, state_len);
+    let pin_str = str_from_c_str(pin);
+    let user_id_str = str_from_c_str(user_id);
+    let device_id_str = str_from_c_str(device_id);
+    let group_id_str = str_from_c_str(group_id);
+
+    match background_group_epoch(
+        state_bytes,
+        &pin_str,
+        &user_id_str,
+        &device_id_str,
+        &group_id_str,
+    ) {
+        // u64 epochs are tiny in practice (< 2^53); the i64 cast never truncates a real epoch.
+        Some(e) => e as i64,
+        None => -1,
+    }
+}
+
+/// Rattrapage de commits en memoire (lecture seule) puis dechiffrement. Applique les commits ordonnes
+/// de `commits_json` (tableau JSON de commits base64) a un manager ephemere pour atteindre l'epoch du
+/// message, puis dechiffre `cipher_ptr`. Retourne le meme JSON que `canari_native_decrypt_message`,
+/// ou `{"ok":false}`. N'ecrit jamais mls.bin - l'etat durable est rattrape plus tard au premier plan.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
+    state_ptr: *const u8,
+    state_len: usize,
+    pin: *const c_char,
+    user_id: *const c_char,
+    device_id: *const c_char,
+    group_id: *const c_char,
+    commits_json: *const c_char,
+    cipher_ptr: *const u8,
+    cipher_len: usize,
+) -> *mut c_char {
+    if state_ptr.is_null()
+        || pin.is_null()
+        || user_id.is_null()
+        || device_id.is_null()
+        || group_id.is_null()
+        || commits_json.is_null()
+        || cipher_ptr.is_null()
+    {
+        return json_to_c_string(serde_json::json!({ "ok": false }));
+    }
+
+    let state_bytes = slice::from_raw_parts(state_ptr, state_len);
+    let ciphertext = slice::from_raw_parts(cipher_ptr, cipher_len);
+    let pin_str = str_from_c_str(pin);
+    let user_id_str = str_from_c_str(user_id);
+    let device_id_str = str_from_c_str(device_id);
+    let group_id_str = str_from_c_str(group_id);
+    let commits = decode_commits_b64_json(&str_from_c_str(commits_json));
+
+    match decrypt_push_message_with_commits(
+        state_bytes,
+        &pin_str,
+        &user_id_str,
+        &device_id_str,
+        &group_id_str,
+        &commits,
         ciphertext,
     ) {
         Some(v) => json_to_c_string(v),

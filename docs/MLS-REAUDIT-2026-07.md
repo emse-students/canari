@@ -273,11 +273,25 @@ when a freshly-added device sends to an existing member whose mobile has not bee
 - **(A) the mobile's push for that message would not decrypt.** The membership commit advanced the
   epoch N->N+1; the never-opened mobile only has the read-only background decrypt
   (`mobile/background.rs` `decrypt_push_message`, no persist, no commit apply), so it stays at N and
-  the newcomer's first message at N+1 is an epoch gap -> generic fallback. Fix = read-only in-memory
-  commit catch-up before the background decrypt (fetch ordered commits via the Phase-2
-  `GET /api/mls/commits/:groupId?sinceEpoch=N`, apply in memory to reach the message epoch, decrypt,
-  discard - never persist, respecting the background no-persist invariant). Sibling commit;
-  on-device (APK) verification required.
+  the newcomer's first message at N+1 is an epoch gap -> generic fallback. Fixed with a **read-only
+  in-memory commit catch-up** before falling back to the generic notification:
+  - Native (shared): `background_group_epoch` (read current epoch) + `decrypt_push_message_with_commits`
+    (apply the ordered commits to an EPHEMERAL manager to reach the message epoch, decrypt, discard)
+    + `decode_commits_b64_json`, in `mobile/background.rs`. NEVER writes mls.bin - the durable state is
+    caught up later by the foreground commit-log replay. mls-core already merges commits via
+    `process_incoming_message` (StagedCommit -> merge_staged_commit); validated by `commit_catchup.rs`.
+  - Backend: `POST /api/mls/push/commits` (PushSecret-authed twin of the JWT `GET /commits/:groupId`,
+    since the background path has no JWT), reusing `getCommitsSince`. Tests: `push.controller.commits.spec.ts`.
+  - Android: JNI `nativeGroupEpoch` + `nativeDecryptMessageWithCommits` (`lib.rs`), Kotlin fetch
+    (`fetchCommitsFromBackend`, PushSecret) + `tryDecryptWithCommitCatchup` wired into the FCM
+    decrypt-fail path before `buildFallbackText`.
+  - iOS: `ios_ffi.rs` C exports (`canari_native_group_epoch` / `_decrypt_message_with_commits`) +
+    header + Swift `CanariFetchCommitsFromBackend`/`CanariTryDecryptWithCommitCatchup` in `canari_push.mm`.
+  - **Verification gap:** the mobile Rust (JNI/FFI), Kotlin, and Swift are NOT compiler-verified in this
+    environment (no Android NDK / no Xcode); they mirror the existing background-decrypt code near-verbatim
+    and the crypto path is covered by `commit_catchup.rs`. Needs an on-device APK/TestFlight build to
+    confirm end-to-end. `belowFloor` (commits pruned past retention) simply yields no catch-up -> the
+    existing worker-retry + fallback path is unchanged.
 
 ## Phase 0 remaining - elaborated plan
 

@@ -261,6 +261,80 @@ static NSString *_Nullable CanariFetchProtoFromBackend(NSString *queuedMessageId
   return nil;
 }
 
+// Fetches the ordered replayable commits for `groupId` with baseEpoch >= `sinceEpoch` via the
+// PushSecret endpoint, returned as a JSON array string of base64 commit protos (`["b64",...]`, the
+// shape canari_native_decrypt_message_with_commits expects), or nil on failure.
+static NSString *_Nullable CanariFetchCommitsFromBackend(NSString *groupId, long long sinceEpoch,
+                                                         CanariPushContext *ctx) {
+  NSString *secret = CanariRetrievePushSecret();
+  if (secret == nil) {
+    NSLog(@"[CanariPush] fetchCommits: pushSecret absent");
+    return nil;
+  }
+  @try {
+    NSURL *url =
+        [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/commits", ctx.baseUrl]];
+    if (url == nil) {
+      return nil;
+    }
+    NSDictionary *payload = @{
+      @"userId" : ctx.userId,
+      @"deviceId" : ctx.deviceId,
+      @"groupId" : groupId,
+      @"sinceEpoch" : @(sinceEpoch),
+    };
+    NSData *reqBody = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    if (reqBody == nil) {
+      return nil;
+    }
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.HTTPMethod = @"POST";
+    req.HTTPBody = reqBody;
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    [req setValue:[NSString stringWithFormat:@"PushSecret %@", secret]
+        forHTTPHeaderField:@"Authorization"];
+    req.timeoutInterval = 5.0;
+
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    __block NSString *commitsJson = nil;
+    [[[NSURLSession sharedSession]
+        dataTaskWithRequest:req
+          completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+            if (error == nil && data != nil) {
+              NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+              // NestJS @Post returns 201 by default; accept both.
+              if (http.statusCode == 200 || http.statusCode == 201) {
+                id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if ([json isKindOfClass:[NSDictionary class]]) {
+                  id commits = ((NSDictionary *)json)[@"commits"];
+                  NSMutableArray<NSString *> *protos = [NSMutableArray array];
+                  if ([commits isKindOfClass:[NSArray class]]) {
+                    for (id entry in (NSArray *)commits) {
+                      if ([entry isKindOfClass:[NSDictionary class]]) {
+                        id proto = ((NSDictionary *)entry)[@"proto"];
+                        if ([proto isKindOfClass:[NSString class]] && [(NSString *)proto length] > 0) {
+                          [protos addObject:(NSString *)proto];
+                        }
+                      }
+                    }
+                  }
+                  NSData *out = [NSJSONSerialization dataWithJSONObject:protos options:0 error:nil];
+                  if (out != nil) {
+                    commitsJson = [[NSString alloc] initWithData:out encoding:NSUTF8StringEncoding];
+                  }
+                }
+              }
+            }
+            dispatch_semaphore_signal(sem);
+          }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC));
+    return commitsJson;
+  } @catch (NSException *ex) {
+    NSLog(@"[CanariPush] fetchCommits exception: %@", ex.reason);
+    return nil;
+  }
+}
+
 static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *ctx, NSString *groupId,
                                                            NSString *protoB64, NSData *stateBytes) {
   NSData *cipher =
@@ -341,6 +415,123 @@ static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessag
       NSLog(@"[CanariPush] tryDecrypt: mls.bin absent");
     } else {
       result = CanariDecryptProto(ctx, groupId, protoB64, stateBytes);
+    }
+  } @finally {
+    [g_mlsStateLock unlock];
+  }
+  return result;
+}
+
+// Parses the JSON from canari_native_decrypt_message_with_commits (mirror of CanariDecryptProto).
+static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
+    CanariPushContext *ctx, NSString *groupId, NSString *commitsJson, NSString *protoB64,
+    NSData *stateBytes) {
+  NSData *cipher =
+      [[NSData alloc] initWithBase64EncodedString:protoB64
+                                          options:NSDataBase64DecodingIgnoreUnknownCharacters];
+  if (cipher == nil || cipher.length == 0) {
+    return nil;
+  }
+  char *jsonPtr = canari_native_decrypt_message_with_commits(
+      (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.pin.UTF8String,
+      ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, commitsJson.UTF8String,
+      (const unsigned char *)cipher.bytes, cipher.length);
+  if (jsonPtr == nil) {
+    return nil;
+  }
+  NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
+  canari_free_string(jsonPtr);
+  if (jsonStr.length == 0) {
+    return nil;
+  }
+  NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
+  id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+  if (![json isKindOfClass:[NSDictionary class]]) {
+    return nil;
+  }
+  NSDictionary *dict = (NSDictionary *)json;
+  if (![dict[@"ok"] boolValue]) {
+    return nil;
+  }
+  NSString *text = [dict[@"text"] isKindOfClass:[NSString class]] ? dict[@"text"] : @"";
+  if (text.length == 0) {
+    return nil;
+  }
+  CanariDecryptedMessage *msg = [[CanariDecryptedMessage alloc] init];
+  if (text.length > 200) {
+    text = [text substringToIndex:200];
+  }
+  msg.text = text;
+  msg.messageId = [dict[@"messageId"] isKindOfClass:[NSString class]] ? dict[@"messageId"] : @"";
+  msg.sentAt = [dict[@"sentAt"] respondsToSelector:@selector(longLongValue)]
+                   ? [dict[@"sentAt"] longLongValue]
+                   : (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  msg.type = [dict[@"type"] isKindOfClass:[NSString class]] ? dict[@"type"] : @"text";
+  id mediaKind = dict[@"mediaKind"];
+  msg.mediaKind = [mediaKind isKindOfClass:[NSString class]] ? mediaKind : nil;
+  return msg;
+}
+
+// Read-only in-memory commit catch-up for a push whose epoch is AHEAD of the persisted mls.bin (a
+// device added to the group advanced the epoch that this never-opened device never applied). Reads
+// the current epoch, fetches the missing ordered commits (PushSecret), and applies them in memory to
+// decrypt this message - a real notification instead of a generic fallback. NEVER persists mls.bin.
+static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
+    NSString *queuedMessageId, NSString *groupId, NSString *_Nullable inlineProto) {
+  if (queuedMessageId.length == 0 || groupId.length == 0) {
+    return nil;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    return nil;
+  }
+
+  NSString *protoB64 = inlineProto;
+  if (protoB64.length == 0) {
+    protoB64 = CanariFetchProtoFromBackend(queuedMessageId, ctx);
+  }
+  if (protoB64.length == 0) {
+    return nil;
+  }
+
+  // 1) Read the current epoch (brief lock: mls.bin + Argon2).
+  long long epoch = -1;
+  if (![g_mlsStateLock tryLock]) {
+    NSLog(@"[CanariPush] catchup: MlsStateLock occupe (epoch)");
+    return nil;
+  }
+  @try {
+    NSData *stateBytes = CanariLoadMlsState();
+    if (stateBytes != nil) {
+      epoch = canari_native_group_epoch((const unsigned char *)stateBytes.bytes, stateBytes.length,
+                                        ctx.pin.UTF8String, ctx.userId.UTF8String,
+                                        ctx.deviceId.UTF8String, groupId.UTF8String);
+    }
+  } @finally {
+    [g_mlsStateLock unlock];
+  }
+  if (epoch < 0) {
+    NSLog(@"[CanariPush] catchup: epoch inconnu group=%@", groupId);
+    return nil;
+  }
+
+  // 2) Fetch the ordered commits since our epoch (outside the lock: HTTP).
+  NSString *commitsJson = CanariFetchCommitsFromBackend(groupId, epoch, ctx);
+  if (commitsJson.length == 0 || [commitsJson isEqualToString:@"[]"]) {
+    NSLog(@"[CanariPush] catchup: aucun commit a rattraper (epoch=%lld)", epoch);
+    return nil;
+  }
+
+  // 3) Apply the commits in memory and decrypt (brief lock).
+  if (![g_mlsStateLock tryLock]) {
+    NSLog(@"[CanariPush] catchup: MlsStateLock occupe (decrypt)");
+    return nil;
+  }
+  CanariDecryptedMessage *result = nil;
+  @try {
+    NSData *stateBytes = CanariLoadMlsState();
+    if (stateBytes != nil) {
+      result = CanariDecryptProtoWithCommits(ctx, groupId, commitsJson, protoB64, stateBytes);
     }
   } @finally {
     [g_mlsStateLock unlock];
@@ -1106,6 +1297,14 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
         NSLog(@"[CanariPush] message silencieux - pas de notification");
       }
       return;
+    }
+
+    // Epoch gap: the direct decrypt failed. A frequent cause on a never-opened device is that a
+    // device added to the group advanced the epoch (commit) that this device never applied in the
+    // background (push decrypt is read-only). Attempt an in-memory commit catch-up (read-only,
+    // mls.bin unchanged) to produce a real notification instead of the generic fallback.
+    if (decrypted == nil && queuedMessageId.length > 0) {
+      decrypted = CanariTryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto);
     }
 
     NSString *body = decrypted.text;

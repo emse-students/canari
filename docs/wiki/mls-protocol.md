@@ -153,7 +153,21 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 | POST | `/api/mls/security/pin-check` | Validate/register PIN verifier |
 | POST | `/api/mls/push/register` | Register FCM push token |
 | DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token |
+| POST | `/api/mls/push/commits` | PushSecret-authed ordered commits `sinceEpoch` (background in-memory catch-up) |
 | GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
+
+### Background push commit catch-up (never-opened mobile)
+
+A device added to a group advances the epoch via a commit. A member whose mobile has not been opened
+only runs the read-only background push decrypt (`mobile/background.rs::decrypt_push_message`, which
+discards commits and never persists), so it stays behind and the newcomer's first message at the new
+epoch is an epoch gap -> generic fallback notification. To decrypt at notification time, the FCM/APNs
+decrypt-fail path performs a **read-only in-memory commit catch-up**: read the current epoch
+(`nativeGroupEpoch`), fetch the ordered commits via `POST /api/mls/push/commits` (PushSecret - the
+background path has no JWT), apply them to an ephemeral manager to reach the message epoch, decrypt,
+and discard (`decrypt_push_message_with_commits`). It NEVER writes `mls.bin`; the durable state is
+caught up later by the foreground commit-log replay. `belowFloor` (commits pruned past retention) ->
+no catch-up, the existing worker-retry + fallback stands.
 
 ## Scenarios
 

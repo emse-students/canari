@@ -24,6 +24,7 @@ import androidx.work.WorkRequest
 import java.util.concurrent.TimeUnit
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -125,6 +126,29 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         userId: String,
         deviceId: String,
         groupId: String,
+        ciphertext: ByteArray
+    ): String
+
+    // Returns the current MLS epoch of groupId in the persisted state, or -1 if unknown / unreadable.
+    // Used to compute the sinceEpoch to fetch for the in-memory commit catch-up. Read-only.
+    external fun nativeGroupEpoch(
+        stateBytes: ByteArray,
+        pin: String,
+        userId: String,
+        deviceId: String,
+        groupId: String
+    ): Long
+
+    // Read-only in-memory commit catch-up decrypt: applies the ordered commitsJson (JSON array of
+    // base64 commit bytes) to an ephemeral manager to reach the message epoch, then decrypts
+    // ciphertext. Same JSON shape as nativeDecryptMessage, or {"ok":false}. Never writes mls.bin.
+    external fun nativeDecryptMessageWithCommits(
+        stateBytes: ByteArray,
+        pin: String,
+        userId: String,
+        deviceId: String,
+        groupId: String,
+        commitsJson: String,
         ciphertext: ByteArray
     ): String
 
@@ -367,10 +391,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "tryDecrypt réessai $raceAttempt/$WELCOME_RACE_RETRIES (course join de groupe) group=$groupId")
                 decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
             }
+            // Epoch gap : le déchiffrement direct a échoué. Une cause fréquente sur un mobile jamais
+            // ouvert est qu'un device ajouté au groupe a fait avancer l'epoch (commit) que ce device
+            // n'a jamais appliqué en arrière-plan (le décodage push est en lecture seule). On tente un
+            // rattrapage de commits EN MÉMOIRE (lecture seule, mls.bin inchangé) pour produire une
+            // vraie notification au lieu du fallback générique.
+            if (!silent && decrypted == null && !queuedMessageId.isNullOrEmpty()) {
+                decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+            }
+
             val body: String = decrypted?.text
                 ?: run {
-                    // Déchiffrement échoué après réessais : groupe pas encore dans l'état MLS.
-                    // On enqueue le worker pour réessayer au prochain cycle.
+                    // Rattrapage insuffisant (aucun commit, sous le plancher, ou groupe pas encore
+                    // rejoint) : on enqueue le worker pour réessayer au prochain cycle.
                     if (!queuedMessageId.isNullOrEmpty()) {
                         val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
                             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -1303,6 +1336,165 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             null
         } catch (e: Exception) {
             Log.e(TAG, "decryptProto: exception: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Read-only in-memory commit catch-up for a push whose epoch is AHEAD of the persisted mls.bin.
+     *
+     * A device added to the group advanced the epoch via a commit; a never-opened mobile only ran the
+     * read-only [decryptProto] (which discards commits), so it stays behind and the newcomer's first
+     * message fails as an epoch gap. Here we read the current epoch, fetch the missing ordered commits
+     * (PushSecret), and apply them in memory to decrypt this message - producing a real notification
+     * instead of a generic fallback. NEVER persists mls.bin; the foreground commit-log replay catches
+     * the durable state up on next open. Returns null (caller falls back) when no commits are
+     * available or the message still cannot be decrypted.
+     */
+    private fun tryDecryptWithCommitCatchup(
+        queuedMessageId: String?,
+        groupId: String,
+        inlineProto: String?,
+    ): DecryptedMessage? {
+        if (queuedMessageId.isNullOrEmpty() || groupId.isEmpty()) return null
+        val ctx = MlsContextLoader.loadPushContext(this) ?: return null
+        val secret = retrievePushSecret() ?: return null
+
+        // Fetch the ciphertext (outside the lock, as tryDecrypt does).
+        val protoB64: String = inlineProto ?: fetchProtoFromBackend(queuedMessageId, ctx) ?: return null
+        val cipherBytes = try {
+            Base64.decode(protoB64, Base64.DEFAULT)
+        } catch (e: Exception) {
+            Log.e(TAG, "catchup: proto base64 invalide: ${e.message}"); return null
+        }
+
+        // 1) Read the current epoch (brief lock: mls.bin + Argon2 via JNI).
+        val epoch = withMlsStateLock(5) {
+            val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock -1L
+            nativeGroupEpoch(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId)
+        } ?: return null
+        if (epoch < 0) {
+            Log.w(TAG, "catchup: epoch inconnu pour group=$groupId → abandon")
+            return null
+        }
+
+        // 2) Fetch the ordered commits since our epoch (outside the lock: HTTP).
+        val commitsJson = fetchCommitsFromBackend(groupId, epoch, ctx, secret)
+        if (commitsJson == null || commitsJson == "[]") {
+            Log.d(TAG, "catchup: aucun commit à rattraper (epoch=$epoch) → fallback")
+            return null
+        }
+
+        // 3) Apply the commits in memory and decrypt (brief lock: mls.bin + Argon2 via JNI).
+        return withMlsStateLock(5) {
+            val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
+            decryptProtoWithCommits(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes)
+        }
+    }
+
+    /** Runs [block] holding [MlsStateLock] for up to [timeoutSec]s; returns null if not acquired. */
+    private fun <T> withMlsStateLock(timeoutSec: Long, block: () -> T): T? {
+        val acquired = try {
+            MlsStateLock.LOCK.tryLock(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Log.e(TAG, "withMlsStateLock: interrompu: ${e.message}")
+            return null
+        }
+        if (!acquired) {
+            Log.w(TAG, "withMlsStateLock: verrou non acquis après ${timeoutSec}s")
+            return null
+        }
+        return try {
+            block()
+        } finally {
+            MlsStateLock.LOCK.unlock()
+        }
+    }
+
+    /** Parses the JSON from nativeDecryptMessageWithCommits into a DecryptedMessage (mirror of decryptProto). */
+    private fun decryptProtoWithCommits(
+        stateBytes: ByteArray,
+        pin: String,
+        userId: String,
+        deviceId: String,
+        groupId: String,
+        commitsJson: String,
+        cipherBytes: ByteArray,
+    ): DecryptedMessage? {
+        return try {
+            val jsonStr = nativeDecryptMessageWithCommits(stateBytes, pin, userId, deviceId, groupId, commitsJson, cipherBytes)
+            val json = JSONObject(jsonStr)
+            if (!json.optBoolean("ok", false)) {
+                Log.w(TAG, "decryptProtoWithCommits: ok=false → rattrapage insuffisant")
+                return null
+            }
+            val text = json.optString("text").takeIf { it.isNotEmpty() } ?: return null
+            Log.d(TAG, "decryptProtoWithCommits: succès après rattrapage → \"${text.take(60)}\"")
+            DecryptedMessage(
+                text      = text.take(200),
+                messageId = json.optString("messageId"),
+                sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
+                type      = json.optString("type", "text"),
+                replyTo   = json.optJSONObject("replyTo"),
+                mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
+            )
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "decryptProtoWithCommits: librairie native non chargée: ${e.message}"); null
+        } catch (e: Exception) {
+            Log.e(TAG, "decryptProtoWithCommits: exception: ${e.message}"); null
+        }
+    }
+
+    /**
+     * Fetches the ordered replayable commits for [groupId] with baseEpoch >= [sinceEpoch] via the
+     * PushSecret endpoint, and returns them as a JSON array of base64 commit strings
+     * (`["b64",...]`, the shape nativeDecryptMessageWithCommits expects), or null on failure.
+     */
+    private fun fetchCommitsFromBackend(
+        groupId: String,
+        sinceEpoch: Long,
+        ctx: PushContext,
+        secret: String,
+    ): String? {
+        return try {
+            val url = URL("${ctx.baseUrl}/api/mls/push/commits")
+            val payload = JSONObject().apply {
+                put("userId", ctx.userId)
+                put("deviceId", ctx.deviceId)
+                put("groupId", groupId)
+                put("sinceEpoch", sinceEpoch)
+            }.toString()
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "POST"
+                doOutput       = true
+                setRequestProperty("Authorization", "PushSecret $secret")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                if (code != 200 && code != 201) {
+                    Log.e(TAG, "fetchCommitsFromBackend: HTTP $code")
+                    return null
+                }
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val commits = JSONObject(text).optJSONArray("commits") ?: return "[]"
+                // Keep only the ordered base64 commit protos - the shape the native catch-up expects.
+                val protos = JSONArray()
+                for (i in 0 until commits.length()) {
+                    val proto = commits.optJSONObject(i)?.optString("proto")
+                    if (!proto.isNullOrEmpty()) protos.put(proto)
+                }
+                Log.d(TAG, "fetchCommitsFromBackend: ${protos.length()} commit(s) depuis epoch=$sinceEpoch")
+                protos.toString()
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchCommitsFromBackend: exception: ${e.message}")
             null
         }
     }

@@ -39,6 +39,91 @@ pub fn decrypt_push_message(
     }
 }
 
+/// Returns the current epoch of `group_id` in the persisted state, or None if the group is unknown
+/// or the state cannot be loaded. Read-only: used by the background push path to compute the
+/// `sinceEpoch` to fetch for the in-memory commit catch-up below. Never persists.
+pub fn background_group_epoch(
+    state_bytes: &[u8],
+    pin: &str,
+    user_id: &str,
+    device_id: &str,
+    group_id: &str,
+) -> Option<u64> {
+    let manager =
+        MlsManager::load_encrypted(user_id, device_id, Some(state_bytes.to_vec()), pin).ok()?;
+    manager.get_epoch(group_id).ok()
+}
+
+/// Read-only in-memory commit catch-up before decrypting a push whose epoch is AHEAD of the
+/// persisted `mls.bin`.
+///
+/// When a device is added to a group, the resulting commit advances the group epoch. A member whose
+/// mobile has not been opened never applies that commit in the background (the plain
+/// `decrypt_push_message` above is read-only and discards control messages), so the newcomer's first
+/// application message lands at an epoch the receiver cannot reach -> generic fallback. This loads an
+/// EPHEMERAL manager, applies the provided ordered `commits` in memory to reach the message epoch,
+/// decrypts, and returns the metadata JSON.
+///
+/// Invariant: this NEVER persists (no `background_write_mls_bin`) - a background engine must never
+/// advance the shared ratchet durably for a message whose plaintext it hands to a notification. The
+/// foreground pipeline still applies these same commits durably on next open via the ordered
+/// commit-log replay. `commits` must be ordered by ascending base epoch (the server returns them so);
+/// an already-applied/stale commit is a benign no-op skip inside `process_incoming_message`.
+pub fn decrypt_push_message_with_commits(
+    state_bytes: &[u8],
+    pin: &str,
+    user_id: &str,
+    device_id: &str,
+    group_id: &str,
+    commits: &[Vec<u8>],
+    ciphertext: &[u8],
+) -> Option<serde_json::Value> {
+    let mut manager =
+        MlsManager::load_encrypted(user_id, device_id, Some(state_bytes.to_vec()), pin).ok()?;
+
+    for commit in commits {
+        match manager.process_incoming_message(group_id, commit) {
+            Ok(_) => {}
+            Err(e) => {
+                // A commit we cannot apply (out-of-order/corrupt) breaks the chain: stop and let the
+                // final decrypt attempt fall back to the generic notification rather than risk a
+                // partial, misleading state.
+                log::warn!("[PushBG] catch-up: commit apply failed, stopping - {e}");
+                break;
+            }
+        }
+    }
+
+    let plaintext = match manager.process_incoming_message(group_id, ciphertext) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            log::warn!("[PushBG] catch-up decrypt: Ok(None) - control message");
+            return None;
+        }
+        Err(e) => {
+            log::error!("[PushBG] catch-up decrypt failed: {e} - group={group_id}");
+            return None;
+        }
+    };
+
+    let info = extract_full_message_info(&plaintext);
+    if info["ok"].as_bool().unwrap_or(false) {
+        Some(info)
+    } else {
+        None
+    }
+    // `manager` is dropped here: mls.bin is never rewritten (read-only catch-up).
+}
+
+/// Decodes a JSON array of base64-encoded commit bytes (`["b64","b64",...]`, ordered by ascending
+/// base epoch as the server returns them) into raw commit byte vectors for the in-memory catch-up.
+/// Malformed entries are skipped rather than aborting the whole set. Shared by the Android JNI and
+/// iOS FFI wrappers so both platforms decode commits identically.
+pub fn decode_commits_b64_json(json: &str) -> Vec<Vec<u8>> {
+    let arr: Vec<String> = serde_json::from_str(json).unwrap_or_default();
+    arr.iter().filter_map(|s| STANDARD.decode(s).ok()).collect()
+}
+
 /// Decrypts a channel-message push (AES-256-GCM) and returns the message metadata JSON.
 ///
 /// Channel messages are NOT MLS: they are AES-256-GCM encrypted with a per-epoch key the client

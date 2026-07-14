@@ -63,6 +63,8 @@ Logique partagee Android/iOS : `frontend/src-tauri/src/mobile/background.rs`
 FFI exposes :
 
 - `canari_native_decrypt_message`
+- `canari_native_group_epoch`
+- `canari_native_decrypt_message_with_commits`
 - `canari_native_create_welcome_background`
 - `canari_native_process_welcome_background`
 - `canari_native_send_message_background`

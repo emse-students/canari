@@ -19,6 +19,25 @@ char *canari_native_decrypt_message(
     const unsigned char *cipher_ptr,
     size_t cipher_len);
 
+long long canari_native_group_epoch(
+    const unsigned char *state_ptr,
+    size_t state_len,
+    const char *pin,
+    const char *user_id,
+    const char *device_id,
+    const char *group_id);
+
+char *canari_native_decrypt_message_with_commits(
+    const unsigned char *state_ptr,
+    size_t state_len,
+    const char *pin,
+    const char *user_id,
+    const char *device_id,
+    const char *group_id,
+    const char *commits_json,
+    const unsigned char *cipher_ptr,
+    size_t cipher_len);
+
 char *canari_native_create_welcome_background(
     const char *files_dir,
     const unsigned char *state_ptr,

@@ -500,6 +500,40 @@ export class PushController {
   }
 
   /**
+   * Returns the ordered replayable commits for `groupId` with `baseEpoch >= sinceEpoch`, for a
+   * device whose app is killed (background push). This is the PushSecret-authed twin of the
+   * JWT-gated `GET /api/mls/commits/:groupId`: the background FCM/APNs path cannot mint a JWT, so it
+   * authenticates with its PushSecret instead. Consumed by the read-only in-memory commit catch-up
+   * that runs before decrypting a push whose epoch is ahead of the device's persisted mls.bin (a
+   * device added to the group advanced the epoch, and the never-opened receiver never applied that
+   * commit in the background). The commits are ciphertext; membership still gates the ordering
+   * metadata inside `getCommitsSince`.
+   */
+  @Post('mls/push/commits')
+  async getCommitsPush(
+    @Headers('authorization') authHeader: string,
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      sinceEpoch: number;
+    },
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    const sinceEpoch =
+      typeof body.sinceEpoch === 'number' && Number.isFinite(body.sinceEpoch)
+        ? Math.max(0, Math.floor(body.sinceEpoch))
+        : 0;
+
+    return this.messagingService.getCommitsSince(groupId, sinceEpoch, userId);
+  }
+
+  /**
    * Sends a queued outbound MLS message (text/reply) on behalf of a device whose app is killed.
    * Called by the Android background service after encrypting the proto against the live epoch via
    * Rust JNI (nativeSendMessageBackground). `proto` is base64(raw MLS ciphertext); recipients are
