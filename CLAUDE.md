@@ -112,10 +112,7 @@ Locked design (condensed - the model, still current): Cotisant status = UserTag 
 
 Family = connected component (isSameFamily gates edits). Conventions: [[project_sky_conventions]], accents rule [[feedback_sky_french_accents]].
 
-* \[ \] Parrainage rules (NEW, hardening - some partly exist, verify + enforce):
-  * A filleul is ALWAYS a strictly higher (more recent) promo than their parrain.
-  * Promo is a number >= 1816 - validate at creation.
-  * Parrain<->filleul promo gap is AT MOST 3 years. (Existing conventions memory notes merge-year tolerance <=3; align this with the parrainage constraint.)
+* \[x\] Parrainage rules (DONE + committed, HEAD 452d427; NOT pushed). Enforced in `addParrainage` (single choke point, src/lib/server/database.ts): fillot strictly more recent than parrain + gap <= MAX_PROMO_GAP (3), both promos required (unknown blocks). Applies to BOTH kinds (parrainage+adoption, user-confirmed). Pure validators `checkPromoPair` + `isValidPromo` (promo null-or-int >= MIN_PROMO 1816) with unit tests in database.test.ts. isValidPromo guards create/edit routes (relationships POST, relatives PUT, admin people POST/PUT) -> localized 400. New RelationError codes PROMO_UNKNOWN/ORDER/GAP + FR/EN msgs; errors surface via AddRelativeModal showError. Gotcha: vitest include = `src/**` only (tests/api.test.ts is orphaned) -> co-locate tests in src/. A 2nd commit (452d427) is pure prettier drift on untouched files.
 * \[ \] Promo color gradient (NEW, nice-to-have): tint nodes by promo so a branch's direction reads visually - lighter = more recent. Compute from the min/max promo bounds across the displayed graph.
 * \[ \] i18n: pages + all user-facing errors localized; remaining = French code comments in server layer ([[project_sky_i18n_progress]]).
 * \[ \] Cleanup (see cross-project): 3 quality CodeQL alerts, ~~Node bump~~ (DONE 5d750f5), wiki/comment audit (Dockerfile comments still FR).
