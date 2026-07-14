@@ -11,6 +11,7 @@ import { In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
+import * as ExcelJS from 'exceljs';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { Association } from './entities/association.entity';
@@ -473,6 +474,50 @@ export class ProductsService {
   > {
     const records = await this.purchaseRecordService.listPaidByAssociation(associationId);
     return this.enrichPurchaseRecords(records);
+  }
+
+  /**
+   * Builds an XLSX export of an association's completed purchases (boutique + paid forms), the
+   * same rows as `listAssociationPurchases`. Used by the association's own accounting view and by
+   * an approved parent's delegated-accounting view. Columns match the treasurer-facing table.
+   */
+  async exportAssociationPurchases(
+    associationId: string
+  ): Promise<{ buffer: Buffer; title: string }> {
+    this.logger.debug(`[SHOP] exportAssociationPurchases assoc=${associationId.slice(0, 8)}`);
+    const nameRows: { name: string }[] = await this.productRepo.manager.query(
+      `SELECT name FROM associations WHERE id = $1`,
+      [associationId]
+    );
+    const assocName = nameRows[0]?.name ?? 'achats';
+    const purchases = await this.listAssociationPurchases(associationId);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Achats');
+    sheet.columns = [
+      { header: 'Nom', key: 'lastName', width: 20 },
+      { header: 'Prénom', key: 'firstName', width: 20 },
+      { header: 'Type', key: 'source', width: 12 },
+      { header: 'Produit', key: 'productName', width: 30 },
+      { header: 'Montant', key: 'amount', width: 12, style: { numFmt: '0.00 "€"' } },
+      { header: 'Paiement', key: 'paymentMethod', width: 12 },
+      { header: 'Date', key: 'paidAt', width: 18, style: { numFmt: 'dd/mm/yyyy hh:mm' } },
+    ];
+
+    purchases.forEach((p) => {
+      sheet.addRow({
+        lastName: p.lastName ?? '',
+        firstName: p.firstName ?? '',
+        source: p.source === 'form' ? 'Formulaire' : 'Boutique',
+        productName: p.productName,
+        amount: p.amountCents / 100,
+        paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'Stripe',
+        paidAt: new Date(p.paidAt),
+      });
+    });
+
+    const buffer = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
+    return { buffer, title: `achats_${assocName}` };
   }
 
   /**

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -1933,6 +1934,23 @@ export class AssociationsService {
       `[DELEGATION] rejected parent=${parentAssociationId.slice(0, 8)} child=${childId.slice(0, 8)}`
     );
     return { associationId: childId, status: null };
+  }
+
+  /**
+   * Ensures `parentId` is the approved payment-delegation parent of `childId`, gating a parent's
+   * read access to a delegated child's accounting. Returns the child association.
+   * @throws ForbiddenException when there is no approved delegation from the child to this parent
+   */
+  async assertIsApprovedParentOf(parentId: string, childId: string): Promise<Association> {
+    const child = await this.assoRepo.findOne({ where: { id: childId } });
+    if (!child) throw new NotFoundException('Association not found');
+    if (
+      child.paymentParentAssociationId !== parentId ||
+      child.paymentDelegationStatus !== 'approved'
+    ) {
+      throw new ForbiddenException('This association does not delegate its payments to you');
+    }
+    return child;
   }
 
   // ── Post authorship check ─────────────────────────────────────────────────

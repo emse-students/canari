@@ -815,24 +815,34 @@ export class AssociationsController {
   @Get(':id/cotisants/export')
   async exportCotisants(@Param('id') id: string, @Res() res: Response) {
     const { buffer, title } = await this.userTagService.exportCotisants(id);
+    this.sendXlsxDownload(res, buffer, title, 'cotisants');
+  }
 
-    // ASCII fallback (strips accents) + RFC 5987 UTF-8 encoded filename for modern browsers
+  /**
+   * Streams an XLSX buffer as a browser download with an ASCII-fallback filename plus an
+   * RFC 5987 UTF-8 encoded filename so accents survive in modern browsers.
+   */
+  private sendXlsxDownload(
+    res: Response,
+    buffer: Buffer | ArrayBuffer,
+    title: string,
+    fallback: string
+  ): void {
+    const bytes = Buffer.from(buffer as ArrayBuffer);
     const asciiName =
       title
         .normalize('NFD')
         .replace(/[̀-ͯ]/g, '')
         .replace(/[^a-zA-Z0-9_\- ]/g, '')
         .trim()
-        .replace(/\s+/g, '_') || 'cotisants';
+        .replace(/\s+/g, '_') || fallback;
     const encodedName = encodeURIComponent(title);
-
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${asciiName}.xlsx"; filename*=UTF-8''${encodedName}.xlsx`,
-      'Content-Length': buffer.byteLength,
+      'Content-Length': bytes.byteLength,
     });
-
-    res.send(Buffer.from(buffer));
+    res.send(bytes);
   }
 
   // ── Boutique (products) ───────────────────────────────────────────────────
@@ -864,6 +874,15 @@ export class AssociationsController {
   @Get(':id/purchases')
   listAssociationPurchases(@Param('id') id: string) {
     return this.productsService.listAssociationPurchases(id);
+  }
+
+  /** Exports this association's completed purchases (boutique + paid forms) as XLSX. Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/purchases/export')
+  async exportAssociationPurchases(@Param('id') id: string, @Res() res: Response) {
+    const { buffer, title } = await this.productsService.exportAssociationPurchases(id);
+    this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
   /** Lists buyers for a boutique product. Requires MANAGE_PRODUCTS flag. */
@@ -1007,6 +1026,33 @@ export class AssociationsController {
   @Get(':id/payment-delegation/children')
   listDelegatedChildren(@Param('id') id: string) {
     return this.service.listDelegatedChildren(id);
+  }
+
+  /**
+   * Parent accounting access: lists a delegated child's completed purchases (boutique + paid
+   * forms). `:id` is the parent; the guard proves parent-admin, then the service verifies the
+   * approved link. Requires MANAGE_PRODUCTS.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/payment-delegation/children/:childId/purchases')
+  async listChildPurchases(@Param('id') id: string, @Param('childId') childId: string) {
+    await this.service.assertIsApprovedParentOf(id, childId);
+    return this.productsService.listAssociationPurchases(childId);
+  }
+
+  /** Parent accounting access: XLSX export of a delegated child's purchases. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/payment-delegation/children/:childId/purchases/export')
+  async exportChildPurchases(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Res() res: Response
+  ) {
+    await this.service.assertIsApprovedParentOf(id, childId);
+    const { buffer, title } = await this.productsService.exportAssociationPurchases(childId);
+    this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
   /** Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS. */

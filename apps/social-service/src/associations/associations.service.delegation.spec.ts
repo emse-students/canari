@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AssociationsService } from './associations.service';
 import type { Association } from './entities/association.entity';
 
@@ -160,6 +160,35 @@ describe('AssociationsService payment delegation', () => {
       await service.cancelPaymentDelegation('club');
       expect(db.get('club').paymentParentAssociationId).toBeNull();
       expect(db.get('club').paymentDelegationStatus).toBeNull();
+    });
+  });
+
+  describe('assertIsApprovedParentOf', () => {
+    it('returns the child when it delegates to this parent and is approved', async () => {
+      const { service } = makeService({
+        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' },
+      });
+      await expect(service.assertIsApprovedParentOf('parent', 'club')).resolves.toMatchObject({
+        id: 'club',
+      });
+    });
+
+    it('rejects when the delegation is only pending', async () => {
+      const { service } = makeService({
+        club: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'pending' },
+      });
+      await expect(service.assertIsApprovedParentOf('parent', 'club')).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('rejects when the child delegates to a different parent', async () => {
+      const { service } = makeService({
+        club: { paymentParentAssociationId: 'other', paymentDelegationStatus: 'approved' },
+      });
+      await expect(service.assertIsApprovedParentOf('parent', 'club')).rejects.toThrow(
+        ForbiddenException
+      );
     });
   });
 
