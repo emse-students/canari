@@ -2,23 +2,24 @@
 
 ## **AGENT DIRECTIVES (OPUS AUTONOMOUS MODE)**
 
-* NO BLIND GREP: Never run generic grep or find across the project. Check the SESSION STATE below first, or ask the user for exact paths.
-ASK EARLY: State assumptions explicitly. If uncertain about architecture, multiple interpretations, or a bug, ASK during the planning phase. No guessing.
-* SURGICAL EDITS: Touch ONLY requested code. Map changes 1:1 to the prompt.
-* STATE PRUNING: When updating the roadmap, DELETE the detailed descriptions of completed tasks. Keep the file small.
-* UPDATE STATE: You MUST update the SESSION STATE at the bottom of this file before finishing a Work Package.
-* BASH OVER SUBAGENTS: Use native `rg`/`find` to filter text BEFORE the LLM sees it. 10 lines of `rg` output in Opus is cheaper than 1000 lines of `cat` in a Haiku subagent.  
-* EDITING STRATEGY: Opus must write surgical edits directly. ONLY spawn subagents for broad, semantic codebase audits or massive multi-file refactors. 
-* WORKFLOW CYCLE:  
-  1. Plan the step and read files (using `rg`/tools).  
-  2. Ask questions EARLY if uncertain (or during execution if needed).  
-  3. Execute the code (Goal-driven, fix tests first).  
-  4. Run tests/checks.  
-  5. Run `git add . && git commit -m "[Task summary]"`.  
-  6. Update SESSION STATE below.  
-  7. STOP and output: "Task committed. Please run `/compact` (or `/clear` if switching to a new theme)."  
-* WIKI & CLEANLINESS: Documentation goes EXCLUSIVELY in `docs/wiki/`. Delete unused/legacy code immediately.  
-* PROD ACCESS: You can connect to production via SSH using `ssh canari` (or `ssh mitv`).
+- NO BLIND GREP: Never run generic grep or find across the project. Check the SESSION STATE below first, or ask the user for exact paths.
+  ASK EARLY: State assumptions explicitly. If uncertain about architecture, multiple interpretations, or a bug, ASK during the planning phase. No guessing.
+- SURGICAL EDITS: Touch ONLY requested code. Map changes 1:1 to the prompt.
+- STATE PRUNING: When updating the roadmap, DELETE the detailed descriptions of completed tasks. Keep the file small.
+- CLAUDE.md HYGIENE: When this file grows long, actively trim it. DELETE Work Packages for past/shipped work (keep only forward-relevant gotchas), collapse redundant notes, and drop stale entries. A lean CLAUDE.md is a hard requirement, not optional.
+- UPDATE STATE: You MUST update the SESSION STATE at the bottom of this file before finishing a Work Package.
+- BASH OVER SUBAGENTS: Use native `rg`/`find` to filter text BEFORE the LLM sees it. 10 lines of `rg` output in Opus is cheaper than 1000 lines of `cat` in a Haiku subagent.
+- EDITING STRATEGY: Opus must write surgical edits directly. ONLY spawn subagents for broad, semantic codebase audits or massive multi-file refactors.
+- WORKFLOW CYCLE:
+  1. Plan the step and read files (using `rg`/tools).
+  2. Ask questions EARLY if uncertain (or during execution if needed).
+  3. Execute the code (Surgical edits only).
+  4. Run tests/checks.
+  5. Run `git add . && git commit -m "[Task summary]"`.
+  6. Update SESSION STATE below.
+  7. STOP and output: "Task committed. Please run `/compact` (or `/clear` if switching to a new theme)."
+- WIKI & CLEANLINESS: Documentation goes EXCLUSIVELY in `docs/wiki/`. Delete unused/legacy code immediately.
+- PROD ACCESS: You can connect to production via SSH using `ssh canari` (or `ssh mitv`).
 
 ## **ARCHITECTURE & CONSTRAINTS**
 
@@ -32,12 +33,17 @@ ASK EARLY: State assumptions explicitly. If uncertain about architecture, multip
 
 ## **CODING STANDARDS**
 
-* Logs: Mandatory (`Log.d`, `appendLog`, `log::debug!`) at function entry, decisions, and error branches.  
-* Docs & Comments: JSDoc/Rustdoc required for exports. Explain WHAT and WHY, do not restate types.  
-* Factorization: Extract and export reusable logic. Zero duplication.  
-* Language: Code, comments, docs, and dev-strings MUST be English. User-visible strings use Paraglide (FR/EN).  
-* Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere. Preserve French accents (`é`, `à`) in localized strings and text. Escape strings in code (`\'`, `\"`) instead of using typographic quotes.  
-* Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.
+- Logs: Mandatory (`Log.d`, `appendLog`, `log::debug!`) at function entry, decisions, and error branches.  
+- Docs & Comments: JSDoc/Rustdoc required for exports. Explain WHAT and WHY, do not restate types.  
+- Factorization: Extract and export reusable logic. Zero duplication.  
+- Language: Code, comments, docs, and dev-strings MUST be English. User-visible strings use Paraglide (FR/EN).  
+- Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere. Preserve French accents (`é`, `à`) in localized strings and text. Escape strings in code (`\'`, `\"`) instead of using typographic quotes.  
+- Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.
+- English Only: Code, comments, docs, and dev-facing strings (`console.log`, errors) MUST be English.
+- I18N: User-visible strings use Paraglide (`messages/fr.json`, `en.json`). No inline string literals.
+- ASCII Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere. Preserve French accents (`é`, `à`) ONLY in localized strings/French comments.
+- UI: Single source of truth is `src/app.css` (tokens, `--radius-*`). Use `.btn-glass` with modifiers. Dark-first glassmorphism. Avoid raw hex/px. `lucide-svelte` only (no aliases).
+- Husky: Pre-commit runs ESLint \+ Prettier \+ svelte-check. Fix errors; do not bypass.
 
 ## **KEY COMMANDS**
 
@@ -72,7 +78,7 @@ Goal: clean all 4 repos - CodeQL alerts, Dependabot hygiene, Node EOL, wiki + En
    * dependabot.yml + code-analysis.yml audit job: real services (core/social/media/chat-delivery + shared-ts), ghost dirs removed.
    * DEFERRED: media.controller.ts:96 `no-unsafe-argument` warning - pre-existing, rooted in media-service missing `@types/express` (eslint sees `req` error-typed though tsc passes); needs a deps/tsconfig pass, unrelated to security scope.
 2. MiGallery CodeQL: file-system-race #26 og-cover (runtime, first) + #27 scripts/ci-local.mjs:123 (NEW since 07-11); triage mitm.html #24/#25 missing-origin-check, migrate-export-db.cjs #22 clear-text-logging, mock-immich.js #10/#23 log-injection (fix or dismiss-justified if non-shipping).
-3. Node -> 24: MiGallery (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`), Sky (`engines>=18`->`24`, CI `22.x`->`24`).
+3. Node -> 24: MiGallery (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Sky DONE+pushed (5d750f5: engines>=24, CI 24.x, Dockerfile build+runtime node:24).
 4. Portail: enrich dependabot.yml (prefix/labels/groups) + close 5 conflicting PRs (#26-30).
 5. Wiki + English-comment audit per repo, folded into touched files.
 6. Sky (3) + Portail (1) low-sev quality CodeQL alerts last.
@@ -112,7 +118,7 @@ Family = connected component (isSameFamily gates edits). Conventions: [[project_
   * Parrain<->filleul promo gap is AT MOST 3 years. (Existing conventions memory notes merge-year tolerance <=3; align this with the parrainage constraint.)
 * \[ \] Promo color gradient (NEW, nice-to-have): tint nodes by promo so a branch's direction reads visually - lighter = more recent. Compute from the min/max promo bounds across the displayed graph.
 * \[ \] i18n: pages + all user-facing errors localized; remaining = French code comments in server layer ([[project_sky_i18n_progress]]).
-* \[ \] Cleanup (see cross-project): 3 quality CodeQL alerts, Node bump, wiki/comment audit.
+* \[ \] Cleanup (see cross-project): 3 quality CodeQL alerts, ~~Node bump~~ (DONE 5d750f5), wiki/comment audit (Dockerfile comments still FR).
 
 ---
 
