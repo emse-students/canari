@@ -92,10 +92,7 @@ Locked design (condensed - the model, still current): Cotisant status = UserTag 
 
 **D. MLS + Communautes audit (track).** Ladder: docs/AUDIT-MLS-2026-06.md. Open findings: C1/C2 (Android dual MLS engine - WebView vs JNI both write mls.bin, foreground never reloads on resume; needs on-device diagnosis), C4/C5 (mls-core), H1-H5 (recovery/backend), strictness pass. Confirm scope of the deferred "correction de..." ask before starting.
 
-**E. UI/UX bugs (NEW).**
-* \[ \] Switching Discussions tab -> Communautes tab keeps the PREVIOUS discussion's content displayed (stale state not cleared on tab switch).
-* \[ \] Clicking a "Filleul / Filleule" on /profile changes the URL but does NOT navigate (page doesn't re-render - suspect SvelteKit reactivity/`$page`/load not re-running on same-component param change; likely needs `afterNavigate`/`invalidate` or a keyed component).
-* \[ \] PIN modal "Session expired: Please Sign In Again" -> instead of showing that message in the modal, log the user out and redirect straight to the login page (current message leaves people lost).
+**E. UI/UX bugs - DONE (committed 6d93dfad, not pushed).** All 3 fixed. Root causes worth remembering: (1) tab-switch stale content = /chat and /communities are separate route components (remount) but selection lives in global singletons; MainChatPage reset used a component-local $state that re-nulled on mount -> now a module-scoped `lastActiveRouteMode` survives the remount. (2) /profile filleul link didn't re-render = data loaded in onMount, which never re-runs on same-component `[id]` param change -> now an `$effect` on `page.params.id` with a monotonic race guard. (3) PIN "Session expired" now distinguishes `SessionExpiredError` via a new `onSessionExpired` session callback -> ChatBackgroundService clears auth + redirects to /login instead of showing it in the modal. NOTE: gated (check/lint/format), not runtime-verified (needs full stack).
 
 **F. i18n(chat) - DONE.** \[x\] Hardcoded FR/EN chat system messages (group events, deletions, removal notice, channel invite, call texts, previews) migrated to Paraglide. Call finalization guarded by a structured `endedAt` flag on SystemEnvelope.callEvent (survives translation), NEVER `text.includes(...)`. Gotcha: callSystemMessages.test.ts still asserts the FR literal (default test locale = FR).
 
