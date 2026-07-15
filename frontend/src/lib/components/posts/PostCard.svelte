@@ -197,7 +197,7 @@
       // Update the poll locally - track votesByUser + per-option vote arrays
       const updatedPolls = (localPost.polls ?? []).map((p) => {
         if (p.id !== pollId) return p;
-        const newVotesByUser = { ...(p.votesByUser ?? {}), [currentUserId]: selectedOptions };
+        const newVotesByUser = { ...p.votesByUser, [currentUserId]: selectedOptions };
         const newOptions = (p.options ?? []).map((opt: any) => {
           const votes = Array.isArray(opt.votes) ? opt.votes : [];
           const hadVote = votes.includes(currentUserId);
@@ -226,7 +226,7 @@
     }
 
     // Optimistic update - apply immediately, roll back on error
-    const prevReactions = { ...(localPost.reactions ?? {}) };
+    const prevReactions = { ...localPost.reactions };
     const wasReacted = prevReactions[currentUserId] === reactionType;
     const newReactions = { ...prevReactions };
     if (wasReacted) delete newReactions[currentUserId];

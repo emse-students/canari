@@ -312,11 +312,6 @@
         memberId: string,
         roleName: 'member' | 'moderator' | 'admin'
       ) => channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx()),
-      onUpdateChannelMemberRole: (
-        channelId: string,
-        memberId: string,
-        roleName: 'member' | 'moderator' | 'admin'
-      ) => channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx()),
       onUpdateWorkspaceImage: (workspaceDbId: string, mediaId: string) =>
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
       onLeaveWorkspace: (workspaceDbId: string) => {

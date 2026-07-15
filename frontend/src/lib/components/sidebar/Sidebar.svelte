@@ -68,12 +68,6 @@
       memberId: string,
       roleName: 'member' | 'moderator' | 'admin'
     ) => void;
-    /** Callback to update an existing channel member's role. */
-    onUpdateChannelMemberRole?: (
-      channelId: string,
-      memberId: string,
-      roleName: 'member' | 'moderator' | 'admin'
-    ) => void;
     /** Callback to update the avatar image of a workspace. */
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
     /** Callback fired when the user leaves a workspace. */

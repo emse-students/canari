@@ -68,5 +68,5 @@ export function noteHistoryBundleReceived(groupId: string): void {
 
 /** Cancels every pending solicitation (session teardown / test cleanup). */
 export function cancelAllHistorySolicit(): void {
-  for (const groupId of [...pending.keys()]) cancelHistorySolicit(groupId);
+  for (const groupId of pending.keys()) cancelHistorySolicit(groupId);
 }

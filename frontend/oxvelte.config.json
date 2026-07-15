@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "svelte/no-navigation-without-resolve": "off"
+  },
+  "settings": {
+    "svelte": {
+      "kit": {
+        "files": {
+          "routes": "src/routes"
+        }
+      }
+    }
+  }
+}
