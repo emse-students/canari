@@ -381,15 +381,38 @@ export class ChannelService {
 
   /** Returns all workspaces the user belongs to (derived from their ChannelMember records). */
   async listWorkspacesForUser(userId: string) {
-    const roles = await this.memberRepo.find({ where: { userId } });
-    if (roles.length === 0) return [];
+    const memberships = await this.memberRepo.find({ where: { userId } });
+    if (memberships.length === 0) return [];
 
-    const workspaceIds = [...new Set(roles.map((r) => r.workspaceId))];
+    const workspaceIds = [...new Set(memberships.map((m) => m.workspaceId))];
     const workspaces = await this.workspaceRepo.find({ where: { id: In(workspaceIds) } });
+
+    // Derive per-workspace management rights server-side so the client can gate admin
+    // controls (e.g. "change image", invite) without deriving permissions itself. We
+    // batch-load every role referenced across the user's memberships to avoid an N+1
+    // query, then flag each workspace where a held role carries MANAGE_WORKSPACE.
+    const allRoleIds = [...new Set(memberships.flatMap((m) => m.roleIds ?? []))];
+    const roles = allRoleIds.length
+      ? await this.roleRepo.find({ where: { id: In(allRoleIds) } })
+      : [];
+    const manageRoleIds = new Set(
+      roles.filter((r) => r.permissions.includes('MANAGE_WORKSPACE')).map((r) => r.id)
+    );
+    const canManageByWorkspace = new Map<string, boolean>();
+    for (const membership of memberships) {
+      const canManage = (membership.roleIds ?? []).some((id) => manageRoleIds.has(id));
+      // A user may hold several membership rows for the same workspace; any one row
+      // bearing a MANAGE_WORKSPACE role is enough to manage it.
+      canManageByWorkspace.set(
+        membership.workspaceId,
+        (canManageByWorkspace.get(membership.workspaceId) ?? false) || canManage
+      );
+    }
 
     return workspaces.map((w) => ({
       ...w,
       id: w.id,
+      viewerCanManage: canManageByWorkspace.get(w.id) ?? false,
     }));
   }
 

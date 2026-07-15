@@ -12,7 +12,11 @@ import { RedisService } from '../common/redis';
 
 describe('ChannelService security hardening', () => {
   function makeService() {
-    const workspaceRepo = {} as Repository<Workspace>;
+    const workspaceRepo = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      save: jest.fn(),
+    };
     const channelRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
@@ -53,7 +57,7 @@ describe('ChannelService security hardening', () => {
     };
 
     const service = new ChannelService(
-      workspaceRepo,
+      workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
       roleRepo as unknown as Repository<ChannelRole>,
       memberRepo as unknown as Repository<ChannelMember>,
@@ -65,6 +69,7 @@ describe('ChannelService security hardening', () => {
 
     return {
       service,
+      workspaceRepo,
       channelRepo,
       roleRepo,
       memberRepo,
@@ -613,5 +618,48 @@ describe('ChannelService security hardening', () => {
     expect(member.notifLevels).toEqual({ ch1: 'none' });
     expect(Object.prototype.hasOwnProperty.call(member.notifLevels, '__proto__')).toBe(false);
     expect(memberRepo.save).toHaveBeenCalledWith(member);
+  });
+
+  it('listWorkspacesForUser flags viewerCanManage from the MANAGE_WORKSPACE permission', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
+    memberRepo.find.mockResolvedValue([
+      { workspaceId: 'ws1', userId: 'u1', roleIds: ['r-admin'] },
+      { workspaceId: 'ws2', userId: 'u1', roleIds: ['r-member'] },
+    ]);
+    workspaceRepo.find.mockResolvedValue([
+      { id: 'ws1', name: 'Admin WS' },
+      { id: 'ws2', name: 'Member WS' },
+    ]);
+    roleRepo.find.mockResolvedValue([
+      { id: 'r-admin', permissions: ['MANAGE_WORKSPACE'] },
+      { id: 'r-member', permissions: ['SEND_MESSAGES'] },
+    ]);
+
+    const result = await service.listWorkspacesForUser('u1');
+
+    expect(result).toEqual([
+      expect.objectContaining({ id: 'ws1', viewerCanManage: true }),
+      expect.objectContaining({ id: 'ws2', viewerCanManage: false }),
+    ]);
+  });
+
+  it('listWorkspacesForUser defaults viewerCanManage to false when the user holds no roles', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
+    memberRepo.find.mockResolvedValue([{ workspaceId: 'ws1', userId: 'u1', roleIds: [] }]);
+    workspaceRepo.find.mockResolvedValue([{ id: 'ws1', name: 'WS' }]);
+
+    const result = await service.listWorkspacesForUser('u1');
+
+    // No roleIds -> no role lookup needed, and the workspace is not manageable.
+    expect(roleRepo.find).not.toHaveBeenCalled();
+    expect(result).toEqual([expect.objectContaining({ id: 'ws1', viewerCanManage: false })]);
+  });
+
+  it('listWorkspacesForUser returns an empty list for a user with no memberships', async () => {
+    const { service, memberRepo, workspaceRepo } = makeService();
+    memberRepo.find.mockResolvedValue([]);
+
+    await expect(service.listWorkspacesForUser('u1')).resolves.toEqual([]);
+    expect(workspaceRepo.find).not.toHaveBeenCalled();
   });
 });

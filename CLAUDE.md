@@ -74,13 +74,12 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 
 **Shipped (needs on-device verify only, no code left):**
 * \[x\] Visible action errors channel/community (d2688ff7). Kick no longer silently purges (91fa0d92: `forgetGroup` + banner instead of silent `deleteConversation`).
-* \[x\] Viewport pinch-zoom/pan mis-detected as keyboard (37744cb). **Verify: iPhone Safari keyboard + desktop trackpad pinch.**
+* \[x\] Viewport pinch-zoom/pan mis-detected as keyboard (37744cb). Verified on-device.
 * \[x\] New-device / pre-join history bundle durable cross-session retry (24b6480c): `awaitingHistoryRegistry.ts` (localStorage, 30d) + `reSolicitAwaitingHistory` on each reconnect + 2.5s initial defer (fixes epoch race). **Verify: real 2nd device, peer offline at join, reconnect -> bundle arrives.** Deferred findings (out of chosen scope): (C) `Sender data decryption error` storm - external-joiner refetches undecryptable `history:{groupId}` every sync bc wrong-epoch frames aren't marked seen ([history.ts:351](frontend/src/lib/utils/chat/history.ts#L351)); benign. (D) discovery `d82cd226` likely covered by connect-sync `requestReAdd` - verify not a separate gap.
 
-**Open (real work):**
-* \[ \] **Server-authoritative admin-button gating.** Hide "change image" + other admin controls when viewer lacks `MANAGE_WORKSPACE`. Client has NO viewer-permission data today (`ChannelSidebarWorkspace`; roles!=permissions client-side; cotisant rule = no client derivation). Backend must expose `viewerCanManage`/effective perms on workspace listing, then thread DTO->composable type->`SidebarCommunityAdminModal` prop->conditional render. Larger WP; not started.
+* \[x\] **Server-authoritative admin-button gating.** DONE. `listWorkspacesForUser` ([channel.service.ts:383](apps/social-service/src/channels/channel.service.ts#L383)) now returns `viewerCanManage` per workspace (batch-loads roles, checks `MANAGE_WORKSPACE`, fail-closed). Threaded `viewerCanManage` through `WorkspaceDto` -> `upsertWorkspaceFromDto` -> `ChannelSidebarWorkspace` -> Sidebar `ChannelWorkspace` -> `SidebarCommunityAdminModal` (`canManage` derived from `selectedWorkspace.viewerCanManage`). Modal hides change-image upload + member-invite button/inputs and makes the name input readonly when `!canManage`; Members list + Leave stay visible to all. Event-created placeholder workspaces default `viewerCanManage:false` until the next full sync (safe). 3 backend tests (`listWorkspacesForUser` flag/no-roles/no-memberships). Wiki (api-surface + social-service) updated. Gates: backend spec 26/26, `bun run check` 0 errors, oxlint clean, oxfmt done. **On-device verify: non-admin member sees no change-image/invite controls; admin does.**
 
-TS 6->7 deferred until 7.1 (see cross-project). Residual otherwise = on-device MLS mobile native verification only.
+Residual otherwise = on-device MLS mobile native verification only.
 
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 

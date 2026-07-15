@@ -30,6 +30,8 @@
     avatarUserId: string;
     imageMediaId?: string | null;
     workspaceDbId?: string;
+    /** Server-authoritative: true when the current user may manage this workspace (MANAGE_WORKSPACE). */
+    viewerCanManage?: boolean;
     channels: ChannelItem[];
   }
 
@@ -186,6 +188,8 @@
     avatarUserId: string;
     imageMediaId?: string | null;
     workspaceDbId?: string;
+    /** Server-authoritative: true when the current user may manage this workspace (MANAGE_WORKSPACE). */
+    viewerCanManage?: boolean;
     channels: ChannelItem[];
   }
 

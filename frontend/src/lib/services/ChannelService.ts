@@ -10,6 +10,8 @@ export interface WorkspaceDto {
   name: string;
   createdBy: string;
   imageMediaId?: string | null;
+  /** Server-authoritative flag: true when the calling user holds MANAGE_WORKSPACE in this workspace. Drives admin-control gating in the UI. */
+  viewerCanManage?: boolean;
 }
 
 export interface CreateChannelDto {

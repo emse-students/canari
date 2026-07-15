@@ -32,6 +32,8 @@ export interface ChannelSidebarWorkspace {
   avatarUserId: string;
   /** media-service ID of the workspace cover image, if set. */
   imageMediaId?: string | null;
+  /** Server-authoritative: true when the current user may manage this workspace (MANAGE_WORKSPACE). Gates admin controls. Defaults to false until the backend listing confirms it. */
+  viewerCanManage?: boolean;
   /** Ordered list of channels belonging to this workspace. */
   channels: ChannelSidebarItem[];
 }
@@ -158,6 +160,8 @@ export function useChannelWorkspaces() {
         existing.avatarUserId = workspace.name || workspaceSlug;
       }
       if (workspace.imageMediaId !== undefined) existing.imageMediaId = workspace.imageMediaId;
+      if (workspace.viewerCanManage !== undefined)
+        existing.viewerCanManage = workspace.viewerCanManage;
       channelWorkspaces = [...channelWorkspaces];
       return existing;
     }
@@ -168,6 +172,7 @@ export function useChannelWorkspaces() {
       workspaceDbId: workspaceId,
       avatarUserId: workspace.name || workspaceSlug,
       imageMediaId: workspace.imageMediaId ?? null,
+      viewerCanManage: workspace.viewerCanManage ?? false,
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];

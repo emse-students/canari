@@ -22,6 +22,8 @@
     name: string;
     imageMediaId?: string | null;
     workspaceDbId?: string;
+    /** Server-authoritative: true when the current user holds MANAGE_WORKSPACE here. Gates admin controls. */
+    viewerCanManage?: boolean;
     channels: ChannelItem[];
   }
 
@@ -60,6 +62,14 @@
   let selectedWorkspace = $derived(
     workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0]
   );
+
+  /**
+   * Whether the current user may manage this workspace, per the server-authoritative
+   * MANAGE_WORKSPACE flag. Admin-only controls (change image, invite members) are hidden
+   * when false. Defaults to false while the flag is unknown, so controls stay hidden until
+   * the backend listing confirms the permission (fail-closed).
+   */
+  let canManage = $derived(selectedWorkspace?.viewerCanManage ?? false);
 
   // Image upload state
   let imageUploading = $state(false);
@@ -346,23 +356,25 @@
                   shape="circle"
                 />
               </div>
-              <label
-                class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
-                title={m.chat_community_change_image_title()}
-              >
-                {#if imageUploading}
-                  <Loader size={14} class="animate-spin" />
-                {:else}
-                  <Upload size={14} />
-                {/if}
-                <input
-                  type="file"
-                  accept="image/*"
-                  class="sr-only"
-                  disabled={imageUploading}
-                  onchange={handleImageFileChange}
-                />
-              </label>
+              {#if canManage}
+                <label
+                  class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
+                  title={m.chat_community_change_image_title()}
+                >
+                  {#if imageUploading}
+                    <Loader size={14} class="animate-spin" />
+                  {:else}
+                    <Upload size={14} />
+                  {/if}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="sr-only"
+                    disabled={imageUploading}
+                    onchange={handleImageFileChange}
+                  />
+                </label>
+              {/if}
             </div>
             <div class="flex-1 space-y-2">
               {#if imageUploadError}
@@ -373,8 +385,9 @@
               >
               <input
                 id="server-name"
-                class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50"
+                class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50 read-only:opacity-60 read-only:cursor-not-allowed"
                 value={selectedWorkspace ? selectedWorkspace.name : ''}
+                readonly={!canManage}
               />
             </div>
           </div>
@@ -402,34 +415,38 @@
               <span class="font-semibold text-text-main"
                 >{communityMembers.length} {m.chat_community_member_count_label()}</span
               >
-              <button
-                class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                onclick={handleGenerateInvitation}
-                disabled={inviteLoading}
-              >
-                {inviteLoading
-                  ? m.common_sending_label()
-                  : m.chat_community_generate_invite_button()}
-              </button>
-            </div>
-            <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
-              <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2.5">
-                <UserAutocomplete
-                  value={inviteUserId}
-                  onValueChange={(v) => (inviteUserId = v)}
-                  placeholder={m.chat_community_search_user_placeholder()}
-                  inputId="community-invite-autocomplete"
-                />
-                <select
-                  bind:value={inviteRole}
-                  class="bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
+              {#if canManage}
+                <button
+                  class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  onclick={handleGenerateInvitation}
+                  disabled={inviteLoading}
                 >
-                  <option value="member">{m.chat_role_member()}</option>
-                  <option value="moderator">{m.chat_role_moderator()}</option>
-                  <option value="admin">{m.chat_role_admin()}</option>
-                </select>
-              </div>
+                  {inviteLoading
+                    ? m.common_sending_label()
+                    : m.chat_community_generate_invite_button()}
+                </button>
+              {/if}
             </div>
+            {#if canManage}
+              <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
+                <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2.5">
+                  <UserAutocomplete
+                    value={inviteUserId}
+                    onValueChange={(v) => (inviteUserId = v)}
+                    placeholder={m.chat_community_search_user_placeholder()}
+                    inputId="community-invite-autocomplete"
+                  />
+                  <select
+                    bind:value={inviteRole}
+                    class="bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
+                  >
+                    <option value="member">{m.chat_role_member()}</option>
+                    <option value="moderator">{m.chat_role_moderator()}</option>
+                    <option value="admin">{m.chat_role_admin()}</option>
+                  </select>
+                </div>
+              </div>
+            {/if}
             {#if inviteStatus}
               <div class="px-4 py-2 border-b border-cn-border text-xs font-medium text-text-muted">
                 {inviteStatus}

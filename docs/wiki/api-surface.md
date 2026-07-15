@@ -249,7 +249,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/channels/workspaces` | Create workspace |
-| GET | `/api/channels/workspaces/user/me` | List caller's workspaces |
+| GET | `/api/channels/workspaces/user/me` | List caller's workspaces (each carries `viewerCanManage`: true iff the caller holds MANAGE_WORKSPACE, used to gate admin controls) |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels for caller |
 | POST | `/api/channels` | Create channel |
 | POST | `/api/channels/:channelId/messages` | Send encrypted message |
