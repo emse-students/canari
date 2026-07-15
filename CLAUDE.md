@@ -98,9 +98,9 @@ Nothing open. Conventions/gotchas in memory: [[project_sky_conventions]], accent
 Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false` because deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, CI integrity, Tailwind cleanup, license, docs = DONE ([[project_portail_vitrine_migration]]).
 
 **Open work:**
-* \[~\] **N3 i18n Paraglide** (infra done+pushed 8395c61): messages/{fr,en}.json ~59 keys, vite strategy localStorage->preferredLanguage->baseLocale. Converted: Header, Footer, LocaleToggle. REMAINING swaps: +page.svelte (home), associations/+page.svelte, lists/+page.svelte, liens/+page.svelte, AssociationCard, EntityDetail, MemberCard (m.member_fallback), FeaturedLinks+links.ts (id -> m.link_*_tagline), associations/[handle] & lists/[handle] (pageTitle, meta descriptions, backLabel -> m.detail_back_*), ThemeToggle aria. Then recompile paraglide + check/lint/build + commit/push.
-* \[ \] **N8** Markdown not rendered in association descriptions (portail-etu.emse.fr/associations/[id]) - investigate.
-* \[ \] **N6** English-only comments: sweep remaining FR comments (e.g. ThemeToggle observer), fold in as files are touched.
+* \[x\] **N3 i18n Paraglide DONE** (pushed f4797f2): all UI strings swapped to `m.*` across home/associations/lists/liens pages, AssociationCard/EntityDetail/MemberCard/FeaturedLinks/ThemeToggle, [handle] detail pages, Header nav aria. Added `nav_primary_aria`; FeaturedLinks taglines resolve via link `id`->message map (links.ts dropped hardcoded tagline). check/lint/build all green.
+* \[ \] **N8** Markdown not rendered in association descriptions (portail-etu.emse.fr/associations/[id]) - investigate. Lead: EntityDetail renders `{@html sanitizeDescription(entity.description)}` (src/lib/html.ts) - upstream data is likely raw markdown never converted to HTML; check sanitizeDescription + whether Canari public API returns MD or HTML.
+* \[ \] **N6** English-only comments: ThemeToggle done; sweep remaining FR comments, fold in as files are touched.
 * \[ \] **N7 CD via GitHub Secrets** (the big "a la fin"): inject ALL secrets via GitHub Secrets, rotate keys, DROP server .env dependency (user has no server .env access). Clean deploy.yml leftovers (sharp install / rollup external in vite.config.ts). Replicable on a fresh machine.
 * \[ \] Cleanup (see cross-project): 1 quality CodeQL alert, Node bump.
 
