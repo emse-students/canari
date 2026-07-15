@@ -94,18 +94,6 @@
 
       <p class="text-xs text-text-muted">{m.auth_secure_login()}</p>
 
-      <div class="pt-2 border-t border-zinc-200/80 dark:border-white/10">
-        <button
-          type="button"
-          onclick={onPasswordLogin}
-          disabled={isLoggingIn || loginDisabled}
-          class="w-full py-2.5 rounded-xl text-sm font-medium text-text-muted border border-zinc-200 dark:border-white/15 bg-transparent transition-colors hover:text-text-main hover:border-zinc-300 dark:hover:border-white/25 disabled:opacity-70 disabled:cursor-wait"
-        >
-          {m.auth_test_login_password()}
-        </button>
-        <p class="text-[11px] text-text-muted/80 mt-2">{m.auth_test_login_password_hint()}</p>
-      </div>
-
       {#if loginError}
         <div
           role="alert"
@@ -117,14 +105,30 @@
         </div>
       {/if}
 
-      <button
-        onclick={onReset}
-        class="text-text-muted text-xs mt-6 underline hover:text-red-500 transition-colors"
-      >
-        {m.auth_reset_device()}
-      </button>
+      <!--
+        Discreet secondary actions: rarely used by end users, so styled as
+        low-emphasis text links (like device reset) to keep the primary
+        OIDC button the clear focal point.
+      -->
+      <div class="flex flex-col items-center gap-2.5 mt-8 text-xs text-text-muted">
+        <button
+          type="button"
+          onclick={onPasswordLogin}
+          disabled={isLoggingIn || loginDisabled}
+          class="underline hover:text-text-main transition-colors disabled:opacity-70 disabled:cursor-wait"
+        >
+          {m.auth_test_login_password()}
+        </button>
+        <button
+          type="button"
+          onclick={onReset}
+          class="underline hover:text-red-500 transition-colors"
+        >
+          {m.auth_reset_device()}
+        </button>
+      </div>
 
-      <div class="flex justify-center gap-4 mt-4 text-xs text-text-muted">
+      <div class="flex justify-center gap-4 mt-6 text-xs text-text-muted">
         <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors">{m.auth_privacy()}</a>
         <span>·</span>
         <a href="/legal/cgu" class="hover:text-cn-yellow transition-colors">{m.auth_terms()}</a>
