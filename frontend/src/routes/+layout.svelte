@@ -54,13 +54,8 @@
 
   const showMaintenanceAdminBanner = $derived.by(() => {
     const info = getAppVersionCheck();
-    return (
-      !isBelowMinClientVersion() &&
-      info?.maintenance.enabled === true &&
-      isGlobalAdmin()
-    );
+    return !isBelowMinClientVersion() && info?.maintenance.enabled === true && isGlobalAdmin();
   });
-
 
   // Hide BottomNav and remove its padding from the composer when a conversation
   // is open on mobile (only relevant on the chat / communities routes).
@@ -107,9 +102,7 @@
     // Redirect console.log/warn/error to tauri-plugin-log → adb logcat on Android.
     // Dynamic import prevents @tauri-apps/plugin-log from being bundled in the Web build.
     if (isTauriRuntime()) {
-      import('@tauri-apps/plugin-log')
-        .then(({ attachConsole }) => attachConsole())
-        .catch(() => {});
+      import('@tauri-apps/plugin-log').then(({ attachConsole }) => attachConsole()).catch(() => {});
     }
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();

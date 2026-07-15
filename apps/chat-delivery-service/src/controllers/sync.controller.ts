@@ -36,16 +36,13 @@ export class SyncController {
   constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
 
   /** Ensures the authenticated user matches the body `userId`. */
-  private assertBodyUser(
-    headerUserId: string | undefined,
-    bodyUserId: string,
-  ): string {
+  private assertBodyUser(headerUserId: string | undefined, bodyUserId: string): string {
     const safeBodyUserId = sanitizeQueryValue(bodyUserId, 'userId');
     assertCallerOwnsUserId(
       headerUserId,
       undefined,
       safeBodyUserId,
-      'Cannot act on behalf of another user',
+      'Cannot act on behalf of another user'
     );
     return safeBodyUserId;
   }
@@ -61,14 +58,11 @@ export class SyncController {
       offerPublicKey: string;
       ttlSeconds?: number;
     },
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const userId = this.assertBodyUser(headerUserId, body.userId);
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    const offerPublicKey = sanitizeQueryValue(
-      body.offerPublicKey,
-      'offerPublicKey',
-    );
+    const offerPublicKey = sanitizeQueryValue(body.offerPublicKey, 'offerPublicKey');
 
     const ttlSeconds = Math.min(parsePositiveInt(body.ttlSeconds, 180), 900);
     const createdAt = Date.now();
@@ -114,21 +108,17 @@ export class SyncController {
       deviceId: string;
       answerPublicKey: string;
     },
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
     const joinToken = sanitizeQueryValue(body.joinToken, 'joinToken');
     const userId = this.assertBodyUser(headerUserId, body.userId);
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    const answerPublicKey = sanitizeQueryValue(
-      body.answerPublicKey,
-      'answerPublicKey',
-    );
+    const answerPublicKey = sanitizeQueryValue(body.answerPublicKey, 'answerPublicKey');
 
     const baseKey = `sync:session:${sessionId}`;
     const raw = await this.redis.get(baseKey);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
 
     const session = JSON.parse(raw) as SyncSessionState;
     if (session.userId !== userId) {
@@ -145,10 +135,7 @@ export class SyncController {
     session.answerPublicKey = answerPublicKey;
     session.state = 'joined';
 
-    const ttlSeconds = Math.max(
-      Math.floor((session.expiresAt - Date.now()) / 1000),
-      30,
-    );
+    const ttlSeconds = Math.max(Math.floor((session.expiresAt - Date.now()) / 1000), 30);
     await this.redis.set(baseKey, JSON.stringify(session), 'EX', ttlSeconds);
 
     return {
@@ -165,17 +152,15 @@ export class SyncController {
   /** Polls the current state of a sync session (offer/answer keys, manifest, etc.). */
   async getSyncSessionState(
     @Param('sessionId') sessionIdRaw: string,
-    @Headers('x-user-id') userIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string
   ) {
     const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const raw = await this.redis.get(`sync:session:${sessionId}`);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
 
     const session = JSON.parse(raw) as SyncSessionState;
-    if (session.userId !== userId)
-      throw new BadRequestException('Session user mismatch');
+    if (session.userId !== userId) throw new BadRequestException('Session user mismatch');
 
     return {
       sessionId: session.sessionId,
@@ -199,7 +184,7 @@ export class SyncController {
       deviceId: string;
       manifest: SyncManifestPayload;
     },
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
     const userId = this.assertBodyUser(headerUserId, body.userId);
@@ -208,30 +193,17 @@ export class SyncController {
 
     const baseKey = `sync:session:${sessionId}`;
     const raw = await this.redis.get(baseKey);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
     const session = JSON.parse(raw) as SyncSessionState;
 
-    if (session.userId !== userId)
-      throw new BadRequestException('Session user mismatch');
-    if (
-      deviceId !== session.offerDeviceId &&
-      deviceId !== session.answerDeviceId
-    ) {
+    if (session.userId !== userId) throw new BadRequestException('Session user mismatch');
+    if (deviceId !== session.offerDeviceId && deviceId !== session.answerDeviceId) {
       throw new BadRequestException('Device is not part of this session');
     }
 
-    const ttlSeconds = Math.max(
-      Math.floor((session.expiresAt - Date.now()) / 1000),
-      30,
-    );
+    const ttlSeconds = Math.max(Math.floor((session.expiresAt - Date.now()) / 1000), 30);
     const manifestKey = `sync:session:${sessionId}:manifest:${deviceId}`;
-    await this.redis.set(
-      manifestKey,
-      JSON.stringify(manifest),
-      'EX',
-      ttlSeconds,
-    );
+    await this.redis.set(manifestKey, JSON.stringify(manifest), 'EX', ttlSeconds);
 
     return {
       status: 'stored',
@@ -250,7 +222,7 @@ export class SyncController {
       userId: string;
       deviceId: string;
     },
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
     const userId = this.assertBodyUser(headerUserId, body.userId);
@@ -258,16 +230,11 @@ export class SyncController {
 
     const baseKey = `sync:session:${sessionId}`;
     const raw = await this.redis.get(baseKey);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
     const session = JSON.parse(raw) as SyncSessionState;
 
-    if (session.userId !== userId)
-      throw new BadRequestException('Session user mismatch');
-    if (
-      deviceId !== session.offerDeviceId &&
-      deviceId !== session.answerDeviceId
-    ) {
+    if (session.userId !== userId) throw new BadRequestException('Session user mismatch');
+    if (deviceId !== session.offerDeviceId && deviceId !== session.answerDeviceId) {
       throw new BadRequestException('Device is not part of this session');
     }
     if (!session.answerDeviceId) {
@@ -275,25 +242,21 @@ export class SyncController {
     }
 
     const peerDeviceId =
-      deviceId === session.offerDeviceId
-        ? session.answerDeviceId
-        : session.offerDeviceId;
+      deviceId === session.offerDeviceId ? session.answerDeviceId : session.offerDeviceId;
     const requesterKey = `sync:session:${sessionId}:manifest:${deviceId}`;
     const peerKey = `sync:session:${sessionId}:manifest:${peerDeviceId}`;
 
     const requesterRaw = await this.redis.get(requesterKey);
     const peerRaw = await this.redis.get(peerKey);
     if (!requesterRaw || !peerRaw) {
-      throw new BadRequestException(
-        'Both manifests must be uploaded before diff computation',
-      );
+      throw new BadRequestException('Both manifests must be uploaded before diff computation');
     }
 
     const requesterManifest = sanitizeSyncManifest(JSON.parse(requesterRaw));
     const peerManifest = sanitizeSyncManifest(JSON.parse(peerRaw));
     const { missingOnRequester, missingOnPeer } = computeManifestDiff(
       requesterManifest,
-      peerManifest,
+      peerManifest
     );
 
     return {
@@ -308,11 +271,11 @@ export class SyncController {
         peerConversationCount: peerManifest.conversations.length,
         requesterMissingMessageCount: missingOnRequester.reduce(
           (acc, conv) => acc + conv.messageIds.length,
-          0,
+          0
         ),
         peerMissingMessageCount: missingOnPeer.reduce(
           (acc, conv) => acc + conv.messageIds.length,
-          0,
+          0
         ),
       },
     };
@@ -330,7 +293,7 @@ export class SyncController {
       toDeviceId: string;
       chunks: SyncSerializedChunk[];
     },
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const sessionId = sanitizeQueryValue(body.sessionId, 'sessionId');
     const userId = this.assertBodyUser(headerUserId, body.userId);
@@ -339,24 +302,16 @@ export class SyncController {
     const chunks = sanitizeSerializedChunks(body.chunks);
 
     const raw = await this.redis.get(`sync:session:${sessionId}`);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
     const session = JSON.parse(raw) as SyncSessionState;
-    if (session.userId !== userId)
-      throw new BadRequestException('Session user mismatch');
+    if (session.userId !== userId) throw new BadRequestException('Session user mismatch');
 
-    const participants = new Set([
-      session.offerDeviceId,
-      session.answerDeviceId,
-    ]);
+    const participants = new Set([session.offerDeviceId, session.answerDeviceId]);
     if (!participants.has(fromDeviceId) || !participants.has(toDeviceId)) {
       throw new BadRequestException('Devices are not part of this session');
     }
 
-    const ttlSeconds = Math.max(
-      Math.floor((session.expiresAt - Date.now()) / 1000),
-      30,
-    );
+    const ttlSeconds = Math.max(Math.floor((session.expiresAt - Date.now()) / 1000), 30);
     const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
 
     // Append each chunk individually so multiple batched uploads accumulate in order.
@@ -381,7 +336,7 @@ export class SyncController {
     @Param('sessionId') sessionIdRaw: string,
     @Headers('x-user-id') userIdRaw: string,
     @Query('toDeviceId') toDeviceIdRaw: string,
-    @Query('fromDeviceId') fromDeviceIdRaw: string,
+    @Query('fromDeviceId') fromDeviceIdRaw: string
   ) {
     const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
@@ -389,16 +344,11 @@ export class SyncController {
     const fromDeviceId = sanitizeQueryValue(fromDeviceIdRaw, 'fromDeviceId');
 
     const raw = await this.redis.get(`sync:session:${sessionId}`);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
     const session = JSON.parse(raw) as SyncSessionState;
-    if (session.userId !== userId)
-      throw new BadRequestException('Session user mismatch');
+    if (session.userId !== userId) throw new BadRequestException('Session user mismatch');
 
-    const participants = new Set([
-      session.offerDeviceId,
-      session.answerDeviceId,
-    ]);
+    const participants = new Set([session.offerDeviceId, session.answerDeviceId]);
     if (!participants.has(fromDeviceId) || !participants.has(toDeviceId)) {
       throw new BadRequestException('Devices are not part of this session');
     }
@@ -409,9 +359,7 @@ export class SyncController {
     const rawItems = await this.redis.lrange(key, 0, -1);
     const chunks =
       rawItems.length > 0
-        ? sanitizeSerializedChunks(
-            rawItems.map((item) => JSON.parse(item) as unknown),
-          )
+        ? sanitizeSerializedChunks(rawItems.map((item) => JSON.parse(item) as unknown))
         : [];
 
     return {
@@ -433,7 +381,7 @@ export class SyncController {
     body: {
       toDeviceId: string;
       fromDeviceId: string;
-    },
+    }
   ) {
     const sessionId = sanitizeQueryValue(sessionIdRaw, 'sessionId');
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
@@ -441,11 +389,9 @@ export class SyncController {
     const fromDeviceId = sanitizeQueryValue(body.fromDeviceId, 'fromDeviceId');
 
     const raw = await this.redis.get(`sync:session:${sessionId}`);
-    if (!raw)
-      throw new BadRequestException('Sync session not found or expired');
+    if (!raw) throw new BadRequestException('Sync session not found or expired');
     const session = JSON.parse(raw) as SyncSessionState;
-    if (session.userId !== userId)
-      throw new BadRequestException('Session user mismatch');
+    if (session.userId !== userId) throw new BadRequestException('Session user mismatch');
 
     const key = `sync:session:${sessionId}:chunks:${toDeviceId}:${fromDeviceId}`;
     await this.redis.del(key);

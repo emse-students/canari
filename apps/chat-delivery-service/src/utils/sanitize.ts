@@ -29,10 +29,7 @@ export function sanitizeQueryValue(value: unknown, fieldName: string): string {
  * Like `sanitizeQueryValue` but treats `undefined`, `null`, and `""` as absent
  * and returns `undefined` instead of throwing, leaving the field truly optional.
  */
-export function sanitizeOptionalQueryValue(
-  value: unknown,
-  fieldName: string,
-): string | undefined {
+export function sanitizeOptionalQueryValue(value: unknown, fieldName: string): string | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
@@ -66,7 +63,7 @@ export function assertCallerOwnsUserId(
   headerUserId: string | undefined,
   headerGlobalAdmin: string | undefined,
   targetUserId: string,
-  message: string,
+  message: string
 ): void {
   if (headerGlobalAdmin === 'true') {
     return;
@@ -117,9 +114,7 @@ export function sanitizeOptionalDeviceOs(value: unknown): string | undefined {
 }
 
 /** Returns a version string matching `[0-9A-Za-z._+-]{1,32}` (e.g. "1.4.2"), or `undefined` if absent. */
-export function sanitizeOptionalDeviceAppVersion(
-  value: unknown,
-): string | undefined {
+export function sanitizeOptionalDeviceAppVersion(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value !== 'string') {
     throw new BadRequestException('deviceAppVersion must be a string');
@@ -127,9 +122,7 @@ export function sanitizeOptionalDeviceAppVersion(
   const version = value.trim();
   if (!version) return undefined;
   if (!/^[0-9A-Za-z._+-]{1,32}$/.test(version)) {
-    throw new BadRequestException(
-      'deviceAppVersion contains invalid characters',
-    );
+    throw new BadRequestException('deviceAppVersion contains invalid characters');
   }
   return version;
 }
@@ -138,14 +131,9 @@ export function sanitizeOptionalDeviceAppVersion(
  * Validates that `value` is a non-empty standard base64 string.
  * Rejects values longer than 128 KiB of encoded data (~96 KiB binary).
  */
-export function sanitizeBase64BinaryField(
-  value: unknown,
-  fieldName: string,
-): string {
+export function sanitizeBase64BinaryField(value: unknown, fieldName: string): string {
   if (typeof value !== 'string' || !value) {
-    throw new BadRequestException(
-      `${fieldName} must be a non-empty base64 string`,
-    );
+    throw new BadRequestException(`${fieldName} must be a non-empty base64 string`);
   }
   if (value.length > 131072) {
     throw new BadRequestException(`${fieldName} is too large`);
@@ -163,9 +151,7 @@ export function sanitizeByteArray(value: unknown, fieldName: string): number[] {
   }
   const bytes = value.map((v) => {
     if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 255) {
-      throw new BadRequestException(
-        `${fieldName} contains invalid byte values`,
-      );
+      throw new BadRequestException(`${fieldName} contains invalid byte values`);
     }
     return v;
   });

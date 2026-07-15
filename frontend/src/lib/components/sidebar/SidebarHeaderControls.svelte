@@ -48,8 +48,12 @@
     <button
       onclick={onOpenNewChat}
       class="w-8 h-8 rounded-full bg-white/65 dark:bg-black/30 hover:bg-white/80 dark:hover:bg-black/40 border border-white/45 dark:border-white/10 text-text-main transition-colors flex items-center justify-center"
-      title={activeSidebarTab === 'channels' ? m.chat_new_channel_title() : m.chat_new_discussion_title()}
-      aria-label={activeSidebarTab === 'channels' ? m.chat_new_channel_label() : m.chat_new_discussion_label()}
+      title={activeSidebarTab === 'channels'
+        ? m.chat_new_channel_title()
+        : m.chat_new_discussion_title()}
+      aria-label={activeSidebarTab === 'channels'
+        ? m.chat_new_channel_label()
+        : m.chat_new_discussion_label()}
     >
       <Plus size={16} />
     </button>

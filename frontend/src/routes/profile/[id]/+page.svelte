@@ -217,7 +217,8 @@
           onclick={handleSendMessage}
           class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all active:scale-95 shadow-md shadow-cn-yellow/20 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
         >
-          <MessageCircle size={18} strokeWidth={2.5} /> {m.profile_public_message_btn()}
+          <MessageCircle size={18} strokeWidth={2.5} />
+          {m.profile_public_message_btn()}
         </button>
       </div>
     </div>
@@ -228,36 +229,34 @@
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
         style="animation-fill-mode: backwards;"
       >
-        <h2 class="text-lg font-extrabold text-text-main mb-4">{m.profile_public_about_heading()}</h2>
+        <h2 class="text-lg font-extrabold text-text-main mb-4">
+          {m.profile_public_about_heading()}
+        </h2>
         <ProfileBioMarkdown source={profile.bio} />
       </div>
     {/if}
 
     {#if memberships.length > 0 || extrasLoading}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
-      >
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
         <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
           <Building2 size={20} />
           {m.assoc_list_heading()}
         </h2>
-        <ProfileAssociationsSection memberships={memberships} loading={extrasLoading} />
+        <ProfileAssociationsSection {memberships} loading={extrasLoading} />
       </div>
     {/if}
 
     {#if roleHistory.length > 0 || extrasLoading}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
-      >
-        <h2 class="text-lg font-extrabold text-text-main mb-5">{m.profile_public_career_heading()}</h2>
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
+        <h2 class="text-lg font-extrabold text-text-main mb-5">
+          {m.profile_public_career_heading()}
+        </h2>
         <ProfileRoleHistorySection entries={roleHistory} />
       </div>
     {/if}
 
     {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || extrasLoading}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm"
-      >
+      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
         <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
           <Users size={20} />
           {m.profile_public_sponsorship_heading()}

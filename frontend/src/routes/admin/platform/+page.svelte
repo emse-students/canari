@@ -83,7 +83,9 @@
 
 <div class="space-y-6">
   <header class="flex items-start gap-3">
-    <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark">
+    <span
+      class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+    >
       <Wrench size={20} />
     </span>
     <div>
@@ -115,7 +117,9 @@
           class="mt-1 h-4 w-4 rounded border-cn-border text-cn-yellow focus:ring-cn-yellow"
         />
         <span>
-          <span class="block text-sm font-bold text-text-main">{m.admin_platform_maintenance_toggle_label()}</span>
+          <span class="block text-sm font-bold text-text-main"
+            >{m.admin_platform_maintenance_toggle_label()}</span
+          >
           <span class="block text-xs text-text-muted mt-0.5">
             {m.admin_platform_maintenance_toggle_desc()}
           </span>
@@ -148,7 +152,10 @@
           required
           class="w-full max-w-xs rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
         />
-        <p class="text-xs text-text-muted">{m.admin_platform_min_version_hint_prefix()} <code>major.minor.patch</code> {m.admin_platform_min_version_hint_suffix()}</p>
+        <p class="text-xs text-text-muted">
+          {m.admin_platform_min_version_hint_prefix()} <code>major.minor.patch</code>
+          {m.admin_platform_min_version_hint_suffix()}
+        </p>
       </div>
 
       {#if error}

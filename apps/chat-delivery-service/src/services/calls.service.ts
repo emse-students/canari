@@ -75,7 +75,7 @@ export class CallsService {
   constructor(
     @InjectRepository(GroupMember)
     private readonly groupMemberRepo: Repository<GroupMember>,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
 
   /**
@@ -83,42 +83,30 @@ export class CallsService {
    * room access token (TTL 5 min). The token must be sent to call-service in the
    * `Join` message to prove the user is authorized for this room.
    */
-  async initiateCall(
-    userId: string,
-    groupId: string,
-  ): Promise<InitiateCallResponse> {
+  async initiateCall(userId: string, groupId: string): Promise<InitiateCallResponse> {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
     });
     if (!membership) {
-      this.logger.warn(
-        `[calls] user ${userId} is not a member of group ${groupId}`,
-      );
+      this.logger.warn(`[calls] user ${userId} is not a member of group ${groupId}`);
       throw new ForbiddenException('Not a member of this group');
     }
 
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
-      this.logger.error(
-        '[calls] CALL_ROOM_SECRET is not set - cannot issue room tokens',
-      );
-      throw new ServiceUnavailableException(
-        'Call room tokens are not configured on this server',
-      );
+      this.logger.error('[calls] CALL_ROOM_SECRET is not set - cannot issue room tokens');
+      throw new ServiceUnavailableException('Call room tokens are not configured on this server');
     }
 
     const roomId = uuidv4();
-    const roomToken = jwt.sign(
-      { room_id: roomId, sub: userId, group_id: groupId },
-      roomSecret,
-      { expiresIn: '5m', algorithm: 'HS256' },
-    );
+    const roomToken = jwt.sign({ room_id: roomId, sub: userId, group_id: groupId }, roomSecret, {
+      expiresIn: '5m',
+      algorithm: 'HS256',
+    });
 
-    this.logger.debug(
-      `[calls] Issued room token for user=${userId} room=${roomId}`,
-    );
+    this.logger.debug(`[calls] Issued room token for user=${userId} room=${roomId}`);
     return { roomId, roomToken };
   }
 
@@ -129,38 +117,29 @@ export class CallsService {
   async requestRoomToken(
     userId: string,
     groupId: string,
-    roomId: string,
+    roomId: string
   ): Promise<{ roomToken: string }> {
-    this.logger.debug(
-      `[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`,
-    );
+    this.logger.debug(`[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
     });
     if (!membership) {
-      this.logger.warn(
-        `[calls] user ${userId} is not a member of group ${groupId}`,
-      );
+      this.logger.warn(`[calls] user ${userId} is not a member of group ${groupId}`);
       throw new ForbiddenException('Not a member of this group');
     }
 
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
-      throw new ServiceUnavailableException(
-        'Call room tokens are not configured on this server',
-      );
+      throw new ServiceUnavailableException('Call room tokens are not configured on this server');
     }
 
-    const roomToken = jwt.sign(
-      { room_id: roomId, sub: userId, group_id: groupId },
-      roomSecret,
-      { expiresIn: '5m', algorithm: 'HS256' },
-    );
+    const roomToken = jwt.sign({ room_id: roomId, sub: userId, group_id: groupId }, roomSecret, {
+      expiresIn: '5m',
+      algorithm: 'HS256',
+    });
 
-    this.logger.debug(
-      `[calls] Issued join token for user=${userId} room=${roomId}`,
-    );
+    this.logger.debug(`[calls] Issued join token for user=${userId} room=${roomId}`);
     return { roomToken };
   }
 
@@ -171,20 +150,16 @@ export class CallsService {
   async getIceServers(
     userId: string,
     groupId: string,
-    callId: string,
+    callId: string
   ): Promise<IceServersResponse> {
-    this.logger.debug(
-      `[ICE] getIceServers user=${userId} group=${groupId} call=${callId}`,
-    );
+    this.logger.debug(`[ICE] getIceServers user=${userId} group=${groupId} call=${callId}`);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
     });
 
     if (!membership) {
-      this.logger.warn(
-        `[ICE] user ${userId} is not a member of group ${groupId}`,
-      );
+      this.logger.warn(`[ICE] user ${userId} is not a member of group ${groupId}`);
       throw new ForbiddenException('Not a member of this group');
     }
 
@@ -193,11 +168,9 @@ export class CallsService {
 
     if (!cloudflareToken || !turnKeyId) {
       this.logger.error(
-        '[ICE] Cloudflare TURN is not configured (CLOUDFLARE_CALLS_API_TOKEN and CLOUDFLARE_TURN_KEY_ID required)',
+        '[ICE] Cloudflare TURN is not configured (CLOUDFLARE_CALLS_API_TOKEN and CLOUDFLARE_TURN_KEY_ID required)'
       );
-      throw new ServiceUnavailableException(
-        'WebRTC TURN is not configured on this server',
-      );
+      throw new ServiceUnavailableException('WebRTC TURN is not configured on this server');
     }
 
     // Refuse new TURN credentials once the monthly relay budget is reached, so we
@@ -207,10 +180,10 @@ export class CallsService {
     const usedMb = await this.getMonthlyTurnUsageMb();
     if (usedMb >= budgetMb) {
       this.logger.error(
-        `[ICE] Monthly TURN budget reached (${usedMb.toFixed(0)}/${budgetMb} MB) - refusing credentials`,
+        `[ICE] Monthly TURN budget reached (${usedMb.toFixed(0)}/${budgetMb} MB) - refusing credentials`
       );
       throw new ServiceUnavailableException(
-        'Monthly call quota reached on this server. Try again next month.',
+        'Monthly call quota reached on this server. Try again next month.'
       );
     }
 
@@ -219,10 +192,7 @@ export class CallsService {
 
   /** Monthly TURN relay budget in GB (Cloudflare free tier is ~1000 GB; default leaves a margin). */
   private turnBudgetGb(): number {
-    const v = parseInt(
-      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB || '950',
-      10,
-    );
+    const v = parseInt(process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB || '950', 10);
     return Number.isFinite(v) && v > 0 ? v : 950;
   }
 
@@ -248,16 +218,14 @@ export class CallsService {
     if (!callStartMs) return;
     const durationSec = Math.min(
       Math.max(0, (Date.now() - callStartMs) / 1000),
-      MAX_COUNTED_CALL_SEC,
+      MAX_COUNTED_CALL_SEC
     );
     if (durationSec < 1) return;
     const mb = (this.relayKbpsPerDevice() * durationSec) / 8000;
     const key = monthlyTurnUsageKey();
     await this.redis.incrbyfloat(key, mb);
     await this.redis.expire(key, TURN_USAGE_TTL_SEC);
-    this.logger.debug(
-      `[ICE] TURN usage +${mb.toFixed(1)} MB (call ${Math.round(durationSec)}s)`,
-    );
+    this.logger.debug(`[ICE] TURN usage +${mb.toFixed(1)} MB (call ${Math.round(durationSec)}s)`);
   }
 
   /**
@@ -267,7 +235,7 @@ export class CallsService {
   async reportCallPresence(
     userId: string,
     deviceId: string,
-    body: { active: boolean; callId?: string; groupId?: string },
+    body: { active: boolean; callId?: string; groupId?: string }
   ): Promise<{ ok: true }> {
     if (!deviceId?.trim()) {
       throw new BadRequestException('deviceId is required');
@@ -283,9 +251,7 @@ export class CallsService {
           if (parsed.deviceId === deviceId) {
             await this.accumulateTurnUsage(parsed.updatedAt);
             await this.redis.del(key);
-            this.logger.debug(
-              `[calls] cleared presence for user=${userId} device=${deviceId}`,
-            );
+            this.logger.debug(`[calls] cleared presence for user=${userId} device=${deviceId}`);
           }
         } catch {
           await this.redis.del(key);
@@ -300,14 +266,9 @@ export class CallsService {
       groupId: body.groupId,
       updatedAt: Date.now(),
     };
-    await this.redis.set(
-      key,
-      JSON.stringify(payload),
-      'EX',
-      USER_CALL_PRESENCE_TTL_SEC,
-    );
+    await this.redis.set(key, JSON.stringify(payload), 'EX', USER_CALL_PRESENCE_TTL_SEC);
     this.logger.debug(
-      `[calls] presence active user=${userId} device=${deviceId} call=${body.callId ?? '?'}`,
+      `[calls] presence active user=${userId} device=${deviceId} call=${body.callId ?? '?'}`
     );
     return { ok: true };
   }
@@ -315,10 +276,7 @@ export class CallsService {
   /**
    * Returns whether another device of the same user is currently in a call.
    */
-  async getSiblingCallStatus(
-    userId: string,
-    deviceId: string,
-  ): Promise<SiblingCallStatusResponse> {
+  async getSiblingCallStatus(userId: string, deviceId: string): Promise<SiblingCallStatusResponse> {
     if (!deviceId?.trim()) {
       throw new BadRequestException('deviceId is required');
     }
@@ -345,14 +303,12 @@ export class CallsService {
   /** Calls Cloudflare Realtime TURN API to generate short-lived credentials. */
   private async fetchCloudflareIceServers(
     turnKeyId: string,
-    apiToken: string,
+    apiToken: string
   ): Promise<IceServersResponse> {
     const ttl = parseInt(process.env.CLOUDFLARE_TURN_TTL_SECONDS || '7200', 10);
     const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${turnKeyId}/credentials/generate-ice-servers`;
 
-    this.logger.debug(
-      `[ICE] Requesting Cloudflare TURN credentials (ttl=${ttl})`,
-    );
+    this.logger.debug(`[ICE] Requesting Cloudflare TURN credentials (ttl=${ttl})`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -366,11 +322,9 @@ export class CallsService {
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       this.logger.error(
-        `[ICE] Cloudflare TURN API error status=${response.status} body=${body.slice(0, 200)}`,
+        `[ICE] Cloudflare TURN API error status=${response.status} body=${body.slice(0, 200)}`
       );
-      throw new ServiceUnavailableException(
-        'Failed to generate TURN credentials',
-      );
+      throw new ServiceUnavailableException('Failed to generate TURN credentials');
     }
 
     const data = (await response.json()) as { iceServers?: IceServerConfig[] };
@@ -381,9 +335,7 @@ export class CallsService {
       throw new ServiceUnavailableException('No ICE servers available');
     }
 
-    this.logger.debug(
-      `[ICE] Cloudflare returned ${iceServers.length} ICE server(s)`,
-    );
+    this.logger.debug(`[ICE] Cloudflare returned ${iceServers.length} ICE server(s)`);
     return { iceServers };
   }
 

@@ -296,7 +296,9 @@
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {:else if asso}
     <header class="space-y-1">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.asso_edit_page_title()}</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+        {m.asso_edit_page_title()}
+      </h1>
       <p class="text-sm text-text-muted">@{asso.slug}</p>
     </header>
 
@@ -466,9 +468,7 @@
                 {m.asso_stripe_connected_desc()}
               </p>
               {#if stripeConnectStatus?.balance}
-                <div
-                  class="rounded-xl border border-cn-border bg-cn-bg/50 p-4 space-y-3"
-                >
+                <div class="rounded-xl border border-cn-border bg-cn-bg/50 p-4 space-y-3">
                   <p class="text-sm font-bold text-text-main flex items-center gap-2">
                     <Wallet size={18} class="text-cn-dark" />
                     {m.asso_stripe_balance_title()}
@@ -536,7 +536,9 @@
                 </p>
                 {#if stripeConnectStatus.pendingVerification && stripeConnectStatus.pendingVerification.length > 0}
                   <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
-                    {m.asso_stripe_verification_items({ count: stripeConnectStatus.pendingVerification.length })}
+                    {m.asso_stripe_verification_items({
+                      count: stripeConnectStatus.pendingVerification.length,
+                    })}
                   </p>
                 {/if}
               </div>
@@ -636,11 +638,7 @@
     {/if}
 
     {#if editSection === 'danger' && isGlobalAdminUser}
-      <EditDangerTab
-        {asso}
-        onUpdated={(a) => (asso = a)}
-        onDeleted={() => goto('/associations')}
-      />
+      <EditDangerTab {asso} onUpdated={(a) => (asso = a)} onDeleted={() => goto('/associations')} />
     {/if}
   {/if}
 </div>

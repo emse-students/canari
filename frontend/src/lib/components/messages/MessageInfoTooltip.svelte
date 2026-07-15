@@ -83,7 +83,8 @@
       <div class="flex items-center gap-1.5 opacity-90">
         <Pencil size={12} class="text-text-muted shrink-0" />
         <span>
-          {m.msg_modifie_a()}{#if editedAt} <span class="font-semibold">{formatTime24(editedAt)}</span>{/if}
+          {m.msg_modifie_a()}{#if editedAt}
+            <span class="font-semibold">{formatTime24(editedAt)}</span>{/if}
         </span>
       </div>
     {/if}

@@ -274,7 +274,9 @@
     <div class="mx-auto max-w-xl animate-rise-in">
       <header class="mb-6 flex items-center justify-between gap-3">
         <div>
-          <h1 class="text-2xl font-brand font-bold text-text-main tracking-tight">{m.posts_page_title()}</h1>
+          <h1 class="text-2xl font-brand font-bold text-text-main tracking-tight">
+            {m.posts_page_title()}
+          </h1>
           <p class="text-text-muted text-sm mt-0.5">{m.posts_page_subtitle()}</p>
         </div>
         <div class="flex items-center gap-2">

@@ -1,0 +1,9 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "respectEslintDisableDirectives": true
+  },
+  "rules": {
+    "no-console": "off"
+  }
+}

@@ -25,3 +25,8 @@ export function buildSiteJsonLd(): string {
   };
   return JSON.stringify(payload);
 }
+
+/** Full JSON-LD script element for injection via `{@html}` in `<svelte:head>`. */
+export function buildSiteJsonLdScriptTag(): string {
+  return '<script type="application/ld+json">' + buildSiteJsonLd() + '</script>';
+}

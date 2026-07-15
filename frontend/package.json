@@ -1,9 +1,10 @@
 {
   "name": "canari",
   "version": "0.9.13",
-  "description": "",
-  "type": "module",
   "private": true,
+  "description": "",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "type": "module",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -18,10 +19,10 @@
     "check": "npm run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:strict": "npm run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold warning",
     "check:watch": "npm run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "lint": "eslint src --ext .ts,.tsx,.js,.jsx,.svelte --cache",
-    "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx,.svelte --cache --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
+    "lint": "oxlint -c .oxlintrc.json src && oxvelte lint src",
+    "lint:fix": "oxlint -c .oxlintrc.json --fix src && oxvelte lint --fix src",
+    "format": "oxfmt -c ../oxfmt.json --write .",
+    "format:check": "oxfmt -c ../oxfmt.json --check .",
     "sync": "svelte-kit sync",
     "tauri": "tauri",
     "android:init": "tauri android init",
@@ -31,7 +32,6 @@
     "ios:dev": "tauri ios dev",
     "ios:build": "tauri ios build"
   },
-  "license": "SEE LICENSE IN ../LICENSE",
   "dependencies": {
     "@fontsource-variable/fredoka": "^5.2.10",
     "@fontsource-variable/nunito": "^5.2.7",
@@ -58,7 +58,6 @@
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@inlang/paraglide-js": "^2.20.0",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.66.0",
@@ -68,14 +67,11 @@
     "@types/node": "^25.9.4",
     "@types/qrcode": "^1.5.6",
     "@vitest/coverage-v8": "^4.1.9",
-    "eslint": "^10.5.0",
-    "eslint-plugin-svelte": "^3.19.0",
-    "globals": "^17.6.0",
     "happy-dom": "^20.10.6",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
-    "prettier": "^3.8.4",
-    "prettier-plugin-svelte": "^3.5.2",
+    "oxfmt": "^0.59.0",
+    "oxlint": "^1.74.0",
     "protobufjs": "^8.6.4",
     "protobufjs-cli": "^2.5.5",
     "sharp": "^0.34.5",
@@ -83,13 +79,12 @@
     "svelte-check": "^4.6.0",
     "tailwindcss": "^4.3.1",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.61.1",
     "vite": "^8.0.16",
     "vitest": "^4.1.9"
   },
   "overrides": {
-    "cookie": "^0.7.0",
     "brace-expansion": "^5.0.6",
+    "cookie": "^0.7.0",
     "postcss": "^8.5.10"
   }
 }

@@ -22,11 +22,7 @@ function listSourceFiles(dir: string, acc: string[] = []): string[] {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
       listSourceFiles(full, acc);
-    } else if (
-      entry.endsWith('.ts') &&
-      !entry.endsWith('.spec.ts') &&
-      !entry.endsWith('.d.ts')
-    ) {
+    } else if (entry.endsWith('.ts') && !entry.endsWith('.spec.ts') && !entry.endsWith('.d.ts')) {
       acc.push(full);
     }
   }
@@ -67,12 +63,10 @@ describe('AppModule - enregistrement DI des repositories TypeORM', () => {
     // 3. Toute entite injectee mais non enregistree casserait le bootstrap.
     const missing = [...injectedAt.keys()].filter((e) => !registered.has(e));
     if (missing.length > 0) {
-      const detail = missing
-        .map((e) => `  - ${e} (injecte dans ${injectedAt.get(e)})`)
-        .join('\n');
+      const detail = missing.map((e) => `  - ${e} (injecte dans ${injectedAt.get(e)})`).join('\n');
       throw new Error(
         `Entite(s) injectee(s) via @InjectRepository absente(s) de TypeOrmModule.forFeature ` +
-          `(bootstrap NestJS KO au demarrage):\n${detail}`,
+          `(bootstrap NestJS KO au demarrage):\n${detail}`
       );
     }
 

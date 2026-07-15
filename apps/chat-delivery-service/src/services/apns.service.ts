@@ -50,8 +50,7 @@ export class ApnsService {
   private readonly logger = new Logger(ApnsService.name);
 
   /** Cached provider JWT, refreshed before {@link PROVIDER_TOKEN_TTL_SECONDS}. */
-  private cachedJwt: { token: string; iat: number; keyId: string } | null =
-    null;
+  private cachedJwt: { token: string; iat: number; keyId: string } | null = null;
 
   /** Cached parsed private key, keyed by the normalised PEM to avoid re-parsing. */
   private cachedKey: { pem: string; key: crypto.KeyObject } | null = null;
@@ -102,8 +101,7 @@ export class ApnsService {
       return this.cachedJwt.token;
     }
 
-    const enc = (o: object): string =>
-      Buffer.from(JSON.stringify(o)).toString('base64url');
+    const enc = (o: object): string => Buffer.from(JSON.stringify(o)).toString('base64url');
     const signingInput = `${enc({ alg: 'ES256', kid: cfg.keyId })}.${enc({
       iss: cfg.teamId,
       iat: now,
@@ -125,10 +123,7 @@ export class ApnsService {
    * Sends a single push to one device token. Resolves (never rejects) with an
    * {@link ApnsSendResult}; `skipped` is true when APNs is not configured.
    */
-  async sendDataNotification(
-    deviceToken: string,
-    req: ApnsRequest,
-  ): Promise<ApnsSendResult> {
+  async sendDataNotification(deviceToken: string, req: ApnsRequest): Promise<ApnsSendResult> {
     const cfg = this.getConfig();
     const token = this.getProviderToken();
     if (!cfg || !token) {
@@ -183,9 +178,7 @@ export class ApnsService {
       stream.on('end', () => {
         let reason = '';
         try {
-          reason = data
-            ? ((JSON.parse(data) as { reason?: string }).reason ?? '')
-            : '';
+          reason = data ? ((JSON.parse(data) as { reason?: string }).reason ?? '') : '';
         } catch {
           /* non-JSON body */
         }

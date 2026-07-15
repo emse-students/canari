@@ -125,9 +125,7 @@
         >
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
-            {mediaPurgedByRetention
-              ? m.msg_media_expired_label()
-              : m.msg_image_load_error()}
+            {mediaPurgedByRetention ? m.msg_media_expired_label() : m.msg_image_load_error()}
           </span>
         </div>
       {:else}
@@ -184,9 +182,7 @@
         >
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs font-medium leading-snug {textMutedClass}">
-            {mediaPurgedByRetention
-              ? m.msg_video_expired_label()
-              : m.msg_video_load_error()}
+            {mediaPurgedByRetention ? m.msg_video_expired_label() : m.msg_video_load_error()}
           </span>
         </div>
       {:else}

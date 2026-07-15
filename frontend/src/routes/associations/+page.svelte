@@ -1,10 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    listAssociations,
-    listMyAssociations,
-    type Association,
-  } from '$lib/associations/api';
+  import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -50,7 +46,9 @@
   <!-- Header -->
   <div class="flex items-center justify-between gap-3 flex-wrap">
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.assoc_list_heading()}</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+        {m.assoc_list_heading()}
+      </h1>
       <p class="text-sm text-text-muted mt-1">{m.assoc_list_subtitle()}</p>
     </div>
     <div class="flex items-center gap-2">
@@ -157,7 +155,9 @@
                       ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
                       : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}
                     {#if myIds.has(asso.id)}
-                      <span class="ml-1 text-cn-dark font-semibold">&#183; {m.assoc_list_member_badge()}</span>
+                      <span class="ml-1 text-cn-dark font-semibold"
+                        >&#183; {m.assoc_list_member_badge()}</span
+                      >
                     {/if}
                   </p>
                 </div>
@@ -177,10 +177,7 @@
           class="flex w-full items-center gap-2 text-base font-bold text-text-muted hover:text-text-main transition-colors"
           aria-expanded={showArchived}
         >
-          <ChevronDown
-            size={18}
-            class="transition-transform {showArchived ? 'rotate-180' : ''}"
-          />
+          <ChevronDown size={18} class="transition-transform {showArchived ? 'rotate-180' : ''}" />
           {m.assoc_list_archived_heading({ count: archivedAssociations.length })}
         </button>
         {#if showArchived}

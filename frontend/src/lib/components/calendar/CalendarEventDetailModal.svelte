@@ -47,7 +47,12 @@
   }
 </script>
 
-<Modal {open} title={event?.title ?? m.calendar_event_fallback_title()} maxWidth="max-w-lg" onClose={onClose}>
+<Modal
+  {open}
+  title={event?.title ?? m.calendar_event_fallback_title()}
+  maxWidth="max-w-lg"
+  {onClose}
+>
   {#if event}
     <div class="space-y-4 text-sm">
       {#if !canEdit}

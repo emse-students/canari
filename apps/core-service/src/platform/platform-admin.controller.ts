@@ -19,9 +19,7 @@ export class PlatformAdminController {
   /** Updates platform settings; only supplied fields are changed. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Patch()
-  updateConfig(
-    @Body() dto: UpdatePlatformConfigDto,
-  ): Promise<PlatformConfigPublic> {
+  updateConfig(@Body() dto: UpdatePlatformConfigDto): Promise<PlatformConfigPublic> {
     return this.platformService.updateConfig(dto);
   }
 }

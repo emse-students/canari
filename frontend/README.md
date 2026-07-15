@@ -192,23 +192,17 @@ Panneau de logs et outils de développement.
 ### Import groupé
 
 ```svelte
-import {
-  LoginForm,
-  Navbar,
-  Sidebar,
-  ChatArea,
-  LogsPanel
-} from "$lib/components";
+import {(LoginForm, Navbar, Sidebar, ChatArea, LogsPanel)} from "$lib/components";
 ```
 
 ### Exemple d'utilisation
 
 ```svelte
 <script lang="ts">
-  import { LoginForm, Navbar, Sidebar, ChatArea } from "$lib/components";
+  import { LoginForm, Navbar, Sidebar, ChatArea } from '$lib/components';
 
   let isLoggedIn = $state(false);
-  let userId = $state("");
+  let userId = $state('');
   // … autres états
 </script>
 
@@ -224,19 +218,10 @@ import {
   />
 {:else}
   <div class="h-screen flex flex-col">
-    <Navbar
-      {isWsConnected}
-      onToggleLogs={() => (showLogs = !showLogs)}
-      onLogout={logout}
-    />
+    <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />
 
     <main class="flex flex-1">
-      <Sidebar
-        {conversations}
-        {selectedContact}
-        onSelectConversation={selectConversation}
-        …
-      />
+      <Sidebar {conversations} {selectedContact} onSelectConversation={selectConversation} … />
 
       <ChatArea
         conversation={currentConvo}

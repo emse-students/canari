@@ -52,7 +52,9 @@
 <svelte:head><title>{m.community_join_page_title()}</title></svelte:head>
 
 <div class="px-4 py-10 max-w-md mx-auto">
-  <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 shadow-sm text-center space-y-5">
+  <div
+    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 shadow-sm text-center space-y-5"
+  >
     {#if loading}
       <div class="flex justify-center py-6">
         <Loader2 size={28} class="animate-spin text-cn-yellow" />
@@ -92,7 +94,9 @@
       >
         {joining ? m.common_connecting_label() : m.community_join_btn()}
       </button>
-      <a href="/communities" class="block text-xs text-text-muted hover:text-text-main">{m.common_cancel_button()}</a>
+      <a href="/communities" class="block text-xs text-text-muted hover:text-text-main"
+        >{m.common_cancel_button()}</a
+      >
     {/if}
   </div>
 </div>

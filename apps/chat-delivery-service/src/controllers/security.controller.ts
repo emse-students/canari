@@ -21,10 +21,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { MessagingService } from '../services/messaging.service';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import {
-  sanitizeQueryValue,
-  sanitizeOptionalQueryValue,
-} from '../utils/sanitize';
+import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
 import {
   assertSafeExternalUrl,
   fetchYouTubeOEmbed,
@@ -45,7 +42,7 @@ export class SecurityController {
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
-    private readonly messagingService: MessagingService,
+    private readonly messagingService: MessagingService
   ) {}
 
   /**
@@ -56,17 +53,12 @@ export class SecurityController {
   private assertSelfOrGlobalAdmin(
     targetUserId: string,
     headerUserId?: string,
-    headerGlobalAdmin?: string,
+    headerGlobalAdmin?: string
   ): void {
     if (headerGlobalAdmin === 'true') return;
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    if (
-      !caller ||
-      caller.trim().toLowerCase() !== targetUserId.trim().toLowerCase()
-    ) {
-      throw new ForbiddenException(
-        'Operation restricted to the authenticated user',
-      );
+    if (!caller || caller.trim().toLowerCase() !== targetUserId.trim().toLowerCase()) {
+      throw new ForbiddenException('Operation restricted to the authenticated user');
     }
   }
 
@@ -86,7 +78,7 @@ export class SecurityController {
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
@@ -118,9 +110,7 @@ export class SecurityController {
     // Constant-time comparison to prevent timing-based inference.
     const stored = Buffer.from(doc.verifier, 'hex');
     const incoming = Buffer.from(safeVerifier, 'hex');
-    const match =
-      stored.length === incoming.length &&
-      crypto.timingSafeEqual(stored, incoming);
+    const match = stored.length === incoming.length && crypto.timingSafeEqual(stored, incoming);
 
     let resetRequired = false;
     if (match && safeDeviceId) {
@@ -132,9 +122,7 @@ export class SecurityController {
         // same physical device can register again as a fresh device.
         await this.revokedDeviceRepo.delete(revoked.id);
         resetRequired = true;
-        this.logger.log(
-          `[PIN_VERIFIER] one-shot reset required for ${safeUserId}:${safeDeviceId}`,
-        );
+        this.logger.log(`[PIN_VERIFIER] one-shot reset required for ${safeUserId}:${safeDeviceId}`);
       }
     }
 
@@ -153,7 +141,7 @@ export class SecurityController {
   async getPinStatus(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<{ registered: boolean }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
@@ -181,17 +169,14 @@ export class SecurityController {
   async changePin(
     @Body() body: { userId: string; oldVerifier: string; newVerifier: string },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<{ ok: boolean }> {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
 
     const oldVerifier = sanitizeQueryValue(body.oldVerifier, 'oldVerifier');
     const newVerifier = sanitizeQueryValue(body.newVerifier, 'newVerifier');
-    if (
-      !/^[0-9a-f]{64}$/.test(oldVerifier) ||
-      !/^[0-9a-f]{64}$/.test(newVerifier)
-    ) {
+    if (!/^[0-9a-f]{64}$/.test(oldVerifier) || !/^[0-9a-f]{64}$/.test(newVerifier)) {
       throw new BadRequestException('verifier format invalid');
     }
 
@@ -204,9 +189,7 @@ export class SecurityController {
 
     const stored = Buffer.from(doc.verifier, 'hex');
     const incoming = Buffer.from(oldVerifier, 'hex');
-    const matches =
-      stored.length === incoming.length &&
-      crypto.timingSafeEqual(stored, incoming);
+    const matches = stored.length === incoming.length && crypto.timingSafeEqual(stored, incoming);
     if (!matches) {
       throw new ForbiddenException('current PIN is incorrect');
     }
@@ -242,7 +225,7 @@ export class SecurityController {
   async resetPin(
     @Body() body: { userId: string },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<{ ok: boolean; devicesPurged: number }> {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
@@ -265,7 +248,7 @@ export class SecurityController {
     ]);
 
     this.logger.log(
-      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} (GroupMember rows kept for re-add)`,
+      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} (GroupMember rows kept for re-add)`
     );
 
     return { ok: true, devicesPurged };
@@ -317,9 +300,7 @@ export class SecurityController {
           const location = response.headers.get('location');
           if (!location) break;
           // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
-          currentUrl = await assertSafeExternalUrl(
-            new URL(location, currentUrl.href).toString(),
-          );
+          currentUrl = await assertSafeExternalUrl(new URL(location, currentUrl.href).toString());
           redirectsCount++;
         } else {
           break;
@@ -335,10 +316,7 @@ export class SecurityController {
         throw new BadRequestException('URL is not an HTML page');
       }
 
-      const contentLength = Number.parseInt(
-        response.headers.get('content-length') || '0',
-        10,
-      );
+      const contentLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
       if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
         throw new BadRequestException('Page is too large to preview');
       }
@@ -362,16 +340,17 @@ export class SecurityController {
   @Get('mls/gallery-cover/:albumId')
   async getGalleryCover(
     @Param('albumId') albumId: string,
-    @Res() res: ExpressResponse,
+    @Res() res: ExpressResponse
   ): Promise<void> {
     if (!albumId || !/^[0-9a-f-]{36}$/i.test(albumId)) {
       res.status(400).end('Invalid album ID');
       return;
     }
 
-    const galleryBaseUrl = (
-      process.env.MIGALLERY_API_URL || 'https://gallery.mitv.fr'
-    ).replace(/\/$/, '');
+    const galleryBaseUrl = (process.env.MIGALLERY_API_URL || 'https://gallery.mitv.fr').replace(
+      /\/$/,
+      ''
+    );
     const apiKey = process.env.MIGALLERY_API_KEY || '';
 
     if (!apiKey) {
@@ -380,16 +359,13 @@ export class SecurityController {
     }
 
     try {
-      const coverRes = await fetch(
-        `${galleryBaseUrl}/api/albums/${albumId}/og-cover`,
-        {
-          headers: {
-            'user-agent': 'CanariLinkPreview/1.0',
-            'x-api-key': apiKey,
-          },
-          signal: AbortSignal.timeout(6000),
+      const coverRes = await fetch(`${galleryBaseUrl}/api/albums/${albumId}/og-cover`, {
+        headers: {
+          'user-agent': 'CanariLinkPreview/1.0',
+          'x-api-key': apiKey,
         },
-      );
+        signal: AbortSignal.timeout(6000),
+      });
 
       if (!coverRes.ok) {
         res.status(coverRes.status).end();
@@ -404,9 +380,7 @@ export class SecurityController {
       res.setHeader('Content-Length', buffer.length);
       res.end(buffer);
     } catch {
-      this.logger.warn(
-        `[gallery-cover] Failed to fetch cover for album ${albumId}`,
-      );
+      this.logger.warn(`[gallery-cover] Failed to fetch cover for album ${albumId}`);
       res.status(502).end();
     }
   }

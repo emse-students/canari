@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listAssociationForms, type Association, type AssociationForm } from '$lib/associations/api';
+  import {
+    listAssociationForms,
+    type Association,
+    type AssociationForm,
+  } from '$lib/associations/api';
   import {
     listPendingCashSubmissions,
     validateCashSubmission,
@@ -131,7 +135,9 @@
 
   {#if formsLoading}
     <div class="flex justify-center py-8">
-      <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
   {:else if forms.length === 0}
     <p class="text-sm text-text-muted text-center py-8">{m.asso_forms_no_forms()}</p>
@@ -146,7 +152,9 @@
                 <p class="text-xs text-text-muted mt-0.5 line-clamp-2">{form.description}</p>
               {/if}
               <p class="text-xs text-text-muted mt-1 flex items-center gap-1.5 flex-wrap">
-                {form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : m.asso_forms_price_free()}
+                {form.basePrice > 0
+                  ? `${(form.basePrice / 100).toFixed(2)} €`
+                  : m.asso_forms_price_free()}
                 {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
                 {#if form.basePrice > 0 && !stripePaymentsReady}
                   <span

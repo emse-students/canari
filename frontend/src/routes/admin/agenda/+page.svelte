@@ -104,7 +104,13 @@
   }
 
   async function remove(ev: AssociationCalendarFeedEvent) {
-    if (!await showConfirm(m.admin_agenda_delete_confirm_message({ title: ev.title }), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.admin_agenda_delete_confirm_message({ title: ev.title }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     actingId = ev.id;
     try {
       await deleteAssociationCalendarEvent(ev.associationId, ev.id);
@@ -191,7 +197,9 @@
             </button>
             <p class="text-xs text-text-muted">{formatRange(ev)}</p>
             {#if ev.description?.trim()}
-              <p class="text-sm text-text-muted whitespace-pre-wrap line-clamp-2">{ev.description}</p>
+              <p class="text-sm text-text-muted whitespace-pre-wrap line-clamp-2">
+                {ev.description}
+              </p>
             {/if}
           </div>
           <div class="flex flex-wrap gap-2 shrink-0">
@@ -253,7 +261,9 @@
     aria-modal="true"
   >
     <div class="w-full max-w-md rounded-2xl bg-white dark:bg-cn-surface shadow-xl p-6 space-y-4">
-      <h3 class="text-base font-bold text-text-main">{m.admin_agenda_reject_modal_title({ title: rejectTarget.title })}</h3>
+      <h3 class="text-base font-bold text-text-main">
+        {m.admin_agenda_reject_modal_title({ title: rejectTarget.title })}
+      </h3>
       <p class="text-sm text-text-muted">
         {m.admin_agenda_reject_modal_desc()}
       </p>
@@ -285,7 +295,9 @@
           class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-4 py-2 text-sm font-bold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
         >
           <X size={14} />
-          {rejecting ? m.admin_agenda_reject_confirm_progress() : m.admin_agenda_reject_confirm_button()}
+          {rejecting
+            ? m.admin_agenda_reject_confirm_progress()
+            : m.admin_agenda_reject_confirm_button()}
         </button>
       </div>
     </div>

@@ -55,7 +55,7 @@ export class InternalController {
     @InjectRepository(RevokedDevice)
     private readonly revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT')
-    private readonly redis: Redis,
+    private readonly redis: Redis
   ) {}
 
   @Post('push/notify')
@@ -67,7 +67,7 @@ export class InternalController {
       title: string;
       body: string;
       data?: Record<string, string>;
-    },
+    }
   ) {
     // Constant-time comparison to prevent timing attacks on the shared secret.
     const expected = Buffer.from(this.secret);
@@ -105,10 +105,7 @@ export class InternalController {
         sent++;
       } catch (e) {
         failed++;
-        const code =
-          typeof e === 'object' && e && 'code' in e
-            ? String((e as any).code)
-            : '';
+        const code = typeof e === 'object' && e && 'code' in e ? String((e as any).code) : '';
         if (
           code === 'messaging/invalid-registration-token' ||
           code === 'messaging/registration-token-not-registered'
@@ -116,14 +113,12 @@ export class InternalController {
           await this.pushTokenRepo.delete({ id: pt.id }).catch(() => {});
         }
         this.logger.warn(
-          `[INTERNAL_PUSH] Failed user=${userId} device=${pt.deviceId}: ${String(e)}`,
+          `[INTERNAL_PUSH] Failed user=${userId} device=${pt.deviceId}: ${String(e)}`
         );
       }
     }
 
-    this.logger.log(
-      `[INTERNAL_PUSH] user=${userId} sent=${sent} failed=${failed}`,
-    );
+    this.logger.log(`[INTERNAL_PUSH] user=${userId} sent=${sent} failed=${failed}`);
     return { sent, failed };
   }
 
@@ -141,7 +136,7 @@ export class InternalController {
   @Delete('users/:userId')
   async deleteUserData(
     @Param('userId') userId: string,
-    @Headers('x-internal-secret') headerSecret: string,
+    @Headers('x-internal-secret') headerSecret: string
   ) {
     const expected = Buffer.from(this.secret);
     const received = Buffer.from(headerSecret ?? '');
@@ -179,7 +174,7 @@ export class InternalController {
             this.redis.del(`history:${g.id}`),
           ]);
           this.logger.log(`[INTERNAL_DELETE] DM deleted groupId=${g.id}`);
-        }),
+        })
       );
 
       // ── Multi-member groups: remove user from Redis membership sets ───────
@@ -193,10 +188,8 @@ export class InternalController {
             const members = deviceIds.map((d) => `${userId}:${d}`);
             await this.redis.srem(`group:members:${g.id}`, ...members);
           }
-          this.logger.log(
-            `[INTERNAL_DELETE] removed from group groupId=${g.id}`,
-          );
-        }),
+          this.logger.log(`[INTERNAL_DELETE] removed from group groupId=${g.id}`);
+        })
       );
     }
 

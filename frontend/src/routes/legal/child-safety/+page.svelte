@@ -77,9 +77,7 @@
           L'application n'est pas destinée aux mineurs. L'accès est conditionné à l'appartenance à
           la communauté EMSE, dont les membres sont majoritairement des adultes. Tout accès non
           autorisé est prohibé par les
-          <a href="/legal/cgu" class="text-cn-yellow hover:underline"
-            >{m.legal_cgu_link()}</a
-          >.
+          <a href="/legal/cgu" class="text-cn-yellow hover:underline">{m.legal_cgu_link()}</a>.
         </p>
       </section>
 

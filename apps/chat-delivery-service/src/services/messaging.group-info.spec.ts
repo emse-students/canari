@@ -80,9 +80,9 @@ describe('MessagingService - group-info (external-join base)', () => {
   describe('storeGroupInfo (membership-gated, monotonic)', () => {
     it('forbids a non-member', async () => {
       groupMemberRepo.findOne.mockResolvedValue(null);
-      await expect(
-        service.storeGroupInfo('g1', 'stranger', 'Z2k=', 5),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.storeGroupInfo('g1', 'stranger', 'Z2k=', 5)).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
     });
 
     it('inserts when no GroupInfo exists yet', async () => {
@@ -118,7 +118,7 @@ describe('MessagingService - group-info (external-join base)', () => {
 
       expect(res.stored).toBe(true);
       expect(updateBuilder.set).toHaveBeenCalledWith(
-        expect.objectContaining({ groupInfo: 'bmV3', baseEpoch: 6 }),
+        expect.objectContaining({ groupInfo: 'bmV3', baseEpoch: 6 })
       );
     });
   });
@@ -126,9 +126,9 @@ describe('MessagingService - group-info (external-join base)', () => {
   describe('getGroupInfo (membership-gated)', () => {
     it('forbids a non-member', async () => {
       groupMemberRepo.findOne.mockResolvedValue(null);
-      await expect(
-        service.getGroupInfo('g1', 'stranger'),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.getGroupInfo('g1', 'stranger')).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
     });
 
     it('returns null when no GroupInfo is stored', async () => {

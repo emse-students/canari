@@ -68,7 +68,7 @@ plus tard a la **doc utilisateur en francais** (utilisateurs, responsables assoc
 - Frontend : `cd frontend && bun run check` -> **0 erreur, 0 warning**, puis `bun run test` (Vitest).
 - NestJS : `npm test` dans le service touche. Rust : `cargo test` + `cargo clippy`.
 - **Avant push** : `rm -rf apps/*/dist` (sinon le hook pre-push rejoue les specs compilees).
-- Le hook pre-commit lance `eslint --fix` + `prettier` et re-stage tout le frontend dirty : normal.
+- Le hook pre-commit lance `oxlint --fix` + `oxvelte lint --fix` + `oxfmt` et re-stage tout le frontend dirty : normal.
 - Commit + push **apres chaque sous-section**. Toujours sur `main`. Pull avant de commencer.
 - **Surveiller les commits externes entre sessions** : verifier qu'ils suivent le standard.
 

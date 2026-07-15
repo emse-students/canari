@@ -121,7 +121,9 @@
         </div>
         <div>
           <h2 class="text-base font-extrabold text-text-main">{m.payment_modal_title()}</h2>
-          <p class="text-xs text-text-muted">{m.payment_modal_amount_label({ amount: formatted })}</p>
+          <p class="text-xs text-text-muted">
+            {m.payment_modal_amount_label({ amount: formatted })}
+          </p>
         </div>
       </div>
       <button
@@ -167,7 +169,9 @@
                 <p class="text-sm font-bold text-text-main">
                   {brandLabel(pm.brand)} •••• {pm.last4}
                 </p>
-                <p class="text-xs text-text-muted">{m.payment_modal_expires({ month: pm.expMonth, year: pm.expYear })}</p>
+                <p class="text-xs text-text-muted">
+                  {m.payment_modal_expires({ month: pm.expMonth, year: pm.expYear })}
+                </p>
               </div>
             </div>
             {#if selectedMethodId === pm.id}

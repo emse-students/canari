@@ -256,7 +256,7 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
   const classified = classifyComposerLines(text);
   let prevKind: ComposerLineKind | null = null;
 
-  for (let i = 0; i < classified.length; ) {
+  for (let i = 0; i < classified.length;) {
     const { kind, line } = classified[i];
 
     if (prevKind !== null && !shouldOmitComposerBreak(prevKind, kind)) {

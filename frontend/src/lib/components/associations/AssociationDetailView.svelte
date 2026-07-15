@@ -47,7 +47,9 @@
 
   /** Base path for the listing page this entity belongs to. */
   const basePath = $derived(kind === 'list' ? '/lists' : '/associations');
-  const backLabel = $derived(kind === 'list' ? m.asso_back_to_lists() : m.asso_back_to_associations());
+  const backLabel = $derived(
+    kind === 'list' ? m.asso_back_to_lists() : m.asso_back_to_associations()
+  );
 
   let asso = $state<Association | null>(null);
   let members = $state<AssociationMember[]>([]);
@@ -193,7 +195,8 @@
           <p class="text-sm text-text-muted">
             {#if kind === 'list' && asso.parentName}<span class="font-semibold text-text-main"
                 >{asso.parentName}</span
-              > · {/if}@{asso.slug} · {asso.memberCount ?? members.length} membre{(asso.memberCount ??
+              > ·
+            {/if}@{asso.slug} · {asso.memberCount ?? members.length} membre{(asso.memberCount ??
               members.length) !== 1
               ? 's'
               : ''}
@@ -338,7 +341,9 @@
         class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
       >
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-bold text-text-main tracking-tight">{m.common_members_label()}</h2>
+          <h2 class="text-lg font-bold text-text-main tracking-tight">
+            {m.common_members_label()}
+          </h2>
           {#if members.length > 0}
             <button
               type="button"

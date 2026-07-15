@@ -334,13 +334,25 @@
   }
 
   async function handleDeleteChannel() {
-    if (!await showConfirm(m.chat_delete_channel_confirm({ channel: selectedChannel?.name ?? '' }), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.chat_delete_channel_confirm({ channel: selectedChannel?.name ?? '' }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     onDeleteChannel?.(selectedChannelId);
     onClose();
   }
 
   async function handleLeaveChannel() {
-    if (!await showConfirm(m.chat_leave_channel_confirm({ channel: selectedChannel?.name ?? '' }), { danger: true, confirmLabel: m.common_leave_button() })) return;
+    if (
+      !(await showConfirm(m.chat_leave_channel_confirm({ channel: selectedChannel?.name ?? '' }), {
+        danger: true,
+        confirmLabel: m.common_leave_button(),
+      }))
+    )
+      return;
     onLeaveChannel?.(selectedChannelId);
     onClose();
   }
@@ -356,7 +368,9 @@
         class="hidden md:flex text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 items-center gap-2"
       >
         <span class="text-amber-500 text-lg leading-none">{m.chat_channel_prefix()}</span>
-        <span class="truncate">{selectedChannel ? selectedChannel.name : m.chat_channel_label()}</span>
+        <span class="truncate"
+          >{selectedChannel ? selectedChannel.name : m.chat_channel_label()}</span
+        >
       </h3>
 
       <button
@@ -487,7 +501,9 @@
           <div class="space-y-3 pt-2">
             <div class="flex items-center gap-2">
               <Bell size={16} class="text-amber-500" strokeWidth={2.5} />
-              <h3 class="text-sm font-bold text-text-main">{m.chat_channel_notifications_label()}</h3>
+              <h3 class="text-sm font-bold text-text-main">
+                {m.chat_channel_notifications_label()}
+              </h3>
             </div>
             <p class="text-xs text-text-muted">{m.chat_channel_notifications_description()}</p>
             <div class="grid grid-cols-3 gap-2" aria-busy={notifLoading || notifSaving}>
@@ -559,7 +575,9 @@
       {#if activeTab === 'permissions'}
         <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">{m.chat_channel_access_title()}</h2>
+            <h2 class="text-xl font-extrabold text-text-main mb-1">
+              {m.chat_channel_access_title()}
+            </h2>
             <p class="text-sm font-medium text-text-muted leading-relaxed">
               {m.chat_channel_access_description()}
             </p>
@@ -567,7 +585,8 @@
 
           {#if accessLoading}
             <div class="flex items-center gap-2 text-sm text-text-muted">
-              <Loader size={16} class="animate-spin" /> {m.common_loading_label()}
+              <Loader size={16} class="animate-spin" />
+              {m.common_loading_label()}
             </div>
           {:else if accessError}
             <div
@@ -587,7 +606,9 @@
                       <Lock size={18} strokeWidth={2.5} />
                     </div>
                     <div>
-                      <p class="font-bold text-text-main text-sm">{m.chat_channel_private_label()}</p>
+                      <p class="font-bold text-text-main text-sm">
+                        {m.chat_channel_private_label()}
+                      </p>
                       <p class="text-xs text-text-muted">
                         {m.chat_channel_private_description()}
                       </p>
@@ -597,7 +618,9 @@
                       <Globe size={18} strokeWidth={2.5} />
                     </div>
                     <div>
-                      <p class="font-bold text-text-main text-sm">{m.chat_channel_public_label()}</p>
+                      <p class="font-bold text-text-main text-sm">
+                        {m.chat_channel_public_label()}
+                      </p>
                       <p class="text-xs text-text-muted">
                         {m.chat_channel_public_description()}
                       </p>
@@ -630,7 +653,8 @@
                   <p
                     class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                   >
-                    <Users size={13} /> {m.chat_allowed_members_label()}
+                    <Users size={13} />
+                    {m.chat_allowed_members_label()}
                   </p>
 
                   <!-- Existing allowed users -->
@@ -669,7 +693,8 @@
                     <p
                       class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                     >
-                      <UserPlus size={13} /> {m.chat_add_member_label()}
+                      <UserPlus size={13} />
+                      {m.chat_add_member_label()}
                     </p>
                     <div class="flex gap-2 items-start">
                       <div class="flex-1">
@@ -685,7 +710,8 @@
                         disabled={!addingUserId.trim()}
                         class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
                       >
-                        <Check size={14} strokeWidth={3} /> {m.common_add_button()}
+                        <Check size={14} strokeWidth={3} />
+                        {m.common_add_button()}
                       </button>
                     </div>
                   </div>
@@ -710,7 +736,8 @@
                 </button>
                 {#if accessSaved}
                   <span class="text-xs font-medium text-emerald-600 flex items-center gap-1">
-                    <Check size={12} strokeWidth={3} /> {m.common_saved_label()}
+                    <Check size={12} strokeWidth={3} />
+                    {m.common_saved_label()}
                   </span>
                 {/if}
               </div>
@@ -723,7 +750,9 @@
       {#if activeTab === 'invites'}
         <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">{m.chat_channel_invitations_roles_title()}</h2>
+            <h2 class="text-xl font-extrabold text-text-main mb-1">
+              {m.chat_channel_invitations_roles_title()}
+            </h2>
             <p class="text-sm font-medium text-text-muted leading-relaxed">
               {m.chat_channel_invitations_description()}
             </p>
@@ -782,7 +811,8 @@
                 class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                 for="invite-autocomplete"
               >
-                <Users size={14} /> {m.chat_search_user_label()}
+                <Users size={14} />
+                {m.chat_search_user_label()}
               </label>
               <UserAutocomplete
                 value={permissionMembersId}
@@ -798,7 +828,8 @@
                 class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                 for="role-select"
               >
-                <Shield size={14} /> {m.chat_assign_role_label()}
+                <Shield size={14} />
+                {m.chat_assign_role_label()}
               </label>
               <select
                 id="role-select"
@@ -837,7 +868,8 @@
                 disabled={!permissionMembersId.trim()}
                 class="flex-1 rounded-xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <Shield size={18} strokeWidth={2.5} /> {m.common_update_button()}
+                <Shield size={18} strokeWidth={2.5} />
+                {m.common_update_button()}
               </button>
             </div>
             {#if inviteError}

@@ -194,7 +194,6 @@
     {/if}
   </div>
 
-
   <!-- Actions (calls, members, search, settings) -->
   <div class="flex items-center gap-1 shrink-0">
     {#if showCallButtons}

@@ -19,9 +19,7 @@ export function internalSocialRequestConfig(): Pick<
 > {
   const secret = process.env.INTERNAL_SECRET?.trim() ?? '';
   if (!secret) {
-    logger.warn(
-      'INTERNAL_SECRET is not set - internal social-service calls will fail',
-    );
+    logger.warn('INTERNAL_SECRET is not set - internal social-service calls will fail');
   }
   return {
     maxRedirects: 0,
@@ -32,7 +30,7 @@ export function internalSocialRequestConfig(): Pick<
 /** Builds the path for an internal form submission API call. */
 export function internalSubmissionPath(
   submissionId: string,
-  suffix?: 'mark-paid' | 'cancel-pending',
+  suffix?: 'mark-paid' | 'cancel-pending'
 ): string {
   const base = `/api/internal/forms/submissions/${encodeURIComponent(submissionId)}`;
   return suffix ? `${base}/${suffix}` : base;

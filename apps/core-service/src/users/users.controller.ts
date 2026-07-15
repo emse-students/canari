@@ -18,12 +18,7 @@ import {
 import type { Response } from 'express';
 import { UsersService } from './users.service';
 import { AvatarService } from './avatar.service';
-import {
-  CreateUserDto,
-  UpdateUserDto,
-  UpdateNotesDto,
-  DirectoryQueryDto,
-} from './dto/user.dto';
+import { CreateUserDto, UpdateUserDto, UpdateNotesDto, DirectoryQueryDto } from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 
@@ -41,7 +36,7 @@ interface RequestWithUser {
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly avatarService: AvatarService,
+    private readonly avatarService: AvatarService
   ) {}
 
   /**
@@ -61,10 +56,7 @@ export class UsersController {
    */
   @UseGuards(NginxAuthGuard)
   @Get('directory')
-  directory(
-    @Query() query: DirectoryQueryDto,
-    @Headers('x-user-id') userId: string,
-  ) {
+  directory(@Query() query: DirectoryQueryDto, @Headers('x-user-id') userId: string) {
     return this.usersService.directory(query, userId);
   }
 
@@ -101,10 +93,7 @@ export class UsersController {
   /** Updates the caller's private personal notepad. */
   @UseGuards(NginxAuthGuard)
   @Put('me/notes')
-  async setMyNotes(
-    @Headers('x-user-id') userId: string,
-    @Body() dto: UpdateNotesDto,
-  ) {
+  async setMyNotes(@Headers('x-user-id') userId: string, @Body() dto: UpdateNotesDto) {
     await this.usersService.setNotes(userId, dto.notes ?? '');
     return { ok: true };
   }
@@ -112,10 +101,7 @@ export class UsersController {
   /** Returns the public profile of the requested user, resolving "me" to the caller. */
   @UseGuards(NginxAuthGuard)
   @Get(':id')
-  async findOne(
-    @Param('id') id: string,
-    @Headers('x-user-id') requesterId: string,
-  ) {
+  async findOne(@Param('id') id: string, @Headers('x-user-id') requesterId: string) {
     if (id === 'me') {
       id = requesterId;
     }
@@ -138,10 +124,7 @@ export class UsersController {
   /** Updates the authenticated user's profile and returns the updated public DTO. */
   @UseGuards(NginxAuthGuard)
   @Patch('me')
-  async updateMe(
-    @Headers('x-user-id') userId: string,
-    @Body() updateUserDto: UpdateUserDto,
-  ) {
+  async updateMe(@Headers('x-user-id') userId: string, @Body() updateUserDto: UpdateUserDto) {
     const user = await this.usersService.update(userId, updateUserDto);
     return this.usersService.toPublicDto(user);
   }
@@ -164,13 +147,12 @@ export class UsersController {
   async setAdmin(
     @Param('id') targetId: string,
     @Headers('x-user-id') callerId: string,
-    @Body() body: { admin: boolean },
+    @Body() body: { admin: boolean }
   ) {
-    const isSelf =
-      targetId.trim().toLowerCase() === (callerId ?? '').trim().toLowerCase();
+    const isSelf = targetId.trim().toLowerCase() === (callerId ?? '').trim().toLowerCase();
     if (body.admin === false && isSelf) {
       throw new ForbiddenException(
-        'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.',
+        'Un administrateur ne peut pas retirer ses propres droits ; un autre administrateur doit le faire.'
       );
     }
     await this.usersService.setAdmin(targetId, body.admin);

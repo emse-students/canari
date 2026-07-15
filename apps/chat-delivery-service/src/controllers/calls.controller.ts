@@ -28,10 +28,7 @@ export class CallsController {
   @UseGuards(HeaderAuthGuard)
   @Post('calls/initiate')
   @HttpCode(200)
-  async initiateCall(
-    @Body() body: { groupId: string },
-    @Headers('x-user-id') userId?: string,
-  ) {
+  async initiateCall(@Body() body: { groupId: string }, @Headers('x-user-id') userId?: string) {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeGroupId = sanitizeQueryValue(body?.groupId, 'groupId');
     return this.callsService.initiateCall(userId, safeGroupId);
@@ -47,7 +44,7 @@ export class CallsController {
   async getRoomToken(
     @Query('groupId') groupId: string,
     @Query('roomId') roomId: string,
-    @Headers('x-user-id') userId?: string,
+    @Headers('x-user-id') userId?: string
   ) {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
@@ -64,7 +61,7 @@ export class CallsController {
   async getIceServers(
     @Query('groupId') groupId: string,
     @Query('callId') callId: string,
-    @Headers('x-user-id') userId?: string,
+    @Headers('x-user-id') userId?: string
   ) {
     if (!userId) {
       throw new BadRequestException('Missing X-User-Id header');
@@ -74,7 +71,7 @@ export class CallsController {
     const safeCallId = sanitizeQueryValue(callId, 'callId');
 
     this.logger.debug(
-      `[ICE] ice-servers request user=${userId} group=${safeGroupId} call=${safeCallId}`,
+      `[ICE] ice-servers request user=${userId} group=${safeGroupId} call=${safeCallId}`
     );
 
     return this.callsService.getIceServers(userId, safeGroupId, safeCallId);
@@ -94,18 +91,14 @@ export class CallsController {
       callId?: string;
       groupId?: string;
     },
-    @Headers('x-user-id') userId?: string,
+    @Headers('x-user-id') userId?: string
   ) {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const deviceId = sanitizeQueryValue(body?.deviceId, 'deviceId');
     return this.callsService.reportCallPresence(userId, deviceId, {
       active: !!body?.active,
-      callId: body?.callId
-        ? sanitizeQueryValue(body.callId, 'callId')
-        : undefined,
-      groupId: body?.groupId
-        ? sanitizeQueryValue(body.groupId, 'groupId')
-        : undefined,
+      callId: body?.callId ? sanitizeQueryValue(body.callId, 'callId') : undefined,
+      groupId: body?.groupId ? sanitizeQueryValue(body.groupId, 'groupId') : undefined,
     });
   }
 
@@ -116,7 +109,7 @@ export class CallsController {
   @Get('calls/sibling-status')
   async getSiblingStatus(
     @Query('deviceId') deviceId: string,
-    @Headers('x-user-id') userId?: string,
+    @Headers('x-user-id') userId?: string
   ) {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');

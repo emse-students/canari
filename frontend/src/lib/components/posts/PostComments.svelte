@@ -385,7 +385,10 @@
             {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
             {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0 {isLong && !isExpanded ? 'line-clamp-5' : ''}"
+              class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0 {isLong &&
+              !isExpanded
+                ? 'line-clamp-5'
+                : ''}"
             >
               <SvelteMarkdown
                 source={preprocessPostMarkdown(comment.text)}
@@ -562,7 +565,8 @@
           class="flex items-center justify-between px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-700 dark:text-amber-400 text-[0.7rem] font-bold ml-10 animate-in fade-in slide-in-from-bottom-1"
         >
           <span class="flex items-center gap-1.5"
-            ><CornerDownRight size={14} /> {m.post_replying_to_label({ name: replyingToName })}</span
+            ><CornerDownRight size={14} />
+            {m.post_replying_to_label({ name: replyingToName })}</span
           >
           <button
             onclick={cancelReply}
@@ -615,7 +619,8 @@
           {/if}
         </div>
         {#if uploadingMedia}
-          <span class="text-[0.7rem] text-text-muted animate-pulse">{m.common_loading_label()}</span>
+          <span class="text-[0.7rem] text-text-muted animate-pulse">{m.common_loading_label()}</span
+          >
         {/if}
       </div>
     {/if}
@@ -663,4 +668,8 @@
   </div>
 {/snippet}
 
-<GifPickerModal open={showGifPicker} onClose={() => (showGifPicker = false)} onSelect={handleGifSelected} />
+<GifPickerModal
+  open={showGifPicker}
+  onClose={() => (showGifPicker = false)}
+  onSelect={handleGifSelected}
+/>

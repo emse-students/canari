@@ -164,7 +164,9 @@
       <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
-      <span class="text-[0.95rem] font-extrabold text-text-main tracking-wide">{m.post_conversations_panel_title()}</span>
+      <span class="text-[0.95rem] font-extrabold text-text-main tracking-wide"
+        >{m.post_conversations_panel_title()}</span
+      >
     </div>
     <a
       href="/chat"

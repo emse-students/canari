@@ -78,7 +78,7 @@ Docs de reference (vivantes, garder) :
 ### Prerequis
 
 - Docker + Docker Compose
-- Node.js 24+, [Bun](https://bun.sh/), [Rust stable](https://rustup.rs/), `cargo install wasm-pack`
+- Node.js 24+, [Bun](https://bun.sh/), [Rust >= 1.93](https://rustup.rs/) (`rust-toolchain.toml`), [oxvelte](https://github.com/tolgaouz/oxvelte) (`make install-oxvelte`), `cargo install wasm-pack`
 - `make`
 
 ### Lancer l'environnement
@@ -197,7 +197,7 @@ canari/
 
 Chaque push sur `main` declenche automatiquement :
 
-1. **CI** - `cargo clippy`, `cargo test`, `eslint`, `svelte-check`, `vitest`
+1. **CI** - `cargo clippy`, `cargo test`, `oxlint`, `oxvelte`, `svelte-check`, `vitest`
 2. **Build** - WASM + SvelteKit + 6 images Docker -> `ghcr.io/emse-students/canari/*`
 3. **Deploiement** - Pull des images sur le serveur via runner self-hosted, restart Docker Compose
 
@@ -210,7 +210,7 @@ Pour configurer un nouveau serveur, voir [`infrastructure/MIGRATION.md`](infrast
 
 ```bash
 # Travailler directement sur main (pas de branches de features)
-# Hooks Husky : eslint + prettier au commit, svelte-check + cargo clippy au push
+# Hooks Husky : oxlint + oxvelte + oxfmt au commit, svelte-check + cargo clippy au push
 git commit -m "feat: description"   # conventional commits
 git push
 ```

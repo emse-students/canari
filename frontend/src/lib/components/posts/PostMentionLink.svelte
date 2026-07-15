@@ -1,7 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import AppLink from '$lib/components/shared/AppLink.svelte';
-  import { isMentionUserId, MENTION_HREF_PREFIX, normalizeMentionUserId } from '$lib/utils/mentions';
+  import {
+    isMentionUserId,
+    MENTION_HREF_PREFIX,
+    normalizeMentionUserId,
+  } from '$lib/utils/mentions';
   import { isInAppHref } from '$lib/utils/publicAppUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { Snippet } from 'svelte';

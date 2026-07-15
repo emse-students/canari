@@ -182,7 +182,11 @@
     </div>
     <div class="flex items-center gap-2">
       {#if lastUpdated}
-        <span class="text-xs text-text-muted">{m.admin_status_last_updated_label({ time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}</span>
+        <span class="text-xs text-text-muted"
+          >{m.admin_status_last_updated_label({
+            time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
+          })}</span
+        >
       {/if}
       <button
         onclick={() => (showLegend = !showLegend)}
@@ -231,7 +235,10 @@
         </div>
         <div>
           <p class="mb-1 font-medium text-text-main">
-            <TriangleAlert size={13} class="mr-1 inline text-cn-yellow" />{m.admin_status_legend_anomalies_label()}
+            <TriangleAlert
+              size={13}
+              class="mr-1 inline text-cn-yellow"
+            />{m.admin_status_legend_anomalies_label()}
           </p>
           <p class="text-text-muted">
             <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->

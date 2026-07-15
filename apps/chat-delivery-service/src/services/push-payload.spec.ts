@@ -67,26 +67,26 @@ describe('buildApnsRequest', () => {
   it('falls back to the group name then "Canari" for the alert title', () => {
     const noSender = buildApnsRequest(
       { ...baseInput, senderName: '' },
-      buildPushDataFields({ ...baseInput, senderName: '' }),
+      buildPushDataFields({ ...baseInput, senderName: '' })
     );
     expect(
       (
         (noSender.payload.aps as Record<string, unknown>).alert as {
           title: string;
         }
-      ).title,
+      ).title
     ).toBe('Asso BDE');
 
     const anonymous = buildApnsRequest(
       { ...baseInput, senderName: '', groupName: '' },
-      buildPushDataFields({ ...baseInput, senderName: '', groupName: '' }),
+      buildPushDataFields({ ...baseInput, senderName: '', groupName: '' })
     );
     expect(
       (
         (anonymous.payload.aps as Record<string, unknown>).alert as {
           title: string;
         }
-      ).title,
+      ).title
     ).toBe('Canari');
   });
 

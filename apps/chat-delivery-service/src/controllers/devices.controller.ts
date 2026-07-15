@@ -54,7 +54,7 @@ export class DevicesController {
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource,
-    private readonly messagingService: MessagingService,
+    private readonly messagingService: MessagingService
   ) {}
 
   private makeTraceId(scope: string): string {
@@ -67,7 +67,7 @@ export class DevicesController {
    */
   private async resolveKeyPackagePayloadForDevice(
     userId: string,
-    deviceId: string,
+    deviceId: string
   ): Promise<string | null> {
     const revoked = await this.revokedDeviceRepo.findOne({
       where: { userId, deviceId },
@@ -116,7 +116,7 @@ export class DevicesController {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
-    },
+    }
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -125,21 +125,17 @@ export class DevicesController {
       body.keyPackage.trim().length === 0 ||
       body.keyPackage.length > 16384
     ) {
-      throw new BadRequestException(
-        'keyPackage must be a non-empty base64 string',
-      );
+      throw new BadRequestException('keyPackage must be a non-empty base64 string');
     }
     const keyPackagePayload = body.keyPackage;
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
-    const deviceAppVersion = sanitizeOptionalDeviceAppVersion(
-      body.deviceAppVersion,
-    );
+    const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
 
     const traceId = this.makeTraceId('reg-device');
 
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}`,
+      `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}`
     );
     const existing = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
@@ -169,7 +165,7 @@ export class DevicesController {
           ...(deviceOs !== undefined && { deviceOs }),
           ...(deviceAppVersion !== undefined && { deviceAppVersion }),
           createdAt: new Date(),
-        },
+        }
       );
     }
 
@@ -197,7 +193,7 @@ export class DevicesController {
               deviceId,
               groupId,
               status: 'pending' as const,
-            })),
+            }))
           )
           .orIgnore()
           .execute();
@@ -205,7 +201,7 @@ export class DevicesController {
     }
 
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${activeGroupIds.length}`,
+      `[REGISTER_DEVICE][${traceId}] DONE user=${userId} device=${deviceId} isNew=${isNew} pendingGroups=${activeGroupIds.length}`
     );
     return { status: 'registered' };
   }
@@ -214,7 +210,7 @@ export class DevicesController {
   @Post('mls/register-device/prekeys')
   /** Bulk-uploads one-time prekeys for the current device. */
   async registerDevicePrekeys(
-    @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
+    @Body() body: { userId: string; deviceId: string; keyPackages: unknown }
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -227,19 +223,15 @@ export class DevicesController {
     }
     for (const kp of body.keyPackages) {
       if (typeof kp !== 'string' || kp.length === 0 || kp.length > 16384) {
-        throw new BadRequestException(
-          'Each keyPackage must be a non-empty base64 string',
-        );
+        throw new BadRequestException('Each keyPackage must be a non-empty base64 string');
       }
     }
 
     const rows = (body.keyPackages as string[]).map((kp) =>
-      this.oneTimeKeyPackageRepo.create({ userId, deviceId, keyPackage: kp }),
+      this.oneTimeKeyPackageRepo.create({ userId, deviceId, keyPackage: kp })
     );
     await this.oneTimeKeyPackageRepo.save(rows);
-    this.logger.log(
-      `[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length}`,
-    );
+    this.logger.log(`[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length}`);
     return { status: 'registered', count: rows.length };
   }
 
@@ -250,21 +242,15 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Body()
-    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
+    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
-    const deviceAppVersion = sanitizeOptionalDeviceAppVersion(
-      body.deviceAppVersion,
-    );
+    const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
 
-    if (
-      deviceName === undefined &&
-      deviceOs === undefined &&
-      deviceAppVersion === undefined
-    ) {
+    if (deviceName === undefined && deviceOs === undefined && deviceAppVersion === undefined) {
       throw new BadRequestException('At least one metadata field is required');
     }
 
@@ -296,20 +282,12 @@ export class DevicesController {
    * Returns one consumable KeyPackage for a specific device (invite / welcome flows).
    * Unlike the user device list, there is no 30-day cutoff - only revoked / missing devices 404.
    */
-  async getDeviceKeyPackage(
-    @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string,
-  ) {
+  async getDeviceKeyPackage(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    const keyPackage = await this.resolveKeyPackagePayloadForDevice(
-      safeUserId,
-      safeDeviceId,
-    );
+    const keyPackage = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
     if (!keyPackage) {
-      throw new BadRequestException(
-        `No key package for device ${safeUserId}:${safeDeviceId}`,
-      );
+      throw new BadRequestException(`No key package for device ${safeUserId}:${safeDeviceId}`);
     }
     const row = await this.keyPackageRepo.findOne({
       where: { userId: safeUserId, deviceId: safeDeviceId },
@@ -341,33 +319,26 @@ export class DevicesController {
       where: { userId },
     });
     const revokedSet = new Set(revokedRows.map((r) => r.deviceId));
-    const activeDevices = registeredDevices.filter(
-      (d) => !revokedSet.has(d.deviceId),
-    );
+    const activeDevices = registeredDevices.filter((d) => !revokedSet.has(d.deviceId));
 
     const results = await Promise.all(
       activeDevices.map(async (device) => {
         const keyPackage = await this.resolveKeyPackagePayloadForDevice(
           device.userId,
-          device.deviceId,
+          device.deviceId
         );
         if (!keyPackage) return null;
         return { ...device, keyPackage };
-      }),
+      })
     );
 
-    return results.filter(
-      (row): row is NonNullable<typeof row> => row !== null,
-    );
+    return results.filter((row): row is NonNullable<typeof row> => row !== null);
   }
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId/:deviceId/prekeys/count')
   /** Returns the count of available one-time prekeys for a device. */
-  async getPrekeyCount(
-    @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string,
-  ) {
+  async getPrekeyCount(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const count = await this.oneTimeKeyPackageRepo.count({
@@ -379,10 +350,7 @@ export class DevicesController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId/prekeys')
   /** Purges all one-time prekeys for a device (used when resetting a device's key material). */
-  async purgeDevicePrekeys(
-    @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string,
-  ) {
+  async purgeDevicePrekeys(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const result = await this.oneTimeKeyPackageRepo.delete({
@@ -390,7 +358,7 @@ export class DevicesController {
       deviceId: safeDeviceId,
     });
     this.logger.log(
-      `[PURGE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`,
+      `[PURGE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`
     );
     return { status: 'purged', deleted: result.affected ?? 0 };
   }
@@ -404,7 +372,7 @@ export class DevicesController {
    */
   async listDevicePrekeys(
     @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string,
+    @Param('deviceId') deviceId: string
   ): Promise<{ id: string; keyPackage: string }[]> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
@@ -425,7 +393,7 @@ export class DevicesController {
   async pruneDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Body() body: { ids: unknown },
+    @Body() body: { ids: unknown }
   ): Promise<{ status: string; deleted: number }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
@@ -446,7 +414,7 @@ export class DevicesController {
       deviceId: safeDeviceId,
     });
     this.logger.log(
-      `[PRUNE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`,
+      `[PRUNE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`
     );
     return { status: 'pruned', deleted: result.affected ?? 0 };
   }
@@ -454,18 +422,12 @@ export class DevicesController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId')
   /** Completely delete a device from the user's account. Purges all per-device state (memberships, KeyPackages, OneTimeKeyPackages, push tokens, queued messages) and denylists the device against immediate re-registration. */
-  async deleteDevice(
-    @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string,
-  ) {
+  async deleteDevice(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
 
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC).
-    const purge = await this.messagingService.purgeDeviceFootprint(
-      safeUserId,
-      safeDeviceId,
-    );
+    const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId);
 
     // 2. Denylist the device to prevent immediate re-registration (explicit deletion only;
     //    the GC does not denylist).
@@ -478,12 +440,12 @@ export class DevicesController {
           id: crypto.randomUUID(),
           userId: safeUserId,
           deviceId: safeDeviceId,
-        }),
+        })
       );
     }
 
     this.logger.log(
-      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted}`,
+      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted}`
     );
 
     return {

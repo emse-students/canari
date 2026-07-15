@@ -65,7 +65,9 @@
     <a href="/lists" class="text-sm text-text-muted hover:text-text-main transition-colors">
       &#x2190; {m.list_new_back()}
     </a>
-    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">{m.list_new_create_btn()}</h1>
+    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">
+      {m.list_new_create_btn()}
+    </h1>
   </div>
 
   <form
@@ -88,17 +90,11 @@
       {m.assoc_new_slug_hint()}
     </p>
 
-    <Input
-      label={m.list_new_promo_label()}
-      type="number"
-      bind:value={promo}
-      placeholder="2027"
-    />
+    <Input label={m.list_new_promo_label()} type="number" bind:value={promo} placeholder="2027" />
 
     <div>
-      <label
-        for="list-parent"
-        class="block text-sm font-bold text-text-main mb-2 ml-1">{m.list_new_parent_label()}</label
+      <label for="list-parent" class="block text-sm font-bold text-text-main mb-2 ml-1"
+        >{m.list_new_parent_label()}</label
       >
       <select
         id="list-parent"

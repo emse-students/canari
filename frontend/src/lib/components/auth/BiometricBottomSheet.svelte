@@ -36,7 +36,8 @@
       <div class="relative p-5 rounded-full bg-amber-500/10">
         <Fingerprint size={52} strokeWidth={1.5} class="text-amber-500" />
         <!-- Pulsing ring -->
-        <span class="absolute inset-0 rounded-full border-2 border-amber-500/40 animate-ping"></span>
+        <span class="absolute inset-0 rounded-full border-2 border-amber-500/40 animate-ping"
+        ></span>
       </div>
     </div>
 

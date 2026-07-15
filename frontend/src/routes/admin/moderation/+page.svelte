@@ -211,7 +211,13 @@
 
   async function handleDeletePost(report: ContentReport) {
     if (report.contentType !== 'post') return;
-    if (!await showConfirm(m.moderation_delete_post_confirm(), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.moderation_delete_post_confirm(), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     processingId = report.id;
     error = '';
     try {
@@ -226,7 +232,13 @@
 
   async function handleDeleteComment(report: ContentReport) {
     if (report.contentType !== 'comment') return;
-    if (!await showConfirm(m.moderation_delete_comment_confirm(), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.moderation_delete_comment_confirm(), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     processingId = report.id;
     error = '';
     try {
@@ -733,7 +745,9 @@
                   </span>
                 </div>
               {:else}
-                <span class="text-xs text-text-muted italic">{m.moderation_association_post_label()}</span>
+                <span class="text-xs text-text-muted italic"
+                  >{m.moderation_association_post_label()}</span
+                >
               {/if}
               <span class="ml-auto text-[11px] text-text-muted/60"
                 >{formatDate(post.createdAt)}</span
@@ -855,7 +869,9 @@
                 <p class="text-[11px] text-text-muted/60 mt-1">
                   {m.moderation_muted_on_label({ date: formatDate(user.mutedAt) })}
                   {#if user.mutedBy}
-                    {m.moderation_muted_by_label({ name: names[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…' })}
+                    {m.moderation_muted_by_label({
+                      name: names[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…',
+                    })}
                   {/if}
                 </p>
               {/if}

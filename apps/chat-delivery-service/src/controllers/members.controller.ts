@@ -39,7 +39,7 @@ export class MembersController {
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly dataSource: DataSource,
+    private readonly dataSource: DataSource
   ) {}
 
   private makeTraceId(scope: string): string {
@@ -55,14 +55,14 @@ export class MembersController {
   async getUserGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     assertCallerOwnsUserId(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      "Cannot list another user's groups",
+      "Cannot list another user's groups"
     );
     const memberships = await this.groupMemberRepo.find({
       where: { userId: safeUserId },
@@ -77,7 +77,7 @@ export class MembersController {
       .filter((g) => !g.deletedAt)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
     this.logger.log(
-      `[USER_GROUPS] user=${safeUserId} groups=${activeGroups.length} ids=${activeGroups.map((g) => g.id).join(',')}`,
+      `[USER_GROUPS] user=${safeUserId} groups=${activeGroups.length} ids=${activeGroups.map((g) => g.id).join(',')}`
     );
     return activeGroups.map((g) => ({
       groupId: g.id,
@@ -98,14 +98,14 @@ export class MembersController {
   async getDismissedGroups(
     @Param('userId') userId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<string[]> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     assertCallerOwnsUserId(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      "Cannot read another user's dismissed groups",
+      "Cannot read another user's dismissed groups"
     );
     const rows = await this.dismissedRepo.find({
       where: { userId: safeUserId },
@@ -120,14 +120,14 @@ export class MembersController {
     @Param('userId') userId: string,
     @Body() body: { groupId: string },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<{ status: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     assertCallerOwnsUserId(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      'Cannot dismiss a group for another user',
+      'Cannot dismiss a group for another user'
     );
     const safeGroupId = sanitizeQueryValue(body?.groupId ?? '', 'groupId');
     // Idempotent : ON CONFLICT DO NOTHING via la contrainte unique (userId, groupId).
@@ -148,14 +148,14 @@ export class MembersController {
     @Param('userId') userId: string,
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<{ status: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     assertCallerOwnsUserId(
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      'Cannot un-dismiss a group for another user',
+      'Cannot un-dismiss a group for another user'
     );
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     await this.dismissedRepo.delete({
@@ -169,16 +169,11 @@ export class MembersController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups/:groupId/members')
   /** Adds a member to a group and registers their device-group membership as pending. */
-  async addGroupMember(
-    @Param('groupId') groupId: string,
-    @Body() body: { userId: string },
-  ) {
+  async addGroupMember(@Param('groupId') groupId: string, @Body() body: { userId: string }) {
     const traceId = this.makeTraceId('add-member');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.logger.log(
-      `[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`,
-    );
+    this.logger.log(`[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`);
 
     // Atomic upsert: INSERT ... ON CONFLICT DO UPDATE avoids the findOne+save race.
     // Window aligned with retention: a still-recoverable device (last seen < 90 days)
@@ -222,7 +217,7 @@ export class MembersController {
     // NB: NOT added to group:members Redis here - devices enter the routing
     // set only when their Welcome is sent (sendWelcome sets status to active).
     this.logger.log(
-      `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length}`,
+      `[ADD_MEMBER][${traceId}] DONE group=${safeGroupId} user=${safeUserId} devices=${userDevices.length}`
     );
     return { status: 'added' };
   }
@@ -236,9 +231,7 @@ export class MembersController {
       where: { groupId: safeGroupId },
       select: { userId: true },
     });
-    this.logger.log(
-      `[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}`,
-    );
+    this.logger.log(`[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}`);
     return rows.map((r) => ({ userId: r.userId }));
   }
 
@@ -269,10 +262,7 @@ export class MembersController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId/members/:userId')
   /** Removes a user from a group server-side (deletes their GroupMember record). */
-  async removeGroupMember(
-    @Param('groupId') groupId: string,
-    @Param('userId') userId: string,
-  ) {
+  async removeGroupMember(@Param('groupId') groupId: string, @Param('userId') userId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
 
@@ -296,7 +286,7 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0}`,
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0}`
     );
     return { status: 'removed' };
   }

@@ -210,9 +210,7 @@
       </div>
 
       {#if isParent}
-        <p
-          class="rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted"
-        >
+        <p class="rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted">
           {m.asso_deleg_is_parent_note()}
         </p>
       {:else if delegation?.status === 'pending'}

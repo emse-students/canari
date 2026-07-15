@@ -1,5 +1,11 @@
 /* eslint-disable */
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -28,11 +34,7 @@ function formRequiresStripeReadyAssociation(input: {
   requiresPayment?: boolean;
 }): boolean {
   if (!input.associationId?.trim()) return false;
-  return (
-    (input.basePrice ?? 0) > 0 ||
-    (input.basePriceMember ?? 0) > 0 ||
-    !!input.requiresPayment
-  );
+  return (input.basePrice ?? 0) > 0 || (input.basePriceMember ?? 0) > 0 || !!input.requiresPayment;
 }
 
 /** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
@@ -140,7 +142,7 @@ export class FormsService {
       const hasFlag = await this.associationsService.callerHasFlag(
         userId,
         form.associationId,
-        AssociationPermissionFlag.MANAGE_FORMS,
+        AssociationPermissionFlag.MANAGE_FORMS
       );
       if (hasFlag) return form;
     }
@@ -221,7 +223,11 @@ export class FormsService {
    * Throws ForbiddenException unless the caller is the submitter
    * or passes assertFormManager checks on the parent form.
    */
-  async assertSubmissionAccess(submissionId: string, callerId: string, isGlobalAdmin: boolean): Promise<void> {
+  async assertSubmissionAccess(
+    submissionId: string,
+    callerId: string,
+    isGlobalAdmin: boolean
+  ): Promise<void> {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
     if (sub.userId === callerId) return;
@@ -242,7 +248,7 @@ export class FormsService {
   /** Returns per-user submission state and whether the form has reached its global capacity. */
   async hasSubmission(
     formId: string,
-    userId: string,
+    userId: string
   ): Promise<{
     hasSubmitted: boolean;
     paymentStatus?: string;
@@ -422,7 +428,7 @@ export class FormsService {
     const STRIPE_MIN_CENTS = 50;
     if (totalCents > 0 && totalCents < STRIPE_MIN_CENTS) {
       throw new BadRequestException(
-        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the Stripe minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`,
+        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the Stripe minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`
       );
     }
 
@@ -519,7 +525,11 @@ export class FormsService {
   }
 
   /** Deletes a submission. Requires form manager access. */
-  async deleteSubmission(submissionId: string, callerId: string, isGlobalAdmin: boolean): Promise<void> {
+  async deleteSubmission(
+    submissionId: string,
+    callerId: string,
+    isGlobalAdmin: boolean
+  ): Promise<void> {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
     await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
@@ -550,7 +560,12 @@ export class FormsService {
    * Requires the caller to be the submitter or a form manager.
    * If the parent form has a `grantedTagName`, grants or renews the tag for the submitter.
    */
-  async markPaid(submissionId: string, sessionId?: string, callerId?: string, isGlobalAdmin?: boolean) {
+  async markPaid(
+    submissionId: string,
+    sessionId?: string,
+    callerId?: string,
+    isGlobalAdmin?: boolean
+  ) {
     if (callerId) {
       await this.assertSubmissionAccess(submissionId, callerId, isGlobalAdmin ?? false);
     }
@@ -563,7 +578,13 @@ export class FormsService {
     // Grant cotisation tag if configured on the form + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: submission.formId },
-      select: { id: true, title: true, grantedTagName: true, tagExpiresAt: true, associationId: true },
+      select: {
+        id: true,
+        title: true,
+        grantedTagName: true,
+        tagExpiresAt: true,
+        associationId: true,
+      },
     });
     if (form?.grantedTagName) {
       try {
@@ -592,7 +613,10 @@ export class FormsService {
           productName: form.title ?? 'Formulaire',
         });
       } catch (e) {
-        this.logger.error(`[PurchaseRecord] Failed to record stripe purchase for submission ${submissionId}`, e);
+        this.logger.error(
+          `[PurchaseRecord] Failed to record stripe purchase for submission ${submissionId}`,
+          e
+        );
       }
     }
     return { ok: true };
@@ -642,7 +666,12 @@ export class FormsService {
    * Validates a cash submission - marks as paid and grants the tag if configured.
    * Requires form manager rights (form owner or MANAGE_FORMS flag).
    */
-  async validateCashPayment(formId: string, submissionId: string, validatedBy: string, isGlobalAdmin: boolean) {
+  async validateCashPayment(
+    formId: string,
+    submissionId: string,
+    validatedBy: string,
+    isGlobalAdmin: boolean
+  ) {
     await this.assertFormManager(formId, validatedBy, isGlobalAdmin);
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
     if (!submission) throw new NotFoundException('Submission not found');
@@ -656,7 +685,13 @@ export class FormsService {
     // Grant tag if form is configured + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: formId },
-      select: { id: true, title: true, grantedTagName: true, tagExpiresAt: true, associationId: true },
+      select: {
+        id: true,
+        title: true,
+        grantedTagName: true,
+        tagExpiresAt: true,
+        associationId: true,
+      },
     });
     if (form?.grantedTagName) {
       try {
@@ -669,7 +704,10 @@ export class FormsService {
           metadata: { submissionId, validatedBy, paymentMethod: 'cash' },
         });
       } catch (e) {
-        this.logger.error(`[UserTag] Failed to grant tag after cash validation for ${submissionId}`, e);
+        this.logger.error(
+          `[UserTag] Failed to grant tag after cash validation for ${submissionId}`,
+          e
+        );
       }
     }
     if (form?.associationId && submission.totalPaid > 0) {
@@ -685,14 +723,22 @@ export class FormsService {
           productName: form.title ?? 'Formulaire',
         });
       } catch (e) {
-        this.logger.error(`[PurchaseRecord] Failed to record cash purchase for submission ${submissionId}`, e);
+        this.logger.error(
+          `[PurchaseRecord] Failed to record cash purchase for submission ${submissionId}`,
+          e
+        );
       }
     }
     return { ok: true };
   }
 
   /** Cancels a cash submission awaiting validation. Requires form manager rights. */
-  async cancelCashPayment(formId: string, submissionId: string, callerId: string, isGlobalAdmin: boolean) {
+  async cancelCashPayment(
+    formId: string,
+    submissionId: string,
+    callerId: string,
+    isGlobalAdmin: boolean
+  ) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
     if (!submission) throw new NotFoundException('Submission not found');
@@ -739,7 +785,9 @@ export class FormsService {
     const process = (optId: string) => {
       const opt = item.options?.find((o: any) => o.id === optId);
       if (!opt) return;
-      const modifier = memberPricing ? (opt.priceModifierMember ?? opt.priceModifier) : opt.priceModifier;
+      const modifier = memberPricing
+        ? (opt.priceModifierMember ?? opt.priceModifier)
+        : opt.priceModifier;
       if (modifier > 0) {
         currentTotal += modifier;
         lines.push({
@@ -764,7 +812,10 @@ export class FormsService {
 
   /** Returns all submissions for a form enriched with the submitter's first/last name. */
   async getSubmissions(formId: string) {
-    const subs = await this.submissionRepo.find({ where: { formId }, order: { createdAt: 'DESC' } });
+    const subs = await this.submissionRepo.find({
+      where: { formId },
+      order: { createdAt: 'DESC' },
+    });
     const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {
@@ -904,7 +955,7 @@ export class FormsService {
     file: { buffer: Buffer; mimetype: string; size: number },
     callerId: string,
     isGlobalAdmin: boolean,
-    authorization: string | undefined,
+    authorization: string | undefined
   ): Promise<{ imageUrl: string }> {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
     if (!authorization?.startsWith('Bearer ')) {

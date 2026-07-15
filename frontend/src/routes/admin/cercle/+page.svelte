@@ -89,7 +89,9 @@
 
   async function loadProducts() {
     if (!selectedAssoId) return;
-    console.log(`[ADMIN][CERCLE] loading products/webhook-failures for association=${selectedAssoId}`);
+    console.log(
+      `[ADMIN][CERCLE] loading products/webhook-failures for association=${selectedAssoId}`
+    );
     productsLoading = true;
     error = '';
     try {
@@ -124,7 +126,9 @@
     savingProduct = true;
     error = '';
     try {
-      console.log(`[ADMIN][CERCLE] creating balance_topup product for association=${selectedAssoId}`);
+      console.log(
+        `[ADMIN][CERCLE] creating balance_topup product for association=${selectedAssoId}`
+      );
       await createProduct(selectedAssoId, {
         name: newName.trim(),
         description: newDescription.trim() || undefined,
@@ -282,7 +286,9 @@
     {#if !selectedAssoId}
       <p class="text-sm text-text-muted">{m.admin_cercle_select_asso_hint()}</p>
     {:else}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm">
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm"
+      >
         <div class="flex items-center justify-between gap-3 flex-wrap">
           <h3 class="text-base font-bold text-text-main">
             {m.admin_cercle_form_title()}
@@ -399,9 +405,7 @@
                 />
               </div>
               <div class="space-y-1">
-                <label
-                  for="new-cercle-webhook-secret"
-                  class="text-xs font-semibold text-text-muted"
+                <label for="new-cercle-webhook-secret" class="text-xs font-semibold text-text-muted"
                   >{m.admin_cercle_webhook_secret_label()}</label
                 >
                 <input
@@ -427,7 +431,8 @@
               <button
                 type="button"
                 onclick={resetProductForm}
-                class="text-sm text-text-muted hover:text-text-main">{m.common_cancel_button()}</button
+                class="text-sm text-text-muted hover:text-text-main"
+                >{m.common_cancel_button()}</button
               >
             </div>
           </form>
@@ -509,7 +514,9 @@
                       }}
                     >
                       <div class="space-y-1 sm:col-span-2">
-                        <label for="edit-name-{product.id}" class="text-xs font-semibold text-text-muted"
+                        <label
+                          for="edit-name-{product.id}"
+                          class="text-xs font-semibold text-text-muted"
                           >{m.admin_cercle_name_label()}</label
                         >
                         <input
@@ -535,7 +542,9 @@
                         >
                       </div>
                       <div class="space-y-1">
-                        <label for="edit-amount-{product.id}" class="text-xs font-semibold text-text-muted"
+                        <label
+                          for="edit-amount-{product.id}"
+                          class="text-xs font-semibold text-text-muted"
                           >{m.admin_cercle_fixed_price_label()}</label
                         >
                         <input
@@ -558,7 +567,9 @@
                         {m.admin_cercle_allow_custom_label()}
                       </label>
                       <div class="space-y-1">
-                        <label for="edit-min-{product.id}" class="text-xs font-semibold text-text-muted"
+                        <label
+                          for="edit-min-{product.id}"
+                          class="text-xs font-semibold text-text-muted"
                           >{m.admin_cercle_min_label()}</label
                         >
                         <input
@@ -574,7 +585,9 @@
                         />
                       </div>
                       <div class="space-y-1">
-                        <label for="edit-max-{product.id}" class="text-xs font-semibold text-text-muted"
+                        <label
+                          for="edit-max-{product.id}"
+                          class="text-xs font-semibold text-text-muted"
                           >{m.admin_cercle_max_label()}</label
                         >
                         <input
@@ -617,7 +630,9 @@
                           placeholder={m.admin_cercle_webhook_edit_hint()}
                           class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
                         />
-                        <p class="text-xs text-text-muted">{m.admin_cercle_webhook_secret_hint()}</p>
+                        <p class="text-xs text-text-muted">
+                          {m.admin_cercle_webhook_secret_hint()}
+                        </p>
                       </div>
                       <button
                         type="submit"

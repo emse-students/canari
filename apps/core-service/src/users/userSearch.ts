@@ -49,7 +49,7 @@ export function isFuzzyEligible(term: string): boolean {
  */
 export function applyFuzzyNameSearch<T extends ObjectLiteral>(
   qb: SelectQueryBuilder<T>,
-  rawQuery: string,
+  rawQuery: string
 ): boolean {
   const terms = splitSearchTerms(rawQuery);
   if (terms.length === 0) return false;
@@ -63,7 +63,7 @@ export function applyFuzzyNameSearch<T extends ObjectLiteral>(
           [`like${i}`]: `%${term}%`,
           [`term${i}`]: term,
           fuzzyThreshold: FUZZY_TERM_THRESHOLD,
-        },
+        }
       );
     } else {
       qb.andWhere(`${N} LIKE unaccent(LOWER(:like${i}))`, {
@@ -75,7 +75,7 @@ export function applyFuzzyNameSearch<T extends ObjectLiteral>(
   const trimmed = rawQuery.trim();
   qb.addSelect(
     `(CASE WHEN ${N} LIKE unaccent(LOWER(:wholeLike)) THEN 1 ELSE 0 END) + similarity(${N}, unaccent(LOWER(:wholeQuery)))`,
-    'search_score',
+    'search_score'
   )
     .setParameter('wholeLike', `%${trimmed}%`)
     .setParameter('wholeQuery', trimmed)

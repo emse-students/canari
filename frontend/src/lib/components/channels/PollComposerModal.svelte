@@ -90,7 +90,9 @@
 </script>
 
 {#if open}
-  <div class="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center">
+  <div
+    class="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center"
+  >
     <button
       type="button"
       class="absolute inset-0 bg-black/45 backdrop-blur-sm"
@@ -130,7 +132,9 @@
         </div>
 
         <div class="space-y-2">
-          <span class="block text-sm font-semibold text-text-main">{m.channel_poll_options_label()}</span>
+          <span class="block text-sm font-semibold text-text-main"
+            >{m.channel_poll_options_label()}</span
+          >
           {#each options as option (option.id)}
             <div class="flex items-center gap-2">
               <input
@@ -156,7 +160,8 @@
               onclick={addOption}
               class="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-semibold text-cn-yellow hover:bg-cn-yellow/10"
             >
-              <Plus size={16} /> {m.channel_poll_add_option()}
+              <Plus size={16} />
+              {m.channel_poll_add_option()}
             </button>
           {/if}
         </div>
@@ -164,13 +169,16 @@
         <label
           class="flex cursor-pointer select-none items-center justify-between rounded-xl bg-black/5 px-4 py-3 dark:bg-white/5"
         >
-          <span class="text-sm font-semibold text-text-main">{m.post_poll_allow_multiple_label()}</span>
+          <span class="text-sm font-semibold text-text-main"
+            >{m.post_poll_allow_multiple_label()}</span
+          >
           <input type="checkbox" bind:checked={multipleChoice} class="h-5 w-5 accent-cn-yellow" />
         </label>
 
         <div>
           <label for="poll-deadline" class="mb-1.5 block text-sm font-semibold text-text-main">
-            {m.channel_poll_deadline_label()} <span class="font-normal text-text-muted">{m.channel_poll_deadline_optional()}</span>
+            {m.channel_poll_deadline_label()}
+            <span class="font-normal text-text-muted">{m.channel_poll_deadline_optional()}</span>
           </label>
           <input
             id="poll-deadline"

@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend bench-mls clean run-ci lint-frontend
+.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -135,7 +135,7 @@ else
 endif
 
 # ── Installation des dépendances ──────────────────────────────────────────────
-install: install-node install-bun install-rust install-wasm-pack install-frontend install-services
+install: install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services
 
 ifeq ($(OS),Windows_NT)
 install-node:
@@ -189,13 +189,21 @@ install-rust:
 	@if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then \
 		echo "${GREEN}✅ Rust already installed: $$(rustc --version)${RESET}"; \
 		echo "${GREEN}✅ cargo already installed: $$(cargo --version)${RESET}"; \
+		rust_version=$$(rustc --version | sed -E 's/rustc ([0-9]+\.[0-9]+\.[0-9]+).*/\1/'); \
+		if [ "$$(printf '%s\n%s\n' '1.93.0' "$$rust_version" | sort -V | head -n1)" != "1.93.0" ]; then \
+			echo "${YELLOW}⚠ Rust >= 1.93.0 required (oxvelte). Run: rustup update stable${RESET}"; \
+		fi; \
 	else \
 		echo "${BLUE}⬇️ Installing Rust via rustup…${RESET}"; \
-		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0; \
 		. "$$HOME/.cargo/env"; \
 		rustup target add wasm32-unknown-unknown; \
 		echo "${YELLOW}⚠ Open a new shell or run: source ~/.cargo/env${RESET}"; \
 	fi
+
+install-oxvelte:
+	@echo "${BLUE}📦 Checking oxvelte installation…${RESET}"
+	@./scripts/install-oxvelte.sh
 
 install-wasm-pack:
 	@echo "${BLUE}📦 Checking wasm-pack installation…${RESET}"
@@ -363,6 +371,6 @@ run-ci: lint-frontend test
 
 lint-frontend:
 	@echo "${BLUE}🧹 Type-checking & linting frontend…${RESET}"
-	@cd frontend && npm run check
-	@echo "${GREEN}✅ Frontend type-check OK${RESET}"
+	@cd frontend && npm run check && npm run lint && npm run format:check
+	@echo "${GREEN}✅ Frontend type-check + lint OK${RESET}"
 

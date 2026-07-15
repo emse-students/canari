@@ -38,21 +38,18 @@ export class AuthController {
 
   constructor(
     private readonly usersService: UsersService,
-    private readonly platformService: PlatformService,
+    private readonly platformService: PlatformService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
       throw new Error(
-        'JWT_SECRET must be set to a strong random value (e.g. openssl rand -hex 32)',
+        'JWT_SECRET must be set to a strong random value (e.g. openssl rand -hex 32)'
       );
     }
     this.jwtSecret = secret;
     this.isProduction = process.env.NODE_ENV === 'production';
 
-    this.authentikBaseUrl = (process.env.AUTHENTIK_BASE_URL || '').replace(
-      /\/+$/,
-      '',
-    );
+    this.authentikBaseUrl = (process.env.AUTHENTIK_BASE_URL || '').replace(/\/+$/, '');
     this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
     this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
     this.internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim() ?? '';
@@ -108,7 +105,7 @@ export class AuthController {
   async oidcCallback(
     @Body() body: OidcCallbackDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res({ passthrough: true }) res: Response
   ): Promise<{
     access_token: string;
     user: {
@@ -123,17 +120,10 @@ export class AuthController {
   }> {
     const { code, redirect_uri } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
-    if (!redirect_uri)
-      throw new BadRequestException('redirect_uri is required');
+    if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
 
-    if (
-      !this.authentikBaseUrl ||
-      !this.authentikClientId ||
-      !this.authentikClientSecret
-    ) {
-      throw new BadRequestException(
-        'Authentik OIDC is not configured on the server',
-      );
+    if (!this.authentikBaseUrl || !this.authentikClientId || !this.authentikClientSecret) {
+      throw new BadRequestException('Authentik OIDC is not configured on the server');
     }
 
     // 1. Exchange authorization code for tokens
@@ -153,7 +143,7 @@ export class AuthController {
     if (!tokenRes.ok) {
       const errText = await tokenRes.text().catch(() => '');
       throw new UnauthorizedException(
-        `Authentik token exchange failed (${tokenRes.status}): ${errText}`,
+        `Authentik token exchange failed (${tokenRes.status}): ${errText}`
       );
     }
 
@@ -169,9 +159,7 @@ export class AuthController {
     });
 
     if (!userinfoRes.ok) {
-      throw new UnauthorizedException(
-        'Failed to fetch user info from Authentik',
-      );
+      throw new UnauthorizedException('Failed to fetch user info from Authentik');
     }
 
     const userinfo = (await userinfoRes.json()) as {
@@ -184,9 +172,7 @@ export class AuthController {
     };
 
     if (!userinfo.sub) {
-      throw new UnauthorizedException(
-        'Invalid userinfo response from Authentik',
-      );
+      throw new UnauthorizedException('Invalid userinfo response from Authentik');
     }
 
     // 3. Upsert local user
@@ -197,16 +183,11 @@ export class AuthController {
       userinfo.firstName || null,
       userinfo.lastName || null,
       promo,
-      userinfo.formation || null,
+      userinfo.formation || null
     );
 
     const platformConfig = await this.platformService.getConfig();
-    if (
-      this.platformService.isAccessBlockedByMaintenance(
-        platformConfig,
-        !!user.admin,
-      )
-    ) {
+    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!user.admin)) {
       throw new ServiceUnavailableException({
         code: 'MAINTENANCE',
         message:
@@ -216,18 +197,12 @@ export class AuthController {
     }
 
     // 4. Issue internal JWT pair
-    const access_token = jwt.sign(
-      { sub: user.id, admin: !!user.admin },
-      this.jwtSecret,
-      {
-        expiresIn: '1h',
-      },
-    );
-    const refresh_token = jwt.sign(
-      { sub: user.id, type: 'refresh' },
-      this.jwtSecret,
-      { expiresIn: '7d' },
-    );
+    const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
+      expiresIn: '1h',
+    });
+    const refresh_token = jwt.sign({ sub: user.id, type: 'refresh' }, this.jwtSecret, {
+      expiresIn: '7d',
+    });
 
     // Set refresh token as HttpOnly cookie (not accessible to JS)
     this.setRefreshCookie(req, res, refresh_token);
@@ -252,7 +227,7 @@ export class AuthController {
   @HttpCode(200)
   async refreshToken(
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res({ passthrough: true }) res: Response
   ): Promise<{ access_token: string }> {
     const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!refresh_token) {
@@ -282,9 +257,7 @@ export class AuthController {
     const isAdmin = !!user?.admin;
 
     const platformConfig = await this.platformService.getConfig();
-    if (
-      this.platformService.isAccessBlockedByMaintenance(platformConfig, isAdmin)
-    ) {
+    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, isAdmin)) {
       this.clearRefreshCookie(req, res);
       throw new ServiceUnavailableException({
         code: 'MAINTENANCE',
@@ -294,18 +267,12 @@ export class AuthController {
       });
     }
 
-    const access_token = jwt.sign(
-      { sub: payload.sub, admin: isAdmin },
-      this.jwtSecret,
-      {
-        expiresIn: '1h',
-      },
-    );
-    const new_refresh = jwt.sign(
-      { sub: payload.sub, type: 'refresh' },
-      this.jwtSecret,
-      { expiresIn: '7d' },
-    );
+    const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
+      expiresIn: '1h',
+    });
+    const new_refresh = jwt.sign({ sub: payload.sub, type: 'refresh' }, this.jwtSecret, {
+      expiresIn: '7d',
+    });
 
     // Rotate the refresh cookie
     this.setRefreshCookie(req, res, new_refresh);
@@ -317,10 +284,7 @@ export class AuthController {
   /** Clears the refresh cookie and invalidates the session. */
   @Post('logout')
   @HttpCode(200)
-  logout(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ): { ok: true } {
+  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): { ok: true } {
     this.clearRefreshCookie(req, res);
     return { ok: true };
   }
@@ -366,12 +330,7 @@ export class AuthController {
       };
 
       const platformConfig = await this.platformService.getConfig();
-      if (
-        this.platformService.isAccessBlockedByMaintenance(
-          platformConfig,
-          !!payload.admin,
-        )
-      ) {
+      if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
         res.set('X-Maintenance-Mode', 'true');
         return res.status(503).json({
           code: 'MAINTENANCE',

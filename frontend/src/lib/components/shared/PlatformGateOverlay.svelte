@@ -8,10 +8,7 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { clearAuth } from '$lib/stores/auth';
-  import {
-    isAndroidTauriRuntime,
-    openLatestAppUpdate,
-  } from '$lib/utils/appVersion';
+  import { isAndroidTauriRuntime, openLatestAppUpdate } from '$lib/utils/appVersion';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
@@ -50,11 +47,19 @@
 </script>
 
 {#if showMinVersion && info}
-  <Modal open={true} title={m.update_required_title()} dismissible={false} maxWidth="max-w-lg" onClose={() => {}}>
+  <Modal
+    open={true}
+    title={m.update_required_title()}
+    dismissible={false}
+    maxWidth="max-w-lg"
+    onClose={() => {}}
+  >
     <div class="space-y-4 text-sm text-text-muted leading-relaxed">
       <p>
-        {m.platform_gate_version_prefix()}<strong class="text-cn-dark">{info.clientVersion}</strong>{m.platform_gate_version_middle()}
-        <strong class="text-cn-dark">{info.minClientVersion}</strong> {m.platform_gate_version_suffix()}
+        {m.platform_gate_version_prefix()}<strong class="text-cn-dark">{info.clientVersion}</strong
+        >{m.platform_gate_version_middle()}
+        <strong class="text-cn-dark">{info.minClientVersion}</strong>
+        {m.platform_gate_version_suffix()}
       </p>
       {#if isAndroid}
         <p>{m.update_android_instruction()}</p>
@@ -91,7 +96,9 @@
   >
     <div class="space-y-4 text-sm text-text-muted leading-relaxed">
       <div class="flex justify-center">
-        <span class="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-600">
+        <span
+          class="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-600"
+        >
           <Wrench size={28} />
         </span>
       </div>

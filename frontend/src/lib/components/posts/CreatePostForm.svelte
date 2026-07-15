@@ -395,7 +395,8 @@
               {#if postAsGroups.assos.length > 0}
                 <optgroup label={m.post_create_associations_group_label()}>
                   {#each postAsGroups.assos as a (a.id)}
-                    <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium">{a.name}</option
+                    <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
+                      >{a.name}</option
                     >
                   {/each}
                 </optgroup>
@@ -727,7 +728,9 @@
             ? m.post_create_scheduling_in_progress_label()
             : m.post_create_publishing_in_progress_label()}
         {:else}
-          {scheduledAt ? m.post_create_schedule_button_label() : m.post_create_publish_button_label()}
+          {scheduledAt
+            ? m.post_create_schedule_button_label()
+            : m.post_create_publish_button_label()}
         {/if}
       </Button>
     </div>

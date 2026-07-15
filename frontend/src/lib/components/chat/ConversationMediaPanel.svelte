@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { X, Search, Image as ImageIcon, Link as LinkIcon, FileText, Download } from '@lucide/svelte';
+  import {
+    X,
+    Search,
+    Image as ImageIcon,
+    Link as LinkIcon,
+    FileText,
+    Download,
+  } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
@@ -39,7 +46,11 @@
   let lightboxUrl = $state<string | null>(null);
 
   const dateFmt = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', { day: '2-digit', month: 'short', year: '2-digit' })
+    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+      day: '2-digit',
+      month: 'short',
+      year: '2-digit',
+    })
   );
 
   function formatBytes(bytes: number): string {
@@ -246,7 +257,8 @@
                   onclick={() => openLink(link.url)}
                   class="flex flex-col items-start gap-0.5 rounded-xl px-3 py-2 text-left hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
                 >
-                  <span class="truncate text-sm font-semibold text-amber-600 dark:text-amber-400 w-full"
+                  <span
+                    class="truncate text-sm font-semibold text-amber-600 dark:text-amber-400 w-full"
                     >{hostOf(link.url)}</span
                   >
                   <span class="truncate text-xs text-text-muted w-full">{link.url}</span>
@@ -316,7 +328,9 @@
         />
       {/if}
     {:else}
-      <div class="h-10 w-10 animate-spin rounded-full border-4 border-white/70 border-t-transparent"></div>
+      <div
+        class="h-10 w-10 animate-spin rounded-full border-4 border-white/70 border-t-transparent"
+      ></div>
     {/if}
   </MediaLightbox>
 {/if}

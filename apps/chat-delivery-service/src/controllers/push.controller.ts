@@ -27,10 +27,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
-import {
-  sanitizeQueryValue,
-  sanitizeOptionalQueryValue,
-} from '../utils/sanitize';
+import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
 
 /** Push notification token management and Firebase Cloud Messaging dispatch. */
@@ -48,7 +45,7 @@ export class PushController {
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly messagingService: MessagingService,
+    private readonly messagingService: MessagingService
   ) {}
 
   /**
@@ -58,7 +55,7 @@ export class PushController {
   private async verifyPushSecretAuth(
     authHeader: string,
     userId: string,
-    deviceId: string,
+    deviceId: string
   ): Promise<void> {
     const secret = authHeader?.startsWith('PushSecret ')
       ? authHeader.slice('PushSecret '.length).trim()
@@ -76,10 +73,7 @@ export class PushController {
     // pushSecret is a fixed-length opaque token, so comparing lengths leaks nothing.
     const expected = Buffer.from(stored, 'utf8');
     const received = Buffer.from(secret, 'utf8');
-    if (
-      expected.length !== received.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
+    if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
       throw new ForbiddenException('Invalid push secret');
     }
   }
@@ -105,7 +99,7 @@ export class PushController {
   @Post('mls/push/register')
   async registerPushToken(
     @Body() body: { token: string; deviceId: string; platform?: string },
-    @Headers('x-user-id') userIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -114,8 +108,7 @@ export class PushController {
       throw new BadRequestException('token is required');
     }
     const token = body.token.trim().slice(0, 500);
-    const platform: 'android' | 'ios' =
-      body.platform === 'ios' ? 'ios' : 'android';
+    const platform: 'android' | 'ios' = body.platform === 'ios' ? 'ios' : 'android';
 
     // Generate an opaque long-lived secret for this device.
     // Returned ONCE in the response; the client encrypts it in Android Keystore
@@ -127,11 +120,9 @@ export class PushController {
     // second hitting the unique(userId, deviceId) constraint.
     await this.pushTokenRepo.upsert(
       { userId, deviceId, token, platform, pushSecret },
-      { conflictPaths: ['userId', 'deviceId'] },
+      { conflictPaths: ['userId', 'deviceId'] }
     );
-    this.logger.log(
-      `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`,
-    );
+    this.logger.log(`[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`);
     // pushSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret };
   }
@@ -147,7 +138,7 @@ export class PushController {
     @Headers('authorization') authHeader: string,
     @Query('messageId') messageIdRaw: string,
     @Query('userId') userIdRaw: string,
-    @Query('deviceId') deviceIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
@@ -182,7 +173,7 @@ export class PushController {
     @Query('requesterId') requesterIdRaw: string,
     @Query('deviceId') deviceIdRaw: string,
     @Param('targetUserId') targetUserIdRaw: string,
-    @Res() res: Response,
+    @Res() res: Response
   ) {
     const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
@@ -190,12 +181,11 @@ export class PushController {
 
     await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
 
-    const coreUrl =
-      process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012';
+    const coreUrl = process.env.CORE_SERVICE_INTERNAL_URL ?? 'http://core-service:3012';
     try {
       const upstream = await fetch(
         `${coreUrl}/api/users/${encodeURIComponent(targetUserId)}/avatar`,
-        { signal: AbortSignal.timeout(4_000) },
+        { signal: AbortSignal.timeout(4_000) }
       );
       if (!upstream.ok) {
         res.status(upstream.status).send();
@@ -221,7 +211,7 @@ export class PushController {
   @Delete('mls/push/unregister/:deviceId')
   async unregisterPushToken(
     @Param('deviceId') deviceIdRaw: string,
-    @Headers('x-user-id') userIdRaw: string,
+    @Headers('x-user-id') userIdRaw: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const deviceId = sanitizeQueryValue(deviceIdRaw, 'deviceId');
@@ -244,7 +234,7 @@ export class PushController {
   @Post('mls/push/refresh-token')
   async refreshPushTokenViaSecret(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; token: string },
+    @Body() body: { userId: string; deviceId: string; token: string }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
@@ -269,18 +259,14 @@ export class PushController {
   @Post('mls/push/membership-active')
   async markMembershipActivePush(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string },
+    @Body() body: { userId: string; deviceId: string; groupId: string }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    await this.messagingService.activateDeviceMembership(
-      userId,
-      deviceId,
-      groupId,
-    );
+    await this.messagingService.activateDeviceMembership(userId, deviceId, groupId);
     return { status: 'active' };
   }
 
@@ -293,7 +279,7 @@ export class PushController {
   @Post('mls/push/acquire-add-lock')
   async acquireAddLockPush(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string },
+    @Body() body: { userId: string; deviceId: string; groupId: string }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
@@ -304,7 +290,7 @@ export class PushController {
     const lockOwner = `${userId}:${deviceId}`;
     const result = await this.redis.set(lockKey, lockOwner, 'EX', 15, 'NX');
     this.logger.log(
-      `[ADD_LOCK_PUSH] group=${groupId} owner=${lockOwner} acquired=${result === 'OK'}`,
+      `[ADD_LOCK_PUSH] group=${groupId} owner=${lockOwner} acquired=${result === 'OK'}`
     );
     return { acquired: result === 'OK' };
   }
@@ -317,7 +303,7 @@ export class PushController {
   @Delete('mls/push/release-add-lock')
   async releaseAddLockPush(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; groupId: string },
+    @Body() body: { userId: string; deviceId: string; groupId: string }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
@@ -330,10 +316,10 @@ export class PushController {
       `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
       1,
       lockKey,
-      lockOwner,
+      lockOwner
     );
     this.logger.log(
-      `[RELEASE_LOCK_PUSH] group=${groupId} owner=${lockOwner} released=${released === 1}`,
+      `[RELEASE_LOCK_PUSH] group=${groupId} owner=${lockOwner} released=${released === 1}`
     );
     return { released: released === 1 };
   }
@@ -350,33 +336,25 @@ export class PushController {
     @Query('requesterId') requesterIdRaw: string,
     @Query('deviceId') deviceIdRaw: string,
     @Query('targetUserId') targetUserIdRaw: string,
-    @Query('targetDeviceId') targetDeviceIdRaw: string,
+    @Query('targetDeviceId') targetDeviceIdRaw: string
   ) {
     const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
     await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
 
-    const targetUserId = sanitizeQueryValue(
-      targetUserIdRaw ?? '',
-      'targetUserId',
-    );
-    const targetDeviceId = sanitizeQueryValue(
-      targetDeviceIdRaw ?? '',
-      'targetDeviceId',
-    );
+    const targetUserId = sanitizeQueryValue(targetUserIdRaw ?? '', 'targetUserId');
+    const targetDeviceId = sanitizeQueryValue(targetDeviceIdRaw ?? '', 'targetDeviceId');
     const kp = await this.keyPackageRepo.findOne({
       where: { userId: targetUserId, deviceId: targetDeviceId },
     });
     if (!kp) {
       this.logger.warn(
-        `[KEY_PACKAGE_PUSH] not found target=${targetUserId}:${targetDeviceId} requester=${requesterId}:${deviceId}`,
+        `[KEY_PACKAGE_PUSH] not found target=${targetUserId}:${targetDeviceId} requester=${requesterId}:${deviceId}`
       );
-      throw new BadRequestException(
-        `Key package not found for ${targetUserId}:${targetDeviceId}`,
-      );
+      throw new BadRequestException(`Key package not found for ${targetUserId}:${targetDeviceId}`);
     }
     this.logger.log(
-      `[KEY_PACKAGE_PUSH] found target=${targetUserId}:${targetDeviceId} requester=${requesterId}:${deviceId}`,
+      `[KEY_PACKAGE_PUSH] found target=${targetUserId}:${targetDeviceId} requester=${requesterId}:${deviceId}`
     );
     return { keyPackage: kp.keyPackage };
   }
@@ -406,21 +384,15 @@ export class PushController {
       ratchetTreePayload?: string;
       commitPayload: string;
       baseEpoch?: number;
-    },
+    }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
-    const targetUserId = sanitizeQueryValue(
-      body.targetUserId ?? '',
-      'targetUserId',
-    );
-    const targetDeviceId = sanitizeQueryValue(
-      body.targetDeviceId ?? '',
-      'targetDeviceId',
-    );
+    const targetUserId = sanitizeQueryValue(body.targetUserId ?? '', 'targetUserId');
+    const targetDeviceId = sanitizeQueryValue(body.targetDeviceId ?? '', 'targetDeviceId');
     if (typeof body.welcomePayload !== 'string' || !body.welcomePayload) {
       throw new BadRequestException('welcomePayload required');
     }
@@ -430,7 +402,7 @@ export class PushController {
 
     const traceId = `bg-wlc-${crypto.randomUUID().slice(0, 8)}`;
     this.logger.log(
-      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId} baseEpoch=${body.baseEpoch ?? 'n/a'}`,
+      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId} baseEpoch=${body.baseEpoch ?? 'n/a'}`
     );
 
     // Membership guard (security): refuse to re-add a target absent from dm_group_members (a
@@ -444,7 +416,7 @@ export class PushController {
     });
     if (!targetMembership) {
       this.logger.warn(
-        `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`,
+        `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
       );
       return { status: 'rejected', reason: 'not_a_member' };
     }
@@ -462,7 +434,7 @@ export class PushController {
       });
       if (!validation.accepted) {
         this.logger.warn(
-          `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - ni Welcome ni diffusion`,
+          `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - ni Welcome ni diffusion`
         );
         return {
           status: 'rejected',
@@ -471,7 +443,7 @@ export class PushController {
         };
       }
       this.logger.log(
-        `[BG_WELCOME][${traceId}] commit valide -> activeEpoch=${validation.newEpoch}`,
+        `[BG_WELCOME][${traceId}] commit valide -> activeEpoch=${validation.newEpoch}`
       );
     }
 
@@ -518,7 +490,7 @@ export class PushController {
       deviceId: string;
       groupId: string;
       sinceEpoch: number;
-    },
+    }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
@@ -551,7 +523,7 @@ export class PushController {
       proto: string;
       messageId?: string;
       silent?: boolean;
-    },
+    }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
@@ -564,7 +536,7 @@ export class PushController {
 
     const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;
     this.logger.log(
-      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'} silent=${body.silent ?? false}`,
+      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'} silent=${body.silent ?? false}`
     );
 
     // silent flows through from the outbox mirror: control events (delete/reaction/read) must not
@@ -577,9 +549,7 @@ export class PushController {
       silent: body.silent ?? false,
     });
 
-    this.logger.log(
-      `[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`,
-    );
+    this.logger.log(`[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`);
     return { status: 'sent', queued: result.queued, sent: result.sent };
   }
 
@@ -591,23 +561,19 @@ export class PushController {
   @Post('mls/push/broadcast-test')
   async broadcastTestPush(
     @Body() body: { title?: string; message?: string },
-    @Headers('x-user-id') requesterRaw?: string,
+    @Headers('x-user-id') requesterRaw?: string
   ) {
     if (getApps().length === 0) {
-      throw new BadRequestException(
-        'Firebase Admin SDK is not initialized (push disabled)',
-      );
+      throw new BadRequestException('Firebase Admin SDK is not initialized (push disabled)');
     }
 
     const requester = sanitizeOptionalQueryValue(requesterRaw, 'x-user-id');
     const traceId = `push-test-${crypto.randomUUID().slice(0, 8)}`;
     const title = (body?.title || 'Canari - test push').trim().slice(0, 80);
-    const message = (body?.message || 'Notification de diagnostic')
-      .trim()
-      .slice(0, 180);
+    const message = (body?.message || 'Notification de diagnostic').trim().slice(0, 180);
 
     this.logger.log(
-      `[PUSH_TEST][${traceId}] START requester=${requester ?? 'unknown'} title=${title}`,
+      `[PUSH_TEST][${traceId}] START requester=${requester ?? 'unknown'} title=${title}`
     );
 
     const targets = await this.pushTokenRepo.find();
@@ -642,24 +608,24 @@ export class PushController {
         });
         sent++;
         this.logger.log(
-          `[PUSH_TEST][${traceId}] SENT user=${pushToken.userId} device=${pushToken.deviceId}`,
+          `[PUSH_TEST][${traceId}] SENT user=${pushToken.userId} device=${pushToken.deviceId}`
         );
       } catch (e) {
         failed++;
         if (this.isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pushToken.id });
           this.logger.warn(
-            `[PUSH_TEST][${traceId}] DELETED invalid token user=${pushToken.userId} device=${pushToken.deviceId}`,
+            `[PUSH_TEST][${traceId}] DELETED invalid token user=${pushToken.userId} device=${pushToken.deviceId}`
           );
         }
         this.logger.warn(
-          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${e}`,
+          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${e}`
         );
       }
     }
 
     this.logger.log(
-      `[PUSH_TEST][${traceId}] DONE targeted=${targets.length} sent=${sent} failed=${failed}`,
+      `[PUSH_TEST][${traceId}] DONE targeted=${targets.length} sent=${sent} failed=${failed}`
     );
 
     return {

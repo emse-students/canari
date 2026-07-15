@@ -117,7 +117,9 @@
   {#if imgEl}
     <div class="flex flex-wrap gap-4 items-start">
       <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">{m.asso_logo_mode_label()}</p>
+        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">
+          {m.asso_logo_mode_label()}
+        </p>
         <div class="flex gap-2">
           <button
             type="button"
@@ -143,7 +145,9 @@
       </div>
       {#if mode === 'cover'}
         <div class="flex-1 min-w-[180px] space-y-1">
-          <label for="assoc-logo-zoom" class="text-xs font-bold uppercase tracking-wide text-text-muted"
+          <label
+            for="assoc-logo-zoom"
+            class="text-xs font-bold uppercase tracking-wide text-text-muted"
             >{m.asso_logo_zoom_label()}</label
           >
           <input

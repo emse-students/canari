@@ -11,14 +11,12 @@ export class AvatarService {
   constructor(private readonly configService: ConfigService) {
     this.avatarApiUrl = this.configService.get<string>(
       'MIGALLERY_API_URL',
-      'https://gallery.mitv.fr',
+      'https://gallery.mitv.fr'
     );
     this.avatarApiKey = this.configService.get<string>('MIGALLERY_API_KEY', '');
 
     if (!this.avatarApiKey) {
-      this.logger.warn(
-        'MIGALLERY_API_KEY is not set - avatar proxy will not work.',
-      );
+      this.logger.warn('MIGALLERY_API_KEY is not set - avatar proxy will not work.');
     }
   }
 
@@ -29,10 +27,7 @@ export class AvatarService {
    */
   async fetchUserAvatar(userId: string): Promise<Buffer> {
     if (!this.avatarApiKey) {
-      throw new HttpException(
-        'Avatar service is not configured',
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
+      throw new HttpException('Avatar service is not configured', HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     // Prevent SSRF / path traversal: userId must be a safe alphanumeric identifier.
@@ -63,17 +58,14 @@ export class AvatarService {
           throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
         }
         if (error.code === 'ECONNABORTED') {
-          throw new HttpException(
-            'Request timeout',
-            HttpStatus.GATEWAY_TIMEOUT,
-          );
+          throw new HttpException('Request timeout', HttpStatus.GATEWAY_TIMEOUT);
         }
       }
 
       this.logger.error('Error fetching avatar', error);
       throw new HttpException(
         'Failed to fetch avatar from external service',
-        HttpStatus.BAD_GATEWAY,
+        HttpStatus.BAD_GATEWAY
       );
     }
   }

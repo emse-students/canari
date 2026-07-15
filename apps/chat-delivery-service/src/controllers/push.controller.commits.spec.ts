@@ -68,18 +68,16 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   it('rejects a wrong PushSecret and never reads the commit log', async () => {
     pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'sekret' });
 
-    await expect(
-      controller.getCommitsPush('PushSecret wrong-one', body),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.getCommitsPush('PushSecret wrong-one', body)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
     expect(getCommitsSince).not.toHaveBeenCalled();
   });
 
   it('rejects a missing PushSecret header', async () => {
     pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'sekret' });
 
-    await expect(controller.getCommitsPush('', body)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(controller.getCommitsPush('', body)).rejects.toBeInstanceOf(ForbiddenException);
     expect(getCommitsSince).not.toHaveBeenCalled();
   });
 

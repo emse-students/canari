@@ -46,7 +46,12 @@
     if (!item.options) item.options = [];
     item.options = [
       ...item.options,
-      { id: crypto.randomUUID(), label: '', priceModifier: undefined, priceModifierMember: undefined },
+      {
+        id: crypto.randomUUID(),
+        label: '',
+        priceModifier: undefined,
+        priceModifierMember: undefined,
+      },
     ];
   }
 
@@ -193,7 +198,11 @@
       />
     </div>
     <div class="md:col-span-5 min-w-0">
-      <label for="type-picker-{item.id}" class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2">{m.form_builder_type_label()}</label>
+      <label
+        for="type-picker-{item.id}"
+        class="block text-sm font-bold text-text-main mb-1.5 sm:mb-2"
+        >{m.form_builder_type_label()}</label
+      >
       <div class="relative">
         {#if true}
           {@const cur = QUESTION_TYPES.find((t) => t.value === item.type)}
@@ -217,7 +226,14 @@
           </button>
         {/if}
         {#if showTypePicker}
-          <div role="presentation" class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)} onkeydown={(e) => { if (e.key === 'Escape') showTypePicker = false; }}></div>
+          <div
+            role="presentation"
+            class="fixed inset-0 z-40"
+            onclick={() => (showTypePicker = false)}
+            onkeydown={(e) => {
+              if (e.key === 'Escape') showTypePicker = false;
+            }}
+          ></div>
           <div
             class="absolute top-full left-0 right-0 mt-1 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-2"
           >
@@ -239,7 +255,9 @@
                     size={14}
                     class="shrink-0 {item.type === qt.value ? 'text-cn-dark' : 'text-text-muted'}"
                   />
-                  <span class="min-w-0 break-words text-xs font-medium leading-tight">{qt.label()}</span>
+                  <span class="min-w-0 break-words text-xs font-medium leading-tight"
+                    >{qt.label()}</span
+                  >
                 </button>
               {/each}
             </div>
@@ -286,7 +304,12 @@
     <div class="mb-4 sm:mb-5">
       {#if item.imageUrl}
         <div class="relative rounded-xl overflow-hidden border border-cn-border">
-          <img src={item.imageUrl} alt="Question" class="w-full max-h-40 object-cover" loading="lazy" />
+          <img
+            src={item.imageUrl}
+            alt="Question"
+            class="w-full max-h-40 object-cover"
+            loading="lazy"
+          />
           <button
             type="button"
             onclick={() => {
@@ -345,14 +368,18 @@
     <div
       class="p-3 sm:p-5 bg-black/5 dark:bg-white/5 border border-dashed border-black/10 dark:border-white/20 rounded-xl sm:rounded-2xl text-xs sm:text-sm text-text-muted/80 italic text-center"
     >
-      {item.type === 'short_text' ? m.form_builder_short_text_hint() : m.form_builder_long_text_hint()}
+      {item.type === 'short_text'
+        ? m.form_builder_short_text_hint()
+        : m.form_builder_long_text_hint()}
     </div>
   {:else if item.type === 'linear_scale'}
     <div
       class="p-3 sm:p-5 bg-white/30 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-xl sm:rounded-2xl space-y-4 sm:space-y-5"
     >
       <div class="flex flex-wrap items-center gap-2 sm:gap-4">
-        <span class="text-sm font-bold text-text-main w-full sm:w-auto">{m.form_builder_scale_prefix()}</span>
+        <span class="text-sm font-bold text-text-main w-full sm:w-auto"
+          >{m.form_builder_scale_prefix()}</span
+        >
         <select bind:value={item.scale.min} class={fieldClass + ' w-auto min-w-[4rem]'}>
           <option value={0} class="bg-white dark:bg-zinc-800">0</option>
           <option value={1} class="bg-white dark:bg-zinc-800">1</option>
@@ -402,7 +429,9 @@
           >
             <div class="flex items-center justify-between gap-2 mb-2 sm:hidden">
               <span class="text-[0.65rem] font-bold uppercase tracking-wide text-text-muted">
-                {isMatrix ? m.form_builder_column_mobile_label() : m.form_builder_option_mobile_label()}
+                {isMatrix
+                  ? m.form_builder_column_mobile_label()
+                  : m.form_builder_option_mobile_label()}
                 {idx + 1}
               </span>
               <button
@@ -423,7 +452,9 @@
               </span>
               <div class="flex-1 min-w-0">
                 <Input
-                  placeholder={isMatrix ? m.form_builder_column_placeholder() : m.form_builder_option_placeholder()}
+                  placeholder={isMatrix
+                    ? m.form_builder_column_placeholder()
+                    : m.form_builder_option_placeholder()}
                   bind:value={opt.label}
                 />
               </div>
@@ -462,7 +493,9 @@
               <input
                 type="text"
                 bind:value={opt.label}
-                placeholder={isMatrix ? m.form_builder_column_placeholder() : m.form_builder_option_placeholder()}
+                placeholder={isMatrix
+                  ? m.form_builder_column_placeholder()
+                  : m.form_builder_option_placeholder()}
                 class={fieldClass}
               />
               {#if !isMatrix && showPriceModifier}
@@ -547,10 +580,7 @@
                     {idx + 1}.
                   </span>
                   <div class="flex-1 min-w-0">
-                    <Input
-                      placeholder={m.form_builder_row_placeholder()}
-                      bind:value={row.value}
-                    />
+                    <Input placeholder={m.form_builder_row_placeholder()} bind:value={row.value} />
                   </div>
                   <button
                     class="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-colors shrink-0"

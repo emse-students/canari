@@ -1,7 +1,12 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { startOidcLogin, hasStoredSession, getToken, PASSWORD_LOGIN_FLOW_SLUG } from '$lib/stores/auth';
+  import {
+    startOidcLogin,
+    hasStoredSession,
+    getToken,
+    PASSWORD_LOGIN_FLOW_SLUG,
+  } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -179,7 +184,7 @@
   {loginError}
   {biometricAvailable}
   {maintenanceNotice}
-  loginDisabled={loginDisabled}
+  {loginDisabled}
   onLogin={handleLogin}
   onPasswordLogin={handlePasswordLogin}
   onReset={resetAll}

@@ -72,12 +72,14 @@ describe('ApnsService', () => {
       expect(token).not.toBeNull();
       const [headerB64, claimsB64, sigB64] = token.split('.');
 
-      const header = JSON.parse(
-        Buffer.from(headerB64, 'base64url').toString(),
-      ) as { alg: string; kid: string };
-      const claims = JSON.parse(
-        Buffer.from(claimsB64, 'base64url').toString(),
-      ) as { iss: string; iat: number };
+      const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString()) as {
+        alg: string;
+        kid: string;
+      };
+      const claims = JSON.parse(Buffer.from(claimsB64, 'base64url').toString()) as {
+        iss: string;
+        iat: number;
+      };
       expect(header).toEqual({ alg: 'ES256', kid: 'KEY123ABC' });
       expect(claims.iss).toBe('TEAM456DEF');
       expect(typeof claims.iat).toBe('number');
@@ -86,7 +88,7 @@ describe('ApnsService', () => {
         'SHA256',
         Buffer.from(`${headerB64}.${claimsB64}`),
         { key: publicKey, dsaEncoding: 'ieee-p1363' },
-        Buffer.from(sigB64, 'base64url'),
+        Buffer.from(sigB64, 'base64url')
       );
       expect(verified).toBe(true);
     });

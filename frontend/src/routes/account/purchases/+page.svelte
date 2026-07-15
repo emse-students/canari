@@ -107,7 +107,9 @@
     </div>
   {:else if loading}
     <div class="flex justify-center py-16">
-      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-border border-t-cn-accent"></div>
+      <div
+        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-border border-t-cn-accent"
+      ></div>
     </div>
   {:else if error}
     <p class="text-red-500 text-sm">{error}</p>
@@ -128,7 +130,11 @@
                 <p class="font-semibold text-sm text-text-main">{tag.tagName}</p>
                 <p class="text-xs text-text-muted mt-0.5">
                   {#if tag.expiresAt}
-                    {m.purchases_tag_expires_at({ date: new Date(tag.expiresAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}
+                    {m.purchases_tag_expires_at({
+                      date: new Date(tag.expiresAt).toLocaleDateString(
+                        getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                      ),
+                    })}
                   {:else}
                     {m.purchases_tag_no_expiry()}
                   {/if}
@@ -156,9 +162,7 @@
       </h2>
 
       {#if data.purchases.length === 0}
-        <div
-          class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center"
-        >
+        <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center">
           <p class="text-text-muted text-sm">{m.purchases_empty_title()}</p>
           <a
             href="/shop"
@@ -190,13 +194,18 @@
                   </span>
                 </div>
                 <p class="text-xs text-text-muted mt-1">
-                  {new Date(purchase.paidAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
+                  {new Date(purchase.paidAt).toLocaleDateString(
+                    getLocale() === 'en' ? 'en-US' : 'fr-FR',
+                    {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    }
+                  )}
                   ·
-                  {purchase.paymentMethod === 'cash' ? m.purchases_payment_cash() : m.purchases_payment_card()}
+                  {purchase.paymentMethod === 'cash'
+                    ? m.purchases_payment_cash()
+                    : m.purchases_payment_card()}
                 </p>
               </div>
               <span class="shrink-0 font-bold text-sm text-text-main">

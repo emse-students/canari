@@ -31,8 +31,7 @@ import {
   productPurchaseCompletedPath,
 } from './social-internal-client';
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Controller handling Stripe Connect onboarding, checkout sessions, and saved payment methods. */
 @Controller('payments')
@@ -41,7 +40,7 @@ export class PaymentController {
 
   constructor(
     private readonly paymentService: PaymentService,
-    private readonly usersService: UsersService,
+    private readonly usersService: UsersService
   ) {}
 
   /** Base URL for inter-service calls to social-service. */
@@ -52,23 +51,21 @@ export class PaymentController {
   /** Marks a form submission as paid via the internal social-service route. */
   private async markSubmissionPaidInternal(
     submissionId: string,
-    sessionId?: string,
+    sessionId?: string
   ): Promise<void> {
     await axios.post(
       `${this.socialBase}${internalSubmissionPath(submissionId, 'mark-paid')}`,
       sessionId ? { sessionId } : {},
-      internalSocialRequestConfig(),
+      internalSocialRequestConfig()
     );
   }
 
   /** Cancels a pending form submission via the internal social-service route. */
-  private async cancelPendingSubmissionInternal(
-    submissionId: string,
-  ): Promise<void> {
+  private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
     await axios.post(
       `${this.socialBase}${internalSubmissionPath(submissionId, 'cancel-pending')}`,
       {},
-      internalSocialRequestConfig(),
+      internalSocialRequestConfig()
     );
   }
 
@@ -77,19 +74,16 @@ export class PaymentController {
     productId: string,
     userId: string,
     amountCents: number,
-    paymentIntentId: string,
+    paymentIntentId: string
   ): Promise<void> {
     await axios.post(
       `${this.socialBase}${productPurchaseCompletedPath(productId)}`,
       { userId, amountCents, paymentIntentId },
-      internalSocialRequestConfig(),
+      internalSocialRequestConfig()
     );
   }
 
-  private async assertCanManageAssociation(
-    req: Request,
-    associationId: string,
-  ): Promise<void> {
+  private async assertCanManageAssociation(req: Request, associationId: string): Promise<void> {
     const userId = (req.headers['x-user-id'] as string | undefined)?.trim();
     if (!userId) {
       throw new UnauthorizedException('Authentication required');
@@ -97,8 +91,7 @@ export class PaymentController {
     const socialBase = this.socialBase;
     const fwd: Record<string, string> = {
       'X-User-Id': userId,
-      'X-Global-Admin':
-        req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
+      'X-Global-Admin': req.headers['x-global-admin'] === 'true' ? 'true' : 'false',
     };
     const nginxAuth = req.headers['x-nginx-auth'];
     if (typeof nginxAuth === 'string') fwd['X-Nginx-Auth'] = nginxAuth;
@@ -107,24 +100,20 @@ export class PaymentController {
     // Forward the Nginx-generated HMAC token so social-service's NginxAuthGuard
     // can validate the inter-service call when INTERNAL_SHARED_SECRET is configured.
     const internalToken = req.headers['x-internal-token'];
-    if (typeof internalToken === 'string')
-      fwd['X-Internal-Token'] = internalToken;
+    if (typeof internalToken === 'string') fwd['X-Internal-Token'] = internalToken;
 
     try {
       const res = await axios.get<{ ok: boolean }>(
         `${socialBase}/api/associations/${encodeURIComponent(associationId)}/manage-permission`,
-        { headers: fwd, validateStatus: () => true },
+        { headers: fwd, validateStatus: () => true }
       );
       if (res.status >= 400 || !res.data?.ok) {
-        throw new ForbiddenException(
-          'You cannot manage payments for this association',
-        );
+        throw new ForbiddenException('You cannot manage payments for this association');
       }
     } catch (e) {
-      if (e instanceof ForbiddenException || e instanceof UnauthorizedException)
-        throw e;
+      if (e instanceof ForbiddenException || e instanceof UnauthorizedException) throw e;
       this.logger.warn(
-        `manage-permission check failed: ${e instanceof Error ? e.message : String(e)}`,
+        `manage-permission check failed: ${e instanceof Error ? e.message : String(e)}`
       );
       throw new BadRequestException('Could not verify association permissions');
     }
@@ -141,7 +130,7 @@ export class PaymentController {
       returnUrl?: string;
       refreshUrl?: string;
     },
-    @Req() req: Request,
+    @Req() req: Request
   ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
@@ -155,9 +144,7 @@ export class PaymentController {
       await this.assertCanManageAssociation(req, assocId);
     }
 
-    const frontendUrl = (
-      process.env.FRONTEND_URL || 'http://localhost'
-    ).replace(/\/$/, '');
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
     const returnUrl = body.returnUrl?.trim() || `${frontendUrl}/associations`;
     const refreshUrl = body.refreshUrl?.trim() || returnUrl;
     const result = await this.paymentService.createConnectOnboarding({
@@ -174,13 +161,13 @@ export class PaymentController {
         await axios.post(
           `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/stripe-account`,
           { stripeAccountId: result.accountId },
-          { maxRedirects: 0 },
+          { maxRedirects: 0 }
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to save stripeAccountId on association',
-          error?.response?.data || error?.message,
+          error?.response?.data || error?.message
         );
       }
     }
@@ -193,10 +180,7 @@ export class PaymentController {
    * Syncs `stripeOnboardingComplete` in social-service when Stripe already enabled charges.
    */
   @Get('connect-status/:associationId')
-  async getConnectStatus(
-    @Param('associationId') associationId: string,
-    @Req() req: Request,
-  ) {
+  async getConnectStatus(@Param('associationId') associationId: string, @Req() req: Request) {
     if (!UUID_RE.test(associationId)) {
       throw new BadRequestException('Invalid associationId');
     }
@@ -217,12 +201,9 @@ export class PaymentController {
       const assoRes = await axios.get<{
         stripeAccountId?: string | null;
         stripeOnboardingComplete?: boolean;
-      }>(
-        `${socialBase}/api/associations/${encodeURIComponent(associationId)}`,
-        {
-          validateStatus: () => true,
-        },
-      );
+      }>(`${socialBase}/api/associations/${encodeURIComponent(associationId)}`, {
+        validateStatus: () => true,
+      });
       if (assoRes.status >= 400) {
         throw new BadRequestException('Association not found');
       }
@@ -231,7 +212,7 @@ export class PaymentController {
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
       this.logger.warn(
-        `connect-status: failed to load association: ${e instanceof Error ? e.message : String(e)}`,
+        `connect-status: failed to load association: ${e instanceof Error ? e.message : String(e)}`
       );
       throw new BadRequestException('Could not load association');
     }
@@ -244,38 +225,35 @@ export class PaymentController {
       };
     }
 
-    const live =
-      await this.paymentService.getConnectAccountStatus(stripeAccountId);
+    const live = await this.paymentService.getConnectAccountStatus(stripeAccountId);
 
     if (live.status === 'active' && !dbOnboardingComplete) {
       try {
         await axios.post(
           `${socialBase}/api/associations/${encodeURIComponent(associationId)}/stripe-complete`,
           undefined,
-          { maxRedirects: 0, timeout: 15_000 },
+          { maxRedirects: 0, timeout: 15_000 }
         );
         dbOnboardingComplete = true;
         this.logger.log(
-          `connect-status: synced stripeOnboardingComplete for association ${associationId}`,
+          `connect-status: synced stripeOnboardingComplete for association ${associationId}`
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.warn(
           'connect-status: failed to sync stripe-complete',
-          error?.response?.data || error?.message,
+          error?.response?.data || error?.message
         );
       }
     }
 
-    let balance: Awaited<
-      ReturnType<PaymentService['getConnectBalance']>
-    > | null = null;
+    let balance: Awaited<ReturnType<PaymentService['getConnectBalance']>> | null = null;
     if (live.chargesEnabled && stripeAccountId) {
       try {
         balance = await this.paymentService.getConnectBalance(stripeAccountId);
       } catch (err: unknown) {
         this.logger.warn(
-          `connect-status: failed to load balance for ${associationId}: ${err instanceof Error ? err.message : String(err)}`,
+          `connect-status: failed to load balance for ${associationId}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
@@ -296,7 +274,7 @@ export class PaymentController {
   @HttpCode(200)
   async createConnectDashboardLink(
     @Param('associationId') associationId: string,
-    @Req() req: Request,
+    @Req() req: Request
   ) {
     if (!UUID_RE.test(associationId)) {
       throw new BadRequestException('Invalid associationId');
@@ -310,7 +288,7 @@ export class PaymentController {
     const socialBase = this.socialBase;
     const assoRes = await axios.get<{ stripeAccountId?: string | null }>(
       `${socialBase}/api/associations/${encodeURIComponent(associationId)}`,
-      { validateStatus: () => true },
+      { validateStatus: () => true }
     );
     if (assoRes.status >= 400) {
       throw new BadRequestException('Association not found');
@@ -318,13 +296,10 @@ export class PaymentController {
 
     const stripeAccountId = assoRes.data.stripeAccountId?.trim();
     if (!stripeAccountId) {
-      throw new BadRequestException(
-        'Stripe Connect is not configured for this association',
-      );
+      throw new BadRequestException('Stripe Connect is not configured for this association');
     }
 
-    const url =
-      await this.paymentService.createConnectDashboardLink(stripeAccountId);
+    const url = await this.paymentService.createConnectDashboardLink(stripeAccountId);
     return { url };
   }
 
@@ -341,7 +316,7 @@ export class PaymentController {
       stripeConnectAccountId?: string;
       customerId?: string;
       saveForFuture?: boolean;
-    },
+    }
   ) {
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
       throw new BadRequestException('Invalid payload');
@@ -393,9 +368,7 @@ export class PaymentController {
     const formId = session.metadata?.formId;
 
     if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
-      this.logger.error(
-        `Missing or invalid submissionId in session ${body.sessionId}`,
-      );
+      this.logger.error(`Missing or invalid submissionId in session ${body.sessionId}`);
       return { ok: false, message: 'No submission linked to this session' };
     }
 
@@ -405,7 +378,7 @@ export class PaymentController {
       const error = err as Error & { response?: { data?: unknown } };
       this.logger.error(
         'verify-session: mark-paid failed',
-        error?.response?.data || error?.message,
+        error?.response?.data || error?.message
       );
       // Non-fatal if already paid - webhook may have already handled it
     }
@@ -444,7 +417,7 @@ export class PaymentController {
       const error = err as Error & { response?: { data?: unknown } };
       this.logger.error(
         'cancel-session: cancel submission failed',
-        error?.response?.data || error?.message,
+        error?.response?.data || error?.message
       );
     }
 
@@ -459,17 +432,17 @@ export class PaymentController {
   @HttpCode(200)
   async setupPaymentMethod(
     @Headers('x-user-id') userId: string,
-    @Body() body: { successUrl?: string; cancelUrl?: string } = {},
+    @Body() body: { successUrl?: string; cancelUrl?: string } = {}
   ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
     const user = await this.usersService.findOne(userId);
-    const customerId = await this.paymentService.getOrCreateCustomer(
-      user.stripeCustomerId,
-      { userId: user.id, displayName: user.displayName },
-    );
+    const customerId = await this.paymentService.getOrCreateCustomer(user.stripeCustomerId, {
+      userId: user.id,
+      displayName: user.displayName,
+    });
 
     // Save customer ID if it was just created
     if (customerId !== user.stripeCustomerId) {
@@ -484,12 +457,12 @@ export class PaymentController {
       successUrl: resolveStripeCallbackUrl(
         body?.successUrl,
         `${frontendUrl}/profile?payment_setup=success`,
-        frontendUrl,
+        frontendUrl
       ),
       cancelUrl: resolveStripeCallbackUrl(
         body?.cancelUrl,
         `${frontendUrl}/profile?payment_setup=cancel`,
-        frontendUrl,
+        frontendUrl
       ),
     });
 
@@ -515,7 +488,7 @@ export class PaymentController {
   @Delete('payment-methods/:id')
   async deletePaymentMethod(
     @Headers('x-user-id') userId: string,
-    @Param('id') paymentMethodId: string,
+    @Param('id') paymentMethodId: string
   ) {
     if (!this.paymentService.isConfigured()) {
       throw new BadRequestException('Stripe not configured');
@@ -527,9 +500,7 @@ export class PaymentController {
       throw new BadRequestException('No payment methods on file');
     }
 
-    const methods = await this.paymentService.listPaymentMethods(
-      user.stripeCustomerId,
-    );
+    const methods = await this.paymentService.listPaymentMethods(user.stripeCustomerId);
     if (!methods.some((m) => m.id === paymentMethodId)) {
       throw new BadRequestException('Payment method not found');
     }
@@ -549,7 +520,7 @@ export class PaymentController {
   @Post('internal/customer-id')
   @HttpCode(200)
   async getOrCreateCustomerForUser(
-    @Body() body: { userId: string },
+    @Body() body: { userId: string }
   ): Promise<{ customerId: string | null }> {
     if (!this.paymentService.isConfigured()) {
       return { customerId: null };
@@ -565,10 +536,10 @@ export class PaymentController {
       return { customerId: null };
     }
 
-    const customerId = await this.paymentService.getOrCreateCustomer(
-      user.stripeCustomerId,
-      { userId: user.id, displayName: user.displayName },
-    );
+    const customerId = await this.paymentService.getOrCreateCustomer(user.stripeCustomerId, {
+      userId: user.id,
+      displayName: user.displayName,
+    });
 
     if (customerId !== user.stripeCustomerId) {
       await this.usersService.update(body.userId, {
@@ -585,7 +556,7 @@ export class PaymentController {
   @HttpCode(200)
   async chargeWithSavedMethod(
     @Headers('x-user-id') userId: string,
-    @Body() body: { submissionId: string; paymentMethodId: string },
+    @Body() body: { submissionId: string; paymentMethodId: string }
   ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
@@ -593,9 +564,7 @@ export class PaymentController {
 
     const { submissionId, paymentMethodId } = body;
     if (!submissionId || !paymentMethodId) {
-      throw new BadRequestException(
-        'submissionId and paymentMethodId are required',
-      );
+      throw new BadRequestException('submissionId and paymentMethodId are required');
     }
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
       throw new BadRequestException('Invalid submissionId');
@@ -603,19 +572,17 @@ export class PaymentController {
 
     // Ensure user has a Stripe customer and this PM belongs to them
     const user = await this.usersService.findOne(userId);
-    const customerId = await this.paymentService.getOrCreateCustomer(
-      user.stripeCustomerId,
-      { userId: user.id, displayName: user.displayName },
-    );
+    const customerId = await this.paymentService.getOrCreateCustomer(user.stripeCustomerId, {
+      userId: user.id,
+      displayName: user.displayName,
+    });
     if (customerId !== user.stripeCustomerId) {
       await this.usersService.update(userId, { stripeCustomerId: customerId });
     }
 
     const methods = await this.paymentService.listPaymentMethods(customerId);
     if (!methods.some((m) => m.id === paymentMethodId)) {
-      throw new BadRequestException(
-        'Payment method not found or does not belong to this account',
-      );
+      throw new BadRequestException('Payment method not found or does not belong to this account');
     }
 
     // Fetch submission details from social-service
@@ -633,15 +600,12 @@ export class PaymentController {
     try {
       const resp = await axios.get<SubmissionData>(
         `${socialBase}${internalSubmissionPath(submissionId)}`,
-        internalSocialRequestConfig(),
+        internalSocialRequestConfig()
       );
       submissionData = resp.data;
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error(
-        'Failed to fetch submission',
-        error?.response?.data || error?.message,
-      );
+      this.logger.error('Failed to fetch submission', error?.response?.data || error?.message);
       throw new BadRequestException('Could not retrieve submission details');
     }
 
@@ -655,8 +619,7 @@ export class PaymentController {
     if (submissionData.paymentStatus === 'cancelled') {
       return {
         ok: false,
-        error:
-          'This submission has been cancelled. Please submit the form again.',
+        error: 'This submission has been cancelled. Please submit the form again.',
       };
     }
     if (submissionData.paymentStatus === 'free' || !submissionData.totalPaid) {
@@ -664,16 +627,15 @@ export class PaymentController {
     }
 
     // Charge - idempotencyKey prevents double-charge on client retry.
-    const result: ChargeResult =
-      await this.paymentService.chargeWithSavedMethod({
-        customerId,
-        paymentMethodId,
-        amountCents: submissionData.totalPaid,
-        currency: submissionData.currency ?? 'eur',
-        metadata: { submissionId, userId },
-        stripeConnectAccountId: submissionData.stripeAccountId ?? undefined,
-        idempotencyKey: `${submissionId}:${paymentMethodId}`,
-      });
+    const result: ChargeResult = await this.paymentService.chargeWithSavedMethod({
+      customerId,
+      paymentMethodId,
+      amountCents: submissionData.totalPaid,
+      currency: submissionData.currency ?? 'eur',
+      metadata: { submissionId, userId },
+      stripeConnectAccountId: submissionData.stripeAccountId ?? undefined,
+      idempotencyKey: `${submissionId}:${paymentMethodId}`,
+    });
 
     if (result.ok) {
       try {
@@ -682,7 +644,7 @@ export class PaymentController {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to mark submission as paid',
-          error?.response?.data || error?.message,
+          error?.response?.data || error?.message
         );
         // Payment succeeded but marking failed - return ok, user can retry
       }
@@ -693,7 +655,7 @@ export class PaymentController {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to cancel submission after charge failure',
-          error?.response?.data || error?.message,
+          error?.response?.data || error?.message
         );
       }
     }
@@ -713,37 +675,32 @@ export class PaymentController {
       productId: string;
       paymentMethodId: string;
       customAmountCents?: number;
-    },
+    }
   ) {
     if (!this.paymentService.isConfigured()) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
-    const { associationId, productId, paymentMethodId, customAmountCents } =
-      body;
+    const { associationId, productId, paymentMethodId, customAmountCents } = body;
     if (!associationId || !productId || !paymentMethodId) {
-      throw new BadRequestException(
-        'associationId, productId and paymentMethodId are required',
-      );
+      throw new BadRequestException('associationId, productId and paymentMethodId are required');
     }
     if (!UUID_RE.test(associationId) || !UUID_RE.test(productId)) {
       throw new BadRequestException('Invalid associationId or productId');
     }
 
     const user = await this.usersService.findOne(userId);
-    const customerId = await this.paymentService.getOrCreateCustomer(
-      user.stripeCustomerId,
-      { userId: user.id, displayName: user.displayName },
-    );
+    const customerId = await this.paymentService.getOrCreateCustomer(user.stripeCustomerId, {
+      userId: user.id,
+      displayName: user.displayName,
+    });
     if (customerId !== user.stripeCustomerId) {
       await this.usersService.update(userId, { stripeCustomerId: customerId });
     }
 
     const methods = await this.paymentService.listPaymentMethods(customerId);
     if (!methods.some((m) => m.id === paymentMethodId)) {
-      throw new BadRequestException(
-        'Payment method not found or does not belong to this account',
-      );
+      throw new BadRequestException('Payment method not found or does not belong to this account');
     }
 
     interface ProductChargeContext {
@@ -759,7 +716,7 @@ export class PaymentController {
       const resp = await axios.post<ProductChargeContext>(
         `${this.socialBase}${internalProductChargeContextPath()}`,
         { associationId, productId, userId, customAmountCents },
-        internalSocialRequestConfig(),
+        internalSocialRequestConfig()
       );
       chargeContext = resp.data;
     } catch (err: unknown) {
@@ -768,18 +725,14 @@ export class PaymentController {
       };
       this.logger.error(
         'Failed to fetch product charge context',
-        error?.response?.data || error?.message,
+        error?.response?.data || error?.message
       );
-      const msg =
-        error?.response?.data?.message ??
-        'Could not retrieve product purchase details';
+      const msg = error?.response?.data?.message ?? 'Could not retrieve product purchase details';
       throw new BadRequestException(msg);
     }
 
     if (chargeContext.userId.toLowerCase() !== userId.toLowerCase()) {
-      throw new BadRequestException(
-        'Product purchase does not belong to this user',
-      );
+      throw new BadRequestException('Product purchase does not belong to this user');
     }
 
     if (!chargeContext.amountCents || chargeContext.amountCents <= 0) {
@@ -787,16 +740,15 @@ export class PaymentController {
     }
 
     const idempotencyKey = `${productId}:${userId}:${chargeContext.amountCents}:${paymentMethodId}`;
-    const result: ChargeResult =
-      await this.paymentService.chargeWithSavedMethod({
-        customerId,
-        paymentMethodId,
-        amountCents: chargeContext.amountCents,
-        currency: chargeContext.currency ?? 'eur',
-        metadata: { productId, userId },
-        stripeConnectAccountId: chargeContext.stripeAccountId,
-        idempotencyKey,
-      });
+    const result: ChargeResult = await this.paymentService.chargeWithSavedMethod({
+      customerId,
+      paymentMethodId,
+      amountCents: chargeContext.amountCents,
+      currency: chargeContext.currency ?? 'eur',
+      metadata: { productId, userId },
+      stripeConnectAccountId: chargeContext.stripeAccountId,
+      idempotencyKey,
+    });
 
     if (result.ok && result.paymentIntentId) {
       try {
@@ -804,13 +756,13 @@ export class PaymentController {
           productId,
           userId,
           chargeContext.amountCents,
-          result.paymentIntentId,
+          result.paymentIntentId
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
           'Failed to fulfill product purchase after charge',
-          error?.response?.data || error?.message,
+          error?.response?.data || error?.message
         );
       }
     }

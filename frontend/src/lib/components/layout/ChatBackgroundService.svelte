@@ -1041,10 +1041,7 @@
           } catch (e) {
             // If the device has no enrolled biometric, catch the error.
             if (String(e).includes('At least one biometric must be enrolled')) {
-              showToast(
-                m.auth_biometric_no_fingerprint_android(),
-                'info'
-              );
+              showToast(m.auth_biometric_no_fingerprint_android(), 'info');
               globalSession.showBiometricEnrollPrompt = false;
             }
           }

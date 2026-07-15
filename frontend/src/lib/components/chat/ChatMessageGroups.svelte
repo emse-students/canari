@@ -195,7 +195,8 @@
         : continuesToNext
           ? 'start'
           : 'single'}
-      {@const showSender = !msg.isOwn && !isDirect && groupPosition !== 'middle' && groupPosition !== 'end'}
+      {@const showSender =
+        !msg.isOwn && !isDirect && groupPosition !== 'middle' && groupPosition !== 'end'}
 
       {#if msg.isSystem}
         <div class="flex justify-center my-3">
@@ -266,7 +267,7 @@
               status={msg.status}
               {groupPosition}
               onReply={onReply ? () => onReply?.(msg) : undefined}
-            onForward={onForward ? () => onForward?.(msg) : undefined}
+              onForward={onForward ? () => onForward?.(msg) : undefined}
               {onNavigateToMessage}
               {onReact}
               {onVotePoll}

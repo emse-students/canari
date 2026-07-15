@@ -41,14 +41,14 @@
 - Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere; escape quotes in code (`\'`, `\"`). Preserve French accents (`é`, `à`) ONLY in localized strings/French comments.  
 - Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.  
 - UI: Single source of truth is `src/app.css` (tokens, `--radius-*`). Use `.btn-glass` with modifiers. Dark-first glassmorphism. Avoid raw hex/px. `lucide-svelte` only (no aliases).  
-- Husky: Pre-commit runs ESLint \+ Prettier \+ svelte-check. Fix errors; do not bypass.
+- Husky: Pre-commit runs oxlint + oxvelte + oxfmt + svelte-check. Fix errors; do not bypass.
 
 ## **KEY COMMANDS**
 
 * Package manager: frontend uses bun (committed bun.lock, CI --frozen-lockfile); the Makefile shells out to npm on the same package.json - both work. Prefer bun locally.  
 * Setup/Dev: make install, make run-services, cd frontend && bun run dev  
 * Tests: make test (All), make test-frontend, cargo test  
-* Frontend gates (before every commit): bun run check (svelte-check, MUST be 0 errors), bun run lint (eslint), bun run format (prettier --write .). cargo clippy for Rust. The pre-commit hook runs prettier+eslint+check across the WHOLE frontend (~2-3 min) and re-stages - isolate unrelated dirty files before committing. make run-ci runs the full local pipeline.
+* Frontend gates (before every commit): bun run check (svelte-check, MUST be 0 errors), bun run lint (oxlint + oxvelte), bun run format (oxfmt --write .). Rust >= 1.93 (`rust-toolchain.toml`). cargo clippy for Rust crates. The pre-commit hook runs oxfmt+oxlint+oxvelte+check across the WHOLE frontend (~2-3 min) and re-stages - isolate unrelated dirty files before committing. make run-ci runs the full local pipeline.
 
 ## **SESSION STATE (Active Memory) - CONSOLIDATED ROADMAP**
 

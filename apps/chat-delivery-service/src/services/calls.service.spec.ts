@@ -2,10 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import {
-  ForbiddenException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { CallsService } from './calls.service';
 import { GroupMember } from '../entities/group-member.entity';
 
@@ -64,9 +61,9 @@ describe('CallsService', () => {
 
   it('rejects non-members', async () => {
     groupMemberRepo.findOne.mockResolvedValue(null);
-    await expect(
-      service.getIceServers('user-1', 'group-1', 'call-1'),
-    ).rejects.toThrow(ForbiddenException);
+    await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+      ForbiddenException
+    );
   });
 
   it('returns 503 when Cloudflare TURN is not configured', async () => {
@@ -74,9 +71,9 @@ describe('CallsService', () => {
       groupId: 'group-1',
       userId: 'user-1',
     });
-    await expect(
-      service.getIceServers('user-1', 'group-1', 'call-1'),
-    ).rejects.toThrow(ServiceUnavailableException);
+    await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+      ServiceUnavailableException
+    );
   });
 
   it('refuses TURN credentials once the monthly budget is reached', async () => {
@@ -90,9 +87,9 @@ describe('CallsService', () => {
     // 10 GB budget = 10000 MB; seed just over it.
     redisStore.set(turnUsageKey, '10001');
 
-    await expect(
-      service.getIceServers('user-1', 'group-1', 'call-1'),
-    ).rejects.toThrow(ServiceUnavailableException);
+    await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+      ServiceUnavailableException
+    );
   });
 
   it('accumulates estimated TURN usage when a call ends', async () => {
@@ -103,7 +100,7 @@ describe('CallsService', () => {
       JSON.stringify({
         deviceId: 'device-a',
         updatedAt: Date.now() - 10 * 60 * 1000,
-      }),
+      })
     );
 
     await service.reportCallPresence('user-1', 'device-a', { active: false });

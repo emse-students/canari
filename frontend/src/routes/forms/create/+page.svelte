@@ -217,7 +217,9 @@
       <ArrowLeft size={20} />
     </button>
     <div class="flex-1 min-w-0">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_create_heading()}</h1>
+      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+        {m.form_create_heading()}
+      </h1>
       <p class="text-sm text-text-muted mt-0.5">{m.form_create_subtitle()}</p>
     </div>
   </div>
@@ -288,8 +290,12 @@
       <label class="flex items-center gap-3 cursor-pointer select-none group">
         <div class="relative">
           <input type="checkbox" bind:checked={allowMultipleSubmissions} class="peer sr-only" />
-          <div class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"></div>
-          <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+          <div
+            class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+          ></div>
+          <div
+            class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"
+          ></div>
         </div>
         <div>
           <span class="text-sm font-semibold text-text-main">{m.form_allow_multiple_label()}</span>
@@ -398,7 +404,7 @@
             >{m.form_member_tag_label()}</label
           >
           <AssociationTagAutocomplete
-            associationId={associationId}
+            {associationId}
             value={pricingTagName}
             onValueChange={(v) => (pricingTagName = v)}
             inputId="pricing-tag-autocomplete"
@@ -511,7 +517,9 @@
       <span
         class="ml-auto text-xs font-semibold text-text-muted bg-cn-border/40 px-2.5 py-1 rounded-full"
       >
-        {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}
+        {items.length === 1
+          ? m.form_questions_count_one()
+          : m.form_questions_count({ count: items.length })}
       </span>
     </div>
 
@@ -598,7 +606,9 @@
       {#if titleMissing}
         <span class="text-amber-600 font-medium">{m.form_title_required_hint()}</span>
       {:else}
-        {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}{#if requiresPayment && basePrice > 0}
+        {items.length === 1
+          ? m.form_questions_count_one()
+          : m.form_questions_count({ count: items.length })}{#if requiresPayment && basePrice > 0}
           · {basePrice.toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
             minimumFractionDigits: 0,
             maximumFractionDigits: 2,

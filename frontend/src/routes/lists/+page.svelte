@@ -62,7 +62,8 @@
   const canCreate = $derived(
     isGlobalAdmin() ||
       myAssociations.some(
-        (a) => a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
+        (a) =>
+          a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
       )
   );
 </script>

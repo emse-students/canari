@@ -310,7 +310,9 @@
           </span>
         {/if}
       </span>
-      <span class="text-xs text-amber-800/80 dark:text-amber-200/80">{m.calendar_moderate_open()} →</span>
+      <span class="text-xs text-amber-800/80 dark:text-amber-200/80"
+        >{m.calendar_moderate_open()} →</span
+      >
     </a>
   {/if}
 
@@ -463,7 +465,9 @@
         </div>
 
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.calendar_deposit_desc_label()}</p>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">
+            {m.calendar_deposit_desc_label()}
+          </p>
           <MarkdownComposerField
             bind:value={depositDescription}
             placeholder={m.calendar_deposit_placeholder()}

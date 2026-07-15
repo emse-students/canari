@@ -101,7 +101,9 @@
 </script>
 
 {#if open}
-  <div class="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center">
+  <div
+    class="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center"
+  >
     <button
       type="button"
       class="absolute inset-0 bg-black/45 backdrop-blur-sm"

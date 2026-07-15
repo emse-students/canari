@@ -11,11 +11,7 @@ import {
 } from '@nestjs/common';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import {
-  MessagingService,
-  SendMessageBody,
-  AckMessagesBody,
-} from '../services/messaging.service';
+import { MessagingService, SendMessageBody, AckMessagesBody } from '../services/messaging.service';
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
@@ -39,7 +35,7 @@ export class MessagingController {
       proto?: string;
       senderId?: string;
       excludeDeviceIds?: string[];
-    },
+    }
   ) {
     return this.messagingService.validateCommit(body);
   }
@@ -53,22 +49,16 @@ export class MessagingController {
   async getCommitsSince(
     @Headers('x-user-id') authUserId: string | undefined,
     @Param('groupId') groupId: string,
-    @Query('sinceEpoch') sinceEpochRaw?: string,
+    @Query('sinceEpoch') sinceEpochRaw?: string
   ) {
     const sinceEpoch = Number.parseInt(sinceEpochRaw ?? '0', 10);
     if (!Number.isFinite(sinceEpoch) || sinceEpoch < 0) {
-      throw new BadRequestException(
-        'sinceEpoch must be a non-negative integer',
-      );
+      throw new BadRequestException('sinceEpoch must be a non-negative integer');
     }
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
-    return this.messagingService.getCommitsSince(
-      groupId,
-      sinceEpoch,
-      authUserId,
-    );
+    return this.messagingService.getCommitsSince(groupId, sinceEpoch, authUserId);
   }
 
   /**
@@ -79,7 +69,7 @@ export class MessagingController {
   @Get('mls/group-info/:groupId')
   async getGroupInfo(
     @Headers('x-user-id') authUserId: string | undefined,
-    @Param('groupId') groupId: string,
+    @Param('groupId') groupId: string
   ) {
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
@@ -97,24 +87,19 @@ export class MessagingController {
   async storeGroupInfo(
     @Headers('x-user-id') authUserId: string | undefined,
     @Param('groupId') groupId: string,
-    @Body() body: { groupInfo: string; baseEpoch: number },
+    @Body() body: { groupInfo: string; baseEpoch: number }
   ) {
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
-    if (
-      typeof body?.groupInfo !== 'string' ||
-      !Number.isFinite(body?.baseEpoch)
-    ) {
-      throw new BadRequestException(
-        'groupInfo (base64) and baseEpoch are required',
-      );
+    if (typeof body?.groupInfo !== 'string' || !Number.isFinite(body?.baseEpoch)) {
+      throw new BadRequestException('groupInfo (base64) and baseEpoch are required');
     }
     return this.messagingService.storeGroupInfo(
       groupId,
       authUserId,
       body.groupInfo,
-      body.baseEpoch,
+      body.baseEpoch
     );
   }
 
@@ -130,7 +115,7 @@ export class MessagingController {
       welcomePayload: string;
       ratchetTreePayload?: string;
       groupId: string;
-    },
+    }
   ) {
     return this.messagingService.sendWelcome(authUserId, body);
   }
@@ -139,11 +124,7 @@ export class MessagingController {
   @Post('mls/welcome-request')
   async notifyWelcomeRequest(
     @Body()
-    body: {
-      groupId: string;
-      requesterUserId: string;
-      requesterDeviceId: string;
-    },
+    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
   ) {
     return this.messagingService.notifyWelcomeRequest(body);
   }
@@ -152,11 +133,7 @@ export class MessagingController {
   @Post('mls/history-request')
   async notifyHistoryRequest(
     @Body()
-    body: {
-      groupId: string;
-      requesterUserId: string;
-      requesterDeviceId: string;
-    },
+    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
   ) {
     return this.messagingService.notifyHistoryRequest(body);
   }
@@ -167,12 +144,12 @@ export class MessagingController {
     @Body()
     body: { groups?: { groupId: string; after?: string; limit?: number }[] },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     return this.messagingService.getHistoryBatch(
       body?.groups ?? [],
       headerUserId,
-      headerGlobalAdmin,
+      headerGlobalAdmin
     );
   }
 
@@ -183,7 +160,7 @@ export class MessagingController {
     @Query('after') after?: string,
     @Query('limit') limitRaw?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<Record<string, unknown>[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
     return this.messagingService.getHistory(
@@ -191,7 +168,7 @@ export class MessagingController {
       after,
       headerUserId,
       headerGlobalAdmin,
-      Number.isFinite(limit) ? limit : undefined,
+      Number.isFinite(limit) ? limit : undefined
     );
   }
 
@@ -203,7 +180,7 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('after') after?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<QueuedMessage[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : 500;
     return this.messagingService.fetchMessages(
@@ -212,7 +189,7 @@ export class MessagingController {
       headerUserId,
       headerGlobalAdmin,
       Number.isFinite(limit) ? limit : 500,
-      after,
+      after
     );
   }
 
@@ -221,13 +198,9 @@ export class MessagingController {
   async acknowledgeMessages(
     @Body() body: AckMessagesBody,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
-    return this.messagingService.acknowledgeMessages(
-      body,
-      headerUserId,
-      headerGlobalAdmin,
-    );
+    return this.messagingService.acknowledgeMessages(body, headerUserId, headerGlobalAdmin);
   }
 
   /**
@@ -248,7 +221,7 @@ export class MessagingController {
       emoji: string;
       messagePreview: string;
       actorName: string;
-    },
+    }
   ): Promise<{ sent: number; failed: number }> {
     if (!callerId) throw new BadRequestException('x-user-id header required');
 
@@ -263,15 +236,10 @@ export class MessagingController {
 
     const notifBody = `${actor} reacted with ${emoji} to "${preview}"`;
 
-    return this.messagingService.sendPushToUser(
-      body.targetSenderId,
-      'New reaction',
-      notifBody,
-      {
-        type: 'social',
-        deepLink: `fr.emse.canari://chat/${body.groupId ?? ''}`,
-        groupId: body.groupId ?? '',
-      },
-    );
+    return this.messagingService.sendPushToUser(body.targetSenderId, 'New reaction', notifBody, {
+      type: 'social',
+      deepLink: `fr.emse.canari://chat/${body.groupId ?? ''}`,
+      groupId: body.groupId ?? '',
+    });
   }
 }

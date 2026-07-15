@@ -64,8 +64,7 @@
     aria-errormessage={error ? `${uniqueId}-error` : undefined}
     class="ui-textarea {isInvalid ? 'border-red-err! focus:border-red-err!' : ''}"
     {oninput}
-    {...rest}
-  ></textarea>
+    {...rest}></textarea>
   {#if error}
     <p id="{uniqueId}-error" role="alert" class="mt-1.5 ml-1 text-xs font-medium text-red-err">
       {error}

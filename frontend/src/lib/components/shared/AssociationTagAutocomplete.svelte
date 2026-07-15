@@ -88,9 +88,7 @@
       suggestions = await searchAssociationTagCatalog(associationId, query);
       const q = query.trim().toLowerCase();
       const canCreate =
-        allowCreate &&
-        q.length > 0 &&
-        !suggestions.some((t) => t.toLowerCase() === q);
+        allowCreate && q.length > 0 && !suggestions.some((t) => t.toLowerCase() === q);
       showDropdown = suggestions.length > 0 || canCreate;
       selectedIndex = -1;
     } catch (e) {
@@ -256,7 +254,9 @@
                 : ''}"
               onmousedown={confirmCreate}
             >
-              <span class="text-text-main">{m.tag_autocomplete_create_prefix()}<span class="font-mono">{trimmedQuery}</span> "</span>
+              <span class="text-text-main"
+                >{m.tag_autocomplete_create_prefix()}<span class="font-mono">{trimmedQuery}</span> "</span
+              >
             </button>
           </li>
         {/if}

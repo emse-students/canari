@@ -141,7 +141,7 @@ jobs:
           if [[ "$shared_ts" == "true" ]] || has '^frontend/src/' || has '^frontend/static/' || \
              has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
-             has '^frontend/tsconfig' || has '^frontend/eslint\.config' || \
+             has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
              has '^frontend/mls-wasm/'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
@@ -296,6 +296,24 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust (oxvelte >= 1.93)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+
+      - name: Cache oxvelte build
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/oxvelte
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/git/db
+          key: oxvelte-v0.2.0-${{ runner.os }}
+
+      - name: Install oxvelte
+        run: ./scripts/install-oxvelte.sh
 
       - name: Install frontend dependencies
         working-directory: frontend

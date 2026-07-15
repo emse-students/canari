@@ -122,7 +122,9 @@
     <img
       src={displaySrc ?? avatarSrc}
       alt={`Avatar de ${displayLabel}`}
-      class="w-full h-full object-cover select-none transition-opacity duration-150 {imageLoaded ? 'opacity-100' : 'opacity-0'}"
+      class="w-full h-full object-cover select-none transition-opacity duration-150 {imageLoaded
+        ? 'opacity-100'
+        : 'opacity-0'}"
       onload={() => {
         imageLoaded = true;
       }}

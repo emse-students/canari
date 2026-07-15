@@ -81,10 +81,16 @@
 
   async function handleDelete(entry: UserRoleHistoryRow) {
     if (
-      !await showConfirm(m.profile_role_history_confirm_delete({ title: entry.roleTitle, asso: entry.associationName }), {
-        danger: true,
-        confirmLabel: m.common_delete_button(),
-      })
+      !(await showConfirm(
+        m.profile_role_history_confirm_delete({
+          title: entry.roleTitle,
+          asso: entry.associationName,
+        }),
+        {
+          danger: true,
+          confirmLabel: m.common_delete_button(),
+        }
+      ))
     ) {
       return;
     }
@@ -100,9 +106,7 @@
 <div class="space-y-3">
   {#if entries.length === 0 && !showForm}
     <p class="text-sm text-text-muted">
-      {editable
-        ? m.profile_role_history_add_prompt()
-        : m.profile_role_history_empty()}
+      {editable ? m.profile_role_history_add_prompt() : m.profile_role_history_empty()}
     </p>
   {:else}
     <ul class="space-y-2">

@@ -19,7 +19,8 @@
       <li>
         <button
           type="button"
-          class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i === selectedIdx
+          class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i ===
+          selectedIdx
             ? 'bg-amber-100/60 dark:bg-amber-900/30'
             : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
           onmousedown={(e) => {

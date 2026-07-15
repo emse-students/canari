@@ -231,7 +231,9 @@
     try {
       await onInviteCommunityMember(savedId, savedRole);
       inviteStatus = m.chat_community_invite_sent_message({ savedId });
-      setTimeout(() => { inviteStatus = ''; }, 4000);
+      setTimeout(() => {
+        inviteStatus = '';
+      }, 4000);
       void loadCommunityMembers();
     } catch (e) {
       inviteStatus = e instanceof Error ? e.message : m.chat_community_key_distribution_error();
@@ -397,13 +399,17 @@
           <!-- Placer ici une liste factice ou une vraie table -->
           <div class="border border-cn-border rounded-xl bg-white overflow-hidden text-sm">
             <div class="p-4 flex items-center justify-between border-b border-cn-border bg-black/5">
-              <span class="font-semibold text-text-main">{communityMembers.length} {m.chat_community_member_count_label()}</span>
+              <span class="font-semibold text-text-main"
+                >{communityMembers.length} {m.chat_community_member_count_label()}</span
+              >
               <button
                 class="bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-bold hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 onclick={handleGenerateInvitation}
                 disabled={inviteLoading}
               >
-                {inviteLoading ? m.common_sending_label() : m.chat_community_generate_invite_button()}
+                {inviteLoading
+                  ? m.common_sending_label()
+                  : m.chat_community_generate_invite_button()}
               </button>
             </div>
             <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
@@ -430,7 +436,9 @@
               </div>
             {/if}
             {#if membersLoading}
-              <div class="p-6 text-center text-text-muted">{m.chat_community_loading_members()}</div>
+              <div class="p-6 text-center text-text-muted">
+                {m.chat_community_loading_members()}
+              </div>
             {:else if membersError}
               <div class="p-6 text-center text-red-600">{membersError}</div>
             {:else if communityMembers.length === 0}

@@ -4,9 +4,7 @@ import type { Repository } from 'typeorm';
 
 describe('PlatformService', () => {
   let service: PlatformService;
-  let repo: jest.Mocked<
-    Pick<Repository<PlatformConfig>, 'findOne' | 'findOneOrFail' | 'save'>
-  >;
+  let repo: jest.Mocked<Pick<Repository<PlatformConfig>, 'findOne' | 'findOneOrFail' | 'save'>>;
 
   beforeEach(() => {
     repo = {
@@ -14,9 +12,7 @@ describe('PlatformService', () => {
       findOneOrFail: jest.fn(),
       save: jest.fn(),
     };
-    service = new PlatformService(
-      repo as unknown as Repository<PlatformConfig>,
-    );
+    service = new PlatformService(repo as unknown as Repository<PlatformConfig>);
   });
 
   it('isAccessBlockedByMaintenance blocks non-admins when enabled', () => {
@@ -51,7 +47,7 @@ describe('PlatformService', () => {
     await service.ensureDefaults();
 
     expect(repo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, maintenanceEnabled: false }),
+      expect.objectContaining({ id: 1, maintenanceEnabled: false })
     );
   });
 });

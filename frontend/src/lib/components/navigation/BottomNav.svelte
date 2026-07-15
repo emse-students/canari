@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { MessageCircle, Newspaper, Users, LayoutDashboard, Bell, Calendar, ShoppingBag, ClipboardList } from '@lucide/svelte';
+  import {
+    MessageCircle,
+    Newspaper,
+    Users,
+    LayoutDashboard,
+    Bell,
+    Calendar,
+    ShoppingBag,
+    ClipboardList,
+  } from '@lucide/svelte';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';

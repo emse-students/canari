@@ -46,7 +46,9 @@
     <nav
       class="mb-8 rounded-2xl border border-white/30 bg-white/10 p-4 dark:border-white/10 dark:bg-white/5"
     >
-      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">{m.legal_toc_heading()}</p>
+      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">
+        {m.legal_toc_heading()}
+      </p>
       <ul class="space-y-1 text-sm text-cn-yellow">
         {#each [['#definitions', '1. Définitions'], ['#age', '2. Âge minimum et accès'], ['#hebergement', '3. Accès et hébergement'], ['#chiffrement', '4. Chiffrement et sécurité'], ['#regles', "5. Règles d'utilisation"], ['#contenu', '6. Contenu, modération et signalement'], ['#enfants', '7. Sécurité des enfants'], ['#paiements', '8. Paiements et remboursements'], ['#suppression', '9. Suppression de compte'], ['#donnees', '10. Données personnelles'], ['#propriete', '11. Propriété intellectuelle'], ['#responsabilite', '12. Responsabilité'], ['#droit', '13. Droit applicable et litiges'], ['#modifications', '14. Modifications des CGU'], ['#contact', '15. Contact']] as [href, label], i (i)}
           <li><a {href} class="hover:underline">{label}</a></li>
@@ -277,8 +279,8 @@
         <p class="mb-4 text-text-muted">
           Certaines fonctionnalités de Canari (billetterie événements, formulaires payants)
           impliquent des transactions financières traitées par <strong>Stripe, Inc.</strong>
-          (prestataire de paiement certifié PCI DSS niveau 1). En effectuant un paiement, vous
-          acceptez également les
+          (prestataire de paiement certifié PCI DSS niveau 1). En effectuant un paiement, vous acceptez
+          également les
           <a
             href="https://stripe.com/fr/legal/end-users"
             target="_blank"
@@ -480,7 +482,9 @@
       <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
         <a href="/legal/privacy" class="text-cn-yellow hover:underline">{m.legal_privacy_link()}</a>
-        <a href="/legal/child-safety" class="text-cn-yellow hover:underline">{m.legal_child_safety_link()}</a>
+        <a href="/legal/child-safety" class="text-cn-yellow hover:underline"
+          >{m.legal_child_safety_link()}</a
+        >
       </div>
     </div>
   </div>

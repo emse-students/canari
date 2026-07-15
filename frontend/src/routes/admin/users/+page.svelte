@@ -66,12 +66,18 @@
       });
       if (!res.ok) throw new Error(m.admin_users_http_error_label({ status: res.status }));
       users = users.map((u) => (u.id === user.id ? { ...u, admin: newVal } : u));
-      feedback = { ...feedback, [user.id]: newVal ? m.admin_users_granted_label() : m.admin_users_revoked_label() };
+      feedback = {
+        ...feedback,
+        [user.id]: newVal ? m.admin_users_granted_label() : m.admin_users_revoked_label(),
+      };
       setTimeout(() => {
         feedback = { ...feedback, [user.id]: '' };
       }, 2000);
     } catch (e) {
-      feedback = { ...feedback, [user.id]: e instanceof Error ? e.message : m.common_generic_error_label() };
+      feedback = {
+        ...feedback,
+        [user.id]: e instanceof Error ? e.message : m.common_generic_error_label(),
+      };
     } finally {
       saving = { ...saving, [user.id]: false };
     }
@@ -162,9 +168,15 @@
                 : 'bg-black/10 dark:bg-white/20'}"
               role="switch"
               aria-checked={user.admin ?? false}
-              title={user.admin ? m.admin_users_revoke_action_label() : m.admin_users_grant_action_label()}
+              title={user.admin
+                ? m.admin_users_revoke_action_label()
+                : m.admin_users_grant_action_label()}
             >
-              <span class="sr-only">{user.admin ? m.admin_users_revoke_action_label() : m.admin_users_grant_action_label()}</span>
+              <span class="sr-only"
+                >{user.admin
+                  ? m.admin_users_revoke_action_label()
+                  : m.admin_users_grant_action_label()}</span
+              >
               <span
                 class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {user.admin
                   ? 'translate-x-6'

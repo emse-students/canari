@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["./.oxlintrc.json"],
+  "plugins": ["typescript", "import", "node", "jest"],
+  "env": {
+    "node": true,
+    "jest": true
+  },
+  "ignorePatterns": ["dist/**"],
+  "options": {
+    "typeAware": true
+  },
+  "rules": {
+    "typescript/no-explicit-any": "off",
+    "typescript/no-floating-promises": "warn",
+    "typescript/no-unsafe-argument": "off",
+    "typescript/no-unsafe-member-access": "off",
+    "typescript/no-unsafe-call": "off",
+    "typescript/no-unsafe-assignment": "off",
+    "typescript/no-base-to-string": "off",
+    "typescript/ban-ts-comment": "off",
+    "typescript/no-useless-default-assignment": "off",
+    "typescript/no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ]
+  }
+}

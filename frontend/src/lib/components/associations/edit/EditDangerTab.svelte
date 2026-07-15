@@ -24,7 +24,9 @@
     if (
       next &&
       !(await showConfirm(
-        kind === 'list' ? m.asso_danger_archive_confirm_list() : m.asso_danger_archive_confirm_asso(),
+        kind === 'list'
+          ? m.asso_danger_archive_confirm_list()
+          : m.asso_danger_archive_confirm_asso(),
         { confirmLabel: m.asso_danger_archive_confirm_button() }
       ))
     )
@@ -62,17 +64,27 @@
     <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
   {/if}
 
-  <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm">
+  <div
+    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm"
+  >
     <h2 class="text-base font-bold text-text-main flex items-center gap-2">
       <Building2 size={18} />
       {asso.archived
-        ? (kind === 'list' ? m.asso_danger_archive_title_archived_list() : m.asso_danger_archive_title_archived_asso())
-        : (kind === 'list' ? m.asso_danger_archive_title_list() : m.asso_danger_archive_title_asso())}
+        ? kind === 'list'
+          ? m.asso_danger_archive_title_archived_list()
+          : m.asso_danger_archive_title_archived_asso()
+        : kind === 'list'
+          ? m.asso_danger_archive_title_list()
+          : m.asso_danger_archive_title_asso()}
     </h2>
     <p class="text-sm text-text-muted">
       {asso.archived
-        ? (kind === 'list' ? m.asso_danger_archived_desc_list() : m.asso_danger_archived_desc_asso())
-        : (kind === 'list' ? m.asso_danger_unarchived_desc_list() : m.asso_danger_unarchived_desc_asso())}
+        ? kind === 'list'
+          ? m.asso_danger_archived_desc_list()
+          : m.asso_danger_archived_desc_asso()
+        : kind === 'list'
+          ? m.asso_danger_unarchived_desc_list()
+          : m.asso_danger_unarchived_desc_asso()}
     </p>
     <button
       type="button"
@@ -83,8 +95,12 @@
       {archiving
         ? '…'
         : asso.archived
-          ? (kind === 'list' ? m.asso_danger_reactivate_list() : m.asso_danger_reactivate_asso())
-          : (kind === 'list' ? m.asso_danger_archive_list() : m.asso_danger_archive_asso())}
+          ? kind === 'list'
+            ? m.asso_danger_reactivate_list()
+            : m.asso_danger_reactivate_asso()
+          : kind === 'list'
+            ? m.asso_danger_archive_list()
+            : m.asso_danger_archive_asso()}
     </button>
   </div>
 

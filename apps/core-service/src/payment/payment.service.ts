@@ -29,9 +29,7 @@ export class PaymentService {
 
   constructor() {
     const key = process.env.STRIPE_SECRET_KEY;
-    this.stripe = key
-      ? new Stripe(key, { apiVersion: '2026-05-27.dahlia' })
-      : null;
+    this.stripe = key ? new Stripe(key, { apiVersion: '2026-05-27.dahlia' }) : null;
     this.logger.log(`Stripe configured: ${key ? 'yes' : 'no'}`);
   }
 
@@ -113,36 +111,28 @@ export class PaymentService {
       };
     }
 
-    const requestOptions: Stripe.RequestOptions | undefined =
-      params.idempotencyKey
-        ? { idempotencyKey: `checkout_${params.idempotencyKey}` }
-        : undefined;
+    const requestOptions: Stripe.RequestOptions | undefined = params.idempotencyKey
+      ? { idempotencyKey: `checkout_${params.idempotencyKey}` }
+      : undefined;
 
-    const session = await this.stripe.checkout.sessions.create(
-      sessionParams,
-      requestOptions,
-    );
+    const session = await this.stripe.checkout.sessions.create(sessionParams, requestOptions);
 
     return session;
   }
 
   /** Retrieves the charges-enabled status for a Stripe Connect account. */
-  async getAccountStatus(
-    accountId: string,
-  ): Promise<{ chargesEnabled: boolean }> {
+  async getAccountStatus(accountId: string): Promise<{ chargesEnabled: boolean }> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     const account = await this.stripe.accounts.retrieve(accountId);
     return { chargesEnabled: account.charges_enabled ?? false };
   }
 
   /** Returns treasurer-facing Connect lifecycle state from the live Stripe account. */
-  async getConnectAccountStatus(
-    accountId: string,
-  ): Promise<StripeConnectStatusResponse> {
+  async getConnectAccountStatus(accountId: string): Promise<StripeConnectStatusResponse> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     const account = await this.stripe.accounts.retrieve(accountId);
     this.logger.debug(
-      `[Stripe] Connect status account=${accountId.slice(0, 8)} charges=${account.charges_enabled} details=${account.details_submitted}`,
+      `[Stripe] Connect status account=${accountId.slice(0, 8)} charges=${account.charges_enabled} details=${account.details_submitted}`
     );
     return buildStripeConnectStatusResponse(account);
   }
@@ -151,28 +141,21 @@ export class PaymentService {
    * Returns available and pending balances for a Connect Standard account.
    * Prefers EUR when present; otherwise uses the first currency in the response.
    */
-  async getConnectBalance(
-    stripeAccountId: string,
-  ): Promise<ConnectBalanceSummary> {
+  async getConnectBalance(stripeAccountId: string): Promise<ConnectBalanceSummary> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
     // v22: stripeAccount is a request option, no longer mixed into params.
-    const balance = await this.stripe.balance.retrieve(
-      {},
-      { stripeAccount: stripeAccountId },
-    );
+    const balance = await this.stripe.balance.retrieve({}, { stripeAccount: stripeAccountId });
     const currency =
       balance.available.find((b) => b.currency === 'eur')?.currency ??
       balance.available[0]?.currency ??
       balance.pending[0]?.currency ??
       'eur';
-    const available =
-      balance.available.find((b) => b.currency === currency)?.amount ?? 0;
-    const pending =
-      balance.pending.find((b) => b.currency === currency)?.amount ?? 0;
+    const available = balance.available.find((b) => b.currency === currency)?.amount ?? 0;
+    const pending = balance.pending.find((b) => b.currency === currency)?.amount ?? 0;
 
     this.logger.debug(
-      `[Stripe] Connect balance account=${stripeAccountId.slice(0, 8)} available=${available} pending=${pending} ${currency}`,
+      `[Stripe] Connect balance account=${stripeAccountId.slice(0, 8)} available=${available} pending=${pending} ${currency}`
     );
 
     return {
@@ -192,7 +175,7 @@ export class PaymentService {
 
     const account = await this.stripe.accounts.retrieve(stripeAccountId);
     this.logger.debug(
-      `[Stripe] Dashboard link account=${stripeAccountId.slice(0, 8)} type=${account.type}`,
+      `[Stripe] Dashboard link account=${stripeAccountId.slice(0, 8)} type=${account.type}`
     );
 
     if (account.type === 'express') {
@@ -208,14 +191,13 @@ export class PaymentService {
   /** Returns the existing Stripe customer ID or creates a new customer and returns its ID. */
   async getOrCreateCustomer(
     existingCustomerId: string | null | undefined,
-    meta: { userId: string; displayName?: string | null },
+    meta: { userId: string; displayName?: string | null }
   ): Promise<string> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
 
     if (existingCustomerId) {
       try {
-        const customer =
-          await this.stripe.customers.retrieve(existingCustomerId);
+        const customer = await this.stripe.customers.retrieve(existingCustomerId);
         if (!customer.deleted) return existingCustomerId;
       } catch {
         // Customer no longer exists - create a new one
@@ -229,7 +211,7 @@ export class PaymentService {
         metadata: { userId: meta.userId },
         name: meta.displayName ?? undefined,
       },
-      { idempotencyKey: `customer-create-${meta.userId}` },
+      { idempotencyKey: `customer-create-${meta.userId}` }
     );
     return customer.id;
   }
@@ -323,10 +305,7 @@ export class PaymentService {
     }
 
     try {
-      const intent = await this.stripe.paymentIntents.create(
-        intentParams,
-        requestOptions,
-      );
+      const intent = await this.stripe.paymentIntents.create(intentParams, requestOptions);
       if (intent.status === 'succeeded') {
         return { ok: true, paymentIntentId: intent.id };
       }
@@ -358,7 +337,7 @@ export class PaymentService {
         };
       }
       this.logger.error(
-        `[Stripe] chargeWithSavedMethod failed: ${stripeErr?.message ?? (err instanceof Error ? err.message : String(err))}`,
+        `[Stripe] chargeWithSavedMethod failed: ${stripeErr?.message ?? (err instanceof Error ? err.message : String(err))}`
       );
       return {
         ok: false,

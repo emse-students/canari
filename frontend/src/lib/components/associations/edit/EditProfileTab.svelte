@@ -185,7 +185,12 @@
       bind:value={editName2}
       placeholder={m.list_new_name2_placeholder()}
     />
-    <Input label={m.list_new_promo_label()} type="number" bind:value={editPromo} placeholder="2027" />
+    <Input
+      label={m.list_new_promo_label()}
+      type="number"
+      bind:value={editPromo}
+      placeholder="2027"
+    />
     <div>
       <label for="edit-list-parent" class="block text-sm font-bold text-text-main mb-2 ml-1">
         {m.list_new_parent_label()}
@@ -210,7 +215,9 @@
     placeholder="contact@asso.fr"
   />
   <div class="space-y-2">
-    <span class="block text-sm font-bold text-text-main ml-1">{m.asso_edit_description_label()}</span>
+    <span class="block text-sm font-bold text-text-main ml-1"
+      >{m.asso_edit_description_label()}</span
+    >
     <MarkdownComposerField
       bind:value={editDescription}
       maxlength={2000}
@@ -232,7 +239,9 @@
     />
   </div>
   <div class="flex flex-col gap-3">
-    <span class="block text-sm font-bold text-text-main ml-1">{m.asso_edit_calendar_color_label()}</span>
+    <span class="block text-sm font-bold text-text-main ml-1"
+      >{m.asso_edit_calendar_color_label()}</span
+    >
     <div class="flex flex-wrap gap-1.5">
       {#each PRESET_COLORS as c (c)}
         <button
@@ -254,7 +263,9 @@
     </div>
   </div>
 
-  <div class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3">
+  <div
+    class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3"
+  >
     <p class="font-semibold text-text-main">{m.asso_edit_preview_label()}</p>
     {#if editDescription.trim()}
       <div>

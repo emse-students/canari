@@ -18,7 +18,7 @@ const NormalizeText = () =>
           .normalize('NFKC')
           .replace(/[\p{Cc}\p{Cf}]/gu, '')
           .trim()
-      : value,
+      : value
   );
 
 /**
@@ -33,11 +33,9 @@ const NormalizeMultilineText = () =>
     typeof value === 'string'
       ? value
           .normalize('NFKC')
-          .replace(/[\p{Cc}\p{Cf}]/gu, (ch) =>
-            ch === '\n' || ch === '\t' ? ch : '',
-          )
+          .replace(/[\p{Cc}\p{Cf}]/gu, (ch) => (ch === '\n' || ch === '\t' ? ch : ''))
           .trim()
-      : value,
+      : value
   );
 
 /** Payload for provisioning a new user record after OIDC sign-in. */

@@ -113,7 +113,9 @@
             <!-- Content -->
             <div class="min-w-0 flex-1">
               <p class="text-sm leading-snug">
-                <span class="font-semibold text-text-main">{notif.actorName || m.notif_actor_unknown()}</span>
+                <span class="font-semibold text-text-main"
+                  >{notif.actorName || m.notif_actor_unknown()}</span
+                >
                 {#if notif.type === 'reaction'}
                   <span class="text-text-muted"> {m.notif_reaction_text()}</span>
                 {:else if notif.type === 'mention'}
@@ -124,7 +126,8 @@
                   <span class="text-text-muted"> {notif.text}</span>
                 {:else}
                   <span class="text-text-muted">
-                    {m.notif_comment_text()} <span class="italic">{renderNotifText(notif.text)}</span></span
+                    {m.notif_comment_text()}
+                    <span class="italic">{renderNotifText(notif.text)}</span></span
                   >
                 {/if}
               </p>

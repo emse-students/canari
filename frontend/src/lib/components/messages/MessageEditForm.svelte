@@ -48,8 +48,7 @@
           e.preventDefault();
           onConfirm?.();
         }
-      }}
-    ></textarea>
+      }}></textarea>
 
     <div class="flex items-center justify-between">
       <!-- Keyboard shortcut hint (hidden on mobile) -->

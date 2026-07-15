@@ -64,9 +64,7 @@
           class="inline-flex items-center gap-1 rounded-full border border-cn-border bg-[var(--cn-surface)] px-2.5 py-1 text-xs font-semibold text-text-main"
         >
           {#if asso.color}
-            <span
-              class="inline-block w-2 h-2 rounded-full shrink-0"
-              style="background:{asso.color}"
+            <span class="inline-block w-2 h-2 rounded-full shrink-0" style="background:{asso.color}"
             ></span>
           {/if}
           {asso.name}

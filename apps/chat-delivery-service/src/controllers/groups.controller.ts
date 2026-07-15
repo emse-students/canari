@@ -36,7 +36,7 @@ export class GroupsController {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
 
   private makeTraceId(scope: string): string {
@@ -48,17 +48,12 @@ export class GroupsController {
   /** Creates a new MLS group record on the server. */
   async createGroup(
     @Body()
-    body: {
-      name: string;
-      createdBy: string;
-      isGroup?: boolean;
-      creatorDeviceId?: string;
-    },
+    body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string }
   ) {
     const traceId = this.makeTraceId('create-grp');
     const groupId = uuidv4();
     this.logger.log(
-      `[CREATE_GROUP][${traceId}] name="${body.name}" createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`,
+      `[CREATE_GROUP][${traceId}] name="${body.name}" createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
     );
     const newGroup = this.groupRepo.create({
       id: groupId,
@@ -76,12 +71,10 @@ export class GroupsController {
         status: 'active' as const,
       });
       await this.deviceGroupRepo.save(creatorMembership);
-      this.logger.log(
-        `[CREATE_GROUP][${traceId}] creator membership set to active`,
-      );
+      this.logger.log(`[CREATE_GROUP][${traceId}] creator membership set to active`);
       await this.redis.sadd(
         `group:members:${groupId}`,
-        `${body.createdBy}:${body.creatorDeviceId}`,
+        `${body.createdBy}:${body.creatorDeviceId}`
       );
     }
 
@@ -106,40 +99,27 @@ export class GroupsController {
   @UseGuards(HeaderAuthGuard)
   @Patch('mls/groups/:groupId')
   /** Renames a group. */
-  async renameGroup(
-    @Param('groupId') groupId: string,
-    @Body() body: { name: string },
-  ) {
+  async renameGroup(@Param('groupId') groupId: string, @Body() body: { name: string }) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     if (typeof body.name !== 'string' || !body.name.trim()) {
       throw new BadRequestException('name is required');
     }
-    await this.groupRepo.update(
-      { id: safeGroupId },
-      { name: body.name.trim() },
-    );
-    this.logger.log(
-      `[RENAME_GROUP] group=${safeGroupId} newName="${body.name.trim()}"`,
-    );
+    await this.groupRepo.update({ id: safeGroupId }, { name: body.name.trim() });
+    this.logger.log(`[RENAME_GROUP] group=${safeGroupId} newName="${body.name.trim()}"`);
     return { status: 'renamed' };
   }
 
   @UseGuards(HeaderAuthGuard)
   @Patch('mls/groups/:groupId/image')
   /** Sets or clears the group's avatar (media-service id). Pass mediaId=null to remove the photo. */
-  async setGroupImage(
-    @Param('groupId') groupId: string,
-    @Body() body: { mediaId: string | null },
-  ) {
+  async setGroupImage(@Param('groupId') groupId: string, @Body() body: { mediaId: string | null }) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const mediaId = body?.mediaId ?? null;
     if (mediaId !== null && !/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId format');
     }
     await this.groupRepo.update({ id: safeGroupId }, { imageMediaId: mediaId });
-    this.logger.log(
-      `[SET_GROUP_IMAGE] group=${safeGroupId} mediaId=${mediaId ?? 'null'}`,
-    );
+    this.logger.log(`[SET_GROUP_IMAGE] group=${safeGroupId} mediaId=${mediaId ?? 'null'}`);
     return { status: 'updated', imageMediaId: mediaId };
   }
 

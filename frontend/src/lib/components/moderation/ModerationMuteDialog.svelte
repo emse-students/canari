@@ -89,8 +89,7 @@
         maxlength="500"
         placeholder={m.moderation_mute_placeholder()}
         class="w-full rounded-xl border border-cn-border bg-white/50 dark:bg-black/20 px-3 py-2.5 text-sm text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/20 outline-none resize-y min-h-[6rem]"
-        disabled={loading}
-      ></textarea>
+        disabled={loading}></textarea>
     </label>
 
     <div class="flex justify-end gap-2 pt-1">

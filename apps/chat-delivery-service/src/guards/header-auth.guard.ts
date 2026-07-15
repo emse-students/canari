@@ -31,7 +31,7 @@ export class HeaderAuthGuard implements CanActivate {
           `[AUTH_GUARD] denied ${String(request?.method ?? 'UNKNOWN')} ${path} ` +
             `x-user-logged-in=${String(loggedIn ?? '')} ` +
             `x-user-id=${String(request?.headers?.['x-user-id'] ?? '')} ` +
-            `hasAuth=${request?.headers?.authorization ? 'yes' : 'no'}`,
+            `hasAuth=${request?.headers?.authorization ? 'yes' : 'no'}`
         );
       }
       throw new UnauthorizedException('User is not authenticated');
@@ -42,12 +42,8 @@ export class HeaderAuthGuard implements CanActivate {
     const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
     if (internalSecret) {
       const userId =
-        (request.headers['x-user-id'] as string | undefined)
-          ?.trim()
-          .toLowerCase() ?? '';
-      const token = (
-        request.headers['x-internal-token'] as string | undefined
-      )?.trim();
+        (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase() ?? '';
+      const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
       if (!token) {
         throw new UnauthorizedException('Missing X-Internal-Token header');
       }
@@ -57,10 +53,7 @@ export class HeaderAuthGuard implements CanActivate {
           .update(`${userId}:${min}`)
           .digest('hex');
         try {
-          return timingSafeEqual(
-            Buffer.from(token, 'hex'),
-            Buffer.from(expected, 'hex'),
-          );
+          return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
         } catch {
           return false;
         }

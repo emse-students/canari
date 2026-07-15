@@ -1,7 +1,4 @@
-import {
-  buildStripeConnectStatusResponse,
-  deriveStripeConnectStatus,
-} from './stripeConnectStatus';
+import { buildStripeConnectStatusResponse, deriveStripeConnectStatus } from './stripeConnectStatus';
 
 describe('deriveStripeConnectStatus', () => {
   it('returns not_started when no account id is handled upstream', () => {
@@ -9,7 +6,7 @@ describe('deriveStripeConnectStatus', () => {
       deriveStripeConnectStatus({
         charges_enabled: false,
         details_submitted: false,
-      }),
+      })
     ).toBe('onboarding_required');
   });
 
@@ -18,7 +15,7 @@ describe('deriveStripeConnectStatus', () => {
       deriveStripeConnectStatus({
         charges_enabled: true,
         details_submitted: true,
-      }),
+      })
     ).toBe('active');
   });
 
@@ -28,7 +25,7 @@ describe('deriveStripeConnectStatus', () => {
         charges_enabled: false,
         details_submitted: false,
         requirements: { currently_due: [], pending_verification: [] },
-      }),
+      })
     ).toBe('onboarding_required');
   });
 
@@ -41,7 +38,7 @@ describe('deriveStripeConnectStatus', () => {
           currently_due: ['individual.verification.document'],
           pending_verification: [],
         },
-      }),
+      })
     ).toBe('onboarding_required');
   });
 
@@ -54,7 +51,7 @@ describe('deriveStripeConnectStatus', () => {
           currently_due: [],
           pending_verification: ['individual.verification.document'],
         },
-      }),
+      })
     ).toBe('pending');
   });
 
@@ -64,7 +61,7 @@ describe('deriveStripeConnectStatus', () => {
         charges_enabled: false,
         details_submitted: true,
         requirements: { currently_due: [], pending_verification: [] },
-      }),
+      })
     ).toBe('pending');
   });
 
@@ -73,7 +70,7 @@ describe('deriveStripeConnectStatus', () => {
       deriveStripeConnectStatus({
         charges_enabled: false,
         requirements: { disabled_reason: 'rejected.fraud' },
-      }),
+      })
     ).toBe('restricted');
   });
 });

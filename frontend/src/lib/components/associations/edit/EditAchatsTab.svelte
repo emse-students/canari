@@ -211,7 +211,9 @@
 
   {#if purchasesLoading}
     <div class="flex justify-center py-8">
-      <div class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
   {:else if filteredPurchases.length === 0}
     <p class="text-sm text-text-muted text-center py-8">{m.asso_achats_no_purchases()}</p>
@@ -240,14 +242,18 @@
               <td class="px-4 py-3 text-text-main">{purchase.productName}</td>
               <td class="px-4 py-3">
                 <span
-                  class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source === 'product'
+                  class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
+                  'product'
                     ? 'bg-emerald-100 text-emerald-700'
                     : 'bg-sky-100 text-sky-700'}"
                 >
-                  {purchase.source === 'product' ? m.asso_achats_source_product() : m.asso_achats_source_form()}
+                  {purchase.source === 'product'
+                    ? m.asso_achats_source_product()
+                    : m.asso_achats_source_form()}
                 </span>
               </td>
-              <td class="px-4 py-3 text-text-muted">{paymentMethodLabel(purchase.paymentMethod)}</td>
+              <td class="px-4 py-3 text-text-muted">{paymentMethodLabel(purchase.paymentMethod)}</td
+              >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
                 {(purchase.amountCents / 100).toFixed(2)} €
               </td>

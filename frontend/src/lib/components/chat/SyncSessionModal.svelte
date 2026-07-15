@@ -313,7 +313,8 @@
               onclick={onCopyPayload}
               class="w-full px-4 py-3 rounded-xl bg-black/5 dark:bg-white/10 text-text-main font-bold text-sm inline-flex items-center justify-center gap-2 hover:bg-black/10 dark:hover:bg-white/20 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             >
-              <Copy size={16} /> {m.sync_copy_code_button()}
+              <Copy size={16} />
+              {m.sync_copy_code_button()}
             </button>
           </div>
         {/if}

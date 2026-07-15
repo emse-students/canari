@@ -173,7 +173,7 @@ export class MessagingService {
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly apns: ApnsService,
+    private readonly apns: ApnsService
   ) {}
 
   /**
@@ -188,7 +188,7 @@ export class MessagingService {
    */
   async purgeDeviceFootprint(
     userId: string,
-    deviceId: string,
+    deviceId: string
   ): Promise<{
     groupsCleaned: number;
     keyPackagesDeleted: number;
@@ -252,7 +252,7 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
-    silent = false,
+    silent = false
   ): Promise<void> {
     if (getApps().length === 0) return;
 
@@ -262,7 +262,7 @@ export class MessagingService {
 
     if (pushTokens.length === 0) {
       this.logger.log(
-        `[PUSH_SEND][${traceId}] No push token for user=${queued.recipientId} device=${queued.deviceId}`,
+        `[PUSH_SEND][${traceId}] No push token for user=${queued.recipientId} device=${queued.deviceId}`
       );
       return;
     }
@@ -290,14 +290,11 @@ export class MessagingService {
         lastName: string | null;
       }[] = await this.groupRepo.manager.query(
         `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
-        [senderId],
+        [senderId]
       );
       if (rows[0]) {
         const { displayName, firstName, lastName } = rows[0];
-        senderName =
-          displayName?.trim() ||
-          [firstName, lastName].filter(Boolean).join(' ') ||
-          '';
+        senderName = displayName?.trim() || [firstName, lastName].filter(Boolean).join(' ') || '';
       }
     } catch {
       /* non-fatal */
@@ -309,8 +306,7 @@ export class MessagingService {
     // messages (media) so the service can fall back gracefully.
     const protoB64 = queued.proto ?? queued.content ?? '';
     const FCM_INLINE_LIMIT = 3_500;
-    const inlineProto =
-      Buffer.byteLength(protoB64, 'utf8') <= FCM_INLINE_LIMIT ? protoB64 : '';
+    const inlineProto = Buffer.byteLength(protoB64, 'utf8') <= FCM_INLINE_LIMIT ? protoB64 : '';
 
     // Shared, transport-agnostic description consumed by both the FCM data
     // payload and the APNs custom keys (see push-payload.ts).
@@ -349,17 +345,17 @@ export class MessagingService {
           },
         });
         this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} inlineProto=${!!inlineProto}`,
+          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} inlineProto=${!!inlineProto}`
         );
       } catch (e) {
         if (this.isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
-            `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`,
+            `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
           );
         }
         this.logger.warn(
-          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
+          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`
         );
       }
     }
@@ -372,22 +368,19 @@ export class MessagingService {
       const apnsRequest = buildApnsRequest(messageInput, dataFields);
       for (const pt of ios) {
         try {
-          const res = await this.apns.sendDataNotification(
-            pt.token,
-            apnsRequest,
-          );
+          const res = await this.apns.sendDataNotification(pt.token, apnsRequest);
           if (res.terminal) {
             await this.pushTokenRepo.delete({ id: pt.id });
             this.logger.warn(
-              `[PUSH_SEND][${traceId}] Deleted invalid APNs token user=${queued.recipientId} device=${pt.deviceId} reason=${res.reason}`,
+              `[PUSH_SEND][${traceId}] Deleted invalid APNs token user=${queued.recipientId} device=${pt.deviceId} reason=${res.reason}`
             );
           }
           this.logger.log(
-            `[PUSH_SEND][${traceId}] APNs user=${queued.recipientId} device=${pt.deviceId} skipped=${res.skipped} status=${res.status ?? '-'}`,
+            `[PUSH_SEND][${traceId}] APNs user=${queued.recipientId} device=${pt.deviceId} skipped=${res.skipped} status=${res.status ?? '-'}`
           );
         } catch (e) {
           this.logger.warn(
-            `[PUSH_SEND][${traceId}] APNs failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`,
+            `[PUSH_SEND][${traceId}] APNs failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`
           );
         }
       }
@@ -408,22 +401,14 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
-    silent = false,
+    silent = false
   ): void {
     const DELAY_MS = 10_000;
     // setTimeout expects () => void; extract the async work into a separate
     // method to satisfy @typescript-eslint/no-misused-promises.
     setTimeout(() => {
-      void this.runDeferredPush(
-        queued,
-        traceId,
-        groupId,
-        senderId,
-        silent,
-      ).catch((e) =>
-        this.logger.warn(
-          `[PUSH_DEFERRED][${traceId}] deferred push error: ${e}`,
-        ),
+      void this.runDeferredPush(queued, traceId, groupId, senderId, silent).catch((e) =>
+        this.logger.warn(`[PUSH_DEFERRED][${traceId}] deferred push error: ${e}`)
       );
     }, DELAY_MS);
   }
@@ -433,7 +418,7 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
-    silent = false,
+    silent = false
   ): Promise<void> {
     const stillQueued = await this.queuedMessageRepo.findOne({
       where: { id: queued.id },
@@ -443,15 +428,9 @@ export class MessagingService {
       return;
     }
     this.logger.log(
-      `[PUSH_DEFERRED][${traceId}] queuedId=${queued.id} still unACKed after 10 s → FCM fallback`,
+      `[PUSH_DEFERRED][${traceId}] queuedId=${queued.id} still unACKed after 10 s → FCM fallback`
     );
-    await this.sendFcmForQueued(
-      queued,
-      `${traceId}-def`,
-      groupId,
-      senderId,
-      silent,
-    );
+    await this.sendFcmForQueued(queued, `${traceId}-def`, groupId, senderId, silent);
   }
 
   /**
@@ -467,7 +446,7 @@ export class MessagingService {
     let sentCount = 0;
 
     this.logger.log(
-      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} recipients=${body.recipients?.length ?? 0} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}`,
+      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} recipients=${body.recipients?.length ?? 0} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}`
     );
 
     if (body.proto) {
@@ -475,14 +454,8 @@ export class MessagingService {
       const { proto } = body;
       for (const r of body.recipients ?? []) {
         if (!r.userId || !r.deviceId) continue;
-        const recipientUserId = sanitizeQueryValue(
-          r.userId,
-          'recipients.userId',
-        );
-        const recipientDeviceId = sanitizeQueryValue(
-          r.deviceId,
-          'recipients.deviceId',
-        );
+        const recipientUserId = sanitizeQueryValue(r.userId, 'recipients.userId');
+        const recipientDeviceId = sanitizeQueryValue(r.deviceId, 'recipients.deviceId');
         ops.push(
           this.queuedMessageRepo.create({
             recipientId: recipientUserId,
@@ -494,7 +467,7 @@ export class MessagingService {
             isCommit: body.isCommit,
             proto,
             createdAt: new Date(),
-          }),
+          })
         );
       }
 
@@ -512,9 +485,8 @@ export class MessagingService {
         const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
         const fallback = memberships.filter(
           (m) =>
-            !(
-              m.userId === body.senderId && m.deviceId === body.senderDeviceId
-            ) && !excludeSet.has(`${m.userId}:${m.deviceId}`),
+            !(m.userId === body.senderId && m.deviceId === body.senderDeviceId) &&
+            !excludeSet.has(`${m.userId}:${m.deviceId}`)
         );
         for (const m of fallback) {
           ops.push(
@@ -528,26 +500,23 @@ export class MessagingService {
               isCommit: body.isCommit,
               proto,
               createdAt: new Date(),
-            }),
+            })
           );
         }
         if (fallback.length > 0) {
           await this.redis.sadd(
             `group:members:${fallbackGroupId}`,
-            ...fallback.map((m) => `${m.userId}:${m.deviceId}`),
+            ...fallback.map((m) => `${m.userId}:${m.deviceId}`)
           );
           this.logger.log(
-            `[SEND][${traceId}] FALLBACK_MEMBERS_CACHE group=${fallbackGroupId} count=${fallback.length}`,
+            `[SEND][${traceId}] FALLBACK_MEMBERS_CACHE group=${fallbackGroupId} count=${fallback.length}`
           );
         }
       }
     } else {
       // ── Legacy path (frontend fallback / group fan-out) ───────────────────
       const senderId = sanitizeQueryValue(body.senderId, 'senderId');
-      const senderDeviceId = sanitizeOptionalQueryValue(
-        body.senderDeviceId,
-        'senderDeviceId',
-      );
+      const senderDeviceId = sanitizeOptionalQueryValue(body.senderDeviceId, 'senderDeviceId');
       const groupId = sanitizeQueryValue(body.groupId, 'groupId');
       const rawContent: unknown = body.content;
       const rawType: unknown = body.type;
@@ -564,9 +533,7 @@ export class MessagingService {
 
       if (!body.recipients || body.recipients.length === 0) {
         const members = await this.groupMemberRepo.find({ where: { groupId } });
-        const memberUserIds = members
-          .map((m) => m.userId)
-          .filter((id) => id !== senderId);
+        const memberUserIds = members.map((m) => m.userId).filter((id) => id !== senderId);
 
         if (memberUserIds.length > 0) {
           const devices = await this.keyPackageRepo.find({
@@ -578,22 +545,16 @@ export class MessagingService {
         }
       } else {
         for (const r of body.recipients) {
-          const recipientUserId = sanitizeQueryValue(
-            r.userId,
-            'recipients.userId',
-          );
+          const recipientUserId = sanitizeQueryValue(r.userId, 'recipients.userId');
           if (r.deviceId) {
-            const recipientDeviceId = sanitizeQueryValue(
-              r.deviceId,
-              'recipients.deviceId',
-            );
+            const recipientDeviceId = sanitizeQueryValue(r.deviceId, 'recipients.deviceId');
             targetList.push({
               userId: recipientUserId,
               deviceId: recipientDeviceId,
             });
           } else {
             console.warn(
-              'Skipping recipient without deviceId. Fan-out is disabled for MLS security.',
+              'Skipping recipient without deviceId. Fan-out is disabled for MLS security.'
             );
           }
         }
@@ -610,7 +571,7 @@ export class MessagingService {
             content: safeContent,
             type: safeType,
             createdAt: new Date(),
-          }),
+          })
         );
       }
     }
@@ -653,15 +614,13 @@ export class MessagingService {
           'content',
           body.proto,
           'timestamp',
-          new Date().toISOString(),
+          new Date().toISOString()
         );
         // Refresh TTL on every write so abandoned groups are evicted after 90 days of inactivity.
         await this.redis.expire(historyKey, 90 * 24 * 60 * 60);
         this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
       } catch (e) {
-        this.logger.warn(
-          `[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${e}`,
-        );
+        this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${e}`);
       }
     }
 
@@ -670,7 +629,7 @@ export class MessagingService {
       const redisKey = `user:online:${queued.recipientId}:${queued.deviceId}`;
       const isOnline = await this.redis.exists(redisKey);
       this.logger.log(
-        `[SEND][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} online=${!!isOnline} queuedId=${queued.id}`,
+        `[SEND][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} online=${!!isOnline} queuedId=${queued.id}`
       );
       if (isOnline) {
         const envelope = JSON.stringify({
@@ -688,7 +647,7 @@ export class MessagingService {
         await this.redis.publish('chat:messages', envelope);
         sentCount++;
         this.logger.log(
-          `[SEND][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} queuedId=${queued.id}`,
+          `[SEND][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} queuedId=${queued.id}`
         );
 
         // Deferred FCM fallback: Android keeps the WebSocket TCP connection alive
@@ -704,16 +663,10 @@ export class MessagingService {
             traceId,
             body.groupId ?? '',
             body.senderId ?? '',
-            body.isWelcome ? true : (body.silent ?? false),
+            body.isWelcome ? true : (body.silent ?? false)
           );
         } else {
-          this.scheduleDeferredPush(
-            queued,
-            traceId,
-            body.groupId ?? '',
-            body.senderId ?? '',
-            true,
-          );
+          this.scheduleDeferredPush(queued, traceId, body.groupId ?? '', body.senderId ?? '', true);
         }
       } else {
         // Offline recipient: FCM push (silent for commits/welcomes).
@@ -724,18 +677,14 @@ export class MessagingService {
           traceId,
           body.groupId ?? '',
           body.senderId ?? '',
-          body.isCommit || body.isWelcome ? true : (body.silent ?? false),
+          body.isCommit || body.isWelcome ? true : (body.silent ?? false)
         ).catch((e) =>
-          this.logger.warn(
-            `[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`,
-          ),
+          this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
         );
       }
     }
 
-    this.logger.log(
-      `[SEND][${traceId}] DONE queued=${ops.length} realtime=${sentCount}`,
-    );
+    this.logger.log(`[SEND][${traceId}] DONE queued=${ops.length} realtime=${sentCount}`);
 
     return { status: 'processed', queued: ops.length, sent: sentCount };
   }
@@ -748,9 +697,7 @@ export class MessagingService {
    * Returns accepted=true with newEpoch on success, or accepted=false with
    * currentEpoch and a reason string when the commit is rejected.
    */
-  async validateCommit(
-    body: ValidateCommitBody,
-  ): Promise<ValidateCommitResult> {
+  async validateCommit(body: ValidateCommitBody): Promise<ValidateCommitResult> {
     const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
@@ -761,13 +708,13 @@ export class MessagingService {
 
     if (baseEpoch < 0) {
       this.logger.warn(
-        `[COMMIT][${traceId}] Invalid baseEpoch=${body.baseEpoch} group=${groupId} device=${deviceId}`,
+        `[COMMIT][${traceId}] Invalid baseEpoch=${body.baseEpoch} group=${groupId} device=${deviceId}`
       );
       throw new BadRequestException('baseEpoch must be a non-negative integer');
     }
 
     this.logger.log(
-      `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`,
+      `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
     );
 
     // Serialize via Redis lock to prevent TOCTOU races.
@@ -779,7 +726,7 @@ export class MessagingService {
       // Another commit is being validated right now - reject to retry.
       const group = await this.groupRepo.findOne({ where: { id: groupId } });
       this.logger.warn(
-        `[COMMIT][${traceId}] REJECT concurrent_commit group=${groupId} currentEpoch=${group?.activeEpoch ?? 0}`,
+        `[COMMIT][${traceId}] REJECT concurrent_commit group=${groupId} currentEpoch=${group?.activeEpoch ?? 0}`
       );
       return {
         accepted: false,
@@ -804,7 +751,7 @@ export class MessagingService {
       // et desaligner tout le monde (H4).
       if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
-          `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`,
+          `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`
         );
         return {
           accepted: false,
@@ -836,7 +783,7 @@ export class MessagingService {
             .execute();
         } catch (e) {
           this.logger.warn(
-            `[COMMIT][${traceId}] commit-log store failed group=${groupId} epoch=${baseEpoch}: ${String(e)}`,
+            `[COMMIT][${traceId}] commit-log store failed group=${groupId} epoch=${baseEpoch}: ${String(e)}`
           );
         }
       }
@@ -855,14 +802,12 @@ export class MessagingService {
           excludeDeviceIds: body.excludeDeviceIds,
         }).catch((e) =>
           this.logger.warn(
-            `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`,
-          ),
+            `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`
+          )
         );
       }
 
-      this.logger.log(
-        `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`,
-      );
+      this.logger.log(`[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`);
 
       return { accepted: true, newEpoch: group.activeEpoch };
     } finally {
@@ -871,15 +816,13 @@ export class MessagingService {
         `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
         1,
         lockKey,
-        deviceId,
+        deviceId
       );
       if (released === 1) {
-        this.logger.log(
-          `[COMMIT][${traceId}] Lock released for group=${groupId}`,
-        );
+        this.logger.log(`[COMMIT][${traceId}] Lock released for group=${groupId}`);
       } else {
         this.logger.warn(
-          `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`,
+          `[COMMIT][${traceId}] Lock already expired or stolen for group=${groupId}`
         );
       }
     }
@@ -894,7 +837,7 @@ export class MessagingService {
   async getCommitsSince(
     groupId: string,
     sinceEpoch: number,
-    requesterUserId: string,
+    requesterUserId: string
   ): Promise<CommitsSinceResult> {
     // Serve the commit-log ONLY to members of the group (the commits are ciphertext, but ordering
     // metadata still gates on membership). x-user-id is injected by the proxy after JWT validation.
@@ -902,9 +845,7 @@ export class MessagingService {
       where: { groupId, userId: requesterUserId },
     });
     if (!membership) {
-      throw new ForbiddenException(
-        `User ${requesterUserId} is not a member of group ${groupId}`,
-      );
+      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
 
     const group = await this.groupRepo.findOne({ where: { id: groupId } });
@@ -921,8 +862,7 @@ export class MessagingService {
       where: { groupId },
       order: { baseEpoch: 'ASC' },
     });
-    const belowFloor =
-      sinceEpoch < activeEpoch && !!oldest && oldest.baseEpoch > sinceEpoch;
+    const belowFloor = sinceEpoch < activeEpoch && !!oldest && oldest.baseEpoch > sinceEpoch;
 
     return {
       commits: rows.map((r) => ({ baseEpoch: r.baseEpoch, proto: r.commit })),
@@ -943,15 +883,13 @@ export class MessagingService {
     groupId: string,
     requesterUserId: string,
     groupInfo: string,
-    baseEpoch: number,
+    baseEpoch: number
   ): Promise<{ stored: boolean }> {
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId: requesterUserId },
     });
     if (!membership) {
-      throw new ForbiddenException(
-        `User ${requesterUserId} is not a member of group ${groupId}`,
-      );
+      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
 
     // Monotonic upsert: only overwrite when the incoming epoch is newer-or-equal. `orIgnore` guards
@@ -989,15 +927,13 @@ export class MessagingService {
    */
   async getGroupInfo(
     groupId: string,
-    requesterUserId: string,
+    requesterUserId: string
   ): Promise<{ groupInfo: string; baseEpoch: number } | null> {
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId: requesterUserId },
     });
     if (!membership) {
-      throw new ForbiddenException(
-        `User ${requesterUserId} is not a member of group ${groupId}`,
-      );
+      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
 
     const row = await this.groupInfoRepo.findOne({ where: { groupId } });
@@ -1019,13 +955,11 @@ export class MessagingService {
     await this.commitLogRepo.query(
       `DELETE FROM mls_commit_log c USING dm_groups g
        WHERE c."groupId" = g.id AND c."baseEpoch" < g."activeEpoch" - $1`,
-      [COMMIT_LOG_MAX_PER_GROUP],
+      [COMMIT_LOG_MAX_PER_GROUP]
     );
     const deleted = byAge.affected ?? 0;
     if (deleted > 0) {
-      this.logger.log(
-        `[CRON] pruneExpiredCommitLog: deleted ${deleted} aged commit(s)`,
-      );
+      this.logger.log(`[CRON] pruneExpiredCommitLog: deleted ${deleted} aged commit(s)`);
     }
     return deleted;
   }
@@ -1037,19 +971,12 @@ export class MessagingService {
    */
   async sendWelcome(
     authUserIdRaw: string | undefined,
-    body: SendWelcomeBody,
+    body: SendWelcomeBody
   ): Promise<{ status: string }> {
     const traceId = this.makeTraceId('welcome-send');
-    const targetDeviceId = sanitizeQueryValue(
-      body.targetDeviceId,
-      'targetDeviceId',
-    );
-    const targetUserId = sanitizeOptionalQueryValue(
-      body.targetUserId,
-      'targetUserId',
-    );
-    const senderUserId =
-      sanitizeOptionalQueryValue(body.senderUserId, 'senderUserId') || 'system';
+    const targetDeviceId = sanitizeQueryValue(body.targetDeviceId, 'targetDeviceId');
+    const targetUserId = sanitizeOptionalQueryValue(body.targetUserId, 'targetUserId');
+    const senderUserId = sanitizeOptionalQueryValue(body.senderUserId, 'senderUserId') || 'system';
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
 
     // Verify that the authenticated sender is a member of the group.
@@ -1061,16 +988,14 @@ export class MessagingService {
       });
       if (!membership) {
         this.logger.warn(
-          `[WELCOME][${traceId}] AUTHZ FAIL sender=${authUserId} not member of group=${safeGroupId}`,
+          `[WELCOME][${traceId}] AUTHZ FAIL sender=${authUserId} not member of group=${safeGroupId}`
         );
-        throw new ForbiddenException(
-          `User ${authUserId} is not a member of group ${safeGroupId}`,
-        );
+        throw new ForbiddenException(`User ${authUserId} is not a member of group ${safeGroupId}`);
       }
     }
 
     this.logger.log(
-      `[WELCOME][${traceId}] START group=${safeGroupId} sender=${senderUserId} target=${targetUserId ?? 'unknown'}:${targetDeviceId} payloadLen=${body.welcomePayload?.length ?? 0} ratchetTreeLen=${body.ratchetTreePayload?.length ?? 0}`,
+      `[WELCOME][${traceId}] START group=${safeGroupId} sender=${senderUserId} target=${targetUserId ?? 'unknown'}:${targetDeviceId} payloadLen=${body.welcomePayload?.length ?? 0} ratchetTreeLen=${body.ratchetTreePayload?.length ?? 0}`
     );
 
     // Look up recipient device - include userId in the query when provided so the lookup
@@ -1084,10 +1009,10 @@ export class MessagingService {
 
     if (!deviceInfo) {
       this.logger.error(
-        `[WELCOME][${traceId}] Target device not found target=${targetUserId ?? 'unknown'}:${targetDeviceId}`,
+        `[WELCOME][${traceId}] Target device not found target=${targetUserId ?? 'unknown'}:${targetDeviceId}`
       );
       throw new Error(
-        `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`,
+        `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
       );
     }
 
@@ -1103,15 +1028,13 @@ export class MessagingService {
     });
     await this.queuedMessageRepo.save(queuedWelcome);
     this.logger.log(
-      `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`,
+      `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
 
     // Real-time push via Gateway when the target device is currently online.
     const redisKey = `user:online:${deviceInfo.userId}:${targetDeviceId}`;
     const isOnline = await this.redis.exists(redisKey);
-    this.logger.log(
-      `[WELCOME][${traceId}] PRESENCE key=${redisKey} online=${!!isOnline}`,
-    );
+    this.logger.log(`[WELCOME][${traceId}] PRESENCE key=${redisKey} online=${!!isOnline}`);
     if (isOnline) {
       const ciphertext = Buffer.from(body.welcomePayload, 'base64');
       const envelope = JSON.stringify({
@@ -1130,11 +1053,11 @@ export class MessagingService {
         queuedMessageId: queuedWelcome.id,
       });
       this.logger.log(
-        `[WELCOME][${traceId}] REALTIME_PUBLISH key=${redisKey} envelopeLen=${envelope.length}`,
+        `[WELCOME][${traceId}] REALTIME_PUBLISH key=${redisKey} envelopeLen=${envelope.length}`
       );
       await this.redis.publish('chat:messages', envelope);
       this.logger.log(
-        `[WELCOME][${traceId}] REALTIME_PUBLISHED key=${redisKey} queuedId=${queuedWelcome.id}`,
+        `[WELCOME][${traceId}] REALTIME_PUBLISHED key=${redisKey} queuedId=${queuedWelcome.id}`
       );
     } else {
       // Device offline (app killed): the realtime WS path can't reach it, so push
@@ -1145,15 +1068,9 @@ export class MessagingService {
       // which joins the group; the queue row is reconciled idempotently on next
       // foreground pull (group already in WASM → ACK, no re-processing).
       this.logger.log(
-        `[WELCOME][${traceId}] OFFLINE_PUSH key=${redisKey} queuedId=${queuedWelcome.id}`,
+        `[WELCOME][${traceId}] OFFLINE_PUSH key=${redisKey} queuedId=${queuedWelcome.id}`
       );
-      await this.sendFcmForQueued(
-        queuedWelcome,
-        traceId,
-        safeGroupId,
-        senderUserId,
-        true,
-      );
+      await this.sendFcmForQueued(queuedWelcome, traceId, safeGroupId, senderUserId, true);
     }
 
     // Upsert DeviceGroupMembership to active.
@@ -1171,17 +1088,14 @@ export class MessagingService {
       {
         conflictPaths: ['deviceId', 'groupId'],
         skipUpdateIfNoValuesChanged: true,
-      },
+      }
     );
 
     // Device can now decrypt - add it to the routing set.
-    await this.redis.sadd(
-      `group:members:${safeGroupId}`,
-      `${deviceInfo.userId}:${targetDeviceId}`,
-    );
+    await this.redis.sadd(`group:members:${safeGroupId}`, `${deviceInfo.userId}:${targetDeviceId}`);
 
     this.logger.log(
-      `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`,
+      `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
     );
 
     return { status: 'queued' };
@@ -1197,11 +1111,7 @@ export class MessagingService {
    * messages suivants en temps reel ni en push (uniquement via le rattrapage d'historique).
    * Idempotent : upsert sur la contrainte unique (deviceId, groupId).
    */
-  async activateDeviceMembership(
-    userId: string,
-    deviceId: string,
-    groupId: string,
-  ): Promise<void> {
+  async activateDeviceMembership(userId: string, deviceId: string, groupId: string): Promise<void> {
     // Lire l'etat anterieur AVANT l'upsert : la re-livraison des messages rates (DF2) ne doit
     // se faire QUE sur une vraie transition pending->active. activateDeviceMembership est aussi
     // appelee de facon idempotente a chaque re-traitement de Welcome ; re-livrer alors qu'on
@@ -1213,15 +1123,11 @@ export class MessagingService {
 
     await this.deviceGroupRepo.upsert(
       { userId, deviceId, groupId, status: 'active' as const },
-      { conflictPaths: ['deviceId', 'groupId'] },
+      { conflictPaths: ['deviceId', 'groupId'] }
     );
     // Routage immediat : ajouter au set Redis sans attendre une reconstruction du cache.
-    await this.redis
-      .sadd(`group:members:${groupId}`, `${userId}:${deviceId}`)
-      .catch(() => {});
-    this.logger.log(
-      `[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`,
-    );
+    await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+    this.logger.log(`[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`);
 
     if (!wasAlreadyActive) {
       // Pendant que le device etait `pending`, la resolution des destinataires (filtre
@@ -1234,11 +1140,11 @@ export class MessagingService {
         userId,
         deviceId,
         groupId,
-        pendingSinceMs,
+        pendingSinceMs
       ).catch((e) =>
         this.logger.warn(
-          `[ACTIVATION_REDELIVER] group=${groupId} device=${userId}:${deviceId} echec: ${e instanceof Error ? e.message : String(e)}`,
-        ),
+          `[ACTIVATION_REDELIVER] group=${groupId} device=${userId}:${deviceId} echec: ${e instanceof Error ? e.message : String(e)}`
+        )
       );
     }
   }
@@ -1257,7 +1163,7 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     groupId: string,
-    pendingSinceMs?: number,
+    pendingSinceMs?: number
   ): Promise<void> {
     const traceId = this.makeTraceId('reactivate');
     const MAX_COUNT = 50;
@@ -1266,7 +1172,7 @@ export class MessagingService {
     // il les recupere via le rattrapage d'historique (sans notification, ce qui est correct).
     const windowStartMs = Math.max(
       pendingSinceMs ?? 0,
-      Date.now() - MessagingService.ACTIVATION_REDELIVER_WINDOW_MS,
+      Date.now() - MessagingService.ACTIVATION_REDELIVER_WINDOW_MS
     );
 
     const historyKey = `history:${groupId}`;
@@ -1276,7 +1182,7 @@ export class MessagingService {
       `${windowStartMs}`,
       '+',
       'COUNT',
-      MAX_COUNT,
+      MAX_COUNT
     );
     if (!entries || entries.length === 0) return;
 
@@ -1284,8 +1190,7 @@ export class MessagingService {
     for (const [, fields] of entries) {
       // fields = ['sender_id', <id>, 'content', <protoB64>, 'timestamp', <iso>]
       const map = new Map<string, string>();
-      for (let i = 0; i + 1 < fields.length; i += 2)
-        map.set(fields[i], fields[i + 1]);
+      for (let i = 0; i + 1 < fields.length; i += 2) map.set(fields[i], fields[i + 1]);
       const senderId = map.get('sender_id') ?? '';
       const proto = map.get('content') ?? '';
       if (!proto || senderId === userId) continue; // pas de payload, ou notre propre message
@@ -1300,7 +1205,7 @@ export class MessagingService {
           isCommit: false,
           proto,
           createdAt: new Date(),
-        }),
+        })
       );
       await this.sendFcmForQueued(queued, traceId, groupId, senderId, false);
       redelivered++;
@@ -1308,7 +1213,7 @@ export class MessagingService {
 
     if (redelivered > 0) {
       this.logger.log(
-        `[ACTIVATION_REDELIVER][${traceId}] group=${groupId} device=${userId}:${deviceId} redelivered=${redelivered}`,
+        `[ACTIVATION_REDELIVER][${traceId}] group=${groupId} device=${userId}:${deviceId} redelivered=${redelivered}`
       );
     }
   }
@@ -1321,22 +1226,14 @@ export class MessagingService {
    * durable FCM wake.
    */
   async notifyHistoryRequest(
-    body: NotifyWelcomeRequestBody,
+    body: NotifyWelcomeRequestBody
   ): Promise<{ status: string; target?: string }> {
     const traceId = this.makeTraceId('history-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
-    const requesterUserId = sanitizeQueryValue(
-      body.requesterUserId,
-      'requesterUserId',
-    );
-    const requesterDeviceId = sanitizeQueryValue(
-      body.requesterDeviceId,
-      'requesterDeviceId',
-    );
+    const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
+    const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
 
-    let members: string[] = await this.redis.smembers(
-      `group:members:${groupId}`,
-    );
+    let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
     if (members.length === 0) {
       const dbMembers = await this.deviceGroupRepo.find({
@@ -1368,9 +1265,7 @@ export class MessagingService {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) continue;
-      const isOnline = await this.redis.exists(
-        `user:online:${memberUserId}:${memberDeviceId}`,
-      );
+      const isOnline = await this.redis.exists(`user:online:${memberUserId}:${memberDeviceId}`);
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -1384,16 +1279,16 @@ export class MessagingService {
             groupId,
             senderId: requesterUserId,
             senderDeviceId: requesterDeviceId,
-          }),
+          })
         );
         this.logger.log(
-          `[HISTORY_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
+          `[HISTORY_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`
         );
         return { status: 'forwarded', target: member };
       }
     }
     this.logger.log(
-      `[HISTORY_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey}`,
+      `[HISTORY_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey}`
     );
     return { status: 'no_peer_online' };
   }
@@ -1404,18 +1299,12 @@ export class MessagingService {
    * the Redis routing cache when the set is empty after a service restart.
    */
   async notifyWelcomeRequest(
-    body: NotifyWelcomeRequestBody,
+    body: NotifyWelcomeRequestBody
   ): Promise<{ status: string; target?: string }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
-    const requesterUserId = sanitizeQueryValue(
-      body.requesterUserId,
-      'requesterUserId',
-    );
-    const requesterDeviceId = sanitizeQueryValue(
-      body.requesterDeviceId,
-      'requesterDeviceId',
-    );
+    const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
+    const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
@@ -1424,9 +1313,7 @@ export class MessagingService {
     // and since SMEMBERS returns an unordered set each call can pick a different
     // peer, causing multiple devices to concurrently commit an add for the same
     // invitation.
-    let members: string[] = await this.redis.smembers(
-      `group:members:${groupId}`,
-    );
+    let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
 
     // Redis routing set is a cache: it can be empty after a service restart or
@@ -1434,7 +1321,7 @@ export class MessagingService {
     // Fall back to the DB and repopulate the cache so routing is restored.
     if (members.length === 0) {
       this.logger.log(
-        `[WELCOME_REQ][${traceId}] REDIS_EMPTY - falling back to DB for group=${groupId}`,
+        `[WELCOME_REQ][${traceId}] REDIS_EMPTY - falling back to DB for group=${groupId}`
       );
       const dbMembers = await this.deviceGroupRepo.find({
         where: { groupId, status: 'active' as const },
@@ -1443,13 +1330,13 @@ export class MessagingService {
         members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
         await this.redis.sadd(`group:members:${groupId}`, ...members);
         this.logger.log(
-          `[WELCOME_REQ][${traceId}] DB_FALLBACK found=${dbMembers.length} repopulated Redis cache`,
+          `[WELCOME_REQ][${traceId}] DB_FALLBACK found=${dbMembers.length} repopulated Redis cache`
         );
       }
     }
 
     this.logger.log(
-      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`,
+      `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`
     );
 
     const notification = JSON.stringify({
@@ -1464,15 +1351,13 @@ export class MessagingService {
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) {
         this.logger.warn(
-          `[WELCOME_REQ][${traceId}] Malformed group member entry='${member}' group=${groupId}`,
+          `[WELCOME_REQ][${traceId}] Malformed group member entry='${member}' group=${groupId}`
         );
         continue;
       }
       const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
       const isOnline = await this.redis.exists(onlineKey);
-      this.logger.log(
-        `[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`,
-      );
+      this.logger.log(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -1486,10 +1371,10 @@ export class MessagingService {
             groupId,
             senderId: requesterUserId,
             senderDeviceId: requesterDeviceId,
-          }),
+          })
         );
         this.logger.log(
-          `[WELCOME_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`,
+          `[WELCOME_REQ][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`
         );
 
         // Drain any welcome_requests that were stored while no peer was online,
@@ -1512,20 +1397,20 @@ export class MessagingService {
                   groupId,
                   requesterUserId: storedUserId,
                   requesterDeviceId: storedDeviceId,
-                }),
+                })
               ).toString('base64'),
               isWelcomeRequest: true,
               groupId,
               senderId: storedUserId,
               senderDeviceId: storedDeviceId,
-            }),
+            })
           );
           drained++;
         }
         if (stored.length > 0) {
           await this.redis.del(pendingSetKey);
           this.logger.log(
-            `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`,
+            `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`
           );
         }
 
@@ -1554,7 +1439,7 @@ export class MessagingService {
         members
           .filter((m) => m !== senderKey)
           .map((m) => m.split(':')[0])
-          .filter(Boolean),
+          .filter(Boolean)
       ),
     ];
     if (uniqueMemberUserIds.length > 0) {
@@ -1569,15 +1454,10 @@ export class MessagingService {
 
     // Wake up offline peers via FCM so they reconnect and drain the pending request
     // without waiting for an organic reconnection.
-    await this.sendFcmWelcomeRequestPending(
-      groupId,
-      members,
-      senderKey,
-      traceId,
-    );
+    await this.sendFcmWelcomeRequestPending(groupId, members, senderKey, traceId);
 
     this.logger.log(
-      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`,
+      `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`
     );
     return { status: 'no_peer_online' };
   }
@@ -1617,7 +1497,7 @@ export class MessagingService {
       ]),
     ]);
     this.logger.warn(
-      `[ORPHAN_PURGE] purged ${orphaned.length} group(s) absent from dm_groups: ${orphaned.join(', ')}`,
+      `[ORPHAN_PURGE] purged ${orphaned.length} group(s) absent from dm_groups: ${orphaned.join(', ')}`
     );
     return existingIds;
   }
@@ -1626,23 +1506,15 @@ export class MessagingService {
    * Clamps history page size: full catch-up may read up to the stream MAXLEN;
    * incremental (`after` set) defaults to a smaller page.
    */
-  private resolveHistoryLimit(
-    after: string | undefined,
-    limitRaw?: number,
-  ): number {
+  private resolveHistoryLimit(after: string | undefined, limitRaw?: number): number {
     if (limitRaw !== undefined && Number.isFinite(limitRaw)) {
-      return Math.min(
-        Math.max(Math.trunc(limitRaw), 1),
-        HISTORY_FULL_PAGE_LIMIT,
-      );
+      return Math.min(Math.max(Math.trunc(limitRaw), 1), HISTORY_FULL_PAGE_LIMIT);
     }
     return after ? HISTORY_INCREMENTAL_DEFAULT_LIMIT : HISTORY_FULL_PAGE_LIMIT;
   }
 
   /** Maps Redis stream entries to the JSON shape expected by clients. */
-  private mapHistoryEntries(
-    entries: [string, string[]][],
-  ): Record<string, unknown>[] {
+  private mapHistoryEntries(entries: [string, string[]][]): Record<string, unknown>[] {
     return entries.map(([id, fields]) => {
       const msg: Record<string, unknown> = { id };
       for (let i = 0; i < fields.length; i += 2) {
@@ -1659,19 +1531,13 @@ export class MessagingService {
   private async readHistoryStreamPage(
     groupId: string,
     after: string | undefined,
-    limit: number,
+    limit: number
   ): Promise<Record<string, unknown>[]> {
     const streamKey = `history:${groupId}`;
     const startId = after ? `(${after}` : '-';
-    const entries = await this.redis.xrange(
-      streamKey,
-      startId,
-      '+',
-      'COUNT',
-      limit,
-    );
+    const entries = await this.redis.xrange(streamKey, startId, '+', 'COUNT', limit);
     this.logger.log(
-      `[HISTORY] group=${groupId} after=${after ?? 'start'} limit=${limit} entries=${entries.length}`,
+      `[HISTORY] group=${groupId} after=${after ?? 'start'} limit=${limit} entries=${entries.length}`
     );
     return this.mapHistoryEntries(entries);
   }
@@ -1684,7 +1550,7 @@ export class MessagingService {
     groupIds: string[],
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
-    rejectForbidden: boolean,
+    rejectForbidden: boolean
   ): Promise<Set<string>> {
     if (groupIds.length === 0) return new Set();
 
@@ -1697,9 +1563,7 @@ export class MessagingService {
 
     const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!authUserId) {
-      throw new ForbiddenException(
-        'History requires authenticated user context',
-      );
+      throw new ForbiddenException('History requires authenticated user context');
     }
 
     if (deliverable.length === 0) {
@@ -1738,7 +1602,7 @@ export class MessagingService {
     after: string | undefined,
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
-    limitRaw?: number,
+    limitRaw?: number
   ): Promise<Record<string, unknown>[]> {
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
     const limit = this.resolveHistoryLimit(after, limitRaw);
@@ -1747,7 +1611,7 @@ export class MessagingService {
       [groupId],
       headerUserId,
       headerGlobalAdmin,
-      true,
+      true
     );
     if (!authorized.has(groupId)) {
       this.logger.warn(`[HISTORY] group=${groupId} orphaned - purged, empty`);
@@ -1769,15 +1633,13 @@ export class MessagingService {
   async getHistoryBatch(
     items: HistoryBatchRequestItem[],
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
+    headerGlobalAdmin: string | undefined
   ): Promise<HistoryBatchResponse> {
     if (!Array.isArray(items)) {
       throw new BadRequestException('groups must be an array');
     }
     if (items.length > HISTORY_BATCH_MAX_GROUPS) {
-      throw new BadRequestException(
-        `At most ${HISTORY_BATCH_MAX_GROUPS} groups per batch`,
-      );
+      throw new BadRequestException(`At most ${HISTORY_BATCH_MAX_GROUPS} groups per batch`);
     }
 
     const normalized = items.map((item) => ({
@@ -1791,7 +1653,7 @@ export class MessagingService {
       groupIds,
       headerUserId,
       headerGlobalAdmin,
-      false,
+      false
     );
 
     const histories: Record<string, Record<string, unknown>[]> = {};
@@ -1802,21 +1664,15 @@ export class MessagingService {
           return;
         }
         try {
-          histories[groupId] = await this.readHistoryStreamPage(
-            groupId,
-            after,
-            limit,
-          );
+          histories[groupId] = await this.readHistoryStreamPage(groupId, after, limit);
         } catch (e) {
           this.logger.error(`[HISTORY_BATCH] group=${groupId} error=${e}`);
           histories[groupId] = [];
         }
-      }),
+      })
     );
 
-    this.logger.log(
-      `[HISTORY_BATCH] groups=${normalized.length} authorized=${authorized.size}`,
-    );
+    this.logger.log(`[HISTORY_BATCH] groups=${normalized.length} authorized=${authorized.size}`);
     return { histories };
   }
 
@@ -1830,7 +1686,7 @@ export class MessagingService {
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
     limit = 500,
-    after?: string,
+    after?: string
   ): Promise<QueuedMessage[]> {
     const traceId = this.makeTraceId('fetch-msg');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -1839,13 +1695,13 @@ export class MessagingService {
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      'Cannot fetch messages for another user',
+      'Cannot fetch messages for another user'
     );
 
     const safeLimit = Math.min(Math.max(limit, 1), 1000);
 
     this.logger.log(
-      `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId} limit=${safeLimit} after=${after ?? 'none'}`,
+      `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId} limit=${safeLimit} after=${after ?? 'none'}`
     );
 
     const qb = this.queuedMessageRepo
@@ -1866,22 +1722,18 @@ export class MessagingService {
     // loop. purgeOrphanGroups also purges the server residue (queue, memberships, Redis
     // keys) - see its doc.
     const groupIds = [
-      ...new Set(
-        messages.map((m) => m.groupId).filter((id): id is string => !!id),
-      ),
+      ...new Set(messages.map((m) => m.groupId).filter((id): id is string => !!id)),
     ];
     const existingIds = await this.purgeOrphanGroups(groupIds);
-    const deliverable = messages.filter(
-      (m) => !m.groupId || existingIds.has(m.groupId),
-    );
+    const deliverable = messages.filter((m) => !m.groupId || existingIds.has(m.groupId));
     if (deliverable.length !== messages.length) {
       this.logger.warn(
-        `[MSG_FETCH][${traceId}] dropped ${messages.length - deliverable.length} orphaned message(s)`,
+        `[MSG_FETCH][${traceId}] dropped ${messages.length - deliverable.length} orphaned message(s)`
       );
     }
 
     this.logger.log(
-      `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${deliverable.length}`,
+      `[MSG_FETCH][${traceId}] DONE user=${safeUserId} device=${safeDeviceId} count=${deliverable.length}`
     );
     return deliverable;
   }
@@ -1894,7 +1746,7 @@ export class MessagingService {
   async acknowledgeMessages(
     body: AckMessagesBody,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
+    headerGlobalAdmin: string | undefined
   ): Promise<{ status: string; count: number }> {
     const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
@@ -1904,16 +1756,16 @@ export class MessagingService {
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      'Cannot acknowledge messages for another user',
+      'Cannot acknowledge messages for another user'
     );
 
     this.logger.log(
-      `[ACK][${traceId}] START user=${safeUserId} device=${safeDeviceId} requested=${safeMessageIds.length}`,
+      `[ACK][${traceId}] START user=${safeUserId} device=${safeDeviceId} requested=${safeMessageIds.length}`
     );
 
     if (safeMessageIds.length === 0) {
       this.logger.warn(
-        `[ACK][${traceId}] IGNORE empty messageIds user=${safeUserId} device=${safeDeviceId}`,
+        `[ACK][${traceId}] IGNORE empty messageIds user=${safeUserId} device=${safeDeviceId}`
       );
       return { status: 'ignored', count: 0 };
     }
@@ -1926,7 +1778,7 @@ export class MessagingService {
     });
 
     this.logger.log(
-      `[ACK][${traceId}] DONE deleted=${result.affected || 0} user=${safeUserId} device=${safeDeviceId}`,
+      `[ACK][${traceId}] DONE deleted=${result.affected || 0} user=${safeUserId} device=${safeDeviceId}`
     );
 
     return { status: 'deleted', count: result.affected || 0 };
@@ -1944,7 +1796,7 @@ export class MessagingService {
     groupId: string,
     members: string[],
     requesterKey: string,
-    traceId: string,
+    traceId: string
   ): Promise<void> {
     if (getApps().length === 0) return;
 
@@ -1955,7 +1807,7 @@ export class MessagingService {
         members
           .filter((m) => m !== requesterKey)
           .map((m) => m.split(':')[0])
-          .filter(Boolean),
+          .filter(Boolean)
       ),
     ];
 
@@ -1983,20 +1835,20 @@ export class MessagingService {
             },
           });
           this.logger.log(
-            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`,
+            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`
           );
         } catch (e) {
           if (this.isTerminalPushTokenError(e)) {
             await this.pushTokenRepo.delete({ id: pt.id });
             this.logger.warn(
-              `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`,
+              `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
             );
           }
           this.logger.warn(
-            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${e}`,
+            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${e}`
           );
         }
-      }),
+      })
     );
   }
 
@@ -2011,7 +1863,7 @@ export class MessagingService {
     userId: string,
     title: string,
     body: string,
-    data: Record<string, string>,
+    data: Record<string, string>
   ): Promise<{ sent: number; failed: number }> {
     if (getApps().length === 0) return { sent: 0, failed: 0 };
 
@@ -2035,19 +1887,17 @@ export class MessagingService {
           android: { priority: 'high' },
         });
         sent++;
-        this.logger.log(
-          `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId}`,
-        );
+        this.logger.log(`[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId}`);
       } catch (e) {
         failed++;
         if (this.isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
-            `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`,
+            `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
           );
         }
         this.logger.warn(
-          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${e}`,
+          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${e}`
         );
       }
     }

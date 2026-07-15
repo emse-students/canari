@@ -50,8 +50,12 @@
   let showZoomIndicator = $state(false);
 
   // Non-reactive drag/pinch tracking
-  let dragStartX = 0, dragStartY = 0, dragStartTx = 0, dragStartTy = 0;
-  let isPinching = false, lastPinchDist = 0;
+  let dragStartX = 0,
+    dragStartY = 0,
+    dragStartTx = 0,
+    dragStartTy = 0;
+  let isPinching = false,
+    lastPinchDist = 0;
   let zoomTimeout: ReturnType<typeof setTimeout> | null = null;
 
   let transformEl = $state<HTMLDivElement | null>(null);
@@ -60,7 +64,10 @@
   const scaleLabel = $derived(`${Math.round(scale * 100)}%`);
 
   function resetZoom() {
-    if (zoomTimeout) { clearTimeout(zoomTimeout); zoomTimeout = null; }
+    if (zoomTimeout) {
+      clearTimeout(zoomTimeout);
+      zoomTimeout = null;
+    }
     scale = 1;
     tx = 0;
     ty = 0;
@@ -88,10 +95,7 @@
     const pH = parent.clientHeight;
     const maxTx = Math.max(0, (elW * scale - pW) / 2);
     const maxTy = Math.max(0, (elH * scale - pH) / 2);
-    return [
-      Math.max(-maxTx, Math.min(maxTx, newTx)),
-      Math.max(-maxTy, Math.min(maxTy, newTy)),
-    ];
+    return [Math.max(-maxTx, Math.min(maxTx, newTx)), Math.max(-maxTy, Math.min(maxTy, newTy))];
   }
 
   /** Zoom around a pivot point expressed in element-center coordinates. */
@@ -101,8 +105,12 @@
     const rawTx = tx * ratio + pivotX * (1 - ratio);
     const rawTy = ty * ratio + pivotY * (1 - ratio);
     scale = newScale;
-    if (scale <= MIN_SCALE) { tx = 0; ty = 0; }
-    else { [tx, ty] = constrain(rawTx, rawTy); }
+    if (scale <= MIN_SCALE) {
+      tx = 0;
+      ty = 0;
+    } else {
+      [tx, ty] = constrain(rawTx, rawTy);
+    }
     showIndicator();
   }
 
@@ -128,7 +136,7 @@
         isPinching = true;
         lastPinchDist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY,
+          e.touches[0].clientY - e.touches[1].clientY
         );
         e.preventDefault();
       } else if (e.touches.length === 1 && isZoomed) {
@@ -148,7 +156,7 @@
         e.preventDefault();
         const dist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY,
+          e.touches[0].clientY - e.touches[1].clientY
         );
         const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -156,14 +164,14 @@
         zoomAt(
           scale * (dist / lastPinchDist),
           midX - rect.left - rect.width / 2,
-          midY - rect.top - rect.height / 2,
+          midY - rect.top - rect.height / 2
         );
         lastPinchDist = dist;
       } else if (isDragging && e.touches.length === 1) {
         e.preventDefault();
         [tx, ty] = constrain(
           dragStartTx + e.touches[0].clientX - dragStartX,
-          dragStartTy + e.touches[0].clientY - dragStartY,
+          dragStartTy + e.touches[0].clientY - dragStartY
         );
       }
     }
@@ -202,7 +210,7 @@
     if (!isDragging || e.pointerType === 'touch') return;
     [tx, ty] = constrain(
       dragStartTx + e.clientX - dragStartX,
-      dragStartTy + e.clientY - dragStartY,
+      dragStartTy + e.clientY - dragStartY
     );
   }
 
@@ -232,15 +240,29 @@
       return;
     }
     if (!isZoomed) {
-      if (e.key === 'ArrowLeft' && showPrev && onPrev) { e.preventDefault(); handlePrev(); }
-      if (e.key === 'ArrowRight' && showNext && onNext) { e.preventDefault(); handleNext(); }
+      if (e.key === 'ArrowLeft' && showPrev && onPrev) {
+        e.preventDefault();
+        handlePrev();
+      }
+      if (e.key === 'ArrowRight' && showNext && onNext) {
+        e.preventDefault();
+        handleNext();
+      }
     }
   }
 
-  function handlePrev() { resetZoom(); onPrev?.(); }
-  function handleNext() { resetZoom(); onNext?.(); }
+  function handlePrev() {
+    resetZoom();
+    onPrev?.();
+  }
+  function handleNext() {
+    resetZoom();
+    onNext?.();
+  }
 
-  $effect(() => { if (!open) resetZoom(); });
+  $effect(() => {
+    if (!open) resetZoom();
+  });
 </script>
 
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
@@ -271,7 +293,6 @@
         onclick={(e) => e.stopPropagation()}
         transition:fly={{ y: 18, duration: 240, easing: cubicOut }}
       >
-
         <!-- Header -->
         <div
           class="flex shrink-0 items-center justify-between gap-3 px-3 sm:px-4 pb-2 sm:pb-3 border-b border-white/8 bg-gradient-to-b from-black/30 to-transparent"
@@ -283,7 +304,10 @@
               <button
                 type="button"
                 class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors text-sm font-semibold"
-                onclick={(e) => { e.stopPropagation(); onDownload!(); }}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onDownload!();
+                }}
               >
                 {m.common_download_label()}
               </button>
@@ -291,7 +315,10 @@
             <button
               type="button"
               class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
-              onclick={(e) => { e.stopPropagation(); onClose(); }}
+              onclick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
               aria-label="Fermer"
             >
               <X size={22} strokeWidth={2.5} />
@@ -300,12 +327,17 @@
         </div>
 
         <!-- Content area -->
-        <div class="relative flex flex-1 min-h-0 w-full items-center justify-center pointer-events-none overflow-hidden">
+        <div
+          class="relative flex flex-1 min-h-0 w-full items-center justify-center pointer-events-none overflow-hidden"
+        >
           {#if showPrev && onPrev}
             <button
               type="button"
               class="absolute left-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
-              onclick={(e) => { e.stopPropagation(); handlePrev(); }}
+              onclick={(e) => {
+                e.stopPropagation();
+                handlePrev();
+              }}
               aria-label={m.media_lightbox_prev_aria()}
             >
               <ChevronLeft size={26} strokeWidth={2.5} />
@@ -317,7 +349,11 @@
             bind:this={transformEl}
             role="presentation"
             class="relative z-10 flex h-full w-full items-center justify-center pointer-events-auto select-none"
-            style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging ? 'grabbing' : isZoomed ? 'grab' : 'zoom-in'};"
+            style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging
+              ? 'grabbing'
+              : isZoomed
+                ? 'grab'
+                : 'zoom-in'};"
             onclick={(e) => e.stopPropagation()}
             ondblclick={handleDoubleClick}
             onpointerdown={handlePointerDown}
@@ -332,7 +368,10 @@
             <button
               type="button"
               class="absolute right-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
-              onclick={(e) => { e.stopPropagation(); handleNext(); }}
+              onclick={(e) => {
+                e.stopPropagation();
+                handleNext();
+              }}
               aria-label="Suivant"
             >
               <ChevronRight size={26} strokeWidth={2.5} />
@@ -359,14 +398,19 @@
             {#each { length: dotCount } as _, i (i)}
               <button
                 type="button"
-                onclick={(e) => { e.stopPropagation(); resetZoom(); onDotSelect!(i); }}
-                class="w-2 h-2 rounded-full transition-all {i === dotIndex ? 'bg-white' : 'bg-white/40'}"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  resetZoom();
+                  onDotSelect!(i);
+                }}
+                class="w-2 h-2 rounded-full transition-all {i === dotIndex
+                  ? 'bg-white'
+                  : 'bg-white/40'}"
                 aria-label="Image {i + 1}"
               ></button>
             {/each}
           </div>
         {/if}
-
       </div>
     </div>
   </div>

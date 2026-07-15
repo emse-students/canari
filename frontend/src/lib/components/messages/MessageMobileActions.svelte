@@ -177,7 +177,9 @@
             aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
           >
             {#if pinned}<PinOff size={20} />{:else}<Pin size={20} />{/if}
-            <span class="text-[10px] font-medium">{pinned ? m.msg_unpin_label() : m.msg_pin_label()}</span>
+            <span class="text-[10px] font-medium"
+              >{pinned ? m.msg_unpin_label() : m.msg_pin_label()}</span
+            >
           </button>
         {/if}
 

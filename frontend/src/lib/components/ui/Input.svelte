@@ -65,7 +65,9 @@
     {required}
     aria-invalid={isInvalid || undefined}
     aria-errormessage={error ? `${uniqueId}-error` : undefined}
-    class="w-full px-4 py-3 border-2 rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20 {isInvalid ? 'border-red-err focus:border-red-err' : 'border-cn-border focus:border-cn-yellow'}"
+    class="w-full px-4 py-3 border-2 rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20 {isInvalid
+      ? 'border-red-err focus:border-red-err'
+      : 'border-cn-border focus:border-cn-yellow'}"
     {oninput}
     {onkeydown}
     {...rest}

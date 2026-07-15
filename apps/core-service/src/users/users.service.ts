@@ -26,13 +26,12 @@ export class UsersService implements OnModuleInit {
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
   private readonly chatDeliveryUrl =
     process.env.CHAT_DELIVERY_URL ?? 'http://chat-delivery-service:3010';
-  private readonly socialUrl =
-    process.env.SOCIAL_URL ?? 'http://social-service:3014';
+  private readonly socialUrl = process.env.SOCIAL_URL ?? 'http://social-service:3014';
 
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    private readonly dataSource: DataSource,
+    private readonly dataSource: DataSource
   ) {}
 
   /**
@@ -104,7 +103,7 @@ export class UsersService implements OnModuleInit {
     firstName: string | null,
     lastName: string | null,
     promo: number | null = null,
-    formation: string | null = null,
+    formation: string | null = null
   ): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (user) {
@@ -160,18 +159,14 @@ export class UsersService implements OnModuleInit {
    * and typo-tolerant (trigram fuzzy matching). Results are ordered by closeness to the query.
    * Returns up to 10 results, excluding the current user if specified.
    */
-  async search(
-    query: string,
-    excludeUserId?: string,
-  ): Promise<Pick<User, 'id' | 'displayName'>[]> {
+  async search(query: string, excludeUserId?: string): Promise<Pick<User, 'id' | 'displayName'>[]> {
     // `query` is typed `string`, but Express query parsing can yield an array or
     // object at runtime (e.g. `?q=a&q=b` -> string[], `?q[x]=1` -> object). Re-check
     // the runtime type before any string operation to prevent parameter-tampering
     // type confusion (CWE-843) from flowing into the fuzzy SQL matcher.
     if (typeof query !== 'string') return [];
     if (!query || query.length < 1) return [];
-    if (query.length > 200)
-      throw new BadRequestException('Search query too long (max 200 chars)');
+    if (query.length > 200) throw new BadRequestException('Search query too long (max 200 chars)');
 
     const qb = this.userRepository
       .createQueryBuilder('user')
@@ -194,7 +189,7 @@ export class UsersService implements OnModuleInit {
    */
   async directory(
     query: DirectoryQueryDto,
-    excludeUserId?: string,
+    excludeUserId?: string
   ): Promise<{ users: DirectoryUserRow[]; total: number }> {
     const limit = Math.min(query.limit ?? 20, 50);
     const offset = query.offset ?? 0;
@@ -202,21 +197,16 @@ export class UsersService implements OnModuleInit {
     const formation = query.formation?.trim() ?? '';
 
     const hasFilter =
-      q.length >= 2 ||
-      query.promo != null ||
-      formation.length > 0 ||
-      !!query.associationId;
+      q.length >= 2 || query.promo != null || formation.length > 0 || !!query.associationId;
     if (!hasFilter) {
       throw new BadRequestException(
-        'Provide at least one filter (name >= 2 chars, promo, cursus, or association)',
+        'Provide at least one filter (name >= 2 chars, promo, cursus, or association)'
       );
     }
 
     let memberUserIds: string[] | null = null;
     if (query.associationId) {
-      memberUserIds = await this.fetchAssociationMemberUserIds(
-        query.associationId,
-      );
+      memberUserIds = await this.fetchAssociationMemberUserIds(query.associationId);
       if (memberUserIds.length === 0) {
         return { users: [], total: 0 };
       }
@@ -224,13 +214,7 @@ export class UsersService implements OnModuleInit {
 
     const qb = this.userRepository
       .createQueryBuilder('user')
-      .select([
-        'user.id',
-        'user.displayName',
-        'user.promo',
-        'user.formation',
-        'user.bio',
-      ]);
+      .select(['user.id', 'user.displayName', 'user.promo', 'user.formation', 'user.bio']);
 
     // Accent-insensitive, word-order-insensitive, typo-tolerant name matching + relevance ordering.
     // Only when a name query is present; otherwise the directory keeps its alphabetical order below.
@@ -244,12 +228,9 @@ export class UsersService implements OnModuleInit {
     }
 
     if (formation.length > 0) {
-      qb.andWhere(
-        'unaccent(LOWER(user.formation)) LIKE unaccent(LOWER(:formation))',
-        {
-          formation: `%${formation}%`,
-        },
-      );
+      qb.andWhere('unaccent(LOWER(user.formation)) LIKE unaccent(LOWER(:formation))', {
+        formation: `%${formation}%`,
+      });
     }
 
     if (memberUserIds) {
@@ -281,21 +262,19 @@ export class UsersService implements OnModuleInit {
   }
 
   /** Fetches member user IDs from social-service for association-scoped directory search. */
-  private async fetchAssociationMemberUserIds(
-    associationId: string,
-  ): Promise<string[]> {
+  private async fetchAssociationMemberUserIds(associationId: string): Promise<string[]> {
     try {
       const resp = await axios.get<{ userIds: string[] }>(
         `${this.socialUrl}/internal/associations/${encodeURIComponent(associationId)}/member-user-ids`,
         {
           headers: { 'X-Internal-Secret': this.internalSecret },
           timeout: 10_000,
-        },
+        }
       );
       return resp.data?.userIds ?? [];
     } catch (err) {
       this.logger.warn(
-        `[directory] failed to fetch association members asso=${associationId}: ${String(err)}`,
+        `[directory] failed to fetch association members asso=${associationId}: ${String(err)}`
       );
       return [];
     }
@@ -320,13 +299,9 @@ export class UsersService implements OnModuleInit {
           apiVersion: '2026-05-27.dahlia',
         });
         await stripe.customers.del(user.stripeCustomerId);
-        this.logger.log(
-          `[deleteUser] stripe customer deleted userId=${userId}`,
-        );
+        this.logger.log(`[deleteUser] stripe customer deleted userId=${userId}`);
       } catch (err) {
-        this.logger.warn(
-          `[deleteUser] stripe deletion failed userId=${userId}: ${String(err)}`,
-        );
+        this.logger.warn(`[deleteUser] stripe deletion failed userId=${userId}: ${String(err)}`);
       }
     }
 
@@ -334,26 +309,16 @@ export class UsersService implements OnModuleInit {
 
     // Best-effort: delete chat-delivery data (MLS keys, devices, messages)
     await axios
-      .delete(
-        `${this.chatDeliveryUrl}/internal/users/${encodeURIComponent(userId)}`,
-        { headers },
-      )
+      .delete(`${this.chatDeliveryUrl}/internal/users/${encodeURIComponent(userId)}`, { headers })
       .catch((err) =>
-        this.logger.warn(
-          `[deleteUser] chat-delivery failed userId=${userId}: ${String(err)}`,
-        ),
+        this.logger.warn(`[deleteUser] chat-delivery failed userId=${userId}: ${String(err)}`)
       );
 
     // Best-effort: delete/anonymise social data (posts, follows, memberships)
     await axios
-      .delete(
-        `${this.socialUrl}/internal/users/${encodeURIComponent(userId)}`,
-        { headers },
-      )
+      .delete(`${this.socialUrl}/internal/users/${encodeURIComponent(userId)}`, { headers })
       .catch((err) =>
-        this.logger.warn(
-          `[deleteUser] social failed userId=${userId}: ${String(err)}`,
-        ),
+        this.logger.warn(`[deleteUser] social failed userId=${userId}: ${String(err)}`)
       );
 
     // Hard-delete the user row last so login becomes impossible immediately after

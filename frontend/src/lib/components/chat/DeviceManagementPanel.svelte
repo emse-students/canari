@@ -284,7 +284,11 @@
                       >
                         {m.chat_device_id_label({ device: device.deviceId.slice(0, 24) })}
                         {#if isMobileOs(device) && device.deviceAppVersion}
-                          <span class="ml-2 font-semibold">{m.chat_device_version_label({ device: device.deviceAppVersion ?? '' })}</span>
+                          <span class="ml-2 font-semibold"
+                            >{m.chat_device_version_label({
+                              device: device.deviceAppVersion ?? '',
+                            })}</span
+                          >
                         {/if}
                       </div>
                       <button
@@ -350,7 +354,9 @@
                   class="flex items-start gap-3 p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 sm:ml-16 mt-2"
                 >
                   <TriangleAlert size={18} class="text-orange-500 mt-0.5 shrink-0" />
-                  <p class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium">
+                  <p
+                    class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium"
+                  >
                     {m.chat_device_stale_groups_warning({ staleGroups: staleGroups.length })}
                   </p>
                 </div>

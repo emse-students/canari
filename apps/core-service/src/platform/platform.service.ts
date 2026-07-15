@@ -24,7 +24,7 @@ export class PlatformService implements OnModuleInit {
 
   constructor(
     @InjectRepository(PlatformConfig)
-    private readonly repo: Repository<PlatformConfig>,
+    private readonly repo: Repository<PlatformConfig>
   ) {}
 
   /** Ensures the singleton config row exists on service startup. */
@@ -48,9 +48,7 @@ export class PlatformService implements OnModuleInit {
   }
 
   /** Applies a partial update from a global admin and returns the new config. */
-  async updateConfig(
-    dto: UpdatePlatformConfigDto,
-  ): Promise<PlatformConfigPublic> {
+  async updateConfig(dto: UpdatePlatformConfigDto): Promise<PlatformConfigPublic> {
     await this.ensureDefaults();
     const row = await this.repo.findOneOrFail({ where: { id: 1 } });
 
@@ -66,17 +64,14 @@ export class PlatformService implements OnModuleInit {
     }
 
     this.logger.debug(
-      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion}`,
+      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion}`
     );
     const saved = await this.repo.save(row);
     return toPublic(saved);
   }
 
   /** True when maintenance is on and the caller is not a global admin. */
-  isAccessBlockedByMaintenance(
-    config: PlatformConfigPublic,
-    isGlobalAdmin: boolean,
-  ): boolean {
+  isAccessBlockedByMaintenance(config: PlatformConfigPublic, isGlobalAdmin: boolean): boolean {
     return config.maintenanceEnabled && !isGlobalAdmin;
   }
 }

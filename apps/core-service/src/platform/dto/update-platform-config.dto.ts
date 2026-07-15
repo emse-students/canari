@@ -1,10 +1,4 @@
-import {
-  IsBoolean,
-  IsOptional,
-  IsString,
-  Matches,
-  MaxLength,
-} from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 /** Body for PATCH /api/users/admin/platform - partial platform settings update. */
 export class UpdatePlatformConfigDto {

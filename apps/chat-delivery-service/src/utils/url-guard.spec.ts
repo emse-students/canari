@@ -27,12 +27,7 @@ describe('isPrivateIpAddress', () => {
   });
 
   it('treats public addresses as non-private', () => {
-    for (const ip of [
-      '1.1.1.1',
-      '8.8.8.8',
-      '93.184.216.34',
-      '2606:4700::1111',
-    ]) {
+    for (const ip of ['1.1.1.1', '8.8.8.8', '93.184.216.34', '2606:4700::1111']) {
       expect(isPrivateIpAddress(ip)).toBe(false);
     }
   });
@@ -45,14 +40,14 @@ describe('isPrivateIpAddress', () => {
 describe('assertPublicAddresses', () => {
   it('passes when every resolved address is public', () => {
     expect(() =>
-      assertPublicAddresses([{ address: '1.1.1.1' }, { address: '8.8.8.8' }]),
+      assertPublicAddresses([{ address: '1.1.1.1' }, { address: '8.8.8.8' }])
     ).not.toThrow();
   });
 
   it('throws BadRequestException if any resolved address is private', () => {
-    expect(() =>
-      assertPublicAddresses([{ address: '1.1.1.1' }, { address: '127.0.0.1' }]),
-    ).toThrow(BadRequestException);
+    expect(() => assertPublicAddresses([{ address: '1.1.1.1' }, { address: '127.0.0.1' }])).toThrow(
+      BadRequestException
+    );
   });
 });
 
@@ -87,27 +82,21 @@ describe('ssrfSafeLookup', () => {
 
 describe('assertSafeExternalUrl', () => {
   it('rejects non-http(s) schemes', async () => {
-    await expect(assertSafeExternalUrl('ftp://example.com')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(assertSafeExternalUrl('ftp://example.com')).rejects.toThrow(BadRequestException);
   });
 
   it('rejects embedded credentials', async () => {
-    await expect(
-      assertSafeExternalUrl('http://user:pass@example.com'),
-    ).rejects.toThrow(BadRequestException);
+    await expect(assertSafeExternalUrl('http://user:pass@example.com')).rejects.toThrow(
+      BadRequestException
+    );
   });
 
   it('rejects localhost hostnames', async () => {
-    await expect(assertSafeExternalUrl('http://localhost/x')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(assertSafeExternalUrl('http://localhost/x')).rejects.toThrow(BadRequestException);
   });
 
   it('rejects literal private IPs before any DNS lookup', async () => {
-    await expect(assertSafeExternalUrl('http://127.0.0.1/x')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(assertSafeExternalUrl('http://127.0.0.1/x')).rejects.toThrow(BadRequestException);
   });
 
   it('accepts a public literal IP and returns the parsed URL', async () => {

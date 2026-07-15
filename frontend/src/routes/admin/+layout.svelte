@@ -4,7 +4,17 @@
   import { page } from '$app/state';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listMyAssociations } from '$lib/associations/api';
-  import { Shield, CalendarClock, Activity, ArrowLeft, ShieldAlert, UserCog, Wrench, Building2, Wallet } from '@lucide/svelte';
+  import {
+    Shield,
+    CalendarClock,
+    Activity,
+    ArrowLeft,
+    ShieldAlert,
+    UserCog,
+    Wrench,
+    Building2,
+    Wallet,
+  } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -62,13 +72,18 @@
   </div>
 {:else}
   <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
-    <a href="/dashboard" class="text-sm text-text-muted hover:text-text-main transition-colors inline-flex items-center gap-1">
+    <a
+      href="/dashboard"
+      class="text-sm text-text-muted hover:text-text-main transition-colors inline-flex items-center gap-1"
+    >
       <ArrowLeft size={14} />
       {m.admin_dashboard_link()}
     </a>
 
     <header class="flex items-start gap-3">
-      <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-cn-yellow/20 text-cn-dark">
+      <span
+        class="flex h-11 w-11 items-center justify-center rounded-2xl bg-cn-yellow/20 text-cn-dark"
+      >
         <Shield size={22} />
       </span>
       <div>

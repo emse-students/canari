@@ -162,7 +162,12 @@
   // Auto-select the first workspace when entering communities mode so the
   // gear icon and channel list are immediately visible (avoids an empty panel).
   $effect(() => {
-    if (viewMode !== 'communities' || selectedCommunityWorkspaceId || channelWorkspaces.length === 0) return;
+    if (
+      viewMode !== 'communities' ||
+      selectedCommunityWorkspaceId ||
+      channelWorkspaces.length === 0
+    )
+      return;
     selectedCommunityWorkspaceId = channelWorkspaces[0].id;
   });
 
@@ -198,7 +203,9 @@
         if (isChannelConversationId(id)) return false;
         if (!query) return true;
         const lastContent = convo.messages.at(-1)?.content ?? '';
-        return convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query);
+        return (
+          convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query)
+        );
       })
       .sort(([, a], [, b]) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
   });
@@ -423,8 +430,13 @@
       {#if activeSidebarTab === 'discussions'}
         {#each filteredConversationEntries as [name, convo] (name)}
           {@const resolved = resolveConversationListPresentation(
-            { id: convo.id || name, name: convo.name, contactName: convo.contactName,
-              conversationType: convo.conversationType, directPeerId: convo.directPeerId },
+            {
+              id: convo.id || name,
+              name: convo.name,
+              contactName: convo.contactName,
+              conversationType: convo.conversationType,
+              directPeerId: convo.directPeerId,
+            },
             currentUserId
           )}
           <div class="relative">
@@ -559,7 +571,7 @@
   onInviteCommunityMember={async (memberId, roleName) => {
     const workspace = selectedCommunityWorkspace;
     if (!workspace) {
-      throw new Error("No community selected");
+      throw new Error('No community selected');
     }
 
     const targetChannel =
@@ -567,7 +579,7 @@
       workspace.channels[0];
 
     if (!targetChannel) {
-      throw new Error("No channel available in this community to send the invitation");
+      throw new Error('No channel available in this community to send the invitation');
     }
 
     await onInviteChannelMember?.(targetChannel.id, memberId, roleName);

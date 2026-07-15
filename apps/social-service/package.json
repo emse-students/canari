@@ -9,8 +9,10 @@
     "test": "jest --passWithNoTests",
     "test:e2e": "jest --runInBand --testRegex .*\\.e2e-spec\\.ts$",
     "smoke": "node scripts/smoke-test.mjs",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "format": "prettier --write \"src/**/*.ts\""
+    "lint": "oxlint -c ../../.oxlintrc.nest.json src test",
+    "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix src test",
+    "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",
+    "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\""
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -32,22 +34,18 @@
     "typeorm": "^1.0.0"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@nestjs/cli": "^11.0.21",
     "@nestjs/schematics": "^11.1.0",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^25.6.0",
-    "eslint": "^10.2.1",
-    "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.5",
-    "globals": "^17.5.0",
     "jest": "^30.2.0",
-    "prettier": "^3.8.3",
+    "oxfmt": "^0.59.0",
+    "oxlint": "^1.74.0",
+    "oxlint-tsgolint": "^0.24.0",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.64.0"
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "qs": "6.15.2",

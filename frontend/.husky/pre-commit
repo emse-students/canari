@@ -1,17 +1,19 @@
+#!/bin/sh
 # Load nvm so node/npx/npm are available in non-interactive shells
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" --no-use
 
-# Also ensure bun is on PATH
-export PATH="$HOME/.bun/bin:$PATH"
+# Also ensure bun and oxvelte (cargo) are on PATH
+export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 cd frontend
 
-# 1. Auto-format then re-stage so CI prettier --check always passes
+# 1. Auto-format then re-stage so CI format:check always passes
 npm run format
 git add -u .
 
-# 2. Lint (fails on unfixable ESLint errors)
+# 2. Lint (oxlint + oxvelte; fails on unfixable errors)
 npm run lint
 
 # 3. Type-check + Svelte diagnostics

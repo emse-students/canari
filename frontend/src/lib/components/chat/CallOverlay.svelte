@@ -92,7 +92,9 @@
     return remoteStreamVal;
   });
   /** Connected audio-only call: a remote stream is flowing but carries no video. */
-  let remoteAudioConnected = $derived(callState === 'incall' && !remoteHasVideo && !!anyRemoteStream);
+  let remoteAudioConnected = $derived(
+    callState === 'incall' && !remoteHasVideo && !!anyRemoteStream
+  );
   /** Any video in play (local sending or remote receiving). */
   let hasAnyVideo = $derived(remoteHasVideo || !isVideoOff);
   /** User explicitly collapsed the call to the docked widget. */
@@ -284,9 +286,19 @@
     class="flex items-center gap-2 bg-black/50 backdrop-blur-md px-2.5 py-1.5 rounded-full border border-white/10 text-white text-sm font-semibold max-w-full"
   >
     <div class="w-7 h-7 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
-      <Avatar userId={participant.userId} fill shape="circle" fallbackLabel={participant.displayName} />
+      <Avatar
+        userId={participant.userId}
+        fill
+        shape="circle"
+        fallbackLabel={participant.displayName}
+      />
     </div>
-    <UserName userId={participant.userId} fallback={participant.displayName} link={false} class="truncate" />
+    <UserName
+      userId={participant.userId}
+      fallback={participant.displayName}
+      link={false}
+      class="truncate"
+    />
   </div>
 {/snippet}
 
@@ -331,7 +343,9 @@
         ></span>
         <div class="h-full w-full overflow-hidden rounded-full ring-1 ring-white/20">
           {#if isGroupCall}
-            <div class="flex h-full w-full items-center justify-center bg-white/10 text-white font-bold">
+            <div
+              class="flex h-full w-full items-center justify-center bg-white/10 text-white font-bold"
+            >
               {participants.length}
             </div>
           {:else if primaryParticipant}
@@ -346,7 +360,9 @@
       </div>
       <div class="min-w-0 flex-1">
         {#if isGroupCall}
-          <p class="truncate text-sm font-bold text-white">{m.call_participants_count({ participants: participants.length })}</p>
+          <p class="truncate text-sm font-bold text-white">
+            {m.call_participants_count({ participants: participants.length })}
+          </p>
         {:else if primaryParticipant}
           <UserName
             userId={primaryParticipant.userId}
@@ -411,289 +427,298 @@
     </div>
   </div>
 {:else}
-<div
-  class="fixed inset-0 z-[300] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
-  transition:fade={{ duration: 300 }}
->
   <div
-    class="relative w-full h-full max-w-6xl max-h-[82vh] bg-[#0a0d14] rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
+    class="fixed inset-0 z-[300] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
+    transition:fade={{ duration: 300 }}
   >
-    {#if showRemoteGrid}
-      <div
-        class="w-full h-full grid gap-1 p-1 {remoteEntries.length <= 4
-          ? 'grid-cols-2'
-          : 'grid-cols-3'}"
-      >
-        {#each remoteEntries as [key, stream], index (key)}
-          {@const participant = participantForIndex(index)}
-          {@const tileHasVideo = hasVideoForStream(stream)}
-          <div class="relative w-full h-full min-h-[120px] bg-black/40 rounded-xl overflow-hidden">
-            <!-- Kept mounted even without video so the tile's audio keeps playing;
-                 hidden behind the avatar when the member is audio-only. -->
-            <video
-              use:attachStream={stream}
-              autoplay
-              playsinline
-              class="w-full h-full object-cover {tileHasVideo ? '' : 'opacity-0'}"
-            ></video>
-            {#if !tileHasVideo && participant}
-              <div class="absolute inset-0 flex items-center justify-center">
-                {@render callAvatar(participant.userId, participant.displayName, 'w-20 h-20')}
-              </div>
-            {/if}
-            {#if participant}
-              <div class="absolute bottom-2 left-2 right-2 z-10">
-                {@render participantLabel(participant)}
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {:else if remoteHasVideo && primaryRemoteStream}
-      <div class="relative w-full h-full flex-1 min-h-0">
-        <video
-          bind:this={remoteVideo}
-          autoplay
-          playsinline
-          class="w-full h-full object-cover"
-        ></video>
-        {#if primaryParticipant}
-          <!-- Bottom-left to avoid the top-left status badge and the bottom-right self PiP. -->
-          <div class="absolute bottom-4 left-4 z-10 max-w-[60%]">
-            {@render participantLabel(primaryParticipant)}
-          </div>
-        {/if}
-      </div>
-    {:else if participants.length > 0}
-      <!-- Audio-only remote: hidden sink keeps the voice playing behind the avatar. -->
-      <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
-      <div class="flex flex-col items-center justify-center gap-8 text-white/70 flex-1 px-6">
-        {#if isGroupCall}
-          <div
-            class="grid gap-8 w-full max-w-lg {participants.length === 2
-              ? 'grid-cols-2'
-              : participants.length <= 4
-                ? 'grid-cols-2'
-                : 'grid-cols-3'}"
-          >
-            {#each participants as participant (participant.userId)}
-              <div class="flex flex-col items-center gap-3">
-                {@render callAvatar(participant.userId, participant.displayName, 'w-24 h-24 sm:w-28 sm:h-28')}
-                <UserName
-                  userId={participant.userId}
-                  fallback={participant.displayName}
-                  link={false}
-                  class="text-white font-bold text-center text-sm sm:text-base"
-                />
-              </div>
-            {/each}
-          </div>
-        {:else if primaryParticipant}
-          {@render callAvatar(primaryParticipant.userId, primaryParticipant.displayName, 'w-28 h-28 sm:w-32 sm:h-32')}
-          <div class="flex flex-col items-center gap-2 text-center">
-            <UserName
-              userId={primaryParticipant.userId}
-              fallback={primaryParticipant.displayName}
-              link={false}
-              class="text-xl font-bold text-white tracking-wide"
-            />
-          </div>
-        {/if}
-        <p
-          class="text-sm font-medium text-white/60 tracking-widest uppercase text-center {remoteAudioConnected
-            ? ''
-            : 'animate-pulse'}"
-        >
-          {#if remoteAudioConnected}
-            {m.call_audio_only_label()}
-          {:else if callState === 'calling'}
-            {m.call_calling_label()}
-          {:else if callState === 'incall'}
-            {m.call_waiting_for_remote_label()}
-          {:else}
-            {m.call_connecting_label()}
-          {/if}
-        </p>
-      </div>
-    {:else}
-      <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1">
-        <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
-          {callState === 'calling' ? m.call_calling_label() : m.call_connecting_label()}
-        </p>
-      </div>
-    {/if}
-
-    {#if localStreamVal || currentUserId}
-      <div
-        class="absolute bottom-6 right-6 z-20 pointer-events-none"
-        transition:scale={{ duration: 400, start: 0.8, delay: 200 }}
-      >
+    <div
+      class="relative w-full h-full max-w-6xl max-h-[82vh] bg-[#0a0d14] rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
+    >
+      {#if showRemoteGrid}
         <div
-          bind:this={pipEl}
-          role="button"
-          aria-label={m.call_move_pip_label()}
-          tabindex="0"
-          onpointerdown={handlePipPointerDown}
-          onpointermove={handlePipPointerMove}
-          onpointerup={handlePipPointerUp}
-          onpointercancel={handlePipPointerUp}
-          class="w-32 h-48 md:w-48 md:h-72 bg-black/60 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/20 backdrop-blur-md pointer-events-auto touch-none {isDragging
-            ? 'cursor-grabbing scale-105'
-            : 'cursor-grab hover:scale-[1.02]'}"
-          style="transform: translate({pipOffsetX}px, {pipOffsetY}px);"
+          class="w-full h-full grid gap-1 p-1 {remoteEntries.length <= 4
+            ? 'grid-cols-2'
+            : 'grid-cols-3'}"
         >
-          {#if localStreamVal && !isVideoOff}
-            <video
-              bind:this={localVideo}
-              autoplay
-              playsinline
-              muted
-              class="w-full h-full object-cover -scale-x-100"
-            ></video>
-          {:else if currentUserId}
-            <div class="w-full h-full flex items-center justify-center bg-[#0a0d14]">
-              <div class="w-20 h-20 md:w-28 md:h-28 rounded-full overflow-hidden ring-2 ring-white/20">
-                <Avatar
-                  userId={currentUserId}
-                  fill
-                  shape="circle"
-                  fallbackLabel={m.call_you_label()}
-                />
-              </div>
-            </div>
-          {/if}
-          {#if isMuted}
+          {#each remoteEntries as [key, stream], index (key)}
+            {@const participant = participantForIndex(index)}
+            {@const tileHasVideo = hasVideoForStream(stream)}
             <div
-              class="absolute top-3 right-3 bg-red-500/80 backdrop-blur-md p-1.5 rounded-full text-white"
+              class="relative w-full h-full min-h-[120px] bg-black/40 rounded-xl overflow-hidden"
             >
-              <MicOff size={14} strokeWidth={2.5} />
+              <!-- Kept mounted even without video so the tile's audio keeps playing;
+                 hidden behind the avatar when the member is audio-only. -->
+              <video
+                use:attachStream={stream}
+                autoplay
+                playsinline
+                class="w-full h-full object-cover {tileHasVideo ? '' : 'opacity-0'}"
+              ></video>
+              {#if !tileHasVideo && participant}
+                <div class="absolute inset-0 flex items-center justify-center">
+                  {@render callAvatar(participant.userId, participant.displayName, 'w-20 h-20')}
+                </div>
+              {/if}
+              {#if participant}
+                <div class="absolute bottom-2 left-2 right-2 z-10">
+                  {@render participantLabel(participant)}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {:else if remoteHasVideo && primaryRemoteStream}
+        <div class="relative w-full h-full flex-1 min-h-0">
+          <video bind:this={remoteVideo} autoplay playsinline class="w-full h-full object-cover"
+          ></video>
+          {#if primaryParticipant}
+            <!-- Bottom-left to avoid the top-left status badge and the bottom-right self PiP. -->
+            <div class="absolute bottom-4 left-4 z-10 max-w-[60%]">
+              {@render participantLabel(primaryParticipant)}
             </div>
           {/if}
-          <div
-            class="absolute bottom-2 left-2 right-2 flex justify-center pointer-events-none"
-          >
-            <span class="text-[10px] font-bold uppercase tracking-wider text-white/80 bg-black/40 px-2 py-0.5 rounded-full"
-              >{m.call_you_label()}</span
+        </div>
+      {:else if participants.length > 0}
+        <!-- Audio-only remote: hidden sink keeps the voice playing behind the avatar. -->
+        <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
+        <div class="flex flex-col items-center justify-center gap-8 text-white/70 flex-1 px-6">
+          {#if isGroupCall}
+            <div
+              class="grid gap-8 w-full max-w-lg {participants.length === 2
+                ? 'grid-cols-2'
+                : participants.length <= 4
+                  ? 'grid-cols-2'
+                  : 'grid-cols-3'}"
             >
+              {#each participants as participant (participant.userId)}
+                <div class="flex flex-col items-center gap-3">
+                  {@render callAvatar(
+                    participant.userId,
+                    participant.displayName,
+                    'w-24 h-24 sm:w-28 sm:h-28'
+                  )}
+                  <UserName
+                    userId={participant.userId}
+                    fallback={participant.displayName}
+                    link={false}
+                    class="text-white font-bold text-center text-sm sm:text-base"
+                  />
+                </div>
+              {/each}
+            </div>
+          {:else if primaryParticipant}
+            {@render callAvatar(
+              primaryParticipant.userId,
+              primaryParticipant.displayName,
+              'w-28 h-28 sm:w-32 sm:h-32'
+            )}
+            <div class="flex flex-col items-center gap-2 text-center">
+              <UserName
+                userId={primaryParticipant.userId}
+                fallback={primaryParticipant.displayName}
+                link={false}
+                class="text-xl font-bold text-white tracking-wide"
+              />
+            </div>
+          {/if}
+          <p
+            class="text-sm font-medium text-white/60 tracking-widest uppercase text-center {remoteAudioConnected
+              ? ''
+              : 'animate-pulse'}"
+          >
+            {#if remoteAudioConnected}
+              {m.call_audio_only_label()}
+            {:else if callState === 'calling'}
+              {m.call_calling_label()}
+            {:else if callState === 'incall'}
+              {m.call_waiting_for_remote_label()}
+            {:else}
+              {m.call_connecting_label()}
+            {/if}
+          </p>
+        </div>
+      {:else}
+        <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1">
+          <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
+            {callState === 'calling' ? m.call_calling_label() : m.call_connecting_label()}
+          </p>
+        </div>
+      {/if}
+
+      {#if localStreamVal || currentUserId}
+        <div
+          class="absolute bottom-6 right-6 z-20 pointer-events-none"
+          transition:scale={{ duration: 400, start: 0.8, delay: 200 }}
+        >
+          <div
+            bind:this={pipEl}
+            role="button"
+            aria-label={m.call_move_pip_label()}
+            tabindex="0"
+            onpointerdown={handlePipPointerDown}
+            onpointermove={handlePipPointerMove}
+            onpointerup={handlePipPointerUp}
+            onpointercancel={handlePipPointerUp}
+            class="w-32 h-48 md:w-48 md:h-72 bg-black/60 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/20 backdrop-blur-md pointer-events-auto touch-none {isDragging
+              ? 'cursor-grabbing scale-105'
+              : 'cursor-grab hover:scale-[1.02]'}"
+            style="transform: translate({pipOffsetX}px, {pipOffsetY}px);"
+          >
+            {#if localStreamVal && !isVideoOff}
+              <video
+                bind:this={localVideo}
+                autoplay
+                playsinline
+                muted
+                class="w-full h-full object-cover -scale-x-100"
+              ></video>
+            {:else if currentUserId}
+              <div class="w-full h-full flex items-center justify-center bg-[#0a0d14]">
+                <div
+                  class="w-20 h-20 md:w-28 md:h-28 rounded-full overflow-hidden ring-2 ring-white/20"
+                >
+                  <Avatar
+                    userId={currentUserId}
+                    fill
+                    shape="circle"
+                    fallbackLabel={m.call_you_label()}
+                  />
+                </div>
+              </div>
+            {/if}
+            {#if isMuted}
+              <div
+                class="absolute top-3 right-3 bg-red-500/80 backdrop-blur-md p-1.5 rounded-full text-white"
+              >
+                <MicOff size={14} strokeWidth={2.5} />
+              </div>
+            {/if}
+            <div class="absolute bottom-2 left-2 right-2 flex justify-center pointer-events-none">
+              <span
+                class="text-[10px] font-bold uppercase tracking-wider text-white/80 bg-black/40 px-2 py-0.5 rounded-full"
+                >{m.call_you_label()}</span
+              >
+            </div>
           </div>
         </div>
+      {/if}
+
+      <div
+        class="absolute top-6 left-6 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full text-white/90 text-sm font-bold border border-white/10 flex items-center gap-3 z-10"
+      >
+        <span
+          class="w-2.5 h-2.5 rounded-full {callState === 'incall'
+            ? 'bg-emerald-400'
+            : 'bg-amber-400 animate-pulse'}"
+        ></span>
+        {#if currentUserId}
+          <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
+            <Avatar userId={currentUserId} fill shape="circle" fallbackLabel={m.call_you_label()} />
+          </div>
+        {/if}
+        {callState === 'calling'
+          ? m.call_outgoing_label()
+          : callState === 'incoming'
+            ? m.call_incoming_label()
+            : m.call_online_label()}
+        {#if remoteEntries.length > 1}
+          <span class="text-white/60 font-normal"
+            >· {m.call_participants_count({ participants: remoteEntries.length + 1 })}</span
+          >
+        {:else if primaryParticipant}
+          <UserName
+            userId={primaryParticipant.userId}
+            fallback={primaryParticipant.displayName}
+            link={false}
+            class="text-white/90 font-bold truncate max-w-[10rem] sm:max-w-xs"
+          />
+        {/if}
       </div>
-    {/if}
+
+      <!-- End-to-end encryption status (top-right, clear of the caller name and self PiP). -->
+      <div class="absolute top-6 right-6 z-10">
+        {@render e2eBadge(false)}
+      </div>
+    </div>
 
     <div
-      class="absolute top-6 left-6 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full text-white/90 text-sm font-bold border border-white/10 flex items-center gap-3 z-10"
+      class="mt-6 flex items-center gap-3 sm:gap-4 bg-white/10 backdrop-blur-2xl px-6 sm:px-8 py-4 rounded-full border border-white/20 shadow-2xl"
+      transition:fly={{ y: 40, duration: 500, delay: 100 }}
     >
-      <span
-        class="w-2.5 h-2.5 rounded-full {callState === 'incall'
-          ? 'bg-emerald-400'
-          : 'bg-amber-400 animate-pulse'}"
-      ></span>
-      {#if currentUserId}
-        <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
-          <Avatar userId={currentUserId} fill shape="circle" fallbackLabel={m.call_you_label()} />
-        </div>
-      {/if}
-      {callState === 'calling'
-        ? m.call_outgoing_label()
-        : callState === 'incoming'
-          ? m.call_incoming_label()
-          : m.call_online_label()}
-      {#if remoteEntries.length > 1}
-        <span class="text-white/60 font-normal">· {m.call_participants_count({ participants: remoteEntries.length + 1 })}</span>
-      {:else if primaryParticipant}
-        <UserName
-          userId={primaryParticipant.userId}
-          fallback={primaryParticipant.displayName}
-          link={false}
-          class="text-white/90 font-bold truncate max-w-[10rem] sm:max-w-xs"
-        />
-      {/if}
-    </div>
-
-    <!-- End-to-end encryption status (top-right, clear of the caller name and self PiP). -->
-    <div class="absolute top-6 right-6 z-10">
-      {@render e2eBadge(false)}
-    </div>
-  </div>
-
-  <div
-    class="mt-6 flex items-center gap-3 sm:gap-4 bg-white/10 backdrop-blur-2xl px-6 sm:px-8 py-4 rounded-full border border-white/20 shadow-2xl"
-    transition:fly={{ y: 40, duration: 500, delay: 100 }}
-  >
-    {#if callState === 'incoming'}
-      <button
-        class="p-4 sm:p-5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all hover:scale-110 active:scale-95"
-        onclick={() =>
-          callService.acceptCall(
-            callService.currentGroupId ?? '',
-            callService.currentCallId ?? ''
-          )}
-        title={m.call_accept_label()}
-        aria-label={m.call_accept_incoming_label()}
-      >
-        <Phone size={28} class="fill-current" />
-      </button>
-      <button
-        class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110 active:scale-95"
-        onclick={endCall}
-        title={m.call_decline_label()}
-        aria-label={m.call_decline_incoming_label()}
-      >
-        <PhoneOff size={28} />
-      </button>
-    {:else}
-      <button
-        class="p-4 rounded-full transition-all {isMuted
-          ? 'bg-white text-[#151B2C]'
-          : 'bg-white/10 text-white hover:bg-white/20'}"
-        onclick={() => callService.toggleMute()}
-        aria-label={isMuted ? m.call_unmute_label() : m.call_mute_label()}
-      >
-        {#if isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
-      </button>
-      <button
-        class="p-4 rounded-full transition-all {isVideoOff
-          ? 'bg-white text-[#151B2C]'
-          : 'bg-white/10 text-white hover:bg-white/20'}"
-        onclick={() => void callService.toggleVideo()}
-        aria-label={isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label()}
-      >
-        {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
-      </button>
-      {#if remoteHasVideo && pipSupported}
+      {#if callState === 'incoming'}
+        <button
+          class="p-4 sm:p-5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all hover:scale-110 active:scale-95"
+          onclick={() =>
+            callService.acceptCall(
+              callService.currentGroupId ?? '',
+              callService.currentCallId ?? ''
+            )}
+          title={m.call_accept_label()}
+          aria-label={m.call_accept_incoming_label()}
+        >
+          <Phone size={28} class="fill-current" />
+        </button>
+        <button
+          class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110 active:scale-95"
+          onclick={endCall}
+          title={m.call_decline_label()}
+          aria-label={m.call_decline_incoming_label()}
+        >
+          <PhoneOff size={28} />
+        </button>
+      {:else}
+        <button
+          class="p-4 rounded-full transition-all {isMuted
+            ? 'bg-white text-[#151B2C]'
+            : 'bg-white/10 text-white hover:bg-white/20'}"
+          onclick={() => callService.toggleMute()}
+          aria-label={isMuted ? m.call_unmute_label() : m.call_mute_label()}
+        >
+          {#if isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
+        </button>
+        <button
+          class="p-4 rounded-full transition-all {isVideoOff
+            ? 'bg-white text-[#151B2C]'
+            : 'bg-white/10 text-white hover:bg-white/20'}"
+          onclick={() => void callService.toggleVideo()}
+          aria-label={isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label()}
+        >
+          {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
+        </button>
+        {#if remoteHasVideo && pipSupported}
+          <button
+            class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
+            onclick={() => void togglePictureInPicture()}
+            title={m.call_pip_label()}
+            aria-label={m.call_open_pip_label()}
+          >
+            <PictureInPicture2 size={24} />
+          </button>
+        {/if}
+        <button
+          class="p-4 rounded-full bg-white/10 text-white hover:bg-white/20"
+          onclick={() => (userMinimized = true)}
+          title={m.call_minimize_label()}
+          aria-label={m.call_minimize_call_label()}
+        >
+          <Minimize2 size={24} />
+        </button>
         <button
           class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
-          onclick={() => void togglePictureInPicture()}
-          title={m.call_pip_label()}
-          aria-label={m.call_open_pip_label()}
+          onclick={toggleFullscreen}
+          aria-label={m.call_fullscreen_label()}
         >
-          <PictureInPicture2 size={24} />
+          {#if isFullscreen}<Minimize size={24} />{:else}<Maximize size={24} />{/if}
+        </button>
+        <div class="w-px h-8 bg-white/20 mx-1"></div>
+        <button
+          class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110"
+          onclick={endCall}
+          aria-label={m.call_hang_up_label()}
+        >
+          <PhoneOff size={28} />
         </button>
       {/if}
-      <button
-        class="p-4 rounded-full bg-white/10 text-white hover:bg-white/20"
-        onclick={() => (userMinimized = true)}
-        title={m.call_minimize_label()}
-        aria-label={m.call_minimize_call_label()}
-      >
-        <Minimize2 size={24} />
-      </button>
-      <button
-        class="p-4 rounded-full hidden sm:block bg-white/10 text-white hover:bg-white/20"
-        onclick={toggleFullscreen}
-        aria-label={m.call_fullscreen_label()}
-      >
-        {#if isFullscreen}<Minimize size={24} />{:else}<Maximize size={24} />{/if}
-      </button>
-      <div class="w-px h-8 bg-white/20 mx-1"></div>
-      <button
-        class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110"
-        onclick={endCall}
-        aria-label={m.call_hang_up_label()}
-      >
-        <PhoneOff size={28} />
-      </button>
-    {/if}
+    </div>
   </div>
-</div>
 {/if}

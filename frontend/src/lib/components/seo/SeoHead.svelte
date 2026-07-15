@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { buildSiteJsonLd } from '$lib/seo/jsonLd';
+  import { buildSiteJsonLdScriptTag } from '$lib/seo/jsonLd';
   import { formatDocumentTitle, mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
   import { SITE, siteAssetUrl, siteOrigin } from '$lib/seo/site';
   import type { SeoMeta } from '$lib/seo/types';
@@ -33,8 +33,7 @@
   const robotsContent = $derived(resolved.noindex ? 'noindex, nofollow' : 'index, follow');
   const ogType = $derived(resolved.ogType ?? SITE.defaultOgType);
   const showSiteJsonLd = $derived(pathname === '/posts' || pathname === '/');
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- used inside <script type="application/ld+json"> below; ESLint doesn't track that usage
-  const jsonLd = $derived(showSiteJsonLd ? buildSiteJsonLd() : '');
+  const jsonLdScript = $derived(showSiteJsonLd ? buildSiteJsonLdScriptTag() : '');
 </script>
 
 <svelte:head>
@@ -65,8 +64,6 @@
   <meta name="twitter:image:alt" content={SITE.defaultOgImageAlt} />
 
   {#if showSiteJsonLd}
-    <script type="application/ld+json">
-{jsonLd}
-    </script>
+    {@html jsonLdScript}
   {/if}
 </svelte:head>

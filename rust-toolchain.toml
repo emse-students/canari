@@ -1,0 +1,5 @@
+# Minimum Rust for oxvelte (cargo install). rustup applies this in the repo tree.
+[toolchain]
+channel = "1.93.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

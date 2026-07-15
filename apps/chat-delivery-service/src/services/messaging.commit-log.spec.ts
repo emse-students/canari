@@ -97,9 +97,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(res.accepted).toBe(true);
       expect(res.newEpoch).toBe(6);
       // Epoch advanced and persisted.
-      expect(groupRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({ activeEpoch: 6 }),
-      );
+      expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ activeEpoch: 6 }));
       // Commit stored keyed by the epoch it advances FROM.
       expect(commitInsertBuilder.values).toHaveBeenCalledWith({
         groupId: 'group-1',
@@ -115,7 +113,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           proto: 'Y29tbWl0',
           isCommit: true,
           excludeDeviceIds: ['user-1:device-1'],
-        }),
+        })
       );
     });
 
@@ -140,9 +138,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   describe('getCommitsSince (membership-gated replay)', () => {
     it('forbids a non-member', async () => {
       groupMemberRepo.findOne.mockResolvedValue(null);
-      await expect(
-        service.getCommitsSince('group-1', 0, 'stranger'),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.getCommitsSince('group-1', 0, 'stranger')).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
     });
 
     it('returns ordered commits and belowFloor=false when the floor is covered', async () => {

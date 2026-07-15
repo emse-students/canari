@@ -59,7 +59,13 @@
   });
 
   async function handleDelete(id: string, title: string) {
-    if (!await showConfirm(m.form_list_delete_confirm({ title }), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.form_list_delete_confirm({ title }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     deletingId = id;
     try {
       await deleteForm(id);
@@ -102,7 +108,13 @@
 
   async function handleDeleteSubmission(formId: string, sub: Submission) {
     const name = [sub.firstName, sub.lastName].filter(Boolean).join(' ') || sub.userId.slice(0, 8);
-    if (!await showConfirm(m.form_list_delete_submission_confirm({ name }), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.form_list_delete_submission_confirm({ name }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     deletingSubmissionId = sub.id;
     try {
       await deleteSubmission(sub.id);
@@ -138,7 +150,10 @@
   /** Formats cents as a currency string, or "-" for zero. */
   function formatAmount(cents: number): string {
     if (!cents) return '-';
-    return (cents / 100).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', { style: 'currency', currency: 'eur' });
+    return (cents / 100).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+      style: 'currency',
+      currency: 'eur',
+    });
   }
 </script>
 
@@ -317,7 +332,9 @@
                               {statusLabel(sub.paymentStatus)}
                             </span>
                           </td>
-                          <td class="py-2 pr-4 text-xs font-medium">{formatAmount(sub.totalPaid)}</td>
+                          <td class="py-2 pr-4 text-xs font-medium"
+                            >{formatAmount(sub.totalPaid)}</td
+                          >
                           <td class="py-2">
                             <button
                               onclick={() => void handleDeleteSubmission(form.id, sub)}

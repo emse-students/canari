@@ -27,11 +27,7 @@
     resolvedMemberNames: Record<string, string>;
   }
 
-  let {
-    asso,
-    members = $bindable(),
-    resolvedMemberNames = $bindable(),
-  }: Props = $props();
+  let { asso, members = $bindable(), resolvedMemberNames = $bindable() }: Props = $props();
 
   let newMemberUserId = $state('');
   let newMemberRole = $state('Membre');
@@ -217,45 +213,51 @@
 
   <!-- Cotisation tags make no sense for promo lists; hidden there. -->
   {#if asso.type !== 'list'}
-  <div class="border-t border-cn-border pt-5 space-y-3">
-    <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
-      <Tag size={16} />
-      {m.asso_members_tags_title()}
-    </h3>
-    <p class="text-xs text-text-muted">
-      {m.asso_members_tags_desc()}
-    </p>
-    {#if assoTagsLoading}
-      <p class="text-sm text-text-muted">{m.common_loading_label()}</p>
-    {:else if assoTagsError}
-      <p class="text-sm text-red-600">{assoTagsError}</p>
-    {:else if assoTags.length === 0}
-      <p class="text-sm text-text-muted">{m.asso_members_no_active_tags()}</p>
-    {:else}
-      <ul class="space-y-2">
-        {#each assoTags as tag (tag.id)}
-          <li class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3">
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-semibold text-text-main">{tag.tagName}</p>
-              <p class="text-xs text-text-muted mt-0.5">
-                {tagHolderName(tag)}
-                {#if tag.expiresAt}
-                  · {m.asso_members_tag_expires({ date: new Date(tag.expiresAt).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR') })}
-                {:else}
-                  · {m.asso_members_tag_no_expiry()}
-                {/if}
-              </p>
-            </div>
-            <span
-              class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-2.5 py-0.5 text-xs font-bold"
+    <div class="border-t border-cn-border pt-5 space-y-3">
+      <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
+        <Tag size={16} />
+        {m.asso_members_tags_title()}
+      </h3>
+      <p class="text-xs text-text-muted">
+        {m.asso_members_tags_desc()}
+      </p>
+      {#if assoTagsLoading}
+        <p class="text-sm text-text-muted">{m.common_loading_label()}</p>
+      {:else if assoTagsError}
+        <p class="text-sm text-red-600">{assoTagsError}</p>
+      {:else if assoTags.length === 0}
+        <p class="text-sm text-text-muted">{m.asso_members_no_active_tags()}</p>
+      {:else}
+        <ul class="space-y-2">
+          {#each assoTags as tag (tag.id)}
+            <li
+              class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3"
             >
-              {m.asso_members_tag_active_badge()}
-            </span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold text-text-main">{tag.tagName}</p>
+                <p class="text-xs text-text-muted mt-0.5">
+                  {tagHolderName(tag)}
+                  {#if tag.expiresAt}
+                    · {m.asso_members_tag_expires({
+                      date: new Date(tag.expiresAt).toLocaleDateString(
+                        getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                      ),
+                    })}
+                  {:else}
+                    · {m.asso_members_tag_no_expiry()}
+                  {/if}
+                </p>
+              </div>
+              <span
+                class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-2.5 py-0.5 text-xs font-bold"
+              >
+                {m.asso_members_tag_active_badge()}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
   {/if}
 
   <div class="border-t border-cn-border pt-5">

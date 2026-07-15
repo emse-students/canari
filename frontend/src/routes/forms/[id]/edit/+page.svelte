@@ -113,8 +113,7 @@
       description = f.description ?? '';
       requiresPayment = f.requiresPayment ?? false;
       basePrice = requiresPayment ? (f.basePrice ?? 0) / 100 : 0;
-      basePriceMember =
-        requiresPayment && f.basePriceMember != null ? f.basePriceMember / 100 : '';
+      basePriceMember = requiresPayment && f.basePriceMember != null ? f.basePriceMember / 100 : '';
       pricingTagName = f.pricingTagName ?? '';
       maxSubmissions = f.maxSubmissions;
       opensAt = isoToDatetimeLocal(f.opensAt);
@@ -392,7 +391,9 @@
           required
         />
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.form_description_label()}</p>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">
+            {m.form_description_label()}
+          </p>
           <MarkdownComposerField
             bind:value={description}
             placeholder={m.form_description_placeholder()}
@@ -410,11 +411,16 @@
         <label class="flex items-center gap-3 cursor-pointer select-none group">
           <div class="relative">
             <input type="checkbox" bind:checked={allowMultipleSubmissions} class="peer sr-only" />
-            <div class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"></div>
-            <div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+            <div
+              class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+            ></div>
+            <div
+              class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"
+            ></div>
           </div>
           <div>
-            <span class="text-sm font-semibold text-text-main">{m.form_allow_multiple_label()}</span>
+            <span class="text-sm font-semibold text-text-main">{m.form_allow_multiple_label()}</span
+            >
             <p class="text-xs text-text-muted">{m.form_allow_multiple_hint()}</p>
           </div>
         </label>
@@ -494,8 +500,7 @@
             class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
           ></div>
         </div>
-        <span class="text-sm font-semibold text-text-main">{m.form_requires_payment_label()}</span
-        >
+        <span class="text-sm font-semibold text-text-main">{m.form_requires_payment_label()}</span>
       </label>
       {#if requiresPayment}
         <div class="mt-5 pt-5 border-t-2 border-cn-border">
@@ -531,11 +536,12 @@
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
           <div class="space-y-1">
-            <label for="pricing-tag-autocomplete-edit" class="block text-sm font-bold text-text-main ml-1"
-              >{m.form_member_tag_label()}</label
+            <label
+              for="pricing-tag-autocomplete-edit"
+              class="block text-sm font-bold text-text-main ml-1">{m.form_member_tag_label()}</label
             >
             <AssociationTagAutocomplete
-              associationId={associationId}
+              {associationId}
               value={pricingTagName}
               onValueChange={(v) => (pricingTagName = v)}
               inputId="pricing-tag-autocomplete-edit"
@@ -573,8 +579,7 @@
                 class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
               ></div>
             </div>
-            <span class="text-sm font-semibold text-text-main">{m.form_cash_label()}</span
-            >
+            <span class="text-sm font-semibold text-text-main">{m.form_cash_label()}</span>
           </label>
           {#if allowCashPayment}
             <Input
@@ -652,7 +657,9 @@
         <span
           class="ml-auto text-xs font-semibold text-text-muted bg-cn-border/40 px-2.5 py-1 rounded-full"
         >
-          {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}
+          {items.length === 1
+            ? m.form_questions_count_one()
+            : m.form_questions_count({ count: items.length })}
         </span>
       </div>
       <div class="space-y-3 sm:space-y-4">
@@ -746,7 +753,9 @@
         {#if titleMissing}
           <span class="text-amber-600 font-medium">{m.form_title_required_hint()}</span>
         {:else}
-          {items.length === 1 ? m.form_questions_count_one() : m.form_questions_count({ count: items.length })}
+          {items.length === 1
+            ? m.form_questions_count_one()
+            : m.form_questions_count({ count: items.length })}
         {/if}
       </p>
       <button

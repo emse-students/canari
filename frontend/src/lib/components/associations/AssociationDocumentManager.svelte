@@ -160,10 +160,9 @@
         (d) => d.name.toLowerCase() === file.name.toLowerCase()
       );
       if (duplicate) {
-        const replace = await showConfirm(
-          m.asso_doc_confirm_replace({ name: duplicate.name }),
-          { confirmLabel: m.asso_doc_replace_button() }
-        );
+        const replace = await showConfirm(m.asso_doc_confirm_replace({ name: duplicate.name }), {
+          confirmLabel: m.asso_doc_replace_button(),
+        });
         if (replace) {
           await deleteDocument(associationId, duplicate.id);
           stats = await listDocuments(associationId);
@@ -306,7 +305,13 @@
   }
 
   async function handleDelete(doc: AssociationDocument) {
-    if (!await showConfirm(m.asso_doc_confirm_delete({ name: doc.name }), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.asso_doc_confirm_delete({ name: doc.name }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     try {
       await deleteDocument(associationId, doc.id);
       console.log(`[Vault] Document deleted: ${doc.id}`);
@@ -320,7 +325,8 @@
     const en = getLocale() === 'en';
     if (bytes < 1024) return `${bytes} ${en ? 'B' : 'o'}`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} ${en ? 'KB' : 'Ko'}`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} ${en ? 'MB' : 'Mo'}`;
+    if (bytes < 1024 * 1024 * 1024)
+      return `${(bytes / 1024 / 1024).toFixed(1)} ${en ? 'MB' : 'Mo'}`;
     return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} ${en ? 'GB' : 'Go'}`;
   }
 </script>
@@ -430,7 +436,8 @@
                 <span class="truncate">{doc.name}</span>
               </p>
               <p class="text-xs text-text-muted">
-                {formatBytes(doc.size)} · {doc.mimeType}{#if isProtected(doc)} · {m.asso_doc_protected_suffix()}{/if}
+                {formatBytes(doc.size)} · {doc.mimeType}{#if isProtected(doc)}
+                  · {m.asso_doc_protected_suffix()}{/if}
               </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -478,7 +485,9 @@
         aria-modal="true"
         aria-labelledby="upload-modal-title"
       >
-        <h3 id="upload-modal-title" class="text-lg font-bold text-text-main">{m.asso_doc_upload_modal_title()}</h3>
+        <h3 id="upload-modal-title" class="text-lg font-bold text-text-main">
+          {m.asso_doc_upload_modal_title()}
+        </h3>
         <p class="text-sm text-text-muted truncate">{pendingFile?.name}</p>
         <div class="space-y-1.5">
           <Input

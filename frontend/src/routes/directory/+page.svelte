@@ -78,7 +78,9 @@
     onsubmit={(e) => void handleSearch(e)}
   >
     <div>
-      <label for="dir-q" class="text-xs font-semibold text-text-muted block mb-1">{m.directory_label_name()}</label>
+      <label for="dir-q" class="text-xs font-semibold text-text-muted block mb-1"
+        >{m.directory_label_name()}</label
+      >
       <div class="relative">
         <Search size={18} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
         <input
@@ -179,7 +181,9 @@
               </div>
               <div class="min-w-0 flex-1">
                 <p class="text-sm font-bold text-text-main truncate">{displayName(user)}</p>
-                <p class="text-xs text-text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <p
+                  class="text-xs text-text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                >
                   {#if user.promo != null}
                     <span class="inline-flex items-center gap-1">
                       <GraduationCap size={12} />

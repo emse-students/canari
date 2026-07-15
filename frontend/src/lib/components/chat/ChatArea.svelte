@@ -1,6 +1,15 @@
 <script lang="ts">
   import { ShieldCheck, TriangleAlert, Loader2 } from '@lucide/svelte';
-  import { ArrowDown, Search, ChevronUp, ChevronDown, X, ChevronLeft, Pin, ChartColumn } from '@lucide/svelte';
+  import {
+    ArrowDown,
+    Search,
+    ChevronUp,
+    ChevronDown,
+    X,
+    ChevronLeft,
+    Pin,
+    ChartColumn,
+  } from '@lucide/svelte';
   import { tick, untrack } from 'svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -370,7 +379,9 @@
     const msg = chatView?.conversation.messages.find((x) => x.id === messageId);
     if (!msg) return null;
     const text = searchableText(msg).replace(/\s+/g, ' ').trim();
-    return text.length > 80 ? `${text.slice(0, 77)}…` : text || m.chat_pinned_message_default_label();
+    return text.length > 80
+      ? `${text.slice(0, 77)}…`
+      : text || m.chat_pinned_message_default_label();
   }
 
   /** Reactive "X is typing…" label for the active conversation, excluding the current user. */
@@ -722,7 +733,9 @@
           </div>
         </div>
         {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
-          <p class="px-1 pt-1 text-[0.7rem] text-text-muted">{m.chat_search_limited_loaded_warning()}</p>
+          <p class="px-1 pt-1 text-[0.7rem] text-text-muted">
+            {m.chat_search_limited_loaded_warning()}
+          </p>
         {/if}
       </div>
     {/if}
@@ -735,8 +748,13 @@
           class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         >
           <ChartColumn size={14} class="shrink-0 text-cn-yellow" />
-          <span class="font-semibold">{m.chat_active_polls_count({ activePolls: activePolls.length })}</span>
-          <ChevronDown size={15} class="ml-auto transition-transform {showPolls ? 'rotate-180' : ''}" />
+          <span class="font-semibold"
+            >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
+          >
+          <ChevronDown
+            size={15}
+            class="ml-auto transition-transform {showPolls ? 'rotate-180' : ''}"
+          />
         </button>
         {#if showPolls}
           <div
@@ -768,8 +786,13 @@
           class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
         >
           <Pin size={14} class="shrink-0 text-amber-500" />
-          <span class="font-semibold">{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span>
-          <ChevronDown size={15} class="ml-auto transition-transform {showPinned ? 'rotate-180' : ''}" />
+          <span class="font-semibold"
+            >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
+          >
+          <ChevronDown
+            size={15}
+            class="ml-auto transition-transform {showPinned ? 'rotate-180' : ''}"
+          />
         </button>
         {#if showPinned}
           <div
@@ -895,7 +918,9 @@
       <div
         class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
       >
-        <p class="text-sm text-[var(--color-text-muted)] text-center">{m.chat_conversation_deleted_message()}</p>
+        <p class="text-sm text-[var(--color-text-muted)] text-center">
+          {m.chat_conversation_deleted_message()}
+        </p>
         <button
           onclick={() => onGroupDeleteLocally?.()}
           class="px-4 py-1.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 active:scale-95 transition-all"

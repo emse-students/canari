@@ -43,7 +43,9 @@
         method: 'POST',
         body: JSON.stringify({
           title: m.admin_push_test_title(),
-          message: m.admin_push_test_diagnostic_label({ time: new Date().toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR') }),
+          message: m.admin_push_test_diagnostic_label({
+            time: new Date().toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
+          }),
         }),
       });
       if (!response.ok) {

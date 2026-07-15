@@ -45,9 +45,7 @@ const APNS_FALLBACK_BODY = 'Nouveau message';
  * payload and the APNs custom keys. FCM requires every data value to be a
  * string, so booleans are serialised as 'true' / 'false'.
  */
-export function buildPushDataFields(
-  input: PushMessageInput,
-): Record<string, string> {
+export function buildPushDataFields(input: PushMessageInput): Record<string, string> {
   return {
     type: 'message',
     groupId: input.groupId,
@@ -86,7 +84,7 @@ export interface ApnsRequest {
  */
 export function buildApnsRequest(
   input: PushMessageInput,
-  dataFields: Record<string, string>,
+  dataFields: Record<string, string>
 ): ApnsRequest {
   if (input.silent) {
     return {
@@ -122,7 +120,7 @@ export function buildApnsRequest(
  * its own transport (FCM for Android, APNs for iOS).
  */
 export function partitionTokensByPlatform<T extends { platform: PushPlatform }>(
-  tokens: T[],
+  tokens: T[]
 ): { android: T[]; ios: T[] } {
   const android: T[] = [];
   const ios: T[] = [];

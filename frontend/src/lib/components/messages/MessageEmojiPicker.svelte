@@ -92,15 +92,17 @@
    */
   const EMOJI_PICKER_FR_I18N = {
     categoriesLabel: 'Catégories',
-    emojiUnsupportedMessage: "Votre navigateur ne supporte pas les emojis en couleur.",
+    emojiUnsupportedMessage: 'Votre navigateur ne supporte pas les emojis en couleur.',
     favoritesLabel: 'Favoris',
     loadingMessage: 'Chargement…',
     networkErrorMessage: 'Impossible de charger les emojis.',
     regionLabel: "Sélecteur d'emoji",
-    searchDescription: "Quand des résultats sont disponibles, utilisez les flèches haut/bas et Entrée pour sélectionner.",
+    searchDescription:
+      'Quand des résultats sont disponibles, utilisez les flèches haut/bas et Entrée pour sélectionner.',
     searchLabel: 'Recherche',
     searchResultsLabel: 'Résultats de recherche',
-    skinToneDescription: "Quand le sélecteur est ouvert, utilisez les flèches haut/bas et Entrée pour sélectionner.",
+    skinToneDescription:
+      'Quand le sélecteur est ouvert, utilisez les flèches haut/bas et Entrée pour sélectionner.',
     skinTonesLabel: 'Tons de peau',
     skinTones: ['Défaut', 'Clair', 'Moyen-clair', 'Moyen', 'Moyen-foncé', 'Foncé'],
     categories: {
@@ -124,7 +126,8 @@
     loadingMessage: 'Loading…',
     networkErrorMessage: 'Could not load emoji.',
     regionLabel: 'Emoji picker',
-    searchDescription: 'When search results are available, press up or down to select and enter to choose.',
+    searchDescription:
+      'When search results are available, press up or down to select and enter to choose.',
     searchLabel: 'Search',
     searchResultsLabel: 'Search results',
     skinToneDescription: 'When expanded, press up or down to select and enter to choose.',
@@ -187,10 +190,13 @@
     <div
       class="px-4 py-3 border-b border-black/5 dark:border-white/10 text-xs font-semibold text-text-muted flex items-center gap-2 bg-white/40 dark:bg-black/20"
     >
-      <Smile size={14} class="text-amber-500" /> {m.msg_react_to_message_label()}
+      <Smile size={14} class="text-amber-500" />
+      {m.msg_react_to_message_label()}
     </div>
     {#if reactionsAtLimit}
-      <p class="px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20">
+      <p
+        class="px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20"
+      >
         {m.msg_max_reactions_label({ max: MAX_DISTINCT_MESSAGE_REACTIONS })}
       </p>
     {/if}

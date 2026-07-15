@@ -159,11 +159,11 @@
     }
   });
 
-  const panelTitle = $derived(isGroupConversation ? m.chat_group_management_title() : m.chat_group_dm_info_title());
+  const panelTitle = $derived(
+    isGroupConversation ? m.chat_group_management_title() : m.chat_group_dm_info_title()
+  );
   const panelSubtitle = $derived(
-    isGroupConversation
-      ? m.chat_group_management_subtitle()
-      : m.chat_group_dm_subtitle()
+    isGroupConversation ? m.chat_group_management_subtitle() : m.chat_group_dm_subtitle()
   );
 
   function submitRename() {
@@ -309,7 +309,8 @@
               for="group-rename-input"
               class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider inline-flex items-center gap-2 mb-1"
             >
-              <PencilLine size={14} /> {m.chat_group_name_label()}
+              <PencilLine size={14} />
+              {m.chat_group_name_label()}
             </label>
             <div class="flex flex-col sm:flex-row gap-3">
               <input
@@ -334,9 +335,7 @@
         <!-- Invite link section -->
         {#if isGroupConversation && groupId}
           <div class="flex flex-col gap-2">
-            <span
-              class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider px-1"
-            >
+            <span class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider px-1">
               {m.chat_group_invite_link_title()}
             </span>
             <p class="text-[0.8rem] text-text-muted leading-relaxed px-1">
@@ -359,7 +358,9 @@
                 </button>
               </div>
               {#if shareCopied}
-                <p class="text-xs font-semibold text-emerald-600 px-1">{m.chat_group_link_copied_label()}</p>
+                <p class="text-xs font-semibold text-emerald-600 px-1">
+                  {m.chat_group_link_copied_label()}
+                </p>
               {/if}
             {:else}
               <button
@@ -384,7 +385,8 @@
               <span
                 class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider inline-flex items-center gap-2"
               >
-                <Users size={14} /> {m.chat_group_members_count_label({ count: groupMembers.length })}
+                <Users size={14} />
+                {m.chat_group_members_count_label({ count: groupMembers.length })}
               </span>
               <button
                 type="button"
@@ -504,7 +506,9 @@
                 class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-red-600 dark:text-red-400 font-bold bg-red-500/10 border border-red-500/20 rounded-2xl text-[0.95rem] hover:bg-red-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500"
               >
                 <Trash2 size={18} strokeWidth={2.5} />
-                {isGroupConversation ? m.chat_group_delete_group_button() : m.chat_group_delete_dm_button()}
+                {isGroupConversation
+                  ? m.chat_group_delete_group_button()
+                  : m.chat_group_delete_dm_button()}
               </button>
             {:else}
               <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
@@ -552,9 +556,9 @@
 >
   <div class="space-y-5 px-1">
     <p class="text-sm font-medium text-text-muted leading-relaxed">
-      {m.chat_group_invite_description_prefix()} <span
-        class="font-bold text-text-main">{effectiveDisplayName}</span
-      > {m.chat_group_invite_description_suffix()}
+      {m.chat_group_invite_description_prefix()}
+      <span class="font-bold text-text-main">{effectiveDisplayName}</span>
+      {m.chat_group_invite_description_suffix()}
     </p>
 
     <MultiUserSelector

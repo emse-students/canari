@@ -30,7 +30,9 @@
   href={url}
   target="_blank"
   rel="noopener noreferrer"
-  class="group {standalone ? '' : 'mt-3'} flex items-stretch rounded-2xl border border-black/5 dark:border-white/10 bg-white/45 dark:bg-black/25 backdrop-blur-xl transition-all duration-300 hover:bg-white/70 dark:hover:bg-black/40 hover:border-amber-500/35 hover:shadow-md overflow-hidden"
+  class="group {standalone
+    ? ''
+    : 'mt-3'} flex items-stretch rounded-2xl border border-black/5 dark:border-white/10 bg-white/45 dark:bg-black/25 backdrop-blur-xl transition-all duration-300 hover:bg-white/70 dark:hover:bg-black/40 hover:border-amber-500/35 hover:shadow-md overflow-hidden"
 >
   <!-- Miniature de la couverture -->
   <div class="shrink-0 relative w-24 sm:w-28 overflow-hidden bg-black/8 dark:bg-white/8">

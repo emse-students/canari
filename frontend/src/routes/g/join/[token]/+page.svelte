@@ -58,7 +58,9 @@
       </div>
     {:else if joined}
       <div class="flex flex-col items-center gap-3 py-2">
-        <div class="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
+        <div
+          class="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600"
+        >
           <Check size={30} />
         </div>
         <p class="text-sm font-semibold text-text-main">{m.group_join_sent_title()}</p>
@@ -82,7 +84,9 @@
         </a>
       </div>
     {:else}
-      <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-cn-yellow/10 text-cn-dark">
+      <div
+        class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-cn-yellow/10 text-cn-dark"
+      >
         <Users size={30} />
       </div>
       <div>
@@ -99,7 +103,9 @@
       >
         {joining ? m.common_sending_label() : m.group_join_btn()}
       </button>
-      <a href="/chat" class="block text-xs text-text-muted hover:text-text-main">{m.common_cancel_button()}</a>
+      <a href="/chat" class="block text-xs text-text-muted hover:text-text-main"
+        >{m.common_cancel_button()}</a
+      >
     {/if}
   </div>
 </div>

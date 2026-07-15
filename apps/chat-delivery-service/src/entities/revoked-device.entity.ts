@@ -1,11 +1,4 @@
-import {
-  Entity,
-  PrimaryColumn,
-  Column,
-  CreateDateColumn,
-  Unique,
-  Index,
-} from 'typeorm';
+import { Entity, PrimaryColumn, Column, CreateDateColumn, Unique, Index } from 'typeorm';
 
 /**
  * Permanent denylist of devices that have been explicitly revoked by their owner.

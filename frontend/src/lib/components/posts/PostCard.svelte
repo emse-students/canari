@@ -192,7 +192,8 @@
     }
     try {
       await votePoll(localPost.id, pollId, { optionIds: selectedOptions });
-      actionMessage = selectedOptions.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
+      actionMessage =
+        selectedOptions.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
       // Update the poll locally - track votesByUser + per-option vote arrays
       const updatedPolls = (localPost.polls ?? []).map((p) => {
         if (p.id !== pollId) return p;
@@ -396,7 +397,8 @@
     <span
       class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30 inline-flex items-center gap-1 pointer-events-none"
     >
-      <Pin size={10} strokeWidth={3} /> {m.post_pinned()}
+      <Pin size={10} strokeWidth={3} />
+      {m.post_pinned()}
     </span>
   {/if}
   <Card

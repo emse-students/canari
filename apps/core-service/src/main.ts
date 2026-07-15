@@ -20,7 +20,7 @@ async function bootstrap() {
   app.enableCors({
     origin: (
       origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean) => void,
+      callback: (err: Error | null, allow?: boolean) => void
     ) => {
       // Allow requests with no origin (server-to-server, curl, etc.)
       if (!origin) {

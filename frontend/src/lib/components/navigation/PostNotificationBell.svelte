@@ -21,7 +21,8 @@
 
   function openNotification(notif: PostNotification) {
     open = false;
-    const url = notif.type === 'form_reminder' ? `/forms/${notif.postId}` : `/posts/${notif.postId}`;
+    const url =
+      notif.type === 'form_reminder' ? `/forms/${notif.postId}` : `/posts/${notif.postId}`;
     void goto(url);
   }
 
@@ -79,7 +80,9 @@
                 class="w-full text-left px-4 py-3 hover:bg-cn-surface transition-colors flex gap-3 items-start"
                 onclick={() => openNotification(notif)}
               >
-                <span class="mt-0.5 shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-cn-surface text-text-muted">
+                <span
+                  class="mt-0.5 shrink-0 flex items-center justify-center w-7 h-7 rounded-full bg-cn-surface text-text-muted"
+                >
                   {#if notif.type === 'reaction'}
                     <span class="text-base leading-none">{reactionTypeToEmoji(notif.text)}</span>
                   {:else if notif.type === 'mention'}
@@ -104,7 +107,10 @@
                     {:else if notif.type === 'form_reminder'}
                       <span> {notif.text}</span>
                     {:else}
-                      <span> {m.notif_comment_text()} <span class="text-text-muted">{notif.text}</span></span>
+                      <span>
+                        {m.notif_comment_text()}
+                        <span class="text-text-muted">{notif.text}</span></span
+                      >
                     {/if}
                   </p>
                   <p class="text-xs text-text-muted mt-0.5">{formatRelative(notif.createdAt)}</p>

@@ -29,9 +29,7 @@ interface SkyEntourage {
 @UseGuards(NginxAuthGuard)
 export class SkyEntourageController {
   private readonly logger = new Logger(SkyEntourageController.name);
-  private readonly skyUrl = (
-    process.env.SKY_API_URL || 'https://sky.mitv.fr'
-  ).replace(/\/+$/, '');
+  private readonly skyUrl = (process.env.SKY_API_URL || 'https://sky.mitv.fr').replace(/\/+$/, '');
   private readonly skyKey = process.env.SKY_API_KEY ?? '';
 
   @Get(':sub/parrainage')
@@ -43,13 +41,11 @@ export class SkyEntourageController {
     try {
       const res = await axios.get<SkyEntourage>(
         `${this.skyUrl}/api/external/entourage/${encodeURIComponent(sub)}`,
-        { headers: { 'x-api-key': this.skyKey }, timeout: 5000 },
+        { headers: { 'x-api-key': this.skyKey }, timeout: 5000 }
       );
       return res.data;
     } catch (e) {
-      this.logger.warn(
-        `Sky entourage fetch failed for ${sub}: ${(e as Error).message}`,
-      );
+      this.logger.warn(`Sky entourage fetch failed for ${sub}: ${(e as Error).message}`);
       return empty;
     }
   }

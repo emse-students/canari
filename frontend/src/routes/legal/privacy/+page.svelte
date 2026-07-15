@@ -46,7 +46,9 @@
     <nav
       class="mb-8 rounded-2xl border border-white/30 bg-white/10 p-4 dark:border-white/10 dark:bg-white/5"
     >
-      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">{m.legal_toc_heading()}</p>
+      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">
+        {m.legal_toc_heading()}
+      </p>
       <ul class="space-y-1 text-sm text-cn-yellow">
         {#each [['#qui', '1. Qui sommes-nous'], ['#collecte', '2. Données collectées'], ['#tiers', '3. Sous-traitants et tiers'], ['#utilisation', '4. Utilisation des données'], ['#retention', '5. Durée de conservation'], ['#stockage', '6. Stockage et sécurité'], ['#transferts', '7. Transferts internationaux'], ['#age', '8. Âge minimum'], ['#droits', '9. Vos droits (RGPD)'], ['#modifications', '10. Modifications'], ['#contact', '11. Contact']] as [href, label], i (i)}
           <li><a {href} class="hover:underline">{label}</a></li>
@@ -333,7 +335,9 @@
       <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
         <a href="/legal/cgu" class="text-cn-yellow hover:underline">{m.legal_cgu_link()}</a>
-        <a href="/legal/child-safety" class="text-cn-yellow hover:underline">{m.legal_child_safety_link()}</a>
+        <a href="/legal/child-safety" class="text-cn-yellow hover:underline"
+          >{m.legal_child_safety_link()}</a
+        >
       </div>
     </div>
   </div>

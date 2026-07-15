@@ -73,7 +73,9 @@
     {m.calendar_day_select_prompt()}
   </div>
 {:else if dayEvents.length === 0}
-  <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 px-4 py-5 text-center text-sm text-text-muted">
+  <div
+    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 px-4 py-5 text-center text-sm text-text-muted"
+  >
     {m.calendar_day_no_events()}
     {#if onClearSelection}
       <button
@@ -86,7 +88,9 @@
     {/if}
   </div>
 {:else}
-  <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 overflow-hidden shadow-sm">
+  <div
+    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 overflow-hidden shadow-sm"
+  >
     <div
       class="flex items-center justify-between gap-2 border-b border-cn-border/60 px-4 py-3 bg-cn-bg/30"
     >

@@ -32,12 +32,16 @@
 
   <!-- Conteneur du texte -->
   <div class="leading-tight flex flex-col justify-center {compact ? 'hidden sm:flex' : 'flex'}">
-    <p class="text-xl font-brand font-bold tracking-wide text-text-main capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400">
+    <p
+      class="text-xl font-brand font-bold tracking-wide text-text-main capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
+    >
       {brandName}
     </p>
 
     {#if subtitle}
-      <p class="text-[11px] font-medium text-text-muted mt-[1px] opacity-80 transition-opacity duration-300 group-hover:opacity-100">
+      <p
+        class="text-[11px] font-medium text-text-muted mt-[1px] opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+      >
         {subtitle}
       </p>
     {/if}

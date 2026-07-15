@@ -64,22 +64,28 @@
       <p>{lineFor(memberCents, m.stripe_payout_label_member())}</p>
     {/if}
     {#if minCents && maxCents}
-      <p>{m.stripe_payout_free_amount_range({
-        min: formatPriceCents(computeAssociationNetPayoutCents(minCents), currency),
-        max: formatPriceCents(computeAssociationNetPayoutCents(maxCents), currency),
-        minPayment: formatPriceCents(minCents, currency),
-        maxPayment: formatPriceCents(maxCents, currency),
-      })}</p>
+      <p>
+        {m.stripe_payout_free_amount_range({
+          min: formatPriceCents(computeAssociationNetPayoutCents(minCents), currency),
+          max: formatPriceCents(computeAssociationNetPayoutCents(maxCents), currency),
+          minPayment: formatPriceCents(minCents, currency),
+          maxPayment: formatPriceCents(maxCents, currency),
+        })}
+      </p>
     {:else if minCents}
-      <p>{m.stripe_payout_free_amount_min({
-        payment: formatPriceCents(minCents, currency),
-        net: formatPriceCents(computeAssociationNetPayoutCents(minCents), currency),
-      })}</p>
+      <p>
+        {m.stripe_payout_free_amount_min({
+          payment: formatPriceCents(minCents, currency),
+          net: formatPriceCents(computeAssociationNetPayoutCents(minCents), currency),
+        })}
+      </p>
     {:else if maxCents}
-      <p>{m.stripe_payout_free_amount_max({
-        payment: formatPriceCents(maxCents, currency),
-        net: formatPriceCents(computeAssociationNetPayoutCents(maxCents), currency),
-      })}</p>
+      <p>
+        {m.stripe_payout_free_amount_max({
+          payment: formatPriceCents(maxCents, currency),
+          net: formatPriceCents(computeAssociationNetPayoutCents(maxCents), currency),
+        })}
+      </p>
     {/if}
     {#if showOptionSupplementNote && (grossCents || memberCents)}
       <p class="text-amber-900/70 dark:text-amber-200/60">

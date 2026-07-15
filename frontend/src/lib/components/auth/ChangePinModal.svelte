@@ -86,9 +86,7 @@
     }
   }
 
-  const progressCaption = $derived(
-    loadingProgress ? progressLabel(loadingProgress) : ''
-  );
+  const progressCaption = $derived(loadingProgress ? progressLabel(loadingProgress) : '');
 
   function handleSubmit(e: Event) {
     e.preventDefault();

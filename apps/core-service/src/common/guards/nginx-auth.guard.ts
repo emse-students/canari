@@ -1,9 +1,4 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
 import { createHmac, timingSafeEqual } from 'crypto';
 
@@ -18,12 +13,10 @@ export class NginxAuthGuard implements CanActivate {
   /** Returns true when X-User-Id is present (and X-Internal-Token is valid if secret is configured). */
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
-    const userId = (request.headers['x-user-id'] as string | undefined)
-      ?.trim()
-      .toLowerCase();
+    const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase();
     if (!userId) {
       throw new UnauthorizedException(
-        'Missing X-User-Id header - ensure the request passes through nginx auth.',
+        'Missing X-User-Id header - ensure the request passes through nginx auth.'
       );
     }
 
@@ -41,27 +34,16 @@ export class NginxAuthGuard implements CanActivate {
  * Accepts tokens from the current or previous minute to tolerate clock skew.
  * Throws UnauthorizedException on failure.
  */
-export function verifyInternalToken(
-  request: Request,
-  userId: string,
-  secret: string,
-): void {
-  const token = (
-    request.headers['x-internal-token'] as string | undefined
-  )?.trim();
+export function verifyInternalToken(request: Request, userId: string, secret: string): void {
+  const token = (request.headers['x-internal-token'] as string | undefined)?.trim();
   if (!token) {
     throw new UnauthorizedException('Missing X-Internal-Token header');
   }
   const epochMinute = Math.floor(Date.now() / 60000);
   const valid = [epochMinute, epochMinute - 1].some((min) => {
-    const expected = createHmac('sha256', secret)
-      .update(`${userId}:${min}`)
-      .digest('hex');
+    const expected = createHmac('sha256', secret).update(`${userId}:${min}`).digest('hex');
     try {
-      return timingSafeEqual(
-        Buffer.from(token, 'hex'),
-        Buffer.from(expected, 'hex'),
-      );
+      return timingSafeEqual(Buffer.from(token, 'hex'), Buffer.from(expected, 'hex'));
     } catch {
       return false;
     }

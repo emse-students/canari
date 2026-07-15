@@ -48,14 +48,13 @@ export class InvitationsController {
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly messagingService: MessagingService,
+    private readonly messagingService: MessagingService
   ) {}
 
   /** Whether an invite is still usable (not revoked/expired/exhausted). */
   private groupInviteIsValid(invite: GroupInvite): boolean {
     if (invite.revoked) return false;
-    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now())
-      return false;
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) return false;
     if (invite.maxUses != null && invite.uses >= invite.maxUses) return false;
     return true;
   }
@@ -68,7 +67,7 @@ export class InvitationsController {
   private async assertCallerIsGroupMember(
     callerUserId: string,
     groupId: string,
-    headerGlobalAdmin?: string,
+    headerGlobalAdmin?: string
   ): Promise<void> {
     if (headerGlobalAdmin === 'true') return;
     const membership = await this.groupMemberRepo.findOne({
@@ -88,23 +87,17 @@ export class InvitationsController {
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string,
-    @Body() body?: { expiresAt?: string | null; maxUses?: number | null },
+    @Body() body?: { expiresAt?: string | null; maxUses?: number | null }
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
-    await this.assertCallerIsGroupMember(
-      callerId,
-      safeGroupId,
-      headerGlobalAdmin,
-    );
+    await this.assertCallerIsGroupMember(callerId, safeGroupId, headerGlobalAdmin);
     const group = await this.groupRepo.findOne({
       where: { id: safeGroupId, deletedAt: IsNull() },
     });
     if (!group) throw new NotFoundException('Group not found');
     if (!group.isGroup) {
-      throw new BadRequestException(
-        'Invites are only available for group chats',
-      );
+      throw new BadRequestException('Invites are only available for group chats');
     }
     const invite = this.groupInviteRepo.create({
       groupId: safeGroupId,
@@ -116,9 +109,7 @@ export class InvitationsController {
       revoked: false,
     });
     const saved = await this.groupInviteRepo.save(invite);
-    this.logger.log(
-      `[GROUP_INVITE] created group=${safeGroupId} by=${callerId.slice(0, 8)}`,
-    );
+    this.logger.log(`[GROUP_INVITE] created group=${safeGroupId} by=${callerId.slice(0, 8)}`);
     return { token: saved.token };
   }
 
@@ -133,8 +124,7 @@ export class InvitationsController {
     const group = await this.groupRepo.findOne({
       where: { id: invite.groupId, deletedAt: IsNull() },
     });
-    if (!group || !group.isGroup)
-      return { valid: false, groupId: null, groupName: null };
+    if (!group || !group.isGroup) return { valid: false, groupId: null, groupName: null };
     return { valid: true, groupId: group.id, groupName: group.name ?? null };
   }
 
@@ -147,7 +137,7 @@ export class InvitationsController {
   @Post('mls/group-invites/:token/accept')
   async acceptGroupInvite(
     @Param('token') token: string,
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
     const invite = await this.groupInviteRepo.findOne({ where: { token } });
@@ -157,8 +147,7 @@ export class InvitationsController {
     const group = await this.groupRepo.findOne({
       where: { id: invite.groupId, deletedAt: IsNull() },
     });
-    if (!group || !group.isGroup)
-      throw new NotFoundException('Group not found');
+    if (!group || !group.isGroup) throw new NotFoundException('Group not found');
 
     const existing = await this.groupMemberRepo.findOne({
       where: { groupId: group.id, userId: callerId },
@@ -172,20 +161,16 @@ export class InvitationsController {
     const revoked = await this.revokedDeviceRepo.find({
       where: { userId: callerId },
     });
-    const revokedKeys = new Set(
-      revoked.map((r) => `${r.userId}:${r.deviceId}`),
-    );
+    const revokedKeys = new Set(revoked.map((r) => `${r.userId}:${r.deviceId}`));
     const deviceIds = [
       ...new Set(
         keyPackages
           .filter((kp) => !revokedKeys.has(`${kp.userId}:${kp.deviceId}`))
-          .map((kp) => kp.deviceId),
+          .map((kp) => kp.deviceId)
       ),
     ];
     if (deviceIds.length === 0) {
-      throw new BadRequestException(
-        'No active device - open Canari on a device and try again.',
-      );
+      throw new BadRequestException('No active device - open Canari on a device and try again.');
     }
 
     // 1. User-level membership (authoritative "who belongs to the group").
@@ -208,14 +193,14 @@ export class InvitationsController {
           deviceId,
           groupId: group.id,
           status: 'pending' as const,
-        })),
+        }))
       )
       .orIgnore()
       .execute();
 
     await this.groupInviteRepo.increment({ id: invite.id }, 'uses', 1);
     this.logger.log(
-      `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`,
+      `[GROUP_INVITE] accepted group=${group.id} user=${callerId.slice(0, 8)} devices=${deviceIds.length}`
     );
 
     // Trigger the add immediately instead of waiting for a member's next sync:
@@ -233,7 +218,7 @@ export class InvitationsController {
         this.logger.warn(
           `[GROUP_INVITE] notifyWelcomeRequest failed group=${group.id} device=${deviceId} err=${
             e instanceof Error ? e.message : 'unknown'
-          }`,
+          }`
         );
       }
     }
@@ -251,7 +236,7 @@ export class InvitationsController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const traceId = this.makeTraceId('pending');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -260,11 +245,9 @@ export class InvitationsController {
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      'Cannot list pending invitations for another user',
+      'Cannot list pending invitations for another user'
     );
-    this.logger.log(
-      `[PENDING][${traceId}] START user=${safeUserId} device=${safeDeviceId}`,
-    );
+    this.logger.log(`[PENDING][${traceId}] START user=${safeUserId} device=${safeDeviceId}`);
 
     // 1. Get groups where this device is already active (has processed its Welcome)
     const myMemberships = await this.deviceGroupRepo.find({
@@ -277,7 +260,7 @@ export class InvitationsController {
     const myGroupIds = myMemberships.map((m) => m.groupId);
     if (myGroupIds.length === 0) {
       this.logger.log(
-        `[PENDING][${traceId}] No active membership for ${safeUserId}:${safeDeviceId}`,
+        `[PENDING][${traceId}] No active membership for ${safeUserId}:${safeDeviceId}`
       );
       return [];
     }
@@ -290,9 +273,7 @@ export class InvitationsController {
     });
 
     if (pending.length === 0) {
-      this.logger.log(
-        `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=0`,
-      );
+      this.logger.log(`[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=0`);
       return [];
     }
 
@@ -300,28 +281,24 @@ export class InvitationsController {
     const revokedRows = await this.revokedDeviceRepo.find({
       where: { userId: In(inviteeUserIds) },
     });
-    const revokedKeys = new Set(
-      revokedRows.map((r) => `${r.userId}:${r.deviceId}`),
-    );
+    const revokedKeys = new Set(revokedRows.map((r) => `${r.userId}:${r.deviceId}`));
     const keyPackages = await this.keyPackageRepo.find({
       where: { userId: In(inviteeUserIds) },
     });
     const inviteableKeys = new Set(
       keyPackages
         .filter((kp) => !revokedKeys.has(`${kp.userId}:${kp.deviceId}`))
-        .map((kp) => `${kp.userId}:${kp.deviceId}`),
+        .map((kp) => `${kp.userId}:${kp.deviceId}`)
     );
-    const actionable = pending.filter((p) =>
-      inviteableKeys.has(`${p.userId}:${p.deviceId}`),
-    );
+    const actionable = pending.filter((p) => inviteableKeys.has(`${p.userId}:${p.deviceId}`));
     const skipped = pending.length - actionable.length;
     if (skipped > 0) {
       this.logger.log(
-        `[PENDING][${traceId}] Skipped ${skipped} invitation(s) without active KeyPackage`,
+        `[PENDING][${traceId}] Skipped ${skipped} invitation(s) without active KeyPackage`
       );
     }
     this.logger.log(
-      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length}`,
+      `[PENDING][${traceId}] DONE groups=${myGroupIds.length} invitations=${actionable.length}`
     );
     return actionable;
   }
@@ -336,7 +313,7 @@ export class InvitationsController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
@@ -344,13 +321,13 @@ export class InvitationsController {
       headerUserId,
       headerGlobalAdmin,
       safeUserId,
-      "Cannot list another user's device memberships",
+      "Cannot list another user's device memberships"
     );
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
     this.logger.log(
-      `[DEVICE_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} count=${memberships.length} statuses=${memberships.map((m) => `${m.groupId}:${m.status}`).join(',')}`,
+      `[DEVICE_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} count=${memberships.length} statuses=${memberships.map((m) => `${m.groupId}:${m.status}`).join(',')}`
     );
     return memberships;
   }
@@ -370,7 +347,7 @@ export class InvitationsController {
       status: 'pending' | 'active';
     },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
@@ -380,22 +357,14 @@ export class InvitationsController {
     // trust model as kick-stale-device. Group members can already invite/kick devices, so
     // confirming a fulfilled invitation adds no new authority; it only stops
     // getPendingInvitations from re-serving a device provably already in the tree every sync.
-    const caller = headerUserId
-      ? sanitizeQueryValue(headerUserId, 'x-user-id')
-      : undefined;
+    const caller = headerUserId ? sanitizeQueryValue(headerUserId, 'x-user-id') : undefined;
     if (headerGlobalAdmin !== 'true' && caller && caller !== safeUserId) {
-      await this.assertCallerIsGroupMember(
-        caller,
-        safeGroupId,
-        headerGlobalAdmin,
-      );
+      await this.assertCallerIsGroupMember(caller, safeGroupId, headerGlobalAdmin);
     }
 
     const validStatuses = ['pending', 'active'];
     if (!validStatuses.includes(body.status)) {
-      throw new BadRequestException(
-        `status must be one of: ${validStatuses.join(', ')}`,
-      );
+      throw new BadRequestException(`status must be one of: ${validStatuses.join(', ')}`);
     }
 
     let membership = await this.deviceGroupRepo.findOne({
@@ -415,7 +384,7 @@ export class InvitationsController {
 
     await this.deviceGroupRepo.save(membership);
     this.logger.log(
-      `[INVITATION_STATUS] device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} newStatus=${body.status}`,
+      `[INVITATION_STATUS] device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} newStatus=${body.status}`
     );
     return { status: membership.status };
   }
@@ -430,18 +399,13 @@ export class InvitationsController {
   async kickStaleUser(
     @Body() body: { userId: string; groupId: string },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
-    if (!headerUserId)
-      throw new BadRequestException('Missing X-User-Id header');
+    if (!headerUserId) throw new BadRequestException('Missing X-User-Id header');
     const callerUserId = sanitizeQueryValue(headerUserId, 'userId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
-    await this.assertCallerIsGroupMember(
-      callerUserId,
-      safeGroupId,
-      headerGlobalAdmin,
-    );
+    await this.assertCallerIsGroupMember(callerUserId, safeGroupId, headerGlobalAdmin);
 
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, groupId: safeGroupId },
@@ -454,7 +418,7 @@ export class InvitationsController {
     if (memberships.length > 0) {
       await this.deviceGroupRepo.save(memberships);
       this.logger.log(
-        `[KICK] Reset ${memberships.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`,
+        `[KICK] Reset ${memberships.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`
       );
     }
 
@@ -474,19 +438,14 @@ export class InvitationsController {
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
-    if (!headerUserId)
-      throw new BadRequestException('Missing X-User-Id header');
+    if (!headerUserId) throw new BadRequestException('Missing X-User-Id header');
     const callerUserId = sanitizeQueryValue(headerUserId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
-    await this.assertCallerIsGroupMember(
-      callerUserId,
-      safeGroupId,
-      headerGlobalAdmin,
-    );
+    await this.assertCallerIsGroupMember(callerUserId, safeGroupId, headerGlobalAdmin);
 
     const membership = await this.deviceGroupRepo.findOne({
       where: {
@@ -503,13 +462,10 @@ export class InvitationsController {
     membership.status = 'pending';
     await this.deviceGroupRepo.save(membership);
 
-    await this.redis.srem(
-      `group:members:${safeGroupId}`,
-      `${safeUserId}:${safeDeviceId}`,
-    );
+    await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);
 
     this.logger.log(
-      `[KICK] Reset device ${safeDeviceId} of user ${safeUserId} in group ${safeGroupId} to pending`,
+      `[KICK] Reset device ${safeDeviceId} of user ${safeUserId} in group ${safeGroupId} to pending`
     );
 
     return { status: 'kicked', affected: 1, deviceId: safeDeviceId };
@@ -524,7 +480,7 @@ export class InvitationsController {
   async deleteDeviceMembership(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Param('groupId') groupId: string,
+    @Param('groupId') groupId: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
@@ -537,13 +493,10 @@ export class InvitationsController {
     });
 
     // Keep Redis message routing in sync with membership deletion.
-    await this.redis.srem(
-      `group:members:${safeGroupId}`,
-      `${safeUserId}:${safeDeviceId}`,
-    );
+    await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);
 
     this.logger.log(
-      `[DEL_MEMBERSHIP] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`,
+      `[DEL_MEMBERSHIP] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`
     );
     return { status: 'deleted', affected: result.affected ?? 0 };
   }
@@ -558,7 +511,7 @@ export class InvitationsController {
   async forceLeave(
     @Param('groupId') groupId: string,
     @Body() body: { deviceId: string },
-    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(headerUserId ?? '', 'userId');
@@ -570,13 +523,10 @@ export class InvitationsController {
       groupId: safeGroupId,
     });
 
-    await this.redis.srem(
-      `group:members:${safeGroupId}`,
-      `${safeUserId}:${safeDeviceId}`,
-    );
+    await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);
 
     this.logger.log(
-      `[FORCE_LEAVE] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`,
+      `[FORCE_LEAVE] user=${safeUserId} device=${safeDeviceId} group=${safeGroupId} affected=${result.affected ?? 0}`
     );
     return { ok: true, affected: result.affected ?? 0 };
   }
@@ -588,7 +538,7 @@ export class InvitationsController {
   @Delete('mls/device-memberships/:userId/:deviceId')
   async deleteAllDeviceMemberships(
     @Param('userId') userId: string,
-    @Param('deviceId') deviceId: string,
+    @Param('deviceId') deviceId: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
@@ -611,7 +561,7 @@ export class InvitationsController {
     }
 
     this.logger.log(
-      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${result.affected ?? 0} redisGroupsCleaned=${groupIds.length}`,
+      `[DEL_ALL_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} affected=${result.affected ?? 0} redisGroupsCleaned=${groupIds.length}`
     );
     return { status: 'deleted', affected: result.affected ?? 0 };
   }

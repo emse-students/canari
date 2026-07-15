@@ -47,9 +47,7 @@
       await updateAssociation(assoc.id, { isBDE: next });
     } catch (e) {
       // Revert on failure so the UI never lies about the persisted state.
-      associations = associations.map((a) =>
-        a.id === assoc.id ? { ...a, isBDE: previous } : a
-      );
+      associations = associations.map((a) => (a.id === assoc.id ? { ...a, isBDE: previous } : a));
       error = e instanceof Error ? e.message : m.admin_assoc_update_error({ name: assoc.name });
     } finally {
       savingIds.delete(assoc.id);
@@ -67,7 +65,9 @@
 
 <div class="space-y-6">
   <header class="flex items-start gap-3">
-    <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark">
+    <span
+      class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+    >
       <Building2 size={20} />
     </span>
     <div>
@@ -80,7 +80,9 @@
 
   {#if loading}
     <div class="flex justify-center py-16">
-      <div class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"></div>
+      <div
+        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      ></div>
     </div>
   {:else}
     <div class="flex flex-wrap items-center justify-between gap-3">
@@ -104,7 +106,9 @@
       <p class="text-sm text-red-500" role="alert">{error}</p>
     {/if}
 
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] divide-y divide-cn-border/70 overflow-hidden">
+    <div
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] divide-y divide-cn-border/70 overflow-hidden"
+    >
       {#if filtered.length === 0}
         <p class="px-4 py-8 text-center text-sm text-text-muted">{m.admin_assoc_empty()}</p>
       {:else}
@@ -118,7 +122,9 @@
               {#if savingIds.has(assoc.id)}
                 <Loader2 size={14} class="animate-spin text-cn-yellow" />
               {/if}
-              <span class="text-xs font-bold {assoc.isBDE ? 'text-emerald-600' : 'text-text-muted'}">
+              <span
+                class="text-xs font-bold {assoc.isBDE ? 'text-emerald-600' : 'text-text-muted'}"
+              >
                 BDE
               </span>
               <input

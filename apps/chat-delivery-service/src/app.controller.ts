@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Inject,
-  OnModuleInit,
-  OnModuleDestroy,
-  Logger,
-} from '@nestjs/common';
+import { Controller, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
@@ -15,16 +9,8 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
-import {
-  initializeApp,
-  getApps,
-  cert,
-  type ServiceAccount,
-} from 'firebase-admin/app';
-import {
-  RETENTION_WINDOW_MS,
-  STALE_PENDING_INVITATION_MS,
-} from './retention.constants';
+import { initializeApp, getApps, cert, type ServiceAccount } from 'firebase-admin/app';
+import { RETENTION_WINDOW_MS, STALE_PENDING_INVITATION_MS } from './retention.constants';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -42,9 +28,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
-  private cleanupStalePendingInvitationsInterval: ReturnType<
-    typeof setInterval
-  >;
+  private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
 
   /**
    * Message retention / stale device TTL. A device is "stale" once its queued
@@ -69,7 +53,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly messagingService: MessagingService,
+    private readonly messagingService: MessagingService
   ) {}
 
   async onModuleInit() {
@@ -87,15 +71,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           });
           this.logger.log('[FIREBASE] Admin SDK initialized');
         } catch (e) {
-          this.logger.error(
-            '[FIREBASE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON',
-            e,
-          );
+          this.logger.error('[FIREBASE] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON', e);
         }
       } else {
-        this.logger.warn(
-          '[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set - push disabled',
-        );
+        this.logger.warn('[FIREBASE] FIREBASE_SERVICE_ACCOUNT_JSON not set - push disabled');
       }
     }
 
@@ -107,14 +86,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // within MESSAGE_RETENTION_MS are reset to pending for re-invite.
     this.staleDeviceInterval = setInterval(() => {
       void this.detectStaleDevices().catch((e) =>
-        this.logger.error('[CRON] detectStaleDevices failed', e),
+        this.logger.error('[CRON] detectStaleDevices failed', e)
       );
     }, ONE_HOUR);
 
     // Cleanup expired queued messages older than MESSAGE_RETENTION_MS
     this.cleanupMessagesInterval = setInterval(() => {
       void this.cleanupExpiredQueuedMessages().catch((e) =>
-        this.logger.error('[CRON] cleanupExpiredQueuedMessages failed', e),
+        this.logger.error('[CRON] cleanupExpiredQueuedMessages failed', e)
       );
     }, ONE_HOUR);
 
@@ -123,7 +102,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // window with no active membership. Bounds growth of per-device tables.
     this.cleanupStaleDevicesInterval = setInterval(() => {
       void this.cleanupStaleDevices().catch((e) =>
-        this.logger.error('[CRON] cleanupStaleDevices failed', e),
+        this.logger.error('[CRON] cleanupStaleDevices failed', e)
       );
     }, ONE_HOUR);
 
@@ -132,29 +111,27 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.commitLogPruneInterval = setInterval(() => {
       void this.messagingService
         .pruneExpiredCommitLog()
-        .catch((e) =>
-          this.logger.error('[CRON] pruneExpiredCommitLog failed', e),
-        );
+        .catch((e) => this.logger.error('[CRON] pruneExpiredCommitLog failed', e));
     }, ONE_HOUR);
 
     // Cleanup orphaned Redis group:members:* keys with no matching DB group
     this.cleanupOrphanedRedisGroupsInterval = setInterval(() => {
       void this.cleanupOrphanedRedisGroups().catch((e) =>
-        this.logger.error('[CRON] cleanupOrphanedRedisGroups failed', e),
+        this.logger.error('[CRON] cleanupOrphanedRedisGroups failed', e)
       );
     }, 6 * ONE_HOUR);
 
     // Purge soft-deleted group tombstones older than 90 days (once per day)
     this.softDeletedGroupsCleanupInterval = setInterval(() => {
       void this.cleanupSoftDeletedGroups().catch((e) =>
-        this.logger.error('[CRON] cleanupSoftDeletedGroups failed', e),
+        this.logger.error('[CRON] cleanupSoftDeletedGroups failed', e)
       );
     }, 24 * ONE_HOUR);
 
     // Purge push tokens not renewed in 90 days (uninstalled / abandoned device)
     this.cleanupStalePushTokensInterval = setInterval(() => {
       void this.cleanupStalePushTokens().catch((e) =>
-        this.logger.error('[CRON] cleanupStalePushTokens failed', e),
+        this.logger.error('[CRON] cleanupStalePushTokens failed', e)
       );
     }, 24 * ONE_HOUR);
 
@@ -163,7 +140,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // they would accumulate forever - this guarantees bounded growth.
     this.cleanupOrphanedMemberRowsInterval = setInterval(() => {
       void this.cleanupOrphanedMemberRows().catch((e) =>
-        this.logger.error('[CRON] cleanupOrphanedMemberRows failed', e),
+        this.logger.error('[CRON] cleanupOrphanedMemberRows failed', e)
       );
     }, 24 * ONE_HOUR);
 
@@ -172,7 +149,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // does not block recovery for a live device (Welcome in queue / welcome_request).
     this.cleanupStalePendingInvitationsInterval = setInterval(() => {
       void this.cleanupStalePendingInvitations().catch((e) =>
-        this.logger.error('[CRON] cleanupStalePendingInvitations failed', e),
+        this.logger.error('[CRON] cleanupStalePendingInvitations failed', e)
       );
     }, 24 * ONE_HOUR);
 
@@ -180,20 +157,20 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
-        'orphaned member rows purge (24h), stale pending invitations purge (24h) scheduled',
+        'orphaned member rows purge (24h), stale pending invitations purge (24h) scheduled'
     );
   }
 
   private async ensureDeviceMetadataColumns() {
     const tableName = this.keyPackageRepo.metadata.tableName;
     await this.keyPackageRepo.query(
-      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceName" varchar(80)`,
+      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceName" varchar(80)`
     );
     await this.keyPackageRepo.query(
-      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceOs" varchar(32)`,
+      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceOs" varchar(32)`
     );
     await this.keyPackageRepo.query(
-      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceAppVersion" varchar(32)`,
+      `ALTER TABLE "${tableName}" ADD COLUMN IF NOT EXISTS "deviceAppVersion" varchar(32)`
     );
   }
 
@@ -206,10 +183,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         "deviceId" varchar(128) NOT NULL,
         "revokedAt" TIMESTAMP NOT NULL DEFAULT now(),
         CONSTRAINT "UQ_${tableName}_user_device" UNIQUE ("userId", "deviceId")
-      )`,
+      )`
     );
     await this.revokedDeviceRepo.query(
-      `CREATE INDEX IF NOT EXISTS "IDX_${tableName}_user" ON "${tableName}" ("userId")`,
+      `CREATE INDEX IF NOT EXISTS "IDX_${tableName}_user" ON "${tableName}" ("userId")`
     );
   }
 
@@ -261,9 +238,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       where: { deviceId: In(deviceIds), createdAt: MoreThanOrEqual(staleDate) },
       select: { userId: true, deviceId: true },
     });
-    const liveDeviceKeys = new Set(
-      liveKeyPackages.map((kp) => `${kp.userId}:${kp.deviceId}`),
-    );
+    const liveDeviceKeys = new Set(liveKeyPackages.map((kp) => `${kp.userId}:${kp.deviceId}`));
 
     let reset = 0;
     for (const member of candidates) {
@@ -276,18 +251,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       await this.deviceGroupRepo.save(member);
       await this.redis.srem(
         `group:members:${member.groupId}`,
-        `${member.userId}:${member.deviceId}`,
+        `${member.userId}:${member.deviceId}`
       );
       reset++;
       this.logger.log(
         `[CRON] Stale device reset: device=${member.deviceId} group=${member.groupId} ` +
-          `(lastUpdate=${member.updatedAt.toISOString()})`,
+          `(lastUpdate=${member.updatedAt.toISOString()})`
       );
     }
 
     if (reset > 0) {
       this.logger.log(
-        `[CRON] detectStaleDevices: ${reset}/${candidates.length} device(s) reset to pending`,
+        `[CRON] detectStaleDevices: ${reset}/${candidates.length} device(s) reset to pending`
       );
     }
   }
@@ -301,9 +276,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       createdAt: LessThan(expiry),
     });
     if (result.affected && result.affected > 0) {
-      this.logger.log(
-        `[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`,
-      );
+      this.logger.log(`[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`);
     }
   }
 
@@ -338,10 +311,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     // Deduplicate by (userId, deviceId): a device has only one static KeyPackage,
     // but guard against accidental duplicates.
-    const staleDevices = new Map<
-      string,
-      { userId: string; deviceId: string }
-    >();
+    const staleDevices = new Map<string, { userId: string; deviceId: string }>();
     for (const kp of expiredPackages) {
       if (activeDeviceIds.has(kp.deviceId)) continue;
       staleDevices.set(`${kp.userId}:${kp.deviceId}`, {
@@ -356,9 +326,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       await this.messagingService.purgeDeviceFootprint(userId, deviceId);
     }
 
-    this.logger.log(
-      `[CRON] cleanupStaleDevices: purged ${staleDevices.size} stale device(s)`,
-    );
+    this.logger.log(`[CRON] cleanupStaleDevices: purged ${staleDevices.size} stale device(s)`);
   }
 
   /**
@@ -400,14 +368,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         deviceId: m.deviceId,
         groupId: m.groupId,
       });
-      await this.redis.srem(
-        `group:members:${m.groupId}`,
-        `${m.userId}:${m.deviceId}`,
-      );
+      await this.redis.srem(`group:members:${m.groupId}`, `${m.userId}:${m.deviceId}`);
     }
 
     this.logger.log(
-      `[CRON] cleanupStalePendingInvitations: purged ${stale.length} stale pending invitation(s)`,
+      `[CRON] cleanupStalePendingInvitations: purged ${stale.length} stale pending invitation(s)`
     );
   }
 
@@ -434,9 +399,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     await this.deviceGroupRepo.delete({ groupId: In(ids) });
     await this.groupRepo.delete(ids);
 
-    this.logger.log(
-      `[CRON] cleanupSoftDeletedGroups: purged ${ids.length} tombstone(s)`,
-    );
+    this.logger.log(`[CRON] cleanupSoftDeletedGroups: purged ${ids.length} tombstone(s)`);
   }
 
   /**
@@ -452,7 +415,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
     if (result.affected && result.affected > 0) {
       this.logger.log(
-        `[CRON] cleanupStalePushTokens: deleted ${result.affected} token(s) not renewed in 90 days`,
+        `[CRON] cleanupStalePushTokens: deleted ${result.affected} token(s) not renewed in 90 days`
       );
     }
   }
@@ -471,7 +434,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'MATCH',
         'group:members:*',
         'COUNT',
-        100,
+        100
       );
       cursor = nextCursor;
 
@@ -493,9 +456,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     if (orphanedKeys.length > 0) {
       await this.redis.del(...orphanedKeys);
-      this.logger.log(
-        `[CRON] cleanupOrphanedRedisGroups: deleted ${orphanedKeys.length} key(s)`,
-      );
+      this.logger.log(`[CRON] cleanupOrphanedRedisGroups: deleted ${orphanedKeys.length} key(s)`);
     }
   }
 
@@ -518,15 +479,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
        UNION
        SELECT DISTINCT d."groupId" FROM dm_device_group_memberships d
          LEFT JOIN dm_groups g ON g.id = d."groupId"
-        WHERE g.id IS NULL`,
+        WHERE g.id IS NULL`
     );
 
     const orphanIds = orphanRows.map((r) => r.groupId);
     if (orphanIds.length === 0) return;
 
     await this.messagingService.purgeOrphanGroups(orphanIds);
-    this.logger.log(
-      `[CRON] cleanupOrphanedMemberRows: swept ${orphanIds.length} ghost group(s)`,
-    );
+    this.logger.log(`[CRON] cleanupOrphanedMemberRows: swept ${orphanIds.length} ghost group(s)`);
   }
 }

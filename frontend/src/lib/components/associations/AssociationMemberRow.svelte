@@ -40,7 +40,10 @@
   );
 
   const permissionsCount = $derived(
-    FLAG_LABELS.reduce((n, { flag }) => n + (hasPermissionFlag(effectivePermissions, flag) ? 1 : 0), 0)
+    FLAG_LABELS.reduce(
+      (n, { flag }) => n + (hasPermissionFlag(effectivePermissions, flag) ? 1 : 0),
+      0
+    )
   );
 
   let showPermissions = $state(false);
@@ -82,7 +85,9 @@
             {member.role}
           </span>
           {#if member.isAdmin}
-            <span class="text-[11px] uppercase tracking-wide text-text-muted font-medium">Admin</span>
+            <span class="text-[11px] uppercase tracking-wide text-text-muted font-medium"
+              >Admin</span
+            >
           {/if}
         </div>
       </div>
@@ -95,21 +100,22 @@
           value={member.role}
           aria-label={m.asso_member_role_label()}
           onchange={(e) =>
-            onRoleChange(
-              member.userId,
-              (e.target as HTMLInputElement).value,
-              effectivePermissions
-            )}
+            onRoleChange(member.userId, (e.target as HTMLInputElement).value, effectivePermissions)}
           class="text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 w-full sm:w-36"
         />
         <button
           type="button"
           onclick={() => (showPermissions = !showPermissions)}
-          class="inline-flex items-center gap-1.5 text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-text-main hover:border-cn-yellow/60 transition-colors {showPermissions ? 'border-cn-yellow/60 bg-cn-yellow/5' : ''}"
+          class="inline-flex items-center gap-1.5 text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-text-main hover:border-cn-yellow/60 transition-colors {showPermissions
+            ? 'border-cn-yellow/60 bg-cn-yellow/5'
+            : ''}"
           aria-expanded={showPermissions}
         >
           {m.asso_member_permissions_label({ count: permissionsCount })}
-          <ChevronDown size={14} class="transition-transform {showPermissions ? 'rotate-180' : ''}" />
+          <ChevronDown
+            size={14}
+            class="transition-transform {showPermissions ? 'rotate-180' : ''}"
+          />
         </button>
         <button
           type="button"
@@ -124,7 +130,9 @@
   </div>
 
   {#if manage && showPermissions}
-    <div class="border-t border-cn-border/40 pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2.5">
+    <div
+      class="border-t border-cn-border/40 pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2.5"
+    >
       {#each FLAG_LABELS as { flag, label } (flag)}
         <label class="flex items-center gap-2 cursor-pointer group">
           <input
@@ -133,7 +141,9 @@
             onchange={() => toggleFlag(flag)}
             class="w-4 h-4 rounded border-cn-border accent-cn-yellow cursor-pointer"
           />
-          <span class="text-sm text-text-main group-hover:text-cn-dark transition-colors">{label}</span>
+          <span class="text-sm text-text-main group-hover:text-cn-dark transition-colors"
+            >{label}</span
+          >
         </label>
       {/each}
     </div>

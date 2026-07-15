@@ -91,9 +91,7 @@
 
   // --- Scheduled publication ---
   let scheduledAt = $state(
-    untrack(() =>
-      post.scheduledAt ? new Date(post.scheduledAt).toISOString().slice(0, 16) : ''
-    )
+    untrack(() => (post.scheduledAt ? new Date(post.scheduledAt).toISOString().slice(0, 16) : ''))
   );
 
   // --- Association identity (immutable, but linked event & payment are editable) ---
@@ -274,9 +272,8 @@
     </p>
     <p class="text-sm font-semibold text-text-main opacity-90">
       {#if post.association}
-        {m.post_edit_published_as()} <span class="text-amber-600 dark:text-amber-400"
-          >{post.association.name}</span
-        >.
+        {m.post_edit_published_as()}
+        <span class="text-amber-600 dark:text-amber-400">{post.association.name}</span>.
       {:else}
         Modifiez le texte, les images, le sondage ou le formulaire.
       {/if}
@@ -590,7 +587,8 @@
         <Button
           type="button"
           class="min-w-[9rem] px-7 py-3 text-sm !font-extrabold shadow-md shadow-amber-500/20 active:translate-y-0"
-          disabled={saving || (!markdown.trim() && existingImages.length === 0 && newFiles.length === 0)}
+          disabled={saving ||
+            (!markdown.trim() && existingImages.length === 0 && newFiles.length === 0)}
           loading={saving}
           onclick={submitEdit}
         >

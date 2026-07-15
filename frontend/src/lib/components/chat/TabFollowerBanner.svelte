@@ -27,10 +27,7 @@
     // show nothing, otherwise the banner flickers on the leader tab while connecting.
     // Only show for a confirmed follower tab, never on mobile.
     const shouldShow =
-      session.isLoggedIn &&
-      !session.isMessagingInitializing &&
-      !session.isTabLeader &&
-      !isMobile;
+      session.isLoggedIn && !session.isMessagingInitializing && !session.isTabLeader && !isMobile;
     if (!shouldShow) {
       show = false;
       return;

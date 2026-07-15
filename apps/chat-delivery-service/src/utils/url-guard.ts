@@ -1,10 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
-import {
-  lookup as dnsLookup,
-  type LookupAddress,
-  type LookupOptions,
-} from 'node:dns';
+import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { isIP } from 'node:net';
 import { Agent } from 'undici';
 
@@ -25,8 +21,7 @@ export function isPrivateIpAddress(ip: string): boolean {
   }
 
   const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part)))
-    return true;
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return true;
 
   const [a, b] = parts;
   return (
@@ -84,9 +79,7 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
  * Shared by the pre-fetch URL check ({@link assertSafeExternalUrl}) and the
  * connect-time dispatcher guard ({@link ssrfSafeLookup}).
  */
-export function assertPublicAddresses(
-  addresses: readonly Pick<LookupAddress, 'address'>[],
-): void {
+export function assertPublicAddresses(addresses: readonly Pick<LookupAddress, 'address'>[]): void {
   for (const entry of addresses) {
     if (isPrivateIpAddress(entry.address)) {
       throw new BadRequestException('Private network URLs are not allowed');
@@ -108,8 +101,8 @@ export function ssrfSafeLookup(
   callback: (
     err: NodeJS.ErrnoException | null,
     address: string | LookupAddress[],
-    family?: number,
-  ) => void,
+    family?: number
+  ) => void
 ): void {
   dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
     if (err) {
@@ -119,14 +112,11 @@ export function ssrfSafeLookup(
     for (const entry of addresses) {
       if (isPrivateIpAddress(entry.address)) {
         callback(
-          Object.assign(
-            new Error(
-              `Blocked connection to private address for host ${hostname}`,
-            ),
-            { code: 'ESSRFBLOCKED' },
-          ),
+          Object.assign(new Error(`Blocked connection to private address for host ${hostname}`), {
+            code: 'ESSRFBLOCKED',
+          }),
           '',
-          0,
+          0
         );
         return;
       }
@@ -157,25 +147,22 @@ export function decodeHtmlEntity(value: unknown): string {
   const normalized = typeof value === 'string' ? value : '';
   // Plain-text link preview fields: decode a small set once. Omit &lt; / &gt; so one pass cannot
   // turn &amp;lt;… into angle brackets (CWE-116 / double-unescape patterns).
-  return normalized.replace(
-    /&(amp|quot|apos);|&#39;|&#x27;/gi,
-    (full, named?: string) => {
-      if (named !== undefined)
-        switch (named.toLowerCase()) {
-          case 'amp':
-            return '&';
-          case 'quot':
-            return '"';
-          case 'apos':
-            return "'";
-          default:
-            return full;
-        }
-      const low = full.toLowerCase();
-      if (low === '&#39;' || low === '&#x27;') return "'";
-      return full;
-    },
-  );
+  return normalized.replace(/&(amp|quot|apos);|&#39;|&#x27;/gi, (full, named?: string) => {
+    if (named !== undefined)
+      switch (named.toLowerCase()) {
+        case 'amp':
+          return '&';
+        case 'quot':
+          return '"';
+        case 'apos':
+          return "'";
+        default:
+          return full;
+      }
+    const low = full.toLowerCase();
+    if (low === '&#39;' || low === '&#x27;') return "'";
+    return full;
+  });
 }
 
 /** Parses all `<meta>` tags from an HTML string and returns their attributes as key/value maps. */
@@ -219,16 +206,10 @@ export function extractTitle(html: string): string | null {
  * truncated to a safe display length.
  */
 export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
-  const title =
-    extractMetaContent(html, 'og:title') ||
-    extractTitle(html) ||
-    targetUrl.hostname;
+  const title = extractMetaContent(html, 'og:title') || extractTitle(html) || targetUrl.hostname;
   const description =
-    extractMetaContent(html, 'og:description') ||
-    extractMetaContent(html, 'description') ||
-    '';
-  const siteName =
-    extractMetaContent(html, 'og:site_name') || targetUrl.hostname;
+    extractMetaContent(html, 'og:description') || extractMetaContent(html, 'description') || '';
+  const siteName = extractMetaContent(html, 'og:site_name') || targetUrl.hostname;
 
   const rawImage = extractMetaContent(html, 'og:image');
   let image = '';
@@ -277,13 +258,12 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
   if (!match) return null;
 
   const albumId = match[1];
-  const galleryBaseUrl = (
-    process.env.MIGALLERY_API_URL || `https://${GALLERY_HOST}`
-  ).replace(/\/$/, '');
+  const galleryBaseUrl = (process.env.MIGALLERY_API_URL || `https://${GALLERY_HOST}`).replace(
+    /\/$/,
+    ''
+  );
   const apiKey = process.env.MIGALLERY_API_KEY || '';
-  const frontendUrl = (
-    process.env.FRONTEND_URL || 'https://canari-emse.fr'
-  ).replace(/\/$/, '');
+  const frontendUrl = (process.env.FRONTEND_URL || 'https://canari-emse.fr').replace(/\/$/, '');
 
   if (!apiKey) return null;
 
@@ -316,7 +296,7 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
             day: 'numeric',
             month: 'long',
             year: 'numeric',
-          }),
+          })
         );
       } catch {
         descParts.push(album.date);
@@ -340,10 +320,7 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
 export function isYouTubeHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
   return (
-    h === 'youtube.com' ||
-    h === 'www.youtube.com' ||
-    h === 'm.youtube.com' ||
-    h === 'youtu.be'
+    h === 'youtube.com' || h === 'www.youtube.com' || h === 'm.youtube.com' || h === 'youtu.be'
   );
 }
 

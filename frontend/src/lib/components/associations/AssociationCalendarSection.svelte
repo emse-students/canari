@@ -78,7 +78,10 @@
 
   /** Visible month / year, locale-aware. */
   const titleMonth = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', { month: 'long', year: 'numeric' }).format(focusDate)
+    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+      month: 'long',
+      year: 'numeric',
+    }).format(focusDate)
   );
 
   let modalOpen = $state(false);
@@ -274,7 +277,12 @@
   }
 
   async function handleDetailDelete(id: string) {
-    if (!await showConfirm(m.asso_calendar_confirm_delete(), { danger: true, confirmLabel: m.common_delete_button() })) {
+    if (
+      !(await showConfirm(m.asso_calendar_confirm_delete(), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    ) {
       return;
     }
     detailModalOpen = false;
@@ -415,7 +423,13 @@
   }
 
   async function removeEvent(id: string) {
-    if (!await showConfirm(m.asso_calendar_confirm_delete(), { danger: true, confirmLabel: m.common_delete_button() })) return;
+    if (
+      !(await showConfirm(m.asso_calendar_confirm_delete(), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
     try {
       await deleteAssociationCalendarEvent(associationId, id);
       await loadMonth();
@@ -517,12 +531,7 @@
     </div>
   {/if}
 
-  <MonthCalendarGridRich
-    {focusDate}
-    events={feedEvents}
-    {loading}
-    bind:selectedDay
-  />
+  <MonthCalendarGridRich {focusDate} events={feedEvents} {loading} bind:selectedDay />
 
   <CalendarDayEventsPanel
     {focusDate}
@@ -617,7 +626,9 @@
             </p>
             <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
             {#if ev.rejectionReason?.trim()}
-              <p class="text-xs text-red-600 mt-1">{m.asso_calendar_rejection_reason_prefix()}{ev.rejectionReason}</p>
+              <p class="text-xs text-red-600 mt-1">
+                {m.asso_calendar_rejection_reason_prefix()}{ev.rejectionReason}
+              </p>
             {/if}
           </div>
           <div class="flex items-center gap-1 shrink-0">
@@ -644,173 +655,186 @@
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && closeModal()}
     >
-    <div
-      class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="cal-modal-title"
-    >
-      <h3 id="cal-modal-title" class="text-lg font-bold text-text-main">
-        {editingId ? m.asso_calendar_modal_edit_title() : m.asso_calendar_modal_create_title()}
-      </h3>
-      {#if !editingId}
-        <p class="text-xs text-text-muted">
-          {m.asso_calendar_modal_pending_note()}
-        </p>
-      {/if}
-      <Input label={m.asso_calendar_event_title_label()} bind:value={formTitle} />
-
-      <!-- Entry kind: normal event card vs full-day background band (break / vacation). -->
-      <div>
-        <span class="block text-sm font-bold text-text-main mb-1 ml-1"
-          >{m.asso_calendar_event_kind_label()}</span
-        >
-        <div class="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onclick={() => (formKind = 'event')}
-            class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
-            'event'
-              ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
-              : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
-          >
-            {m.asso_calendar_event_kind_event()}
-          </button>
-          <button
-            type="button"
-            onclick={() => (formKind = 'break')}
-            class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
-            'break'
-              ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
-              : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
-          >
-            {m.asso_calendar_event_kind_break()}
-          </button>
-        </div>
-        {#if formKind === 'break'}
-          <p class="text-xs text-text-muted mt-1 ml-1">{m.asso_calendar_event_kind_break_hint()}</p>
+      <div
+        class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cal-modal-title"
+      >
+        <h3 id="cal-modal-title" class="text-lg font-bold text-text-main">
+          {editingId ? m.asso_calendar_modal_edit_title() : m.asso_calendar_modal_create_title()}
+        </h3>
+        {#if !editingId}
+          <p class="text-xs text-text-muted">
+            {m.asso_calendar_modal_pending_note()}
+          </p>
         {/if}
-      </div>
+        <Input label={m.asso_calendar_event_title_label()} bind:value={formTitle} />
 
-      <div class="grid gap-4 sm:grid-cols-2">
+        <!-- Entry kind: normal event card vs full-day background band (break / vacation). -->
         <div>
-          <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-start"
-            >{m.asso_calendar_event_start_label()}</label
+          <span class="block text-sm font-bold text-text-main mb-1 ml-1"
+            >{m.asso_calendar_event_kind_label()}</span
           >
-          <input
-            id="ev-start"
-            type="datetime-local"
-            bind:value={formStart}
-            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
-          />
-        </div>
-        <div>
-          <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-end"
-            >{m.asso_calendar_event_end_label()}</label
-          >
-          <input
-            id="ev-end"
-            type="datetime-local"
-            bind:value={formEnd}
-            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
-          />
-        </div>
-      </div>
-      <div>
-        <p class="block text-sm font-bold text-text-main mb-1 ml-1">{m.asso_calendar_event_description_label()}</p>
-        <MarkdownComposerField
-          bind:value={formDescription}
-          placeholder={m.calendar_deposit_placeholder()}
-          minHeight="100px"
-        />
-      </div>
-      <!-- Poster image - only available when editing an existing event -->
-      {#if editingId}
-        <div class="space-y-2">
-          <p class="text-sm font-bold text-text-main ml-1">{m.asso_calendar_event_poster_label()}</p>
-          {#if formImageUrl}
-            <div class="relative rounded-xl overflow-hidden border border-cn-border">
-              <img src={formImageUrl} alt={m.asso_calendar_poster_alt()} class="w-full max-h-48 object-cover" loading="lazy" />
-              <button
-                type="button"
-                onclick={handleImageRemove}
-                disabled={uploadingImage}
-                class="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
-                title={m.asso_calendar_poster_remove_title()}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          {:else}
-            <label
-              class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage
-                ? 'opacity-50 pointer-events-none'
-                : ''}"
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onclick={() => (formKind = 'event')}
+              class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
+              'event'
+                ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
             >
-              <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
-              {uploadingImage ? m.asso_calendar_poster_uploading() : m.asso_calendar_poster_add_label()}
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                class="sr-only"
-                onchange={handleImageUpload}
-              />
-            </label>
+              {m.asso_calendar_event_kind_event()}
+            </button>
+            <button
+              type="button"
+              onclick={() => (formKind = 'break')}
+              class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
+              'break'
+                ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
+            >
+              {m.asso_calendar_event_kind_break()}
+            </button>
+          </div>
+          {#if formKind === 'break'}
+            <p class="text-xs text-text-muted mt-1 ml-1">
+              {m.asso_calendar_event_kind_break_hint()}
+            </p>
           {/if}
         </div>
-      {:else}
-        <p class="text-xs text-text-muted">
-          {m.asso_calendar_poster_after_save_note()}
-        </p>
-      {/if}
-      <!-- Co-owner associations picker -->
-      <CoOwnerPicker bind:selectedIds={formCoOwnerIds} excludeId={associationId} />
-      {#if canEdit && linkCandidates}
-        <div class="space-y-3 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
-          <p
-            class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
-          >
-            <Link2 size={14} />
-            {m.asso_calendar_link_form_label()}
-          </p>
+
+        <div class="grid gap-4 sm:grid-cols-2">
           <div>
-            <label class="block text-xs font-semibold text-text-main mb-1" for="cal-link-form"
-              >{m.asso_calendar_form_label()}</label
+            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-start"
+              >{m.asso_calendar_event_start_label()}</label
             >
-            <select
-              id="cal-link-form"
-              bind:value={formLinkedFormId}
+            <input
+              id="ev-start"
+              type="datetime-local"
+              bind:value={formStart}
               class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-end"
+              >{m.asso_calendar_event_end_label()}</label
             >
-              <option value="">{m.asso_calendar_link_form_none_option()}</option>
-              {#each linkCandidates.forms as f (f.id)}
-                <option value={f.id}>{f.title}</option>
-              {/each}
-            </select>
+            <input
+              id="ev-end"
+              type="datetime-local"
+              bind:value={formEnd}
+              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+            />
           </div>
         </div>
-      {/if}
-      {#if formError}
-        <p class="text-sm text-red-600">{formError}</p>
-      {/if}
-      <div class="flex flex-wrap gap-2 justify-end pt-2">
-        <button
-          type="button"
-          onclick={closeModal}
-          class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
-        >
-          {m.common_cancel_button()}
-        </button>
-        <button
-          type="button"
-          onclick={submitForm}
-          disabled={saving}
-          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
-        >
-          {saving ? m.asso_calendar_saving_label() : m.common_save_button()}
-        </button>
+        <div>
+          <p class="block text-sm font-bold text-text-main mb-1 ml-1">
+            {m.asso_calendar_event_description_label()}
+          </p>
+          <MarkdownComposerField
+            bind:value={formDescription}
+            placeholder={m.calendar_deposit_placeholder()}
+            minHeight="100px"
+          />
+        </div>
+        <!-- Poster image - only available when editing an existing event -->
+        {#if editingId}
+          <div class="space-y-2">
+            <p class="text-sm font-bold text-text-main ml-1">
+              {m.asso_calendar_event_poster_label()}
+            </p>
+            {#if formImageUrl}
+              <div class="relative rounded-xl overflow-hidden border border-cn-border">
+                <img
+                  src={formImageUrl}
+                  alt={m.asso_calendar_poster_alt()}
+                  class="w-full max-h-48 object-cover"
+                  loading="lazy"
+                />
+                <button
+                  type="button"
+                  onclick={handleImageRemove}
+                  disabled={uploadingImage}
+                  class="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                  title={m.asso_calendar_poster_remove_title()}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            {:else}
+              <label
+                class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage
+                  ? 'opacity-50 pointer-events-none'
+                  : ''}"
+              >
+                <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
+                {uploadingImage
+                  ? m.asso_calendar_poster_uploading()
+                  : m.asso_calendar_poster_add_label()}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  class="sr-only"
+                  onchange={handleImageUpload}
+                />
+              </label>
+            {/if}
+          </div>
+        {:else}
+          <p class="text-xs text-text-muted">
+            {m.asso_calendar_poster_after_save_note()}
+          </p>
+        {/if}
+        <!-- Co-owner associations picker -->
+        <CoOwnerPicker bind:selectedIds={formCoOwnerIds} excludeId={associationId} />
+        {#if canEdit && linkCandidates}
+          <div class="space-y-3 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
+            <p
+              class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
+            >
+              <Link2 size={14} />
+              {m.asso_calendar_link_form_label()}
+            </p>
+            <div>
+              <label class="block text-xs font-semibold text-text-main mb-1" for="cal-link-form"
+                >{m.asso_calendar_form_label()}</label
+              >
+              <select
+                id="cal-link-form"
+                bind:value={formLinkedFormId}
+                class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              >
+                <option value="">{m.asso_calendar_link_form_none_option()}</option>
+                {#each linkCandidates.forms as f (f.id)}
+                  <option value={f.id}>{f.title}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+        {/if}
+        {#if formError}
+          <p class="text-sm text-red-600">{formError}</p>
+        {/if}
+        <div class="flex flex-wrap gap-2 justify-end pt-2">
+          <button
+            type="button"
+            onclick={closeModal}
+            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+          >
+            {m.common_cancel_button()}
+          </button>
+          <button
+            type="button"
+            onclick={submitForm}
+            disabled={saving}
+            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          >
+            {saving ? m.asso_calendar_saving_label() : m.common_save_button()}
+          </button>
+        </div>
       </div>
-    </div>
     </div>
   </div>
 {/if}

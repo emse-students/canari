@@ -114,21 +114,19 @@ describe('verifyInternalToken', () => {
 
   it('passes with a valid token', () => {
     const token = makeToken(userId, SECRET);
-    expect(() =>
-      verifyInternalToken(makeReq(token), userId, SECRET),
-    ).not.toThrow();
+    expect(() => verifyInternalToken(makeReq(token), userId, SECRET)).not.toThrow();
   });
 
   it('throws when token header is absent', () => {
-    expect(() =>
-      verifyInternalToken(makeReq(undefined), userId, SECRET),
-    ).toThrow(UnauthorizedException);
+    expect(() => verifyInternalToken(makeReq(undefined), userId, SECRET)).toThrow(
+      UnauthorizedException
+    );
   });
 
   it('throws when token is not a valid HMAC (malformed hex)', () => {
     // Node.js silently skips non-hex chars when parsing, so 'zz' → empty buffer → length mismatch → false
-    expect(() =>
-      verifyInternalToken(makeReq('zzzzzz'), userId, SECRET),
-    ).toThrow(UnauthorizedException);
+    expect(() => verifyInternalToken(makeReq('zzzzzz'), userId, SECRET)).toThrow(
+      UnauthorizedException
+    );
   });
 });

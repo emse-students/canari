@@ -121,9 +121,7 @@
   );
 
   const isSendDisabled = $derived(
-    interactionLocked ||
-      (!messageText.trim() && pendingFiles.length === 0) ||
-      isUploading
+    interactionLocked || (!messageText.trim() && pendingFiles.length === 0) || isUploading
   );
 
   // ── Typing signal (throttled) ──────────────────────────────────────────────
@@ -385,9 +383,12 @@
     <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 sm:px-4 md:px-6 pb-1">
       <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
         <span class="flex items-end gap-0.5" aria-hidden="true">
-          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"></span>
-          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:150ms"></span>
-          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:300ms"></span>
+          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"
+          ></span>
+          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:150ms"
+          ></span>
+          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:300ms"
+          ></span>
         </span>
         {typingLabel}
       </span>
@@ -406,7 +407,11 @@
           <div
             class="text-xs font-bold text-amber-600 dark:text-amber-500 mb-0.5 flex items-center gap-1.5"
           >
-            <span class="truncate">{m.chat_reply_to_message({ replySenderDisplayName: replySenderDisplayName || replyingTo.senderId })}</span>
+            <span class="truncate"
+              >{m.chat_reply_to_message({
+                replySenderDisplayName: replySenderDisplayName || replyingTo.senderId,
+              })}</span
+            >
           </div>
           <div class="text-[0.85rem] font-medium text-text-muted truncate leading-snug">
             {replyPreviewText}
@@ -450,7 +455,10 @@
                   type="button"
                   class="block w-full h-full p-0 border-0 cursor-zoom-in"
                   aria-label={m.chat_enlarge_preview_label()}
-                  onclick={(e) => { e.stopPropagation(); openLightbox(key); }}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    openLightbox(key);
+                  }}
                   onpointerdown={(e) => e.stopPropagation()}
                 >
                   <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
@@ -524,7 +532,8 @@
           <span
             class="px-4 py-2.5 bg-amber-500 text-[#151B2C] font-extrabold rounded-full shadow-xl shadow-amber-500/20 text-sm flex items-center gap-2 whitespace-nowrap"
           >
-            <UploadCloud size={18} strokeWidth={2.5} /> {m.chat_drag_files_badge()}
+            <UploadCloud size={18} strokeWidth={2.5} />
+            {m.chat_drag_files_badge()}
           </span>
         </div>
       {/if}
@@ -601,11 +610,16 @@
         onchange={handleMessageChange}
         class="flex-1 min-w-0"
         editorClass="chat-composer-textarea"
-        placeholder={interactionLocked ? m.chat_mls_syncing_placeholder() : m.chat_message_placeholder()}
+        placeholder={interactionLocked
+          ? m.chat_mls_syncing_placeholder()
+          : m.chat_message_placeholder()}
         minHeight="44px"
         disabled={interactionLocked}
         onfocus={() => onFocusChange?.(true)}
-        onblur={() => { onFocusChange?.(false); stopTyping(); }}
+        onblur={() => {
+          onFocusChange?.(false);
+          stopTyping();
+        }}
         onkeydown={handleComposerKeydown}
         onpaste={handlePaste}
       />
@@ -614,7 +628,12 @@
       <div class="shrink-0 pr-1">
         <button
           onmousedown={(e) => e.preventDefault()}
-          onclick={() => { mentionComposer?.commitComposition(); onSend(); stopTyping(); mentionComposer?.clearEditor(); }}
+          onclick={() => {
+            mentionComposer?.commitComposition();
+            onSend();
+            stopTyping();
+            mentionComposer?.clearEditor();
+          }}
           disabled={isSendDisabled}
           aria-label={m.chat_send_message_label()}
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"

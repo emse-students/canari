@@ -35,9 +35,7 @@ export type StripeAccountStatusInput = {
  * Maps a Stripe Connect account snapshot to a treasurer-facing status.
  * `pending` means the association finished onboarding and Stripe is reviewing.
  */
-export function deriveStripeConnectStatus(
-  account: StripeAccountStatusInput,
-): StripeConnectStatus {
+export function deriveStripeConnectStatus(account: StripeAccountStatusInput): StripeConnectStatus {
   const disabledReason = account.requirements?.disabled_reason?.trim() || null;
   if (disabledReason) {
     return 'restricted';
@@ -58,7 +56,7 @@ export function deriveStripeConnectStatus(
 
 /** Builds the API payload from a Stripe Account retrieve result. */
 export function buildStripeConnectStatusResponse(
-  account: StripeAccountStatusInput,
+  account: StripeAccountStatusInput
 ): StripeConnectStatusResponse {
   return {
     status: deriveStripeConnectStatus(account),

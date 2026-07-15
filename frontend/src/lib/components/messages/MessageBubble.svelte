@@ -227,13 +227,17 @@
   // Link-only message (no surrounding text, no reply, not a GIF) - also renders naked
   const isLinkOnly = $derived.by(() => {
     if (!firstLink || isGifUrl(firstLink) || effectiveReplyTo) return false;
-    return textSegments.every((s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === ''));
+    return textSegments.every(
+      (s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === '')
+    );
   });
   // GIF-only message (no surrounding text, no reply) - renders naked like an image/media,
   // with no bubble frame around it.
   const isGifOnly = $derived.by(() => {
     if (!firstLink || !isGifUrl(firstLink) || effectiveReplyTo || isDeleted) return false;
-    return textSegments.every((s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === ''));
+    return textSegments.every(
+      (s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === '')
+    );
   });
 
   let replySenderDisplayName = $state('');
@@ -299,7 +303,11 @@
         lastTapTime = 0;
         showInfo = false;
         onReact(messageId, '❤️');
-        if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        if (
+          settings.vibrationsEnabled &&
+          typeof navigator !== 'undefined' &&
+          'vibrate' in navigator
+        ) {
           navigator.vibrate(12);
         }
         return;
@@ -355,7 +363,11 @@
         showMobileActions = true;
         showEmojiPicker = false;
         showInfo = false;
-        if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        if (
+          settings.vibrationsEnabled &&
+          typeof navigator !== 'undefined' &&
+          'vibrate' in navigator
+        ) {
           navigator.vibrate(10);
         }
       }, 420);
@@ -404,13 +416,21 @@
     if (shouldTriggerReplySwipe(dx, dy, isOwn, replyGesture.phase)) {
       swipeHandled = true;
       onReply?.(messageId);
-      if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      if (
+        settings.vibrationsEnabled &&
+        typeof navigator !== 'undefined' &&
+        'vibrate' in navigator
+      ) {
         navigator.vibrate(12);
       }
     } else if (shouldTriggerReactionSwipe(dx, dy, isOwn, replyGesture.phase) && onReact) {
       swipeHandled = true;
       showQuickReactions = true;
-      if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      if (
+        settings.vibrationsEnabled &&
+        typeof navigator !== 'undefined' &&
+        'vibrate' in navigator
+      ) {
         navigator.vibrate(12);
       }
     }
@@ -511,7 +531,8 @@
         href="/chat"
         class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
       >
-        <Hash size={12} strokeWidth={3} /> {m.msg_channel_invite_join_button()}
+        <Hash size={12} strokeWidth={3} />
+        {m.msg_channel_invite_join_button()}
       </a>
     </div>
   {:else}
@@ -587,7 +608,9 @@
             toggleInfo(e as unknown as MouseEvent);
           }
         }}
-        style:transform={replyDragPx !== 0 || reactDragPx !== 0 ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)` : undefined}
+        style:transform={replyDragPx !== 0 || reactDragPx !== 0
+          ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)`
+          : undefined}
         class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
           ? 'p-0'
           : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
@@ -729,12 +752,17 @@
             onclick={() => {
               onReact(messageId, emoji);
               showQuickReactions = false;
-              if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+              if (
+                settings.vibrationsEnabled &&
+                typeof navigator !== 'undefined' &&
+                'vibrate' in navigator
+              ) {
                 navigator.vibrate(12);
               }
             }}
             class="text-xl leading-none px-1 py-0.5 rounded-xl hover:bg-black/8 dark:hover:bg-white/10 active:scale-125 transition-all"
-          >{emoji}</button>
+            >{emoji}</button
+          >
         {/each}
       </div>
     {/if}
@@ -750,7 +778,11 @@
       onReactEmoji={(emoji) => {
         onReact?.(messageId, emoji);
         showMobileActions = false;
-        if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        if (
+          settings.vibrationsEnabled &&
+          typeof navigator !== 'undefined' &&
+          'vibrate' in navigator
+        ) {
           navigator.vibrate(12);
         }
       }}
@@ -758,22 +790,48 @@
         showMobileActions = false;
         showEmojiPicker = true;
       }}
-      onReply={onReply && !isDeleted ? () => { onReply!(messageId); showMobileActions = false; } : undefined}
+      onReply={onReply && !isDeleted
+        ? () => {
+            onReply!(messageId);
+            showMobileActions = false;
+          }
+        : undefined}
       onForward={onForward && !isDeleted ? () => onForward!(messageId) : undefined}
       {pinned}
-      onPin={!isDeleted && onTogglePin ? () => { onTogglePin!(messageId); showMobileActions = false; } : undefined}
+      onPin={!isDeleted && onTogglePin
+        ? () => {
+            onTogglePin!(messageId);
+            showMobileActions = false;
+          }
+        : undefined}
       onCopy={textContent && !isDeleted
         ? () => {
             navigator.clipboard?.writeText(textContent);
             showMobileActions = false;
-            if (settings.vibrationsEnabled && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            if (
+              settings.vibrationsEnabled &&
+              typeof navigator !== 'undefined' &&
+              'vibrate' in navigator
+            ) {
               navigator.vibrate(8);
             }
           }
         : undefined}
-      onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? () => { startInlineEdit(); showMobileActions = false; } : undefined}
-      onDelete={!isDeleted && isOwn && onDelete ? () => { showDeleteModal = true; showMobileActions = false; } : undefined}
-      onClose={() => { showMobileActions = false; }}
+      onEdit={!isDeleted && isOwn && !mediaRef && onEdit
+        ? () => {
+            startInlineEdit();
+            showMobileActions = false;
+          }
+        : undefined}
+      onDelete={!isDeleted && isOwn && onDelete
+        ? () => {
+            showDeleteModal = true;
+            showMobileActions = false;
+          }
+        : undefined}
+      onClose={() => {
+        showMobileActions = false;
+      }}
     />
   </div>
 

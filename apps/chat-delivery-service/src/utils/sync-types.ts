@@ -102,8 +102,7 @@ export function sanitizeSyncManifest(payload: unknown): SyncManifestPayload {
 
   const record = payload as Record<string, unknown>;
   const generatedAt =
-    typeof record.generatedAt === 'number' &&
-    Number.isFinite(record.generatedAt)
+    typeof record.generatedAt === 'number' && Number.isFinite(record.generatedAt)
       ? Math.floor(record.generatedAt)
       : Date.now();
 
@@ -111,37 +110,30 @@ export function sanitizeSyncManifest(payload: unknown): SyncManifestPayload {
     throw new BadRequestException('manifest.conversations must be an array');
   }
   if (record.conversations.length > 2_000) {
-    throw new BadRequestException(
-      'manifest.conversations must not exceed 2 000 entries',
-    );
+    throw new BadRequestException('manifest.conversations must not exceed 2 000 entries');
   }
 
-  const conversations: SyncConversationManifest[] = record.conversations.map(
-    (raw) => {
-      if (!raw || typeof raw !== 'object') {
-        throw new BadRequestException('manifest conversation entry is invalid');
-      }
+  const conversations: SyncConversationManifest[] = record.conversations.map((raw) => {
+    if (!raw || typeof raw !== 'object') {
+      throw new BadRequestException('manifest conversation entry is invalid');
+    }
 
-      const entry = raw as Record<string, unknown>;
-      const conversationId = sanitizeQueryValue(
-        entry.conversationId,
-        'conversationId',
-      );
-      const groupId = sanitizeOptionalQueryValue(entry.groupId, 'groupId');
-      const updatedAt =
-        typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
-          ? Math.floor(entry.updatedAt)
-          : undefined;
-      const messageIds = sanitizeMessageIdList(entry.messageIds);
+    const entry = raw as Record<string, unknown>;
+    const conversationId = sanitizeQueryValue(entry.conversationId, 'conversationId');
+    const groupId = sanitizeOptionalQueryValue(entry.groupId, 'groupId');
+    const updatedAt =
+      typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
+        ? Math.floor(entry.updatedAt)
+        : undefined;
+    const messageIds = sanitizeMessageIdList(entry.messageIds);
 
-      return {
-        conversationId,
-        groupId,
-        updatedAt,
-        messageIds,
-      };
-    },
-  );
+    return {
+      conversationId,
+      groupId,
+      updatedAt,
+      messageIds,
+    };
+  });
 
   return { generatedAt, conversations };
 }
@@ -151,9 +143,7 @@ export function sanitizeSyncManifest(payload: unknown): SyncManifestPayload {
  * Enforces a maximum of 2 000 chunks per upload to prevent oversized payloads.
  * Throws `BadRequestException` if any chunk or row fails validation.
  */
-export function sanitizeSerializedChunks(
-  value: unknown,
-): SyncSerializedChunk[] {
+export function sanitizeSerializedChunks(value: unknown): SyncSerializedChunk[] {
   if (!Array.isArray(value)) {
     throw new BadRequestException('chunks must be an array');
   }
@@ -175,25 +165,19 @@ export function sanitizeSerializedChunks(
 
     const conversation = {
       id: sanitizeQueryValue(rawConversation.id, 'conversation.id'),
-      groupId: sanitizeQueryValue(
-        rawConversation.groupId,
-        'conversation.groupId',
-      ),
+      groupId: sanitizeQueryValue(rawConversation.groupId, 'conversation.groupId'),
       name: (() => {
         if (typeof rawConversation.name !== 'string') {
           throw new BadRequestException('conversation.name must be a string');
         }
         const text = rawConversation.name.trim();
-        if (!text)
-          throw new BadRequestException('conversation.name is required');
-        if (text.length > 256)
-          throw new BadRequestException('conversation.name is too long');
+        if (!text) throw new BadRequestException('conversation.name is required');
+        if (text.length > 256) throw new BadRequestException('conversation.name is too long');
         return text;
       })(),
       isReady: Boolean(rawConversation.isReady),
       updatedAt:
-        typeof rawConversation.updatedAt === 'number' &&
-        Number.isFinite(rawConversation.updatedAt)
+        typeof rawConversation.updatedAt === 'number' && Number.isFinite(rawConversation.updatedAt)
           ? Math.floor(rawConversation.updatedAt)
           : Date.now(),
     };
@@ -210,10 +194,7 @@ export function sanitizeSerializedChunks(
       const row = rawRow as Record<string, unknown>;
       return {
         id: sanitizeQueryValue(row.id, 'row.id'),
-        conversationId: sanitizeQueryValue(
-          row.conversationId,
-          'row.conversationId',
-        ),
+        conversationId: sanitizeQueryValue(row.conversationId, 'row.conversationId'),
         timestamp:
           typeof row.timestamp === 'number' && Number.isFinite(row.timestamp)
             ? Math.floor(row.timestamp)
@@ -234,16 +215,11 @@ export function sanitizeSerializedChunks(
  * messages the peer is missing (requester has them). Used by the server to
  * tell each side exactly which messages to upload to the session storage.
  */
-export function computeManifestDiff(
-  requester: SyncManifestPayload,
-  peer: SyncManifestPayload,
-) {
+export function computeManifestDiff(requester: SyncManifestPayload, peer: SyncManifestPayload) {
   const requesterByConversation = new Map(
-    requester.conversations.map((c) => [c.conversationId, c]),
+    requester.conversations.map((c) => [c.conversationId, c])
   );
-  const peerByConversation = new Map(
-    peer.conversations.map((c) => [c.conversationId, c]),
-  );
+  const peerByConversation = new Map(peer.conversations.map((c) => [c.conversationId, c]));
 
   const allConversationIds = new Set<string>([
     ...requesterByConversation.keys(),

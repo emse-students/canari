@@ -49,7 +49,7 @@ export class ExternalController {
 
   constructor(
     @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
+    private readonly userRepo: Repository<User>
   ) {}
 
   /** Throws ForbiddenException unless the header matches EXTERNAL_API_KEY (timing-safe). */
@@ -67,10 +67,7 @@ export class ExternalController {
 
   /** Aggregated public profile (identity, bio, associations) for an OIDC subject. */
   @Get('profile/:sub')
-  async profile(
-    @Param('sub') sub: string,
-    @Headers('x-api-key') apiKey: string,
-  ) {
+  async profile(@Param('sub') sub: string, @Headers('x-api-key') apiKey: string) {
     this.assertApiKey(apiKey);
 
     const user = await this.userRepo.findOne({ where: { id: sub } });
@@ -84,13 +81,11 @@ export class ExternalController {
     try {
       const res = await axios.get<SocialAssociations>(
         getSocialServiceBase() + internalUserAssociationsPath(sub),
-        internalSocialRequestConfig(),
+        internalSocialRequestConfig()
       );
       associations = res.data;
     } catch (e) {
-      this.logger.warn(
-        `Failed to fetch associations for ${sub}: ${(e as Error).message}`,
-      );
+      this.logger.warn(`Failed to fetch associations for ${sub}: ${(e as Error).message}`);
     }
 
     return {

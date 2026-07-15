@@ -84,9 +84,7 @@
         await navigateExternal(result.url);
       }
     } catch (err: unknown) {
-      showToast(
-        err instanceof Error ? err.message : m.form_card_registration_error()
-      );
+      showToast(err instanceof Error ? err.message : m.form_card_registration_error());
     } finally {
       savingCard = false;
     }
@@ -456,7 +454,9 @@
                 <span
                   class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
                 >
-                  {m.form_view_from_price({ price: formatCurrency(effectiveBasePrice(form), form.currency) })}
+                  {m.form_view_from_price({
+                    price: formatCurrency(effectiveBasePrice(form), form.currency),
+                  })}
                   {#if memberPricing}{m.form_view_member_pricing()}{/if}
                 </span>
               {/if}
@@ -481,7 +481,9 @@
               <span
                 class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
               >
-                {m.form_view_from_price({ price: formatCurrency(effectiveBasePrice(form), form.currency) })}
+                {m.form_view_from_price({
+                  price: formatCurrency(effectiveBasePrice(form), form.currency),
+                })}
                 {#if memberPricing}{m.form_view_member_pricing()}{/if}
               </span>
             {/if}
@@ -527,7 +529,9 @@
           <CalendarDays size={18} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-xs font-bold uppercase tracking-wide text-text-muted">{m.form_view_event_linked()}</p>
+          <p class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            {m.form_view_event_linked()}
+          </p>
           <p class="text-sm font-semibold text-text-main truncate">{linkedAgendaEvent.title}</p>
         </div>
         <span class="text-xs font-semibold text-cn-dark shrink-0">{m.form_view_event_see()}</span>
@@ -619,8 +623,7 @@
               class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
               bind:value={selections[item.id]}
               placeholder={m.form_view_answer_placeholder()}
-              disabled={submitted || isNotOpenYet}
-            ></textarea>
+              disabled={submitted || isNotOpenYet}></textarea>
           {:else if item.type === 'dropdown' || item.type === 'single'}
             <select
               class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all appearance-none focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
@@ -882,7 +885,9 @@
           {:else if formFull}
             {m.form_view_full()}
           {:else if calculateTotal() > 0}
-            <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({ amount: formatCurrency(calculateTotal(), form.currency) })}
+            <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
+              amount: formatCurrency(calculateTotal(), form.currency),
+            })}
           {:else}
             <Check size={16} class="mr-1.5" />{form.submitLabel || 'Envoyer'}
           {/if}
