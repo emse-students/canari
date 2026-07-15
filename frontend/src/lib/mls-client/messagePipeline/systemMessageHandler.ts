@@ -381,8 +381,9 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
-    // A bundle arrived: stop any in-flight solicitation retries for this group (idempotent).
-    noteHistoryBundleReceived(convoKey);
+    // A bundle arrived: stop any in-flight solicitation retries for this group (idempotent) and
+    // clear the durable awaiting-history marker so future sessions no longer re-solicit it.
+    noteHistoryBundleReceived(userId, convoKey);
     try {
       const msgs: Array<{
         id: string;

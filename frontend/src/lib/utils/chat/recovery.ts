@@ -167,7 +167,7 @@ export async function requestReAdd(
     // Solicit the pre-join history from one online member: an external join lands at the current
     // epoch WITHOUT the peer-driven history bundle, so we ask for it explicitly. Bounded,
     // receipt-driven retries rotate past a frozen-online peer; cancelled when the bundle arrives.
-    solicitHistory(deps.mlsService, groupId, deps.log);
+    solicitHistory(deps.mlsService, deps.userId, groupId, deps.log);
     return;
   }
 

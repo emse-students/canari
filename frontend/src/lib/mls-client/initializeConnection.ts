@@ -1,6 +1,7 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
+import { reSolicitAwaitingHistory } from '$lib/utils/chat/historySolicit';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 export interface ConnectionDeps {
@@ -203,6 +204,13 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   if (stateMutated) {
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
   }
+
+  // Cross-session history retry: re-solicit the pre-join bundle for any group we hold locally that
+  // is still awaiting it (durable registry). Covers the case where the sole reachable member was
+  // offline during the in-session solicitation window at join time - each reconnect gives it a
+  // fresh chance. Groups absent from WASM are handled above by the recovery seam, which solicits on
+  // a successful (re)join.
+  reSolicitAwaitingHistory(mlsService, userId, mlsService.getLocalGroups(), log);
 
   // Small delay to let the first batch of messages arrive.
   await new Promise((r) => setTimeout(r, 500));

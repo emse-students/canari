@@ -666,7 +666,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             // inviter pushes a bundle on the foreground add path, but its background twin
             // (send-welcome-and-commit) does not, so we also solicit it ourselves (idempotent,
             // receipt-driven retries). Only for a genuinely new local conversation.
-            solicitHistory(mlsService, groupId, cb.log);
+            solicitHistory(mlsService, ctx.getUserId(), groupId, cb.log);
           }
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)

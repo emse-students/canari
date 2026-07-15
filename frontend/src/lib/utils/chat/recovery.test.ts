@@ -7,6 +7,7 @@ vi.mock('$lib/utils/hex', () => ({
 import { requestReAdd, cancelReAdd, recoverForkedGroup, resetReAddCooldowns } from './recovery';
 import { saveMlsState } from '$lib/utils/hex';
 import { cancelAllHistorySolicit } from './historySolicit';
+import { enumerateAwaitingHistory } from './awaitingHistoryRegistry';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -70,8 +71,9 @@ describe('requestReAdd', () => {
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
     // External join lands at the current epoch without the peer-driven history bundle, so we
-    // solicit it explicitly from one online member.
-    expect(deps.mlsService.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    // solicit it. The first network attempt is deferred (lets the peer apply our commit first), but
+    // the durable awaiting-history intent is armed synchronously so it is retried across sessions.
+    expect(enumerateAwaitingHistory('user-a')).toContain('g1');
     // Not-ready marker cleared on success.
     expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).toBeNull();
   });
