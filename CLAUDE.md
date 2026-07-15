@@ -65,14 +65,18 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 **Open items:**
 * **Canari TS 6->7 majors (#168/#163/#162): DEFERRED until TS 7.1.** Breaking compiler jump fails `Test TS Backend`; ecosystem not ready. Hold the PRs (do not merge); TS stays `~6.0.3`. Revisit when 7.1 ships.
 * **Watch (majors that may fail CI):** prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
-* **Node -> 24: MiGallery pending** (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Canari/Sky done.
-* Low-sev CodeQL alerts to close: MiGallery (2 high + 4 medium; file-system-race is the real one), Portail (1 quality), Sky (3). Fold wiki + English-comment audit into touched files.
+* **Node -> 24: DONE across all** (MiGallery shipped 2026-07-15, commit dd80739: ci/code-analysis/release workflows + Dockerfile both stages + `engines>=24`; Canari/Sky already done). Portail = pure Bun, N/A.
+* **CodeQL: DONE.** Verified via `gh api` 2026-07-15: MiGallery 4 alerts dismissed (all FP/stale: atomic-rename file-system-race + safeLog log-injection + a stale unused-import) -> 0 open; Sky 0 open (roadmap's "3" was stale); Portail has NO code scanning configured (the "1 quality" was stale). Nothing left to close.
 
 ---
 
-### CANARI - no open code tasks
+### CANARI - open
 
-All roadmap items resolved. Residual = on-device verification of MLS mobile native paths (Android/iOS, not compiler-verifiable here). TS 6->7 deferred until 7.1 (see cross-project).
+* \[x\] **Visible action errors (channel/community).** DONE, committed d2688ff7. Failed sidebar actions only hit the debug log before; now `useChannelWorkspaces` parses the NestJS error body (`parseApiError`) and `toUiActionError` localizes it, distinguishing **401 session** vs **403 permission (with backend reason)**, raising a `showToast`. 10 call sites pass `m.channel_action_*()` labels; invite site `toast=false` (modal shows inline). 15 Paraglide keys added. Gates green (check 0 errors, lint, format via hook). Gotcha for the follow-up: Paraglide param messages need both `{action}`&`{detail}` present (permission/generic pass both; session/conflict/network pass only `{action}`).
+* \[ \] **FOLLOW-UP: server-authoritative button gating.** User wants the "change image" (and other admin) controls hidden when the viewer lacks `MANAGE_WORKSPACE`. Client currently has NO viewer-permission data (`ChannelSidebarWorkspace` has none; roles!=permissions client-side; cotisant-style rule = no client derivation). Needs backend to expose `viewerCanManage`/effective perms on the workspace listing, then thread DTO->composable type->`SidebarCommunityAdminModal` prop->conditional render. Larger WP; not started.
+* \[ \] **AUDIT: new-device login for a user whose old device is gone.** Symptom (user-reported, web session logs 2026-07-15, user b78568a3): re-add works but is flaky. Sync self-repairs over a few messages/refreshes (repair mechanisms OK), BUT the pre-join **history bundle never displays** on the new device, plus noise. Observed in logs: (a) `externalJoin succeeded (base epoch 7)` + `[READD] rejoined via external commit (self-service)` -> `[HISTORY_REQ] solicit attempt 0` fires but no `history_bundle` ever arrives; (b) `[DISCOVERY] 1 server group(s) missing locally d82cd226::b78568a3` only gets a **placeholder** created, never externalJoin'd -> so NO history solicit at all for that group; (c) ~15x `[RUST::ERROR] Sender data decryption error` during `bulk ingest depth=1`. Audit scope: **(1)** solicit->serve->receive round-trip: sender [historySolicit.ts](frontend/src/lib/utils/chat/historySolicit.ts) (bounded retries 30/90/180s, stops on `noteHistoryBundleReceived`), responder selection [chat-delivery-service/.../messaging.service.ts](apps/chat-delivery-service/src/services/messaging.service.ts), receive/apply [history.ts](frontend/src/lib/utils/chat/history.ts) + [historySystemEvents.ts](frontend/src/lib/utils/chat/historySystemEvents.ts) + [systemMessageHandler.ts](frontend/src/lib/mls-client/messagePipeline/systemMessageHandler.ts). Known liveness limit already documented ([historySolicit.ts:28-31](frontend/src/lib/utils/chat/historySolicit.ts#L28-L31)): if the ONLY other member is offline/frozen-online no responder exists -> for a 1:1 DM this is the whole failure. Verify whether peer WAS online and still didn't serve (=real bug) vs genuinely absent (=expected, needs UX). **(2)** discovered-but-not-joined groups: placeholder path in [syncEngine.ts](frontend/src/lib/sync/syncEngine.ts) should trigger externalJoin + solicit, not stop at placeholder. **(3)** `Sender data decryption error` bulk-ingest storm: epoch-mismatch frames pre-join being force-decrypted; confirm they are dropped gracefully vs blocking ingest. Cross-check recent design docs [MLS-REAUDIT-2026-07.md](docs/MLS-REAUDIT-2026-07.md) + [AUDIT-MLS-2026-06.md](docs/AUDIT-MLS-2026-06.md). Not started; investigation-first (no fix committed yet).
+
+All prior roadmap items resolved. Residual = on-device verification of MLS mobile native paths (Android/iOS, not compiler-verifiable here). TS 6->7 deferred until 7.1 (see cross-project).
 
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
@@ -84,18 +88,19 @@ Nothing open. Conventions in memory: [[project_sky_conventions]], accents [[feed
 
 ---
 
-### MIGALLERY (../MiGallery) - open
+### MIGALLERY (../MiGallery) - essentially COMPLETE (HEAD 882d6d1)
 
-* \[ \] Normalization: wiki + Paraglide infra done+pushed; remaining = UI string migration + English comments + tolerant search ([[project_migallery_normalization]]).
-* \[ \] Cleanup (see cross-project): CodeQL alerts, Node bump, wiki/comment audit.
+* \[x\] Normalization: wiki + Paraglide i18n + tolerant search done; ALL user-facing FR strings migrated (last residuals shipped 882d6d1; accented-French sweep of src = 0 string literals) ([[project_migallery_normalization]]).
+* \[x\] Cleanup: CodeQL (0 open) + Node 24 done (see cross-project).
+* Residual (minor, opportunistic): stray French code comments in src (hooks, permissions.ts JSDoc, immich proxy) - fold into touched files, no dedicated pass.
 
 ---
 
-### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA - only cleanup open
+### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA - COMPLETE
 
 Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false`: deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, i18n, MD bios, CI integrity, N7 CD-via-Secrets (verified live 2026-07-15) all DONE ([[project_portail_vitrine_migration]]).
 
-* \[ \] Cleanup (see cross-project): 1 quality CodeQL alert, Node bump.
+* \[x\] Cleanup: no code scanning configured (no CodeQL alert to close); Node bump N/A (pure Bun). Nothing open.
 
 ---
 
