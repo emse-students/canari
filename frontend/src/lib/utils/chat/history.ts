@@ -31,6 +31,62 @@ function lastStreamIdKey(userId: string, groupId: string): string {
   return `history_last_stream_id:${userId}:${groupId}`;
 }
 
+/** Return the localStorage key used to persist per-ciphertext retry counters for undecryptable history frames. */
+function retryCipherKey(userId: string, groupId: string): string {
+  return `history_retry_cipher:${userId}:${groupId}`;
+}
+
+/**
+ * Max number of separate replay runs an `epoch-gap` / `wrong-epoch` history frame may stay
+ * un-seen (retryable) before it is treated as permanently undecryptable and consumed. Bounds the
+ * per-sync refetch storm caused by frames that no epoch catch-up can ever resolve (an external
+ * joiner's pre-join / forked-epoch ciphertexts) while still leaving room for a genuinely transient
+ * gap to heal across a few reconnects. [[M2]]
+ */
+const MAX_HISTORY_DECRYPT_RETRIES = 6;
+
+/**
+ * Decides how a recoverable history decrypt failure (`epoch-gap` / `wrong-epoch`) should be
+ * handled given how many prior replay runs already left this exact ciphertext un-seen. Returns
+ * the incremented attempt count and whether the frame should stay retryable (`retry: true` -> keep
+ * it un-seen so a later epoch catch-up can decrypt it) or be given up on (`retry: false` -> mark it
+ * seen to stop the per-sync refetch storm from a frame no catch-up can ever resolve). [[M2]]
+ */
+export function nextHistoryRetryDecision(priorAttempts: number): {
+  attempts: number;
+  retry: boolean;
+} {
+  const attempts = priorAttempts + 1;
+  return { attempts, retry: attempts < MAX_HISTORY_DECRYPT_RETRIES };
+}
+
+/** Load the per-ciphertext retry counters from localStorage (fingerprint -> failed-replay count). */
+function loadRetryCipherCounts(userId: string, groupId: string): Map<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(retryCipherKey(userId, groupId)) ?? '[]');
+    return new Map(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Map();
+  }
+}
+
+/** Persist the retry counters, capped at 2 000 entries (keeps the most-recently-touched) to bound growth. */
+function saveRetryCipherCounts(userId: string, groupId: string, counts: Map<string, number>): void {
+  const MAX_ENTRIES = 2000;
+  const entries = [...counts.entries()];
+  const bounded =
+    entries.length > MAX_ENTRIES ? entries.slice(entries.length - MAX_ENTRIES) : entries;
+  try {
+    if (bounded.length === 0) {
+      localStorage.removeItem(retryCipherKey(userId, groupId));
+    } else {
+      localStorage.setItem(retryCipherKey(userId, groupId), JSON.stringify(bounded));
+    }
+  } catch {
+    /* quota exceeded - graceful degradation */
+  }
+}
+
 /** Read the last-processed Redis stream ID from localStorage; returns undefined if not set. */
 export function readHistoryStreamCursor(userId: string, groupId: string): string | undefined {
   return localStorage.getItem(lastStreamIdKey(userId, groupId)) ?? undefined;
@@ -195,6 +251,12 @@ export async function replayConversationHistory(params: {
     const seenCipherHashes = loadSeenCipherHashes(userId, id);
     let seenUpdated = false;
 
+    // Per-ciphertext retry ledger: how many prior replay runs left this frame un-seen because it
+    // failed with a recoverable epoch-gap / wrong-epoch. Bounds the refetch storm from frames no
+    // catch-up can ever resolve (external joiner's pre-join / forked-epoch ciphertexts). [[M2]]
+    const retryCounts = loadRetryCipherCounts(userId, id);
+    let retryUpdated = false;
+
     let addedMsg = 0;
     let mlsUpdated = false;
 
@@ -349,15 +411,35 @@ export async function replayConversationHistory(params: {
             continue;
           }
           if (kind === 'epoch-gap' || kind === 'wrong-epoch') {
-            // Recoverable: epoch/ratchet gap (epoch-gap), or a frame from an epoch this replay
-            // has not reached yet (wrong-epoch - the commit may apply on a later load).
-            // Do NOT mark it "seen" so the entry is retried at the next history load
-            // after epoch resynchronization. [[M2]]
-            skipSeenHash = true;
             // epoch-gap = we are BEHIND (missing a commit). Remember it so we can flag the group
             // for recovery at the end if no catch-up commit advances our epoch in this replay.
             if (kind === 'epoch-gap') sawEpochGap = true;
-            console.warn(`[History] retryable (${kind}): ${String(err).slice(0, 200)}`);
+            const { attempts, retry } = nextHistoryRetryDecision(
+              retryCounts.get(cipherFingerprint) ?? 0
+            );
+            if (retry) {
+              // Recoverable: epoch/ratchet gap (epoch-gap), or a frame from an epoch this replay
+              // has not reached yet (wrong-epoch - the commit may apply on a later load). Do NOT
+              // mark it "seen" so the entry is retried at the next history load after epoch
+              // resynchronization. Bounded so it cannot refetch-storm forever. [[M2]]
+              skipSeenHash = true;
+              retryCounts.set(cipherFingerprint, attempts);
+              retryUpdated = true;
+              console.warn(
+                `[History] retryable ${attempts}/${MAX_HISTORY_DECRYPT_RETRIES} (${kind}): ${String(err).slice(0, 200)}`
+              );
+            } else {
+              // Bounded retries exhausted: no epoch catch-up has resolved this frame across many
+              // syncs, so it is permanently undecryptable for us (pre-join / forked epoch). Fall
+              // through with skipSeenHash=false so the finally consumes it (marks seen + advances
+              // the cursor), stopping the per-sync refetch storm. The `sawEpochGap` flag above
+              // still lets shouldFlagStaleEpochGap escalate a genuinely stuck-behind group.
+              retryCounts.delete(cipherFingerprint);
+              retryUpdated = true;
+              console.warn(
+                `[History] permanently undecryptable after ${attempts} attempts (${kind}); marking seen`
+              );
+            }
           } else {
             console.warn(`History msg error: ${err}`);
           }
@@ -366,6 +448,9 @@ export async function replayConversationHistory(params: {
             seenCipherHashes.add(cipherFingerprint);
             seenUpdated = true;
             advanceStreamCursor = true;
+            // Frame resolved (decrypted) or given up on: drop any retry counter so it can never
+            // linger and re-trigger a give-up on a later, unrelated cursor position.
+            if (retryCounts.delete(cipherFingerprint)) retryUpdated = true;
           }
         }
 
@@ -516,6 +601,7 @@ export async function replayConversationHistory(params: {
     return () => {
       if (latestStreamId) saveLastStreamId(userId, id, latestStreamId);
       if (seenUpdated) saveSeenCipherHashes(userId, id, seenCipherHashes);
+      if (retryUpdated) saveRetryCipherCounts(userId, id, retryCounts);
     };
   } catch (err) {
     // Non-blocking: log the error and continue so other conversations still load

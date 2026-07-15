@@ -333,8 +333,9 @@ If saved WASM/Rust state embeds a different device ID than what's in localStorag
 2. Fetch Redis Stream from `/api/mls/history/:groupId?after=<streamId>`.
 3. For each message: use Redis Stream ID as deduplication fingerprint.
 4. `processIncomingMessage()` -> decrypt -> `appMsgToEnvelope()` -> dispatch.
-5. Irrecoverable errors (`CannotDecryptOwnMessage`, `WrongEpoch`, `SecretReuseError`) -> add to seen fingerprints -> skip.
-6. Save `lastStreamId` for next fetch.
+5. Permanent same-epoch errors (`CannotDecryptOwnMessage`, `SecretReuseError`) -> add to seen fingerprints -> skip.
+6. Recoverable errors (`epoch-gap` = future frame we are behind; `wrong-epoch`) -> kept **un-seen** so a later load after epoch catch-up can decrypt them. Bounded by a per-ciphertext retry ledger (`history_retry_cipher:*`, cap `MAX_HISTORY_DECRYPT_RETRIES`): a frame that stays undecryptable across that many replay runs is a permanently-undecryptable frame (an external joiner's pre-join / forked-epoch ciphertext), so it is finally marked seen and the cursor advances past it - this stops the per-sync `Sender data decryption error` refetch storm. `epoch-gap` still sets the stale-gap flag (`shouldFlagStaleEpochGap`) so a genuinely stuck-behind group is escalated to forget + re-Welcome.
+7. Save `lastStreamId` (and the retry ledger) for next fetch - deferred to the post-checkpoint commit thunk so durable progress never runs ahead of the persisted ratchet.
 
 ## Multi-tab leadership
 
