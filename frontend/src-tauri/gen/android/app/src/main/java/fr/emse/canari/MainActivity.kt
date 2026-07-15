@@ -13,9 +13,9 @@ import java.io.File
 class MainActivity : TauriActivity() {
     companion object {
         /**
-         * Vrai quand l'activité est au premier plan (entre onResume et onPause).
-         * Utilisé par CanariFirebaseMessagingService pour supprimer les notifications
-         * de messages MLS quand l'app est ouverte (le WebSocket les a déjà livrés).
+         * True while the activity is in the foreground (between onResume and onPause).
+         * Used by CanariFirebaseMessagingService to suppress MLS message notifications
+         * when the app is open (the WebSocket has already delivered them).
          */
         @Volatile var isInForeground: Boolean = false
     }
@@ -24,15 +24,15 @@ class MainActivity : TauriActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
-        // Demande la permission de notification nativement sur Android 13+
+        // Request the notification permission natively on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
             }
         }
 
-        // Synchronise le token FCM vers fcm_token.txt lu par la commande Rust get_fcm_token.
-        // Nécessaire au redémarrage : onNewToken n'est pas rappelé si le token est inchangé.
+        // Sync the FCM token to fcm_token.txt read by the Rust command get_fcm_token.
+        // Needed on restart: onNewToken is not called again when the token is unchanged.
         FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
             if (!token.isNullOrEmpty()) {
                 try {
@@ -48,10 +48,10 @@ class MainActivity : TauriActivity() {
         }
     }
 
-    // Par défaut sur Android ≥ API 21, les cookies tiers sont bloqués dans le WebView.
-    // L'app fait des requêtes fetch() avec credentials:'include' depuis tauri://localhost
-    // vers canari-emse.fr - sans ce flag, le cookie canari_refresh n'est jamais stocké
-    // ni renvoyé, ce qui brise la persistance de session après chaque redémarrage.
+    // By default on Android >= API 21, third-party cookies are blocked in the WebView.
+    // The app makes fetch() requests with credentials:'include' from tauri://localhost
+    // to canari-emse.fr - without this flag the canari_refresh cookie is never stored
+    // nor sent back, which breaks session persistence after every restart.
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)

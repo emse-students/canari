@@ -9,14 +9,14 @@ import android.util.Log
 import java.io.File
 
 /**
- * Application custom chargée AVANT tout composant Android (y compris les services FCM).
- * Rôles :
- *  1. Charger la bibliothèque native Rust mines_app_lib.
- *  2. Créer les canaux de notification Android (requis depuis API 26).
- *  3. Transférer le pushSecret depuis pending_push_secret.txt vers le Keystore Android
- *     (écrit par Tauri après enregistrement FCM, lu une seule fois puis supprimé).
+ * Custom Application loaded BEFORE any Android component (including the FCM services).
+ * Roles:
+ *  1. Load the native Rust library mines_app_lib.
+ *  2. Create the Android notification channels (required since API 26).
+ *  3. Transfer the pushSecret from pending_push_secret.txt to the Android Keystore
+ *     (written by Tauri after FCM registration, read exactly once then deleted).
  *
- * Enregistrée dans AndroidManifest.xml via android:name=".CanariApplication".
+ * Registered in AndroidManifest.xml via android:name=".CanariApplication".
  */
 class CanariApplication : Application() {
     override fun onCreate() {
@@ -24,8 +24,8 @@ class CanariApplication : Application() {
         try {
             System.loadLibrary("mines_app_lib")
         } catch (_: UnsatisfiedLinkError) {
-            // La lib n'est pas disponible sur cette architecture – les appels
-            // natifs échoueront gracieusement (notification générique affichée).
+            // The lib is not available on this architecture - native calls
+            // will fail gracefully (a generic notification is shown).
         }
         createNotificationChannels()
         processPendingPushSecret()
@@ -38,24 +38,24 @@ class CanariApplication : Application() {
     }
 
     /**
-     * Vérifie que le Keystore Android peut lire le push secret (clé non perdue).
-     * Écrit `keystore_ok.flag` si OK, le supprime sinon.
-     * La commande Tauri `check_push_secret_health` lit ce flag pour signaler l'UI.
-     * Appel silencieux : une erreur ici ne doit pas bloquer le démarrage.
+     * Verifies that the Android Keystore can read the push secret (key not lost).
+     * Writes `keystore_ok.flag` if OK, deletes it otherwise.
+     * The Tauri command `check_push_secret_health` reads this flag to signal the UI.
+     * Silent call: an error here must not block startup.
      */
     internal fun checkKeystoreHealth() {
         try {
             val dataDir = MlsContextLoader.tauriDataDir(this)
             val contextFile = File(dataDir, "push_context.json")
-            if (!contextFile.exists()) return // pas encore authentifié, aucun secret attendu
+            if (!contextFile.exists()) return // not authenticated yet, no secret expected
             val markerFile = File(dataDir, "keystore_ok.flag")
             val secret = PushSecretKeystore.retrieve(this)
             if (secret != null) {
                 markerFile.writeText("ok")
-                Log.d(TAG, "checkKeystoreHealth: Keystore opérationnel")
+                Log.d(TAG, "checkKeystoreHealth: Keystore operational")
             } else {
                 markerFile.delete()
-                Log.e(TAG, "checkKeystoreHealth: Keystore perdu - push background désactivé")
+                Log.e(TAG, "checkKeystoreHealth: Keystore lost - background push disabled")
             }
         } catch (e: Exception) {
             Log.e(TAG, "checkKeystoreHealth: exception: ${e.message}", e)
@@ -73,12 +73,12 @@ class CanariApplication : Application() {
             val secret = rawBytes.toString(Charsets.UTF_8).trim()
             if (secret.isNotEmpty()) {
                 PushSecretKeystore.store(this, secret)
-                Log.i(TAG, "processPendingPushSecret: secret stocké dans le Keystore")
+                Log.i(TAG, "processPendingPushSecret: secret stored in the Keystore")
             }
             file.writeBytes(ByteArray(rawBytes.size) { 0 })
             file.delete()
         } catch (e: Exception) {
-            Log.e(TAG, "processPendingPushSecret: échec du transfert push secret: ${e.message}", e)
+            Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.message}", e)
         }
     }
 
@@ -86,12 +86,12 @@ class CanariApplication : Application() {
         private const val TAG = "CanariApp"
 
         /**
-         * Crée les trois canaux de notification s'ils n'existent pas encore.
-         * Appelé depuis [CanariApplication.onCreate] et en fallback depuis
+         * Creates the three notification channels if they do not exist yet.
+         * Called from [CanariApplication.onCreate] and as a fallback from
          * [CanariFirebaseMessagingService.ensureNotificationChannels].
-         *  - canari_messages : DMs et messages de groupe (IMPORTANCE_HIGH, vibration, son)
-         *  - canari_social   : réactions/commentaires sur les posts (IMPORTANCE_DEFAULT, silencieux)
-         *  - canari_forms    : rappels de formulaires (IMPORTANCE_DEFAULT, silencieux)
+         *  - canari_messages : DMs and group messages (IMPORTANCE_HIGH, vibration, sound)
+         *  - canari_social   : reactions/comments on posts (IMPORTANCE_DEFAULT, silent)
+         *  - canari_forms    : form reminders (IMPORTANCE_DEFAULT, silent)
          */
         internal fun ensureChannels(manager: NotificationManager) {
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {

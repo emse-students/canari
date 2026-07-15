@@ -14,25 +14,25 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
 
     companion object {
         const val TAG = "CanariWorker"
-        /** ID de la notification foreground affichée quand le worker s'exécute en mode expedited. */
+        /** ID of the foreground notification shown when the worker runs in expedited mode. */
         private const val FOREGROUND_NOTIF_ID = 9998
-        /** ID de la notification "ouvrez l'app" affichée après 3 échecs consécutifs. */
+        /** ID of the "open the app" notification shown after 3 consecutive failures. */
         private const val FAILURE_NOTIF_ID = 9997
 
         const val PREFS_WORKER = "canari_worker_prefs"
         const val KEY_FAILED   = "mls_bg_failed"
 
         /**
-         * Réinitialise le flag d'échec persistant - à appeler depuis [MainActivity.onResume]
-         * dès que l'utilisateur ouvre l'app, pour que les prochains FCM enqueueront à nouveau.
+         * Resets the persistent failure flag - to be called from [MainActivity.onResume]
+         * as soon as the user opens the app, so that the next FCM messages enqueue again.
          */
         fun resetFailureFlag(context: Context) {
             context.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_FAILED, false).apply()
-            Log.d(TAG, "resetFailureFlag: flag réinitialisé")
+            Log.d(TAG, "resetFailureFlag: flag reset")
         }
 
-        /** Affiche une notification invitant l'utilisateur à ouvrir l'app pour débloquer la sync. */
+        /** Shows a notification inviting the user to open the app to unblock the sync. */
         private fun showWorkerFailureNotification(ctx: Context) {
             val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             CanariApplication.ensureChannels(manager)
@@ -50,16 +50,16 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
                 .setContentIntent(pi)
                 .build()
             manager.notify(FAILURE_NOTIF_ID, notif)
-            Log.w(TAG, "showWorkerFailureNotification: notification affichée")
+            Log.w(TAG, "showWorkerFailureNotification: notification shown")
         }
     }
 
-    // Pont JNI spécifique pour le traitement de la file d'attente (Welcome, etc.)
+    // Dedicated JNI bridge for queue processing (Welcome, etc.)
     external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String, userId: String, deviceId: String): Boolean
 
     /**
-     * Requis pour les workers expedited : fournit la notification foreground affichée
-     * si Android décide de promouvoir le worker en ForegroundService (rare en pratique).
+     * Required for expedited workers: provides the foreground notification shown
+     * if Android decides to promote the worker to a ForegroundService (rare in practice).
      */
     override fun getForegroundInfo(): ForegroundInfo {
         val notification = NotificationCompat.Builder(
@@ -82,20 +82,20 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             showWorkerFailureNotification(applicationContext)
             return Result.failure()
         }
-        Log.d(TAG, "doWork: démarrage (attempt $runAttemptCount)")
+        Log.d(TAG, "doWork: starting (attempt $runAttemptCount)")
 
-        // Garde foreground : si l'app est revenue au premier plan depuis l'enqueue, le moteur
-        // MLS Tauri traite déjà via WebSocket et écrit mls.bin. Traiter ici en parallèle
-        // clobbererait l'état (KeyPackages perdus, epoch gaps). On reporte : au prochain retry
-        // l'app sera probablement de nouveau en arrière-plan, sinon le foreground aura tout traité.
+        // Foreground guard: if the app came back to the foreground since the enqueue, the Tauri
+        // MLS engine is already processing via WebSocket and writing mls.bin. Processing here in
+        // parallel would clobber the state (lost KeyPackages, epoch gaps). We defer: on the next
+        // retry the app will likely be in the background again, otherwise the foreground handled it.
         if (MainActivity.isInForeground) {
-            Log.d(TAG, "doWork: app au premier plan → MLS géré par le foreground, retry différé")
+            Log.d(TAG, "doWork: app in foreground -> MLS handled by the foreground, retry deferred")
             return Result.retry()
         }
 
         val ctx = MlsContextLoader.loadPushContext(applicationContext)
         if (ctx == null) {
-            Log.e(TAG, "doWork: push_context.json manquant ou invalide → failure")
+            Log.e(TAG, "doWork: push_context.json missing or invalid -> failure")
             return Result.failure()
         }
         val filesDir = MlsContextLoader.tauriDataDir(applicationContext).also { it.mkdirs() }.absolutePath
@@ -107,33 +107,33 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
-            Log.e(TAG, "doWork: thread interrompu pendant tryLock: ${e.message}")
+            Log.e(TAG, "doWork: thread interrupted during tryLock: ${e.message}")
             return Result.retry()
         }
         if (!lockAcquired) {
-            Log.w(TAG, "doWork: MlsStateLock non acquis après 15s → retry")
+            Log.w(TAG, "doWork: MlsStateLock not acquired after 15s -> retry")
             return Result.retry()
         }
         return try {
             val stateBytes = MlsContextLoader.loadMlsState(applicationContext)
             if (stateBytes == null) {
-                Log.e(TAG, "doWork: mls.bin absent → failure")
+                Log.e(TAG, "doWork: mls.bin absent -> failure")
                 return Result.failure()
             }
-            Log.d(TAG, "doWork: état MLS=${stateBytes.size} octets, filesDir=$filesDir")
+            Log.d(TAG, "doWork: MLS state=${stateBytes.size} bytes, filesDir=$filesDir")
             val success = nativeProcessBackgroundTasks(filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId)
             if (success) {
-                Log.d(TAG, "doWork: nativeProcessBackgroundTasks → succès")
+                Log.d(TAG, "doWork: nativeProcessBackgroundTasks -> success")
                 Result.success()
             } else {
-                Log.w(TAG, "doWork: nativeProcessBackgroundTasks → false, retry")
+                Log.w(TAG, "doWork: nativeProcessBackgroundTasks -> false, retry")
                 Result.retry()
             }
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "doWork: librairie native non chargée → retry: ${e.message}")
+            Log.e(TAG, "doWork: native library not loaded -> retry: ${e.message}")
             Result.retry()
         } catch (e: Exception) {
-            Log.e(TAG, "doWork: exception inattendue → failure: ${e.message}")
+            Log.e(TAG, "doWork: unexpected exception -> failure: ${e.message}")
             Result.failure()
         } finally {
             MlsStateLock.LOCK.unlock()

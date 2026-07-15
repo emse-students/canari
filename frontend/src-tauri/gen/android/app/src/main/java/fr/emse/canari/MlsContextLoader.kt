@@ -5,15 +5,15 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Utilitaires partagés pour charger le contexte MLS et l'état binaire depuis le disque.
- * Centralisé ici pour éviter la duplication entre [CanariFirebaseMessagingService]
- * et [MlsBackgroundWorker], qui lisent les mêmes fichiers avec la même logique.
+ * Shared helpers to load the MLS context and binary state from disk.
+ * Centralized here to avoid duplication between [CanariFirebaseMessagingService]
+ * and [MlsBackgroundWorker], which read the same files with the same logic.
  */
 object MlsContextLoader {
 
     /**
-     * Contexte d'identité nécessaire à tous les appels HTTP et JNI MLS côté background.
-     * Chargé depuis push_context.json, écrit par Tauri après authentification.
+     * Identity context required by every background-side MLS HTTP and JNI call.
+     * Loaded from push_context.json, written by Tauri after authentication.
      */
     data class PushContext(
         val pin: String,
@@ -23,19 +23,19 @@ object MlsContextLoader {
     )
 
     /**
-     * Répertoire de données que Tauri utilise comme `app_data_dir()` sur Android.
-     * Tauri 2 résout `app_data_dir()` vers `getDataDir` SANS suffixer le bundle identifier
-     * (cf. tauri path/android.rs : app_data_dir → getDataDir), soit `Context.getDataDir()`
-     * = `/data/user/0/<package>`. Tous les fichiers échangés entre Rust (app_data_dir) et
-     * Kotlin (push_context.json, mls.bin, fcm_token.txt, pending_push_secret.txt) doivent
-     * donc viser ce répertoire — et non `filesDir` ni `filesDir/<id>`, sinon Rust et Kotlin
-     * lisent/écrivent à deux endroits différents.
+     * Data directory that Tauri uses as `app_data_dir()` on Android.
+     * Tauri 2 resolves `app_data_dir()` to `getDataDir` WITHOUT suffixing the bundle identifier
+     * (see tauri path/android.rs: app_data_dir -> getDataDir), i.e. `Context.getDataDir()`
+     * = `/data/user/0/<package>`. Every file exchanged between Rust (app_data_dir) and
+     * Kotlin (push_context.json, mls.bin, fcm_token.txt, pending_push_secret.txt) must
+     * therefore target this directory - not `filesDir` nor `filesDir/<id>`, otherwise Rust and
+     * Kotlin read/write in two different places.
      */
     fun tauriDataDir(context: Context): File = context.dataDir
 
     /**
-     * Charge push_context.json depuis le répertoire Tauri (app_data_dir).
-     * Retourne null si le fichier est absent ou si un champ obligatoire est vide/manquant.
+     * Loads push_context.json from the Tauri directory (app_data_dir).
+     * Returns null if the file is absent or if a required field is empty/missing.
      */
     fun loadPushContext(context: Context): PushContext? {
         val file = File(tauriDataDir(context), "push_context.json")
@@ -52,8 +52,8 @@ object MlsContextLoader {
     }
 
     /**
-     * Charge l'état MLS binaire depuis mls.bin dans le répertoire Tauri (app_data_dir).
-     * Retourne null si le fichier est absent ou illisible.
+     * Loads the binary MLS state from mls.bin in the Tauri directory (app_data_dir).
+     * Returns null if the file is absent or unreadable.
      */
     fun loadMlsState(context: Context): ByteArray? {
         val file = File(tauriDataDir(context), "mls.bin")
