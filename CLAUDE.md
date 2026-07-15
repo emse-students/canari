@@ -70,16 +70,13 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 
 ---
 
-### CANARI
+### CANARI - no open code tasks
 
-Recently shipped + pushed (details in docs/wiki + commits, not repeated here): Cotisations & Boutique rework (docs/COTISATIONS-REWORK-PLAN.md, wiki cotisations.md), Parent-association Stripe delegation (wiki payments.md/associations.md), UI/UX bug fixes, chat i18n Paraglide migration, security CodeQL pass.
+All roadmap items resolved. Only residuals are non-code:
+* **D. MLS + Communautes audit - CODE FULLY RESOLVED.** Every finding fixed; July re-architecture deleted the reboot/CAS/successor machinery. Residual = on-device verification of mobile native paths (Android/iOS, not compiler-verifiable here) - a device task.
+* TS 6->7 deferred until 7.1 (see cross-project).
 
-**Open work:**
-* **D. MLS + Communautes audit - CODE FULLY RESOLVED (verified 2026-07-15).** docs/AUDIT-MLS-2026-06.md is a SUPERSEDED historical snapshot: every listed finding (C1/C2, C4/C5, H1-H5, S1-S5, FCM0-3) is FIXED in its own status table, and the July re-architecture (docs/MLS-REAUDIT-2026-07.md, Phases 0-4 COMPLETE) DELETED the reboot/CAS/successor machinery those findings describe (confirmed: no performReboot/migrateConversation/joinSuccessor/acquireRebootLock in frontend/src). FCM1/FCM2 (the only June OPEN items) are now implemented in Kotlin (markMembershipActive, refreshTokenOnBackend). No surviving code target. Only residual = on-device verification of the mobile native paths (Android/iOS not compiler-verifiable here) - a device task, not a code task.
-* **H. Normalization sweep - listed residuals DONE + Android natives DONE (2026-07-15, 3d563945).** Paraglide FR/EN + English comments + wiki across chat/community modules complete (NORMALIZATION-PLAN.md [x] except REUSE1). Android native FCM/MLS Kotlin surface (7 files under src-tauri/gen/android/.../fr/emse/canari) now English comments + dev-logs + ASCII punctuation; user-facing FR strings (notification channels/bodies/fallbacks, "Moi"/"Salon") kept (no native Paraglide). Residual H work now = other modules only, fold in as touched. LESSON: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep on future sweeps.
-* **Cleanup:** deferred `media.controller.ts:96` `no-unsafe-argument` warning (media-service missing `@types/express`; needs deps/tsconfig pass). (TS 6->7 deferred until 7.1 - see cross-project.)
-
-Device-verified + closed: C (MLS fresh-device history solicit + read-only commit catch-up), G (keyboard-GIF commitContent, channel push #2, channel_read cross-device dismissal, mobile keyboard scroll).
+Gotcha for future normalization sweeps: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
 ---
 
