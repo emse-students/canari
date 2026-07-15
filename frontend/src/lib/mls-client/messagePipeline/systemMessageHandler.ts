@@ -154,17 +154,24 @@ export async function handleSystemEvent(
   if (event === 'memberRemoved' && data.targetUser) {
     const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
     if (data.targetUser.toLowerCase() === userId.toLowerCase()) {
-      // Current user was kicked - purge the conversation immediately
+      // Current user was excluded. Mirror the peer-delete (`groupDeleted`) handling instead of a
+      // silent purge: forget the WASM state (we can no longer decrypt future epochs) but KEEP the
+      // local conversation as `removed`. The user reads the history behind a banner and deletes it
+      // manually - which dismisses it on ALL their devices. A silent purge here dropped the
+      // conversation everywhere with no visible trace.
       try {
         mlsService.forgetGroup(convo.id);
       } catch {
         /* non-blocking */
       }
       persistMlsStateNow();
-      if (deleteConversation) await deleteConversation(convoKey);
-      conversations.delete(convoKey);
-      if (getSelectedContact() === convoKey) setSelectedContact(null);
-      log(`[INFO] Kicked from group "${convoKey}" by ${getName(senderNorm)}`);
+      await addMessageToChat('system', m.chat_system_removed_from_group(), convoKey, {
+        isSystem: true,
+      });
+      const updated = conversations.get(convoKey);
+      if (updated) conversations.set(convoKey, { ...updated, lifecycle: 'removed' });
+      await saveConversation(convoKey).catch(() => {});
+      log(`[INFO] Excluded from group "${convoKey}" by ${getName(senderNorm)} - marked removed`);
     } else {
       await addMessageToChat(
         'system',
