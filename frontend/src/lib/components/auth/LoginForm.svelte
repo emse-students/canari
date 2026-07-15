@@ -129,7 +129,9 @@
       </div>
 
       <div class="flex justify-center gap-4 mt-6 text-xs text-text-muted">
-        <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors">{m.auth_privacy()}</a>
+        <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors"
+          >{m.auth_privacy()}</a
+        >
         <span>·</span>
         <a href="/legal/cgu" class="hover:text-cn-yellow transition-colors">{m.auth_terms()}</a>
       </div>
