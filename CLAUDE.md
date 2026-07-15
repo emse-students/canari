@@ -63,7 +63,7 @@ Deep-dive design docs referenced inline. Legend: \[x\] done+pushed, \[ \] todo, 
 Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): green PRs self-merge, no involvement. Each repo = its own commits on main; full local CI gate before push.
 
 **Open items:**
-* **Canari TS 6->7 majors (#168/#163/#162):** `Test TS Backend` FAILS (breaking compiler jump) - decide fix-vs-close.
+* **Canari TS 6->7 majors (#168/#163/#162): DEFERRED until TS 7.1.** Breaking compiler jump fails `Test TS Backend`; ecosystem not ready. Hold the PRs (do not merge); TS stays `~6.0.3`. Revisit when 7.1 ships.
 * **Watch (majors that may fail CI):** prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
 * **Node -> 24: MiGallery pending** (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Canari/Sky done.
 * Wiki + English-comment audit per repo, folded into touched files. Sky (3) + Portail (1) low-sev CodeQL alerts last.
@@ -75,11 +75,11 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 Recently shipped + pushed (details in docs/wiki + commits, not repeated here): Cotisations & Boutique rework (docs/COTISATIONS-REWORK-PLAN.md, wiki cotisations.md), Parent-association Stripe delegation (wiki payments.md/associations.md), UI/UX bug fixes, chat i18n Paraglide migration, security CodeQL pass.
 
 **Open work:**
-* **C. MLS fresh-device - VERIFY on-device.** Code shipped (history solicit + read-only commit catch-up, `POST /api/mls/push/commits`); crypto validated by `mls-core/tests/commit_catchup.rs`. But mobile Rust/Kotlin/Swift are compile-UNVERIFIED (no NDK/Xcode). NEXT: APK/TestFlight end-to-end (fresh device -> backgrounded mobile decrypts + gets history). [[project_notif_decrypt_readonly_limit]]
 * **D. MLS + Communautes audit.** docs/AUDIT-MLS-2026-06.md. Open: C1/C2 (Android dual MLS engine - WebView vs JNI both write mls.bin, foreground never reloads on resume; needs on-device diagnosis), C4/C5 (mls-core), H1-H5 (recovery/backend), strictness pass. Confirm scope before starting.
-* **G. Device/APK verification backlog.** keyboard-GIF commitContent (chat + comments), channel push #2, channel_read cross-device dismissal, mobile keyboard-open off-screen scroll.
-* **H. Normalization sweep - listed residuals DONE.** Paraglide FR/EN + English comments + wiki across chat/community modules. NORMALIZATION-PLAN.md is [x] everywhere except REUSE1; H tracked residuals from post-plan feature work. Batch 1 (2a9e57b9 + 73be1f0a): user-visible FR in chat/channels -> Paraglide (historySystemEvents replay reuses live-path keys incl. chat_system_member_left; messaging send/deleted errors + reply preview; pinChange thrown errors -> profile_pin_error_*) + EN normalization of those 3 .ts files. Batch 2 (bc56c100): all remaining dev-facing FR (comments + console/appendLog/log strings, no new keys) in components/chat/{ChatArea,ChatGroupPanel,ChatHeader,ConversationTile,DeviceManagementPanel}.svelte + utils/chat/{conversations,fcmCache,history,groupSyncEligibility,outbox,sharedContent}.ts + VoiceRecorder + AssociationDocumentManager + mls-client/systemMessageHandler. IMPORTANT lesson: accent-grep MISSES French comments written without accents (e.g. "Section Membres", "chiffre a une epoch perimee") - a French-token grep found several after the accent pass; use both nets on future sweeps. Residual H work now = other modules only, fold in as touched.
-* **Cleanup:** TS 6->7 decision (above); deferred `media.controller.ts:96` `no-unsafe-argument` warning (media-service missing `@types/express`; needs deps/tsconfig pass).
+* **H. Normalization sweep - listed residuals DONE.** Paraglide FR/EN + English comments + wiki across chat/community modules complete (NORMALIZATION-PLAN.md [x] except REUSE1). Residual H work now = other modules only, fold in as touched. LESSON: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep on future sweeps.
+* **Cleanup:** deferred `media.controller.ts:96` `no-unsafe-argument` warning (media-service missing `@types/express`; needs deps/tsconfig pass). (TS 6->7 deferred until 7.1 - see cross-project.)
+
+Device-verified + closed: C (MLS fresh-device history solicit + read-only commit catch-up), G (keyboard-GIF commitContent, channel push #2, channel_read cross-device dismissal, mobile keyboard scroll).
 
 ---
 
