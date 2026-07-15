@@ -119,11 +119,23 @@ function oidcRedirectUri(): string {
   return `${window.location.origin}/auth/callback`;
 }
 
+/** Slug du flow Authentik MiConnect pour la connexion mot de passe (revue Google/Apple). */
+export const PASSWORD_LOGIN_FLOW_SLUG = 'password-login';
+
+export type OidcLoginOptions = {
+  /** Slug du flow d'authentification Authentik (ex. password-login). */
+  flowSlug?: string;
+};
+
 /**
  * Redirect the user to Authentik's authorize endpoint.
  * After login, Authentik will redirect back to `/auth/callback`.
+ * When `flowSlug` is set, the user is sent through `/if/flow/{slug}/` first.
  */
-export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
+export async function startOidcLogin(
+  returnTo = '/chat',
+  options?: OidcLoginOptions
+): Promise<void> {
   const baseUrl = authentikUrl();
   const clientId = authentikClientId();
   if (!baseUrl || !clientId) {
@@ -148,8 +160,11 @@ export async function startOidcLogin(returnTo = '/chat'): Promise<void> {
     state,
   });
 
-  const authUrl = `${baseUrl}/application/o/authorize/?${params}`;
-  alog(`login returnTo=${returnTo} uri=${redirectUri}`);
+  const authorizePath = `/application/o/authorize/?${params}`;
+  const authUrl = options?.flowSlug
+    ? `${baseUrl}/if/flow/${options.flowSlug}/?next=${encodeURIComponent(authorizePath)}`
+    : `${baseUrl}${authorizePath}`;
+  alog(`login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'}`);
 
   // On Android Tauri, open in the system browser (Chrome Custom Tabs) so the
   // main WebView is never navigated away and the Tauri IPC bridge stays intact.

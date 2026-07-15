@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { startOidcLogin, hasStoredSession, getToken } from '$lib/stores/auth';
+  import { startOidcLogin, hasStoredSession, getToken, PASSWORD_LOGIN_FLOW_SLUG } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -116,6 +116,22 @@
     }
   }
 
+  async function handlePasswordLogin() {
+    loginError = '';
+    await refreshAppVersionCheck();
+    if (isBelowMinClientVersion()) {
+      loginError = m.auth_update_required({ version: platformInfo?.minClientVersion ?? '?' });
+      return;
+    }
+    isLoggingIn = true;
+    try {
+      await startOidcLogin(getSafeReturnTarget(), { flowSlug: PASSWORD_LOGIN_FLOW_SLUG });
+    } catch (e: unknown) {
+      loginError = e instanceof Error ? e.message : String(e);
+      isLoggingIn = false;
+    }
+  }
+
   async function resetAll() {
     // IndexedDB cleanup is web-only (Tauri uses native app data instead).
     if (!isTauriRuntime()) {
@@ -165,5 +181,6 @@
   {maintenanceNotice}
   loginDisabled={loginDisabled}
   onLogin={handleLogin}
+  onPasswordLogin={handlePasswordLogin}
   onReset={resetAll}
 />

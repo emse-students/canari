@@ -15,6 +15,8 @@
     loginDisabled?: boolean;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
+    /** Called when the user clicks the password test login button (store review). */
+    onPasswordLogin: () => void;
     /** Called when the user clicks the device-reset link. */
     onReset: () => void;
   }
@@ -26,6 +28,7 @@
     maintenanceNotice = null,
     loginDisabled = false,
     onLogin,
+    onPasswordLogin,
     onReset,
   }: Props = $props();
 </script>
@@ -90,6 +93,18 @@
       </button>
 
       <p class="text-xs text-text-muted">{m.auth_secure_login()}</p>
+
+      <div class="pt-2 border-t border-zinc-200/80 dark:border-white/10">
+        <button
+          type="button"
+          onclick={onPasswordLogin}
+          disabled={isLoggingIn || loginDisabled}
+          class="w-full py-2.5 rounded-xl text-sm font-medium text-text-muted border border-zinc-200 dark:border-white/15 bg-transparent transition-colors hover:text-text-main hover:border-zinc-300 dark:hover:border-white/25 disabled:opacity-70 disabled:cursor-wait"
+        >
+          {m.auth_test_login_password()}
+        </button>
+        <p class="text-[11px] text-text-muted/80 mt-2">{m.auth_test_login_password_hint()}</p>
+      </div>
 
       {#if loginError}
         <div
