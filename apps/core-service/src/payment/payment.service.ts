@@ -96,7 +96,7 @@ export class PaymentService {
 
     if (params.saveForFuture) {
       sessionParams.payment_intent_data = {
-        ...(sessionParams.payment_intent_data ?? {}),
+        ...sessionParams.payment_intent_data,
         setup_future_usage: 'off_session',
       };
     }
@@ -104,7 +104,7 @@ export class PaymentService {
     // Destination charge: funds go to the connected account
     if (params.stripeConnectAccountId) {
       sessionParams.payment_intent_data = {
-        ...(sessionParams.payment_intent_data ?? {}),
+        ...sessionParams.payment_intent_data,
         transfer_data: {
           destination: params.stripeConnectAccountId,
         },

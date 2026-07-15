@@ -1612,7 +1612,7 @@ export class ChannelService {
     // Use the DB-canonical `channel.id` (loaded above) rather than the raw request
     // param as the map key, so a remote-controlled value never becomes an object
     // property name (remote property injection, CWE-250/915).
-    member.notifLevels = { ...(member.notifLevels ?? {}), [channel.id]: level };
+    member.notifLevels = { ...member.notifLevels, [channel.id]: level };
     await this.memberRepo.save(member);
     this.logger.log(`[CHANNEL_PUSH] level set channel=${channelId} user=${userId} level=${level}`);
     return { channelId, level };
@@ -1747,7 +1747,7 @@ export class ChannelService {
         meta.votesByUser[userId] = selected;
       }
 
-      msg.metadata = { ...(msg.metadata ?? {}), poll: meta };
+      msg.metadata = { ...msg.metadata, poll: meta };
       await manager.save(msg);
       poll = meta;
     });
@@ -1816,7 +1816,7 @@ export class ChannelService {
       }
 
       meta.endsAt = new Date().toISOString();
-      msg.metadata = { ...(msg.metadata ?? {}), poll: meta };
+      msg.metadata = { ...msg.metadata, poll: meta };
       msg.pinned = false;
       await manager.save(msg);
       poll = meta;
