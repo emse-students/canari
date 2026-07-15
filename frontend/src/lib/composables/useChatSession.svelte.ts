@@ -35,7 +35,6 @@ import {
   attemptReconnectImpl,
   pauseConnectionImpl,
   resumeConnectionImpl,
-  runGroupDiscoveryImpl,
   scheduleReconnectImpl,
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
@@ -447,12 +446,6 @@ export function useChatSession() {
     /** Performs one WebSocket reconnect attempt and re-runs device sync. */
     attemptReconnect: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       attemptReconnectImpl(ctx, cb),
-    /** Fires discoverMissingGroups (factored to avoid duplication at call sites). */
-    runGroupDiscovery: (
-      cb: import('./session/sessionTypes').ChatSessionCallbacks,
-      mlsSvc: IMlsService,
-      label?: string
-    ) => runGroupDiscoveryImpl(ctx, cb, mlsSvc, label),
     /** Exports an encrypted backup of all conversations (triggers browser download). */
     handleExport: (log: (msg: string) => void) =>
       exportBackupImpl(ctx, log, (v) => {
