@@ -2,6 +2,9 @@
 # Pre-push hook for Canari project
 # Prevent pushing dirty worktrees and run checks only for impacted projects
 
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
+
 if ! git diff --cached --quiet; then
   echo "❌ Push bloqué : des fichiers sont stagés mais pas commités."
   echo "   Committez ou stashez avant de pusher."
@@ -43,16 +46,16 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
   (
     cd frontend && bun run lint && bun run check && bun run format:check
   ) || {
-    echo "❌ Frontend checks failed (lint/check/format:check)."
+    echo "❌ Frontend checks failed (oxlint/oxvelte/check/format:check)."
     exit 1
   }
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
   (
-    cd apps/chat-delivery-service && ./node_modules/.bin/eslint "{src,apps,libs,test}/**/*.ts" --fix && bun test
+    cd apps/chat-delivery-service && npm run lint && npm run format:check && npm test
   ) || {
-    echo "❌ chat-delivery-service checks failed (lint/test)."
+    echo "❌ chat-delivery-service checks failed (oxlint/format:check/test)."
     exit 1
   }
 fi
