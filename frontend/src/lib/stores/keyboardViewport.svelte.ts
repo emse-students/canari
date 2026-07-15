@@ -16,7 +16,28 @@ export type KeyboardViewportSnapshot = {
    * (adjustPan). Zero when adjustResize already resized the window.
    */
   layoutInsetBottom: number;
+  /**
+   * True when the user has pinch-zoomed in (visual viewport scale > 1). A zoomed-in visual
+   * viewport shrinks exactly like a keyboard opening, so we must NOT treat it as one:
+   * doing so collapses the app shell (white gaps) and hides the nav bars (reframing).
+   */
+  zoomed: boolean;
 };
+
+/** Raw viewport measurements, injectable so the geometry stays unit-testable off-DOM. */
+export type ViewportMeasurement = {
+  /** Layout viewport height (`window.innerHeight`), immune to pinch-zoom. */
+  winH: number;
+  /** Visual viewport height (`visualViewport.height`), shrinks on keyboard AND pinch-zoom. */
+  vvHeight: number;
+  /** Visual viewport top offset (`visualViewport.offsetTop`), grows when the page is panned. */
+  offsetTop: number;
+  /** Pinch-zoom scale (`visualViewport.scale`); 1 at rest, > 1 when zoomed in. */
+  scale: number;
+};
+
+/** A pinch-zoom scale above this counts as "the user zoomed", not "a keyboard opened". */
+const ZOOM_SCALE_EPSILON = 1.01;
 
 function keyboardOpenThresholdPx(): number {
   const ua = navigator.userAgent.toLowerCase();
@@ -25,40 +46,74 @@ function keyboardOpenThresholdPx(): number {
   return 160;
 }
 
+/**
+ * Pure geometry: turns raw viewport numbers into a keyboard snapshot.
+ * Fix (root cause): when `scale > 1` the visual viewport shrank because of a pinch-zoom, not a
+ * keyboard - bail out with `zoomed: true` and a full-height, closed snapshot so the shell is
+ * left untouched (see the desktop-zoom / iOS-keyboard white-gap bug).
+ */
+export function computeSnapshot(
+  m: ViewportMeasurement,
+  baselineHeight: number,
+  thresholdPx: number
+): KeyboardViewportSnapshot {
+  if (m.scale > ZOOM_SCALE_EPSILON) {
+    return {
+      isOpen: false,
+      viewportHeight: baselineHeight,
+      offsetTop: 0,
+      insetBottom: 0,
+      layoutInsetBottom: 0,
+      zoomed: true,
+    };
+  }
+
+  const insetBottom = Math.max(0, m.winH - m.vvHeight - m.offsetTop);
+  const delta = Math.max(baselineHeight - m.vvHeight, m.winH - m.vvHeight);
+  const isOpen = delta > thresholdPx;
+  const layoutShrunk =
+    baselineHeight - m.winH > thresholdPx * 0.35 || m.winH - m.vvHeight > thresholdPx * 0.35;
+  const layoutInsetBottom = isOpen && !layoutShrunk ? insetBottom : 0;
+
+  return {
+    isOpen,
+    viewportHeight: m.vvHeight,
+    offsetTop: m.offsetTop,
+    insetBottom,
+    layoutInsetBottom,
+    zoomed: false,
+  };
+}
+
 function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
   const vv = window.visualViewport;
   const winH = window.innerHeight;
-  const viewportHeight = vv?.height ?? winH;
-  const offsetTop = vv?.offsetTop ?? 0;
-  const insetBottom = Math.max(0, winH - viewportHeight - offsetTop);
-  const delta = Math.max(baselineHeight - viewportHeight, winH - viewportHeight);
-  const isOpen = delta > keyboardOpenThresholdPx();
-  const layoutShrunk =
-    baselineHeight - winH > keyboardOpenThresholdPx() * 0.35 ||
-    winH - viewportHeight > keyboardOpenThresholdPx() * 0.35;
-  const layoutInsetBottom = isOpen && !layoutShrunk ? insetBottom : 0;
-
-  return { isOpen, viewportHeight, offsetTop, insetBottom, layoutInsetBottom };
+  return computeSnapshot(
+    {
+      winH,
+      vvHeight: vv?.height ?? winH,
+      offsetTop: vv?.offsetTop ?? 0,
+      scale: vv?.scale ?? 1,
+    },
+    baselineHeight,
+    keyboardOpenThresholdPx()
+  );
 }
 
 function applyCssVars(snapshot: KeyboardViewportSnapshot, baselineHeight: number): void {
-  document.documentElement.style.setProperty(
-    '--app-viewport-height',
-    `${snapshot.viewportHeight}px`
-  );
-  document.documentElement.style.setProperty(
-    '--keyboard-inset-bottom',
-    `${snapshot.insetBottom}px`
-  );
-  document.documentElement.style.setProperty(
-    '--keyboard-layout-inset-bottom',
-    `${snapshot.layoutInsetBottom}px`
-  );
-  document.documentElement.style.setProperty(
-    '--visual-viewport-offset-top',
-    `${snapshot.offsetTop}px`
-  );
-  document.documentElement.style.setProperty('--keyboard-baseline-height', `${baselineHeight}px`);
+  const root = document.documentElement.style;
+  // Fix 2: only pin the shell height (in px) while the keyboard is actually open. Otherwise
+  // remove the override so the shell falls back to the stable `100dvh` from `:root` - a bare
+  // pan (URL-bar slide) or a pinch-zoom must NOT be allowed to collapse the shell into a white gap.
+  if (snapshot.isOpen) {
+    root.setProperty('--app-viewport-height', `${snapshot.viewportHeight}px`);
+  } else {
+    root.removeProperty('--app-viewport-height');
+  }
+  root.setProperty('--keyboard-inset-bottom', `${snapshot.insetBottom}px`);
+  root.setProperty('--keyboard-layout-inset-bottom', `${snapshot.layoutInsetBottom}px`);
+  root.setProperty('--visual-viewport-offset-top', `${snapshot.offsetTop}px`);
+  root.setProperty('--keyboard-baseline-height', `${baselineHeight}px`);
 }
 
 let snapshot = $state<KeyboardViewportSnapshot>({
@@ -67,6 +122,7 @@ let snapshot = $state<KeyboardViewportSnapshot>({
   offsetTop: 0,
   insetBottom: 0,
   layoutInsetBottom: 0,
+  zoomed: false,
 });
 
 /** Reactive keyboard / viewport snapshot for components. */
@@ -125,6 +181,17 @@ export function initKeyboardViewport(): () => void {
     }
   };
 
+  // Fix 3: a visual-viewport `scroll` is a PAN, not a resize. Only refresh the overlay offset -
+  // never re-evaluate keyboard state, re-pin the shell height, or re-run scrollIntoView (which
+  // would fight the user's own scroll and jitter). Height stays owned by the `resize` path.
+  const updateOffsetOnly = () => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const offsetTop = vv.scale > ZOOM_SCALE_EPSILON ? 0 : vv.offsetTop;
+    snapshot = { ...snapshot, offsetTop };
+    document.documentElement.style.setProperty('--visual-viewport-offset-top', `${offsetTop}px`);
+  };
+
   const handleFocusIn = (e: FocusEvent) => {
     const target = e.target;
     if (!(target instanceof HTMLElement) || !isFocusableField(target)) return;
@@ -144,14 +211,14 @@ export function initKeyboardViewport(): () => void {
   window.addEventListener('orientationchange', handleOrientationChange);
   window.addEventListener('focusin', handleFocusIn, true);
   window.visualViewport?.addEventListener('resize', update);
-  window.visualViewport?.addEventListener('scroll', update);
+  window.visualViewport?.addEventListener('scroll', updateOffsetOnly);
 
   return () => {
     window.removeEventListener('resize', update);
     window.removeEventListener('orientationchange', handleOrientationChange);
     window.removeEventListener('focusin', handleFocusIn, true);
     window.visualViewport?.removeEventListener('resize', update);
-    window.visualViewport?.removeEventListener('scroll', update);
+    window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     document.documentElement.style.removeProperty('--keyboard-inset-bottom');
     document.documentElement.style.removeProperty('--keyboard-layout-inset-bottom');
     document.documentElement.style.removeProperty('--visual-viewport-offset-top');
