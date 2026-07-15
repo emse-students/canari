@@ -214,10 +214,10 @@ export async function replayConversationHistory(params: {
     const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }> = [];
 
     // Batch-collect decoded messages to flush in one UI update at the end.
-    // Les champs reactions/readBy/isDeleted/isEdited sont optionnels et proviennent
-    // uniquement du chemin history_bundle (migration) - AddMessageToChatOptions ne
-    // les inclut pas car addMessageToChat n'en a pas besoin (les mutations arrivent
-    // via des events MLS séparés pendant une session normale).
+    // The reactions/readBy/isDeleted/isEdited fields are optional and come only from the
+    // history_bundle path (migration) - AddMessageToChatOptions does not include them
+    // because addMessageToChat does not need them (the mutations arrive via separate MLS
+    // events during a normal session).
     const pendingMessages: PendingHistoryMessage[] = [];
     let historyIngestSeq = 0;
     /** Queues a decoded message into the page batch (assigns ingest order, bumps the count). */
@@ -317,7 +317,7 @@ export async function replayConversationHistory(params: {
             const reactions = messageReactions.get(messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
             const updated = addMessageReaction(reactions, senderNorm, emoji);
-            if (!updated) continue; // déjà présente ou cap atteint - no-op
+            if (!updated) continue; // already present or cap reached - no-op
             messageReactions.set(messageId, updated);
             reactionUpdates.set(messageId, updated);
             mlsUpdated = true;
@@ -349,10 +349,10 @@ export async function replayConversationHistory(params: {
             continue;
           }
           if (kind === 'epoch-gap' || kind === 'wrong-epoch') {
-            // Recoverable: epoch/ratchet gap (epoch-gap), ou frame d'une epoch que ce replay
-            // n'a pas encore atteinte (wrong-epoch - le commit peut s'appliquer a un load ulterieur).
-            // Ne PAS marquer "vu" pour que l'entree soit retentee au prochain chargement
-            // d'historique apres resynchronisation d'epoch. [[M2]]
+            // Recoverable: epoch/ratchet gap (epoch-gap), or a frame from an epoch this replay
+            // has not reached yet (wrong-epoch - the commit may apply on a later load).
+            // Do NOT mark it "seen" so the entry is retried at the next history load
+            // after epoch resynchronization. [[M2]]
             skipSeenHash = true;
             // epoch-gap = we are BEHIND (missing a commit). Remember it so we can flag the group
             // for recovery at the end if no catch-up commit advances our epoch in this replay.
@@ -408,10 +408,10 @@ export async function replayConversationHistory(params: {
           senderId: pm.senderId.toLowerCase(),
           // Preserve deleted/edited content from DB if the mutation event was already
           // processed in a prior run and is now in seenCipherHashes.
-          // prev.isDeleted/isEdited : état d'une run précédente (seenCipherHashes).
-          // pm.isDeleted/isEdited   : état transmis par le history_bundle.
-          // Les deux sources sont combinées pour que les nouvelles installations
-          // reflètent les suppressions/éditions sans avoir rejoué les events MLS.
+          // prev.isDeleted/isEdited : state from a previous run (seenCipherHashes).
+          // pm.isDeleted/isEdited   : state carried by the history_bundle.
+          // Both sources are combined so fresh installs reflect the deletions/edits
+          // without having replayed the MLS events.
           content:
             prev?.isDeleted || pm.isDeleted
               ? chat_system_message_deleted()
@@ -520,7 +520,7 @@ export async function replayConversationHistory(params: {
   } catch (err) {
     // Non-blocking: log the error and continue so other conversations still load
     log(
-      `[WARN] Echec replay historique pour ${contactName}: ${err instanceof Error ? err.message : String(err)}`
+      `[WARN] History replay failed for ${contactName}: ${err instanceof Error ? err.message : String(err)}`
     );
     return undefined;
   } finally {
@@ -533,7 +533,7 @@ const HEX_ID_RE = /\b[0-9a-f]{64}\b/g;
 
 /**
  * Retroactively resolves 64-char hex user IDs baked into stored system message
- * content (e.g. "abc…def a ajouté xyz…uvw au groupe") that were stored before
+ * content (e.g. "abc…def added xyz…uvw to the group") that were stored before
  * async name resolution was applied. Updates the local DB so future loads are
  * already clean.
  */

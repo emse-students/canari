@@ -154,7 +154,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         },
         pin
       )
-      .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… échoué: ${String(e)}`));
+      .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
   }
 
   /** Replace a message's rendered content in memory (queued media -> real attachment on send). */
@@ -279,7 +279,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         conversationId: terminalId,
         latencyMs: Date.now() - entry.sentAt,
       });
-      log(`[OUTBOX] ${entry.id.slice(0, 8)}… envoyé dans ${terminalId.slice(0, 8)}…`);
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent in ${terminalId.slice(0, 8)}…`);
       return 'sent';
     } catch (e) {
       // Transient (WrongEpoch / network): keep pending, back off. The message is never lost.
@@ -298,7 +298,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         )
         .catch(() => {});
       log(
-        `[OUTBOX] ${entry.id.slice(0, 8)}… échec transitoire (tentative ${attempts}): ${String(e).slice(0, 80)}`
+        `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
       );
       return 'retry';
     }
@@ -330,14 +330,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     flushing = true;
     try {
-      // Avant tout envoi : laisser la file de messages ENTRANTS se drainer. fetchPendingMessages
-      // (au reconnect/resume) ne fait qu'enfiler les frames en attente - leur traitement (commits
-      // qui avancent l'epoch) est asynchrone. Sans cette barriere, un flush declenche par
-      // online/visibilitychange peut partir AVANT que les commits manques soient appliques :
-      // le message serait chiffre a une epoch perimee, donc indechiffrable par les pairs a jour
-      // (perte silencieuse - la course "envoi a froid au resume"). Attendre l'idle garantit que
-      // l'epoch locale est a jour. En regime permanent la file est deja idle -> resolution
-      // immediate, aucune latence ajoutee. [[DF1c]]
+      // Before any send: let the INCOMING message queue drain. fetchPendingMessages
+      // (on reconnect/resume) only enqueues the pending frames - their processing (commits
+      // that advance the epoch) is asynchronous. Without this barrier, a flush triggered by
+      // online/visibilitychange can go out BEFORE the missed commits are applied:
+      // the message would be encrypted at a stale epoch, hence undecryptable by up-to-date peers
+      // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
+      // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
+      // no added latency. [[DF1c]]
       await mlsService.waitForMessageQueueIdle().catch(() => {});
       do {
         rerun = false;
@@ -366,7 +366,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (!storage) return;
       await storage
         .saveOutboxEntry(entry, pin)
-        .catch((e) => log(`[OUTBOX] Enqueue échoué: ${String(e)}`));
+        .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
       await refreshMirror();
       runFlush();
     },

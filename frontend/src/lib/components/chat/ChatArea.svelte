@@ -373,7 +373,7 @@
     return text.length > 80 ? `${text.slice(0, 77)}…` : text || m.chat_pinned_message_default_label();
   }
 
-  /** Reactive "X écrit…" label for the active conversation, excluding the current user. */
+  /** Reactive "X is typing…" label for the active conversation, excluding the current user. */
   const typingLabel = $derived.by(() => {
     const convId = chatView?.conversation.id;
     if (!convId) return '';
@@ -808,7 +808,7 @@
       </div>
     {/if}
 
-    <!-- Messages (padding bas pour laisser défiler sous le composeur glass) -->
+    <!-- Messages (bottom padding so they scroll under the glass composer) -->
     <div class="relative flex-1 min-h-0 flex flex-col">
       <div
         bind:this={chatContainer}

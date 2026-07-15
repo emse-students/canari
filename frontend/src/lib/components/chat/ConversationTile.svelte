@@ -112,7 +112,7 @@
       : 'hover:bg-white/40 dark:hover:bg-black/20 border border-transparent'}
     animate-rise-in"
 >
-  <!-- Zone Avatar / Icône de Groupe -->
+  <!-- Avatar / group icon zone -->
   <div class="relative flex-shrink-0">
     {#if isDirect}
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
@@ -131,10 +131,10 @@
     {/if}
   </div>
 
-  <!-- Zone d'Informations (Nom, Aperçu, Badges) -->
+  <!-- Info zone (name, preview, badges) -->
   <div class="flex-1 min-w-0 flex flex-col justify-center">
     <div class="flex justify-between items-center mb-0.5 gap-3">
-      <!-- Nom de la conversation -->
+      <!-- Conversation name -->
       <span
         class="text-[0.95rem] text-text-main truncate {unreadCount > 0
           ? 'font-extrabold'
@@ -143,7 +143,7 @@
         {effectiveDisplayName}
       </span>
 
-      <!-- Espace Badges (Non lus, Sync) -->
+      <!-- Badges area (unread, sync) -->
       <div class="flex items-center gap-2 flex-shrink-0">
         {#if !isReady && !isRemoved}
           <span
@@ -163,7 +163,7 @@
       </div>
     </div>
 
-    <!-- Aperçu du dernier message -->
+    <!-- Last message preview -->
     <div
       class="text-sm truncate mt-0.5 {unreadCount > 0
         ? 'text-text-main font-semibold'

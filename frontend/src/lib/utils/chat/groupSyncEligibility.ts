@@ -26,18 +26,18 @@ export function isGroupEligibleForMlsRecovery(
   if (!index) return true;
 
   if (index.deletedGroupIds.has(groupId)) {
-    log?.(`[MLS] Skip recovery: groupe supprimé ${groupId}`);
+    log?.(`[MLS] Skip recovery: deleted group ${groupId}`);
     return false;
   }
 
   const row = index.byGroupId.get(groupId);
   if (row?.deletedAt) {
-    log?.(`[MLS] Skip recovery: groupe supprimé ${groupId}`);
+    log?.(`[MLS] Skip recovery: deleted group ${groupId}`);
     return false;
   }
 
   if (!row) {
-    log?.(`[MLS] Skip recovery: groupe absent de la liste serveur ${groupId}`);
+    log?.(`[MLS] Skip recovery: group absent from the server list ${groupId}`);
     return false;
   }
 

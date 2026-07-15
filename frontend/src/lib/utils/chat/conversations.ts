@@ -391,7 +391,7 @@ export async function mergeDirectConversationDuplicates(
         canonical = { ...canonical, id: terminalId };
       }
     } else {
-      // Vrais doublons indépendants (pas une chaîne de successeurs) : garder le plus récent.
+      // True independent duplicates (not a chain of successors): keep the most recent one.
       canonical = metas.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b));
       terminalId = canonical.id;
     }
@@ -421,19 +421,19 @@ export async function mergeDirectConversationDuplicates(
       const merged = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
       if (merged.length > 0) await storage.saveMessages(merged, pin);
       await storage.deleteConversation(duplicate.id);
-      // Supprimer le groupe orphelin côté serveur pour éviter qu'il réapparaisse
-      // au prochain login via discoverMissingGroups.
+      // Delete the orphan group server-side so it does not reappear at the next login
+      // via discoverMissingGroups.
       if (mlsService) {
         try {
           await mlsService.deleteGroupOnServer(duplicate.id);
         } catch {
-          // Non-bloquant : nettoyé lors du prochain GC serveur
+          // Non-blocking: cleaned up at the next server GC
         }
       }
-      log(`Fusion de discussions 1:1 en doublon: ${duplicate.name} -> ${canonical.name}`);
+      log(`Merged duplicate 1:1 conversation: ${duplicate.name} -> ${canonical.name}`);
     } catch (error) {
       log(
-        `Erreur fusion discussions directes: ${error instanceof Error ? error.message : String(error)}`
+        `Direct-conversation merge error: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -441,14 +441,14 @@ export async function mergeDirectConversationDuplicates(
   const duplicateIds = new Set(duplicatesToMerge.map((item) => item.duplicate.id));
   const merged = convMetas.filter((meta) => !duplicateIds.has(meta.id));
 
-  // Réinjecter le canonique re-keyé vers le terminal s'il n'était pas déjà dans la liste.
+  // Re-add the canonical re-keyed to the terminal id if it was not already in the list.
   for (const canonical of canonicalByPeer.values()) {
     if (merged.some((m) => m.id === canonical.id)) continue;
     try {
       await storage.saveConversation(canonical);
     } catch (e) {
       log(
-        `[WARN] Echec persistance canonique ${canonical.id}: ${e instanceof Error ? e.message : String(e)}`
+        `[WARN] Canonical persist failed ${canonical.id}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
     merged.push(canonical);
@@ -473,7 +473,7 @@ export async function mergeDirectConversationDuplicates(
       normalizedMetas.push(updatedMeta);
     } catch (e) {
       log(
-        `[WARN] Echec normalisation conversation directe ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
+        `[WARN] Direct-conversation normalization failed ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
       );
       normalizedMetas.push(meta);
     }
@@ -601,7 +601,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       const groups = await ctx.mlsService.getUserGroups(ctx.userId);
       serverGroupIndex = buildUserGroupSyncIndex(groups);
     } catch {
-      ctx.log('[WARN] getUserGroups indisponible — classification DM/groupe depuis le cache local');
+      ctx.log('[WARN] getUserGroups unavailable — DM/group classification from the local cache');
     }
 
     const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
@@ -615,10 +615,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
           }))
         );
-        ctx.log(`[CATCHUP] batch history: ${batchFirstPages.size} groupe(s) en 1 requête`);
+        ctx.log(`[CATCHUP] batch history: ${batchFirstPages.size} group(s) in 1 request`);
       } catch (e) {
         ctx.log(
-          `[WARN] batch history échoué: ${e instanceof Error ? e.message : String(e)} — fallback séquentiel`
+          `[WARN] batch history failed: ${e instanceof Error ? e.message : String(e)} — sequential fallback`
         );
       }
     }
@@ -739,7 +739,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         }
       } catch (e) {
         ctx.log(
-          `[WARN] Echec chargement conversation ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
+          `[WARN] Conversation load failed ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }

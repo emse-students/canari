@@ -221,7 +221,7 @@
       console.log(`[Vault] Document saved: ${doc.id}`);
       stats = await listDocuments(associationId);
     } catch (e: unknown) {
-      console.error('[Vault] Erreur upload:', e);
+      console.error('[Vault] Upload error:', e);
       if (e && typeof e === 'object' && 'status' in e) {
         uploadError = `Error ${(e as { status: number }).status} - check available storage space`;
       } else {

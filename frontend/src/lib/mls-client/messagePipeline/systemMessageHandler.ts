@@ -112,7 +112,7 @@ export async function handleSystemEvent(
       );
     } catch (e) {
       log(
-        `[CHANNEL-KEY] Echec traitement distribution ${distributionId}: ${e instanceof Error ? e.message : String(e)}`
+        `[CHANNEL-KEY] Distribution handling failed ${distributionId}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
 

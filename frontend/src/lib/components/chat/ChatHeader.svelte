@@ -133,11 +133,11 @@
 
 <svelte:window onkeydown={handlePanelKeydown} />
 
-<!-- En-tête principal -->
+<!-- Main header -->
 <header
   class="bg-white/70 dark:bg-black/50 px-3 md:px-6 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 md:gap-4 relative backdrop-blur-2xl z-20"
 >
-  <!-- Bouton Retour (Mobile) - largeur fixe pour que l'avatar soit centré -->
+  <!-- Back button (mobile) - fixed width so the avatar stays centered -->
   <div class="w-8 flex-shrink-0 flex items-center justify-start md:hidden">
     {#if onBack}
       <button
@@ -150,7 +150,7 @@
     {/if}
   </div>
 
-  <!-- Icône de la conversation (Avatar, Groupe ou Canal) -->
+  <!-- Conversation icon (avatar, group or channel) -->
   {#if isChannel}
     <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
       <GroupAvatar {imageMediaId} name={displayName} variant="channel" size="lg" />
@@ -170,7 +170,7 @@
     </div>
   {/if}
 
-  <!-- Informations (Nom, Statut) -->
+  <!-- Info (name, status) -->
   <div class="flex-1 min-w-0 flex flex-col justify-center">
     <h2 class="text-base md:text-[1.05rem] font-bold text-text-main mb-0.5 truncate leading-tight">
       {effectiveDisplayName}
@@ -195,7 +195,7 @@
   </div>
 
 
-  <!-- Actions (Appels, Membres, Recherche, Paramètres) -->
+  <!-- Actions (calls, members, search, settings) -->
   <div class="flex items-center gap-1 shrink-0">
     {#if showCallButtons}
       {#if onStartAudioCall}
@@ -273,7 +273,7 @@
     </button>
   </div>
 
-  <!-- Panneau de paramètres du groupe / DM -->
+  <!-- Group / DM settings panel -->
   <ChatGroupPanel
     {showPanel}
     {effectiveDisplayName}

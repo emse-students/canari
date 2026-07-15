@@ -221,7 +221,7 @@
                 ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
                 : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
             >
-              <!-- En-tête de l'appareil -->
+              <!-- Device header -->
               <div class="flex items-start sm:items-center gap-4">
                 <div
                   class="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm
@@ -311,7 +311,7 @@
                 {/if}
               </div>
 
-              <!-- Statistiques d'adhésions (Pills) -->
+              <!-- Membership stats (pills) -->
               <div class="flex flex-wrap items-center gap-2 text-xs sm:pl-16">
                 {#if stats.active > 0}
                   <span
@@ -344,7 +344,7 @@
                 {/if}
               </div>
 
-              <!-- Alerte de groupes obsolètes / en attente -->
+              <!-- Stale / pending groups alert -->
               {#if staleGroups.length > 0 && !isCurrentDevice}
                 <div
                   class="flex items-start gap-3 p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 sm:ml-16 mt-2"

@@ -74,7 +74,7 @@
         recordingDuration += 1;
       }, 1000);
     } catch (error) {
-      console.error('Erreur acces micro:', error);
+      console.error('Mic access error:', error);
       showToast(m.chat_mic_permission_error());
       cleanup();
     }

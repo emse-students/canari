@@ -3,7 +3,7 @@ import type { MediaRef } from '$lib/media';
 
 /**
  * Aggregates the media, files and links shared in a conversation from its full
- * (decrypted) local message history, for the "Médias, liens & fichiers" panel.
+ * (decrypted) local message history, for the media, links & files panel.
  * Pure over already-decrypted message content - works the same for DMs, groups
  * and community channels.
  */

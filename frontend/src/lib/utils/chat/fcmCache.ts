@@ -1,20 +1,20 @@
 /**
- * FCM Message Cache - pré-injection des messages dans le stockage local.
+ * FCM Message Cache - pre-injects messages into local storage.
  *
- * Quand l'app est fermée et qu'une notification FCM arrive, CanariFirebaseMessagingService
- * déchiffre le message MLS (pour afficher le texte dans la notification) et écrit une entrée
- * dans fcm_message_cache.ndjson. Au boot de l'app, consumeFcmCache() lit ce fichier et injecte
- * les messages dans le stockage local AVANT la sync MLS complète (~10s) → affichage immédiat.
+ * When the app is closed and an FCM notification arrives, CanariFirebaseMessagingService
+ * decrypts the MLS message (to show the text in the notification) and writes an entry to
+ * fcm_message_cache.ndjson. On app boot, consumeFcmCache() reads that file and injects the
+ * messages into local storage BEFORE the full MLS sync (~10s) -> immediate display.
  *
- * Les messages complets provenant du pipeline MLS remplacent les previews FCM via
- * shouldUpgradeMessage() dans useMessaging (merge à l'arrivée de l'enveloppe JSON).
+ * Full messages coming from the MLS pipeline replace the FCM previews via
+ * shouldUpgradeMessage() in useMessaging (merged when the JSON envelope arrives).
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
-/** Structure d'une entrée dans fcm_message_cache.ndjson (écrite par Kotlin/Rust). */
+/** Shape of one entry in fcm_message_cache.ndjson (written by Kotlin/Rust). */
 interface FcmCacheEntry {
   groupId: string;
   messageId: string;
@@ -28,10 +28,10 @@ interface FcmCacheEntry {
 }
 
 /**
- * Lit le cache FCM natif (Tauri uniquement) et injecte les messages dans le stockage local.
- * Retourne les messages effectivement écrits en base pour que l'appelant puisse mettre à
- * jour l'état en mémoire sans attendre le prochain rechargement de l'historique.
- * No-op sur web/desktop (pas de cache natif disponible) → retourne [].
+ * Reads the native FCM cache (Tauri only) and injects the messages into local storage.
+ * Returns the messages actually written to the DB so the caller can update in-memory state
+ * without waiting for the next history reload.
+ * No-op on web/desktop (no native cache available) -> returns [].
  */
 export async function consumeFcmCache(pin: string, storage: IStorage): Promise<StoredMessage[]> {
   if (!isTauriRuntime()) return [];
@@ -43,19 +43,19 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
     const { invoke } = await import('@tauri-apps/api/core');
     entries = await invoke<FcmCacheEntry[]>('read_and_clear_fcm_cache');
   } catch (e) {
-    appendLog(`[FCM_CACHE] Lecture cache échouée: ${e instanceof Error ? e.message : String(e)}`);
+    appendLog(`[FCM_CACHE] Cache read failed: ${e instanceof Error ? e.message : String(e)}`);
     return [];
   }
 
   if (!entries.length) return [];
 
-  appendLog(`[FCM_CACHE] ${entries.length} message(s) à pré-injecter depuis le cache FCM`);
+  appendLog(`[FCM_CACHE] ${entries.length} message(s) to pre-inject from the FCM cache`);
 
   const injected: StoredMessage[] = [];
   for (const entry of entries) {
     if (!entry.messageId || !entry.groupId || !entry.senderId) {
       appendLog(
-        `[FCM_CACHE] Entrée ignorée (champs manquants): ${JSON.stringify(entry).slice(0, 80)}`
+        `[FCM_CACHE] Entry skipped (missing fields): ${JSON.stringify(entry).slice(0, 80)}`
       );
       continue;
     }
@@ -68,33 +68,31 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
       isFcmPreview: true,
     };
     try {
-      // Le message a une FK vers conversations(id). Si le groupe vient d'etre rejoint en
-      // arriere-plan, sa ligne conversation n'existe pas encore -> saveMessage echoue
-      // (SQLITE_CONSTRAINT_FOREIGNKEY, code 787) et le preview est perdu. On insere d'abord
-      // un placeholder non-destructif (INSERT OR IGNORE) : la vraie sync (Welcome) ecrasera
-      // ensuite name/lifecycle via saveConversation (INSERT OR REPLACE). Le nom de l'expediteur
-      // sert d'etiquette transitoire ; lifecycle 'pending' car le groupe n'est pas encore synchro.
+      // The message has an FK to conversations(id). If the group was just joined in the
+      // background, its conversation row does not exist yet -> saveMessage fails
+      // (SQLITE_CONSTRAINT_FOREIGNKEY, code 787) and the preview is lost. So first insert a
+      // non-destructive placeholder (INSERT OR IGNORE): the real sync (Welcome) then overwrites
+      // name/lifecycle via saveConversation (INSERT OR REPLACE). The sender name serves as a
+      // transient label; lifecycle 'pending' because the group is not synced yet.
       await storage.mergeConversation({
         id: entry.groupId,
         name: entry.senderName || entry.groupId,
         lifecycle: 'pending',
         updatedAt: entry.timestamp,
       });
-      // .saveMessage() utilise .put() - le pipeline MLS peut écraser avec les données complètes
+      // .saveMessage() uses .put() - the MLS pipeline can overwrite with the full data
       await storage.saveMessage(msg, pin);
       injected.push(msg);
       appendLog(
-        `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} groupe=${entry.groupId.slice(0, 8)} type=${entry.type}`
+        `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} group=${entry.groupId.slice(0, 8)} type=${entry.type}`
       );
     } catch (e) {
       appendLog(
-        `[FCM_CACHE] Échec injection id=${entry.messageId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+        `[FCM_CACHE] Injection failed id=${entry.messageId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
 
-  appendLog(
-    `[FCM_CACHE] Injection terminée: ${injected.length}/${entries.length} message(s) injectés`
-  );
+  appendLog(`[FCM_CACHE] Injection done: ${injected.length}/${entries.length} message(s) injected`);
   return injected;
 }

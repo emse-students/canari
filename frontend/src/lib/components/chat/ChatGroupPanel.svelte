@@ -196,7 +196,7 @@
 
 {#if showPanel}
   <div use:portal class="fixed inset-0 z-[260] pointer-events-none flex justify-end">
-    <!-- Overlay sombre cliquable pour fermer -->
+    <!-- Clickable dark overlay to close -->
     <button
       type="button"
       class="absolute inset-0 bg-black/40 backdrop-blur-sm border-0 pointer-events-auto outline-none transition-opacity"
@@ -205,7 +205,7 @@
       transition:fade={{ duration: 250 }}
     ></button>
 
-    <!-- Contenu du panneau -->
+    <!-- Panel content -->
     <div
       role="dialog"
       aria-modal="true"
@@ -213,7 +213,7 @@
       class="relative pointer-events-auto w-full md:w-[28rem] h-full bg-white/85 dark:bg-[#151B2C]/95 border-l border-black/5 dark:border-white/10 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)] backdrop-blur-3xl flex flex-col overflow-hidden text-text-main"
       transition:fly={{ x: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
-      <!-- En-tête du panneau -->
+      <!-- Panel header -->
       <div
         class="px-5 md:px-6 py-5 border-b border-black/5 dark:border-white/10 flex items-start justify-between gap-3 bg-white/40 dark:bg-black/20"
         style="padding-top: max(1.25rem, env(safe-area-inset-top))"
@@ -233,11 +233,11 @@
         </button>
       </div>
 
-      <!-- Contenu scrollable -->
+      <!-- Scrollable content -->
       <div
         class="keyboard-aware-panel-scroll flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-6"
       >
-        <!-- Carte d'identité du groupe/contact -->
+        <!-- Group/contact identity card -->
         <div
           class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 px-4 py-4 flex items-center gap-4 shadow-sm"
         >
@@ -300,7 +300,7 @@
           </p>
         {/if}
 
-        <!-- Section Renommer -->
+        <!-- Rename section -->
         {#if isGroupConversation}
           <div
             class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-4 md:p-5 flex flex-col gap-3 shadow-sm"
@@ -331,7 +331,7 @@
           </div>
         {/if}
 
-        <!-- Section Lien d'invitation -->
+        <!-- Invite link section -->
         {#if isGroupConversation && groupId}
           <div class="flex flex-col gap-2">
             <span
@@ -377,7 +377,7 @@
           </div>
         {/if}
 
-        <!-- Section Membres -->
+        <!-- Members section -->
         {#if isGroupConversation}
           <div class="flex flex-col gap-3">
             <div class="flex items-center justify-between gap-2 px-1">
@@ -449,7 +449,7 @@
         {/if}
       </div>
 
-      <!-- Section Quitter / Supprimer (Pied du panneau) -->
+      <!-- Leave / delete section (panel footer) -->
       {#if onGroupLeave || onGroupDelete}
         <div
           class="keyboard-aware-panel-footer mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md flex flex-col gap-3"
@@ -541,7 +541,7 @@
   </div>
 {/if}
 
-<!-- Modal d'invitation -->
+<!-- Invite modal -->
 <Modal
   open={showInviteModal}
   onClose={() => {
