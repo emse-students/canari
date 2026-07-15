@@ -14,7 +14,7 @@ COPY apps/chat-delivery-service/package*.json ./apps/chat-delivery-service/
 RUN cd apps/chat-delivery-service && npm install --legacy-peer-deps --install-links
 
 COPY apps/chat-delivery-service ./apps/chat-delivery-service
-RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.json
+RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.build.json
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM node:24-alpine
