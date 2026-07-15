@@ -5,6 +5,8 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { hydrateChannelBootstrap, isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -66,22 +68,67 @@ export function useChannelWorkspaces() {
 
   const service = new ChannelService();
 
-  /** Maps a raw API error to a user-friendly error message for the given action label. */
-  function toUiActionError(action: string, error: unknown): string {
+  /**
+   * Extracts an HTTP status code and a human-readable detail from a raw API error body.
+   * Handles NestJS JSON error envelopes ({ statusCode, message }) and plain-text bodies,
+   * so callers can distinguish 401 (session) from 403 (permission) and surface the real reason.
+   */
+  function parseApiError(raw: string): { status?: number; detail: string } {
+    try {
+      const body = JSON.parse(raw) as {
+        statusCode?: number;
+        message?: string | string[];
+        error?: string;
+      };
+      const detail = Array.isArray(body.message)
+        ? body.message.join(', ')
+        : (body.message ?? body.error ?? raw);
+      return { status: body.statusCode, detail };
+    } catch {
+      const match = raw.match(/\b(4\d\d|5\d\d)\b/);
+      return { status: match ? Number(match[1]) : undefined, detail: raw };
+    }
+  }
+
+  /**
+   * Maps a raw API error to a localized, user-facing message for `action`, surfaces it as an
+   * error toast (so users no longer need the debug log to see failures), and returns the same
+   * string for `ctx.log`. A 403 is reported as insufficient permissions with the backend reason,
+   * distinct from a 401 which is reported as an expired session.
+   * @param action Localized action label (e.g. `m.channel_action_community_image()`).
+   * @param error The caught error - an Error carrying the raw API body, or any thrown value.
+   * @param toast When false, skips the toast because the caller surfaces the error itself. Defaults to true.
+   */
+  function toUiActionError(action: string, error: unknown, toast = true): string {
     const raw = error instanceof Error ? error.message : String(error);
-    const lower = raw.toLowerCase();
+    const { status, detail } = parseApiError(raw);
+    const hay = `${status ?? ''} ${detail}`.toLowerCase();
 
-    if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized')) {
-      return `${action} failed: session expired or insufficient permissions. Please sign in again.`;
-    }
-    if (lower.includes('409') || lower.includes('already')) {
-      return `${action} failed: already exists.`;
-    }
-    if (lower.includes('network') || lower.includes('fetch') || lower.includes('failed to fetch')) {
-      return `${action} failed: service unavailable. Check your network connection.`;
+    let message: string;
+    if (status === 401 || hay.includes('unauthorized') || hay.includes('token')) {
+      message = m.channel_action_error_session({ action });
+    } else if (
+      status === 403 ||
+      hay.includes('403') ||
+      hay.includes('forbidden') ||
+      hay.includes('permission')
+    ) {
+      message = m.channel_action_error_permission({ action, detail });
+    } else if (status === 409 || hay.includes('already')) {
+      message = m.channel_action_error_conflict({ action });
+    } else if (
+      (status !== undefined && status >= 500) ||
+      hay.includes('network') ||
+      hay.includes('fetch') ||
+      hay.includes('injoignable')
+    ) {
+      message = m.channel_action_error_network({ action });
+    } else {
+      message = m.channel_action_error_generic({ action, detail });
     }
 
-    return `${action} failed: ${raw}`;
+    if (toast) showToast(message, 'error');
+    return message;
   }
 
   // ---------- Workspace helpers ----------
@@ -338,7 +385,7 @@ export function useChannelWorkspaces() {
       await ensureWorkspaceByName(normalized, ctx);
       ctx.log(`Community created: ${normalized}`);
     } catch (error) {
-      ctx.log(toUiActionError('Community creation', error));
+      ctx.log(toUiActionError(m.channel_action_community_create(), error));
     }
   }
 
@@ -403,7 +450,7 @@ export function useChannelWorkspaces() {
       ctx.selectConversation(channelId);
       ctx.log(`Channel created: #${normalizedChannelName}`);
     } catch (error) {
-      ctx.log(toUiActionError('Channel creation', error));
+      ctx.log(toUiActionError(m.channel_action_channel_create(), error));
     }
   }
 
@@ -477,7 +524,8 @@ export function useChannelWorkspaces() {
 
       ctx.log(`Member invited to channel (${roleName}): ${memberId}`);
     } catch (error) {
-      const msg = toUiActionError(`Invitation dans le canal (${roleName})`, error);
+      // Suppress the toast: the invite modal re-surfaces this error inline via inviteStatus.
+      const msg = toUiActionError(m.channel_action_channel_invite(), error, false);
       ctx.log(msg);
       throw error;
     }
@@ -507,7 +555,7 @@ export function useChannelWorkspaces() {
       });
       ctx.log(`Role updated (${roleName}) for: ${memberId}`);
     } catch (error) {
-      ctx.log(toUiActionError(`Role update (${roleName})`, error));
+      ctx.log(toUiActionError(m.channel_action_role_update(), error));
     }
   }
 
@@ -525,7 +573,7 @@ export function useChannelWorkspaces() {
       }
       ctx.log('You have left the channel.');
     } catch (error) {
-      ctx.log(toUiActionError('Leave channel', error));
+      ctx.log(toUiActionError(m.channel_action_channel_leave(), error));
     }
   }
 
@@ -552,7 +600,7 @@ export function useChannelWorkspaces() {
       }
       ctx.log('You have left the community.');
     } catch (error) {
-      ctx.log(toUiActionError('Leave community', error));
+      ctx.log(toUiActionError(m.channel_action_community_leave(), error));
     }
   }
 
@@ -580,7 +628,7 @@ export function useChannelWorkspaces() {
       }
       ctx.log(`Channel renamed: #${trimmed}`);
     } catch (error) {
-      ctx.log(toUiActionError('Renommage du canal', error));
+      ctx.log(toUiActionError(m.channel_action_channel_rename(), error));
     }
   }
 
@@ -598,7 +646,7 @@ export function useChannelWorkspaces() {
       }
       ctx.log('Channel deleted.');
     } catch (error) {
-      ctx.log(toUiActionError('Suppression du canal', error));
+      ctx.log(toUiActionError(m.channel_action_channel_delete(), error));
     }
   }
 
@@ -619,7 +667,7 @@ export function useChannelWorkspaces() {
       }
       ctx.log('Channel image updated.');
     } catch (error) {
-      ctx.log(toUiActionError('Update channel image', error));
+      ctx.log(toUiActionError(m.channel_action_channel_image(), error));
     }
   }
 
@@ -638,7 +686,7 @@ export function useChannelWorkspaces() {
       );
       ctx.log('Community image updated.');
     } catch (error) {
-      ctx.log(toUiActionError('Update community image', error));
+      ctx.log(toUiActionError(m.channel_action_community_image(), error));
     }
   }
 
