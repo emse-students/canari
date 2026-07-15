@@ -60,24 +60,20 @@ Deep-dive design docs referenced inline. Legend: \[x\] done+pushed, \[ \] todo, 
 
 ### CROSS-PROJECT: Quality & Security cleanup (started 2026-07-14)
 
-Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): green PRs self-merge, no involvement. Each repo = its own commits on main; full local CI gate before push.
+Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): green PRs self-merge, no involvement. Each repo = its own commits on main; full local CI gate before push. Node -> 24 and CodeQL cleanup DONE everywhere.
 
 **Open items:**
 * **Canari TS 6->7 majors (#168/#163/#162): DEFERRED until TS 7.1.** Breaking compiler jump fails `Test TS Backend`; ecosystem not ready. Hold the PRs (do not merge); TS stays `~6.0.3`. Revisit when 7.1 ships.
 * **Watch (majors that may fail CI):** prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
-* **Node -> 24: DONE across all** (MiGallery shipped 2026-07-15, commit dd80739: ci/code-analysis/release workflows + Dockerfile both stages + `engines>=24`; Canari/Sky already done). Portail = pure Bun, N/A.
-* **CodeQL: DONE.** Verified via `gh api` 2026-07-15: MiGallery 4 alerts dismissed (all FP/stale: atomic-rename file-system-race + safeLog log-injection + a stale unused-import) -> 0 open; Sky 0 open (roadmap's "3" was stale); Portail has NO code scanning configured (the "1 quality" was stale). Nothing left to close.
 
 ---
 
-### CANARI - open
+### CANARI
 
-**Shipped (needs on-device verify only, no code left):**
-* \[x\] Visible action errors channel/community (d2688ff7). Kick no longer silently purges (91fa0d92: `forgetGroup` + banner instead of silent `deleteConversation`).
-* \[x\] Viewport pinch-zoom/pan mis-detected as keyboard (37744cb). Verified on-device.
-* \[x\] New-device / pre-join history bundle durable cross-session retry (24b6480c): `awaitingHistoryRegistry.ts` (localStorage, 30d) + `reSolicitAwaitingHistory` on each reconnect + 2.5s initial defer (fixes epoch race). **Verify: real 2nd device, peer offline at join, reconnect -> bundle arrives.** Deferred findings: (C) DONE (0de94457): `Sender data decryption error` refetch storm fixed via a bounded per-ciphertext retry ledger (`history_retry_cipher:*`, cap `MAX_HISTORY_DECRYPT_RETRIES=6`) in `history.ts` - epoch-gap/wrong-epoch frames stay retryable below the cap (no msg loss), then are marked seen + cursor-advanced (storm stops); epoch-gap still escalates via `shouldFlagStaleEpochGap`. Pure `nextHistoryRetryDecision` unit-tested. (D) VERIFIED - NOT a separate gap. `discoverMissingGroups` (actions.ts) is a pure UI/state reconciler (placeholder creation + orphan cleanup + avatar seeding); it performs NO re-add. The single `requestReAdd` seam is driven by exactly two complementary sources that fully subsume it: (1) connect-sync `syncConnectionAfterWsOpen` fires it for WASM-missing groups straight from the server `getUserGroups` list on every reconnect (independent of discovery/the conversations map); (2) SYNC_WATCHDOG (5s) fires it for every candidate in `cb.conversations` UNION the not-ready registry that lacks WASM state - and discovery writes its placeholders INTO the SAME `cb.conversations` instance, so every discovered group is a watchdog candidate next poll. No double-drive (discovery never re-adds), no coverage gap. Residual = the already-documented inherent liveness limit (lost Welcome + permanently-silent group + no reconnect), orthogonal to discovery. Incidental cleanup shipped: removed the dead `runGroupDiscovery` composable callback (zero consumers; all real calls go through `runGroupDiscoveryImpl`).
-
-* \[x\] **Server-authoritative admin-button gating.** DONE. `listWorkspacesForUser` ([channel.service.ts:383](apps/social-service/src/channels/channel.service.ts#L383)) now returns `viewerCanManage` per workspace (batch-loads roles, checks `MANAGE_WORKSPACE`, fail-closed). Threaded `viewerCanManage` through `WorkspaceDto` -> `upsertWorkspaceFromDto` -> `ChannelSidebarWorkspace` -> Sidebar `ChannelWorkspace` -> `SidebarCommunityAdminModal` (`canManage` derived from `selectedWorkspace.viewerCanManage`). Modal hides change-image upload + member-invite button/inputs and makes the name input readonly when `!canManage`; Members list + Leave stay visible to all. Event-created placeholder workspaces default `viewerCanManage:false` until the next full sync (safe). 3 backend tests (`listWorkspacesForUser` flag/no-roles/no-memberships). Wiki (api-surface + social-service) updated. Gates: backend spec 26/26, `bun run check` 0 errors, oxlint clean, oxfmt done. **On-device verify: non-admin member sees no change-image/invite controls; admin does.**
+No open code work. Shipped this cycle, pending ON-DEVICE verification only (implementation recoverable from git):
+* Pre-join history bundle durable cross-session retry (24b6480c) - verify: real 2nd device, peer offline at join, reconnect -> bundle arrives.
+* History refetch-storm bounded retry (finding C, 0de94457) + discovery-gap check (finding D, a365d96e, closed - not a gap) - verify: external joiner, storm stops, no message loss.
+* Server-authoritative admin-button gating on the community modal (71bfe02c) - verify: non-admin member sees no change-image/invite controls; admin does.
 
 Residual otherwise = on-device MLS mobile native verification only.
 
@@ -93,19 +89,15 @@ Nothing open. Conventions in memory: [[project_sky_conventions]], accents [[feed
 
 ---
 
-### MIGALLERY (../MiGallery) - essentially COMPLETE (HEAD 882d6d1)
+### MIGALLERY (../MiGallery) - COMPLETE (HEAD 882d6d1)
 
-* \[x\] Normalization: wiki + Paraglide i18n + tolerant search done; ALL user-facing FR strings migrated (last residuals shipped 882d6d1; accented-French sweep of src = 0 string literals) ([[project_migallery_normalization]]).
-* \[x\] Cleanup: CodeQL (0 open) + Node 24 done (see cross-project).
-* Residual (minor, opportunistic): stray French code comments in src (hooks, permissions.ts JSDoc, immich proxy) - fold into touched files, no dedicated pass.
+Normalization (wiki + i18n + tolerant search) and cleanup done ([[project_migallery_normalization]]). Residual (minor, opportunistic): stray French code comments in src - fold into touched files, no dedicated pass.
 
 ---
 
 ### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA - COMPLETE
 
-Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false`: deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, i18n, MD bios, CI integrity, N7 CD-via-Secrets (verified live 2026-07-15) all DONE ([[project_portail_vitrine_migration]]).
-
-* \[x\] Cleanup: no code scanning configured (no CodeQL alert to close); Node bump N/A (pure Bun). Nothing open.
+Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false`: deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, i18n, MD bios, CI integrity, N7 CD-via-Secrets (verified live 2026-07-15) all DONE ([[project_portail_vitrine_migration]]). Nothing open.
 
 ---
 
