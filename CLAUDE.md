@@ -66,40 +66,35 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 * **Canari TS 6->7 majors (#168/#163/#162): DEFERRED until TS 7.1.** Breaking compiler jump fails `Test TS Backend`; ecosystem not ready. Hold the PRs (do not merge); TS stays `~6.0.3`. Revisit when 7.1 ships.
 * **Watch (majors that may fail CI):** prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
 * **Node -> 24: MiGallery pending** (`release.yml` matrix->`[24]`, `engines>=24`, Docker `node:22`->`24`). Canari/Sky done.
-* Wiki + English-comment audit per repo, folded into touched files. Sky (3) + Portail (1) low-sev CodeQL alerts last.
+* Low-sev CodeQL alerts to close: MiGallery (2 high + 4 medium; file-system-race is the real one), Portail (1 quality), Sky (3). Fold wiki + English-comment audit into touched files.
 
 ---
 
 ### CANARI - no open code tasks
 
-All roadmap items resolved. Only residuals are non-code:
-* **D. MLS + Communautes audit - CODE FULLY RESOLVED.** Every finding fixed; July re-architecture deleted the reboot/CAS/successor machinery. Residual = on-device verification of mobile native paths (Android/iOS, not compiler-verifiable here) - a device task.
-* TS 6->7 deferred until 7.1 (see cross-project).
+All roadmap items resolved. Residual = on-device verification of MLS mobile native paths (Android/iOS, not compiler-verifiable here). TS 6->7 deferred until 7.1 (see cross-project).
 
-Gotcha for future normalization sweeps: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
+Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
 ---
 
-### SKY (../Sky) - COMPLETE (all roadmap items DONE + PUSHED, HEAD 174a8bd)
+### SKY (../Sky) - COMPLETE (HEAD 174a8bd)
 
-Nothing open. Conventions/gotchas in memory: [[project_sky_conventions]], accents [[feedback_sky_french_accents]] (vitest include = `src/**` only -> co-locate tests in src/). Possible future nice-to-have: promo color legend (was out of scope).
+Nothing open. Conventions in memory: [[project_sky_conventions]], accents [[feedback_sky_french_accents]] (vitest include = `src/**` only -> co-locate tests in src/). Future nice-to-have: promo color legend.
 
 ---
 
-### MIGALLERY (../MiGallery)
+### MIGALLERY (../MiGallery) - open
 
 * \[ \] Normalization: wiki + Paraglide infra done+pushed; remaining = UI string migration + English comments + tolerant search ([[project_migallery_normalization]]).
-* \[ \] Cleanup (see cross-project): 2 high + 4 medium CodeQL alerts (file-system-race is the real one), Node bump, wiki/comment audit.
+* \[ \] Cleanup (see cross-project): CodeQL alerts, Node bump, wiki/comment audit.
 
 ---
 
-### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA
+### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA - only cleanup open
 
-Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false` because deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, CI integrity, Tailwind cleanup, license, docs = DONE ([[project_portail_vitrine_migration]]).
+Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false`: deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, i18n, MD bios, CI integrity, N7 CD-via-Secrets (verified live 2026-07-15) all DONE ([[project_portail_vitrine_migration]]).
 
-**Open work:**
-* \[x\] **N3 / N8 / N6 DONE + pushed** (i18n `m.*` sweep; MD bios in `description`+`bioMarkdown` via svelte-markdown; comment sweep + 404 i18n). Details pruned.
-* \[x\] **N7 CD via GitHub Secrets - FULLY DONE + VERIFIED LIVE (2026-07-15).** deploy.yml rewrites `~/portail-etu/.env` from 4 GitHub Secrets each push (masked; Bun auto-loads `.env`; empty values fall back to public defaults / disable avatar proxy). All 4 secrets set; `GALLERY_API_KEY` rotated (old revoked on MiGallery). Redeploy (rerun of 29418846082) applied the key; prod avatar proxy verified returning `200 image/jpeg` for a real member. `.env.example` is the canonical secret-name list.
 * \[ \] Cleanup (see cross-project): 1 quality CodeQL alert, Node bump.
 
 ---
