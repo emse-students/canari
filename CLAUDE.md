@@ -99,7 +99,7 @@ Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false` beca
 
 **Open work:**
 * \[x\] **N3 / N8 / N6 DONE + pushed** (i18n `m.*` sweep; MD bios in `description`+`bioMarkdown` via svelte-markdown; comment sweep + 404 i18n). Details pruned.
-* \[x\] **N7 CD via GitHub Secrets - CODE + SECRETS DONE (f135b0e).** deploy.yml wipes `~/portail-etu` and rewrites `.env` from 4 GitHub Secrets each push (via `env:`, masked; Bun auto-loads `.env`; empty values fall back to public defaults / disable avatar proxy). Dropped dead sharp (rollup external + `bun install ... sharp` in deploy.yml/release.yml) + stale commented Setup-Bun block. `.env.example` is the canonical secret-name list. All 4 secrets set via `gh secret set` on `emse-students/refonte-portail-etu` (`GALLERY_API_KEY` = new rotated key; old one revoked on MiGallery). **PENDING (1 prod deploy):** the f135b0e deploy ran BEFORE secrets existed, so prod `.env` still has an empty `GALLERY_API_KEY` and the avatar proxy is down until a redeploy. Trigger with `gh run rerun 29418846082 --repo emse-students/refonte-portail-etu` (or any next push to main) - user deferred it. Then verify avatars load.
+* \[x\] **N7 CD via GitHub Secrets - FULLY DONE + VERIFIED LIVE (2026-07-15).** deploy.yml rewrites `~/portail-etu/.env` from 4 GitHub Secrets each push (masked; Bun auto-loads `.env`; empty values fall back to public defaults / disable avatar proxy). All 4 secrets set; `GALLERY_API_KEY` rotated (old revoked on MiGallery). Redeploy (rerun of 29418846082) applied the key; prod avatar proxy verified returning `200 image/jpeg` for a real member. `.env.example` is the canonical secret-name list.
 * \[ \] Cleanup (see cross-project): 1 quality CodeQL alert, Node bump.
 
 ---
