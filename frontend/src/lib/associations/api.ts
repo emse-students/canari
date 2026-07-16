@@ -80,6 +80,8 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
+  /** Primary thematic category (managed table). Null when uncategorized. Used by the "Carte de la Vie Asso" poster. */
+  categoryId?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list';
   /** Lists only: the promotion year the list belongs to. */
@@ -136,6 +138,8 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
+  /** Primary thematic category id. Pass `""` or `null` to clear. */
+  categoryId?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
@@ -1492,4 +1496,138 @@ export async function startStripeOnboarding(
     throw new Error(`onboarding ${res.status}: ${details || res.statusText}`);
   }
   return (await res.json()) as { url: string; accountId: string };
+}
+
+// ── Association categories (thematic taxonomy) ───────────────────────────────
+
+/** A managed thematic category used to group associations on the poster and directory. */
+export interface AssociationCategory {
+  id: string;
+  /** Human-readable label (e.g. "Cuisine"). */
+  label: string;
+  /** URL-safe unique identifier (e.g. "cuisine"). */
+  slug: string;
+  /** Display position - lower values appear first. */
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAssociationCategoryPayload {
+  label: string;
+  slug: string;
+  sortOrder?: number;
+}
+
+export interface UpdateAssociationCategoryPayload {
+  label?: string;
+  sortOrder?: number;
+}
+
+/** Lists categories in display order. Public. */
+export async function listAssociationCategories(): Promise<AssociationCategory[]> {
+  return request<AssociationCategory[]>('/api/associations/categories');
+}
+
+/** Creates a category. Global admins / BDE super-admins only. */
+export async function createAssociationCategory(
+  payload: CreateAssociationCategoryPayload
+): Promise<AssociationCategory> {
+  return request<AssociationCategory>('/api/associations/categories', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Updates a category's label/order. Global admins / BDE super-admins only. */
+export async function updateAssociationCategory(
+  id: string,
+  payload: UpdateAssociationCategoryPayload
+): Promise<AssociationCategory> {
+  return request<AssociationCategory>(`/api/associations/categories/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Deletes a category and detaches it from its associations. Global admins / BDE super-admins only. */
+export async function deleteAssociationCategory(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/associations/categories/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** Persists a new top-to-bottom category order. Global admins / BDE super-admins only. */
+export async function reorderAssociationCategories(
+  orderedIds: string[]
+): Promise<AssociationCategory[]> {
+  return request<AssociationCategory[]>('/api/associations/categories/reorder', {
+    method: 'PATCH',
+    body: JSON.stringify({ orderedIds }),
+  });
+}
+
+// ── Poster projects ("Carte de la Vie Asso") ─────────────────────────────────
+
+/**
+ * A saved, re-editable poster layout. `layout` holds only positions/sizes/doodles/theme/background;
+ * live content (photos, members, colors) is re-resolved at render time so a regenerated map stays
+ * current. Restricted to global admins / BDE super-admins.
+ */
+export interface PosterProject {
+  id: string;
+  name: string;
+  /** Opaque JSON layout - the editor owns this shape. */
+  layout: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatePosterProjectPayload {
+  name: string;
+  layout?: Record<string, unknown>;
+}
+
+export interface UpdatePosterProjectPayload {
+  name?: string;
+  layout?: Record<string, unknown>;
+}
+
+/** Lists all poster projects, most-recently-updated first. Admins / BDE super-admins only. */
+export async function listPosterProjects(): Promise<PosterProject[]> {
+  return request<PosterProject[]>('/api/associations/poster');
+}
+
+/** Loads one poster project (full layout). Admins / BDE super-admins only. */
+export async function getPosterProject(id: string): Promise<PosterProject> {
+  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}`);
+}
+
+/** Creates a poster project owned by the caller. Admins / BDE super-admins only. */
+export async function createPosterProject(
+  payload: CreatePosterProjectPayload
+): Promise<PosterProject> {
+  return request<PosterProject>('/api/associations/poster', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Renames a project and/or replaces its layout. Admins / BDE super-admins only. */
+export async function updatePosterProject(
+  id: string,
+  payload: UpdatePosterProjectPayload
+): Promise<PosterProject> {
+  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Permanently deletes a project. Admins / BDE super-admins only. */
+export async function deletePosterProject(id: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/associations/poster/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }

@@ -15,6 +15,7 @@
     Building2,
     Wallet,
     FileCheck2,
+    Map,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -61,7 +62,8 @@
         | 'platform'
         | 'associations'
         | 'cercle'
-        | 'doc-reviewers';
+        | 'doc-reviewers'
+        | 'carte';
     }[] = [{ href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: 'agenda' }];
     if (isGlobalAdminUser) {
       items.push(
@@ -73,13 +75,16 @@
         { href: '/admin/users', label: m.admin_admins_label(), icon: 'users' }
       );
     }
-    // Document-reviewer grants: global admins and BDE super-admins.
+    // Document-reviewer grants + Carte de la Vie Asso: global admins and BDE super-admins.
     if (isGlobalAdminUser || isSuperAdminUser) {
-      items.push({
-        href: '/admin/document-reviewers',
-        label: m.docreview_nav_label(),
-        icon: 'doc-reviewers',
-      });
+      items.push(
+        {
+          href: '/admin/document-reviewers',
+          label: m.docreview_nav_label(),
+          icon: 'doc-reviewers',
+        },
+        { href: '/admin/carte', label: m.carte_card_label(), icon: 'carte' }
+      );
     }
     return items;
   });
@@ -151,6 +156,8 @@
             <Wallet size={15} />
           {:else if item.icon === 'doc-reviewers'}
             <FileCheck2 size={15} />
+          {:else if item.icon === 'carte'}
+            <Map size={15} />
           {:else}
             <Activity size={15} />
           {/if}

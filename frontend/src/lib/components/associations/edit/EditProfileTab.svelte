@@ -5,7 +5,9 @@
     uploadAssociationLogo,
     deleteAssociationLogo,
     listAssociations,
+    listAssociationCategories,
     type Association,
+    type AssociationCategory,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Check } from '@lucide/svelte';
@@ -36,6 +38,10 @@
   let editColor = $state(initial.color ?? '');
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
+  /** Primary thematic category id ("" = uncategorized), used by the "Carte de la Vie Asso" poster. */
+  let editCategoryId = $state(initial.categoryId ?? '');
+  /** Managed thematic categories, loaded once for the picker. */
+  let categoryOptions = $state<AssociationCategory[]>([]);
 
   // ── List-only fields (campaign year, parent association, optional 2nd theme) ──
   const isList = initial.type === 'list';
@@ -46,7 +52,15 @@
   let parentOptions = $state<Association[]>([]);
 
   onMount(async () => {
-    if (!isList) return;
+    // Load the thematic categories for regular associations (used by the poster generator).
+    if (!isList) {
+      try {
+        categoryOptions = await listAssociationCategories();
+      } catch {
+        categoryOptions = [];
+      }
+      return;
+    }
     try {
       parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
     } catch {
@@ -93,12 +107,13 @@
               parentAssociationId: editParentId || null,
               name2: editName2.trim() || null,
             }
-          : {}),
+          : { categoryId: editCategoryId || null }),
       });
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
       editContactEmail = updated.contactEmail ?? '';
+      editCategoryId = updated.categoryId ?? '';
       editPromo = updated.promo ?? '';
       editParentId = updated.parentAssociationId ?? '';
       editName2 = updated.name2 ?? '';
@@ -262,6 +277,25 @@
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
+
+  {#if !isList}
+    <div>
+      <label for="edit-asso-category" class="block text-sm font-bold text-text-main mb-2 ml-1">
+        {m.asso_edit_category_label()}
+      </label>
+      <select
+        id="edit-asso-category"
+        bind:value={editCategoryId}
+        class="w-full rounded-xl border border-cn-border bg-cn-bg/30 px-4 py-2.5 text-sm text-text-main"
+      >
+        <option value="">{m.asso_edit_category_none()}</option>
+        {#each categoryOptions as cat (cat.id)}
+          <option value={cat.id}>{cat.label}</option>
+        {/each}
+      </select>
+      <p class="mt-1.5 ml-1 text-xs text-text-muted">{m.asso_edit_category_hint()}</p>
+    </div>
+  {/if}
 
   <div
     class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3"

@@ -17,6 +17,7 @@
     Wrench,
     FileCheck2,
     BookUser,
+    Map,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -84,7 +85,8 @@
     | 'create-association'
     | 'calendar'
     | 'directory'
-    | 'doc-reviewers';
+    | 'doc-reviewers'
+    | 'carte';
 
   interface AdminCard {
     href?: string;
@@ -167,14 +169,22 @@
         }
       );
     }
-    // Document-reviewer grants: global admins and BDE super-admins.
+    // Document-reviewer grants + Carte de la Vie Asso: global admins and BDE super-admins.
     if (isGlobalAdminUser || isSuperAdminUser) {
-      list.push({
-        href: '/admin/document-reviewers',
-        kind: 'doc-reviewers',
-        label: m.docreview_card_label(),
-        description: m.docreview_card_desc(),
-      });
+      list.push(
+        {
+          href: '/admin/document-reviewers',
+          kind: 'doc-reviewers',
+          label: m.docreview_card_label(),
+          description: m.docreview_card_desc(),
+        },
+        {
+          href: '/admin/carte',
+          kind: 'carte',
+          label: m.carte_card_label(),
+          description: m.carte_card_desc(),
+        }
+      );
     }
     return list;
   });
@@ -207,6 +217,8 @@
               <PlusCircle size={20} />
             {:else if card.kind === 'directory'}
               <BookUser size={20} />
+            {:else if card.kind === 'carte'}
+              <Map size={20} />
             {:else}
               <CalendarDays size={20} />
             {/if}

@@ -95,8 +95,11 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
 
 ## Phasing
 
-- **P0 - Foundations**: `category` migration + admin control; `poster_project` table + CRUD
-  API behind the guard; `/admin` route + dashboard card.
+- **P0 - Foundations** (DONE): `category` migration + admin control; `poster_project` table +
+  CRUD API behind the guard; `/admin/carte` hub (category manager + poster-project list) +
+  dashboard card + nav item; `categoryId` picker in the association profile settings; typed API
+  client (`listAssociationCategories`, poster CRUD, ...) + FR/EN i18n. Editor page
+  `/admin/carte/[id]` is a stub until P1.
 - **P1 - Generator + static render**: "auto-populate" one bubble per asso pre-grouped by
   category; render bubbles + polaroids + themed text directory; PDF export. Presentable map
   with no editing yet.
