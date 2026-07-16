@@ -88,29 +88,8 @@ describe('minesweeper', () => {
     expect(board.status).toBe('playing');
   });
 
-  it('auto-flags when a number equals its remaining hidden neighbors', () => {
-    // Mine only at (0,0). Reveal everything else via revealCell so auto-flag runs.
-    const board = makeBoard(3, 3, [[0, 0]]);
-    for (const [x, y] of [
-      [0, 1],
-      [0, 2],
-      [1, 0],
-      [1, 1],
-      [1, 2],
-      [2, 0],
-      [2, 1],
-      [2, 2],
-    ] as const) {
-      revealCell(board, x, y);
-    }
-    expect(cellAt(board, 0, 0).state).toBe('flagged');
-    expect(board.flagCount).toBeGreaterThanOrEqual(1);
-    expect(board.status).toBe('won');
-  });
-
-  it('auto-flags a forced mine without opening neighbors', () => {
-    // Mines at top corners. Manually reveal the ring so (1,0) has adj=2 and
-    // exactly two hidden neighbors — auto-flag must not open the remaining safe cell.
+  it('does not auto-flag after digging; flags only when clicking the number', () => {
+    // Mines at top corners. Digging (1,0) must leave mines hidden until the number is clicked.
     const board = makeBoard(3, 3, [
       [0, 0],
       [2, 0],
@@ -126,6 +105,12 @@ describe('minesweeper', () => {
       cellAt(board, x, y).state = 'revealed';
       board.revealedCount++;
     }
+    revealCell(board, 1, 0);
+    expect(cellAt(board, 1, 0).state).toBe('revealed');
+    expect(cellAt(board, 0, 0).state).toBe('hidden');
+    expect(cellAt(board, 2, 0).state).toBe('hidden');
+
+    // Click the number → places both flags.
     revealCell(board, 1, 0);
     expect(cellAt(board, 0, 0).state).toBe('flagged');
     expect(cellAt(board, 2, 0).state).toBe('flagged');

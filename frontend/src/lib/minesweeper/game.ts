@@ -9,8 +9,9 @@
  * soluble or a fresh layout is tried. See:
  * https://www.chiark.greenend.org.uk/~sgtatham/puzzles/
  *
- * During play, auto-flag runs when a revealed number N has exactly N hidden
- * neighbors left; opening chords stay manual via chord on a revealed number.
+ * During play, flags are placed only when the player clicks a revealed number
+ * whose remaining mine count equals its hidden neighbors; opening chords stay
+ * manual on a second click when flags already match.
  */
 
 export type CellState = 'hidden' | 'revealed' | 'flagged';
@@ -579,9 +580,8 @@ function applyCspAssists(
 
 /**
  * Runs logical assists until the board stabilizes (basic chords + CSP).
- * Used for no-guess generation / solvability checks. During play only
- * {@link applyAutoFlags} runs automatically; opening chords stay manual
- * via {@link chordCell}.
+ * Used for no-guess generation / solvability checks only — not during play.
+ * During play, flag-then-open chords are manual via {@link chordCell}.
  */
 export function runAutoAssists(
   board: MinesweeperBoard | SolveState,
@@ -608,7 +608,6 @@ export function runAutoAssists(
  * Click on a revealed number:
  * 1. If remaining mines == hidden neighbors, flag them all.
  * 2. Else if flags already == the number, open every remaining hidden neighbor.
- * Cascading auto-flags may still run after an open chord.
  */
 export function chordCell(board: MinesweeperBoard, x: number, y: number): MinesweeperBoard {
   if (board.status !== 'playing' || !inBounds(board, x, y)) return board;
@@ -652,10 +651,7 @@ export function chordCell(board: MinesweeperBoard, x: number, y: number): Minesw
     revealFlood(board, nx, ny);
   }
 
-  if (board.status === 'playing') {
-    applyAutoFlags(board);
-    checkWin(board);
-  }
+  if (board.status === 'playing') checkWin(board);
   return board;
 }
 
@@ -1033,14 +1029,13 @@ export function revealCell(board: MinesweeperBoard, x: number, y: number): Mines
   }
 
   revealFlood(board, x, y);
-  applyAutoFlags(board);
   checkWin(board);
   return board;
 }
 
 /**
  * Right-click / long press: toggle flag on a hidden cell.
- * Does not auto-open neighbors; may cascade further auto-flags.
+ * Does not auto-open neighbors or cascade flags.
  */
 export function toggleFlag(board: MinesweeperBoard, x: number, y: number): MinesweeperBoard {
   if (board.status !== 'playing' || !inBounds(board, x, y)) return board;
@@ -1056,7 +1051,6 @@ export function toggleFlag(board: MinesweeperBoard, x: number, y: number): Mines
     board.flagCount++;
   }
 
-  applyAutoFlags(board);
   return board;
 }
 
