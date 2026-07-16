@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "0.9.14"
+version = "0.9.15"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
