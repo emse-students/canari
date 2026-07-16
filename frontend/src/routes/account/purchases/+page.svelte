@@ -5,6 +5,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { ShoppingBag, Tag, ArrowLeft } from '@lucide/svelte';
   import type { UserTag } from '$lib/associations/api';
+  import CotisationTagRow from '$lib/components/shared/CotisationTagRow.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -126,28 +127,15 @@
             <li
               class="flex items-center gap-3 rounded-2xl border border-cn-border bg-[var(--cn-surface)] px-5 py-3"
             >
-              <div class="min-w-0 flex-1">
-                <p class="font-semibold text-sm text-text-main">{tag.tagName}</p>
-                <p class="text-xs text-text-muted mt-0.5">
-                  {#if tag.expiresAt}
-                    {m.purchases_tag_expires_at({
-                      date: new Date(tag.expiresAt).toLocaleDateString(
-                        getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                      ),
-                    })}
-                  {:else}
-                    {m.purchases_tag_no_expiry()}
-                  {/if}
-                  {#if tag.issuingAssocId}
-                    · emis par {tag.issuingAssocId.slice(0, 8)}…
-                  {/if}
-                </p>
-              </div>
-              <span
-                class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-xs font-bold"
-              >
-                {m.purchases_tag_active_badge()}
-              </span>
+              <CotisationTagRow {tag}>
+                {#snippet trailing()}
+                  <span
+                    class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-xs font-bold"
+                  >
+                    {m.purchases_tag_active_badge()}
+                  </span>
+                {/snippet}
+              </CotisationTagRow>
             </li>
           {/each}
         </ul>

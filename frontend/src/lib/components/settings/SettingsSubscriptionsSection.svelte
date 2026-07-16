@@ -4,8 +4,8 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import type { UserTag } from '$lib/associations/api';
+  import CotisationTagRow from '$lib/components/shared/CotisationTagRow.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   // Active membership tags (cotisations) bought through forms. Loaded here so the section is
   // self-contained; the full purchase history lives at /account/purchases.
@@ -68,25 +68,15 @@
         <li
           class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3"
         >
-          <div class="min-w-0 flex-1">
-            <p class="text-sm font-bold text-text-main">{tag.tagName}</p>
-            <p class="text-xs text-text-muted mt-0.5">
-              {#if tag.expiresAt}
-                {m.profile_subs_expires_at({
-                  date: new Date(tag.expiresAt).toLocaleDateString(
-                    getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                  ),
-                })}
-              {:else}
-                {m.profile_subs_no_expiry()}
-              {/if}
-            </p>
-          </div>
-          <span
-            class="shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 text-xs font-bold"
-          >
-            {m.profile_subs_active_badge()}
-          </span>
+          <CotisationTagRow {tag}>
+            {#snippet trailing()}
+              <span
+                class="shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 text-xs font-bold"
+              >
+                {m.profile_subs_active_badge()}
+              </span>
+            {/snippet}
+          </CotisationTagRow>
         </li>
       {/each}
     </ul>

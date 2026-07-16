@@ -11,6 +11,7 @@
     type AssociationMember,
     type UserTag,
   } from '$lib/associations/api';
+  import { formatCotisationTag } from '$lib/associations/cotisationTag';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import { Download, GripVertical, Tag, UserPlus } from '@lucide/svelte';
@@ -234,7 +235,9 @@
               class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3"
             >
               <div class="min-w-0 flex-1">
-                <p class="text-sm font-semibold text-text-main">{tag.tagName}</p>
+                <p class="text-sm font-semibold text-text-main">
+                  {m.cotisation_tag_label({ acronym: formatCotisationTag(tag.tagName).acronym })}
+                </p>
                 <p class="text-xs text-text-muted mt-0.5">
                   {tagHolderName(tag)}
                   {#if tag.expiresAt}
