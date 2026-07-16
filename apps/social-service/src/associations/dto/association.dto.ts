@@ -253,6 +253,34 @@ export class CreateAssociationDocumentDto {
   @IsInt()
   @Min(0)
   size: number;
+
+  /** Original uploaded file name (with extension), preserved for download. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  originalFilename?: string;
+}
+
+/** Partial update of a vault document: rename the display name and/or change visibility. */
+export class UpdateAssociationDocumentDto {
+  @IsString()
+  @IsOptional()
+  @IsNotEmpty()
+  @MaxLength(200)
+  name?: string;
+
+  /** `public` is rejected for password-protected documents (enforced in the service). */
+  @IsIn(['private', 'public'])
+  @IsOptional()
+  visibility?: 'private' | 'public';
+}
+
+/** Body for granting global document-reviewer access to a user. */
+export class AddDocumentReviewerDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  userId: string;
 }
 
 /** Payload for the association's vault-encrypted shared notepad (opaque ciphertext). */

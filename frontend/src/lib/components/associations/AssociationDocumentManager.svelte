@@ -4,6 +4,7 @@
     getVaultKey,
     listDocuments,
     createDocument,
+    updateDocument,
     getDocumentDetail,
     deleteDocument,
     getAssociationNotesCiphertext,
@@ -26,7 +27,18 @@
   } from '$lib/associations/vaultCrypto';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
-  import { FileUp, Trash2, Download, FileText, Lock, NotebookPen } from '@lucide/svelte';
+  import {
+    FileUp,
+    Trash2,
+    Download,
+    FileText,
+    Lock,
+    NotebookPen,
+    Globe,
+    EyeOff,
+    Pencil,
+    Info,
+  } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { portal } from '$lib/actions/portal';
   import Input from '$lib/components/ui/Input.svelte';
@@ -216,6 +228,7 @@
         mediaId,
         mimeType: file.type || 'application/octet-stream',
         size: file.size,
+        originalFilename: file.name,
       });
       console.log(`[Vault] Document saved: ${doc.id}`);
       stats = await listDocuments(associationId);
@@ -301,6 +314,75 @@
       pwPromptError = m.asso_doc_pw_incorrect();
     } finally {
       pwPromptBusy = false;
+    }
+  }
+
+  // Rename dialog: edits the display name only (the stored file/original name is kept).
+  let renameDoc = $state<AssociationDocument | null>(null);
+  let renameValue = $state('');
+  let renameBusy = $state(false);
+  let renameError = $state('');
+
+  // Per-document visibility toggle (private <-> public) in-flight id.
+  let visibilityBusyId = $state<string | null>(null);
+
+  function openRename(doc: AssociationDocument) {
+    renameDoc = doc;
+    renameValue = doc.name;
+    renameError = '';
+  }
+
+  async function submitRename() {
+    if (!renameDoc) return;
+    const name = renameValue.trim();
+    if (!name) {
+      renameError = m.asso_doc_rename_empty();
+      return;
+    }
+    renameBusy = true;
+    renameError = '';
+    try {
+      await updateDocument(associationId, renameDoc.id, { name });
+      renameDoc = null;
+      stats = await listDocuments(associationId);
+    } catch (e) {
+      console.error('[Vault] Rename error:', e);
+      renameError = e instanceof Error ? e.message : m.common_generic_error_label();
+    } finally {
+      renameBusy = false;
+    }
+  }
+
+  /**
+   * Toggles a document between private and public. A password-protected document
+   * can never be made public (the server cannot derive a shareable key), so the
+   * control is disabled for it. Optimistic with revert on failure.
+   */
+  async function toggleVisibility(doc: AssociationDocument) {
+    if (isProtected(doc) || !stats) return;
+    const next: 'private' | 'public' = doc.visibility === 'public' ? 'private' : 'public';
+    visibilityBusyId = doc.id;
+    error = '';
+    const documents = stats.documents.map((d) =>
+      d.id === doc.id ? { ...d, visibility: next } : d
+    );
+    stats = { ...stats, documents };
+    try {
+      await updateDocument(associationId, doc.id, { visibility: next });
+    } catch (e) {
+      console.error('[Vault] Visibility toggle error:', e);
+      // Revert so the UI never lies about the persisted state.
+      if (stats) {
+        stats = {
+          ...stats,
+          documents: stats.documents.map((d) =>
+            d.id === doc.id ? { ...d, visibility: doc.visibility } : d
+          ),
+        };
+      }
+      error = e instanceof Error ? e.message : m.common_generic_error_label();
+    } finally {
+      visibilityBusyId = null;
     }
   }
 
@@ -418,6 +500,14 @@
       {/if}
     </div>
 
+    <!-- Private/public explanation -->
+    <div
+      class="flex items-start gap-2 rounded-xl border border-cn-border/60 bg-cn-bg/30 px-3 py-2.5 text-xs text-text-muted"
+    >
+      <Info size={14} class="mt-0.5 shrink-0 text-cn-dark" />
+      <p>{m.asso_doc_visibility_hint()}</p>
+    </div>
+
     <!-- Document list -->
     {#if stats.documents.length === 0}
       <p class="text-sm text-text-muted text-center py-8">{m.asso_doc_no_documents()}</p>
@@ -441,6 +531,36 @@
               </p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onclick={() => toggleVisibility(doc)}
+                disabled={isProtected(doc) || visibilityBusyId === doc.id}
+                title={isProtected(doc)
+                  ? m.asso_doc_visibility_locked_title()
+                  : doc.visibility === 'public'
+                    ? m.asso_doc_visibility_make_private_title()
+                    : m.asso_doc_visibility_make_public_title()}
+                class="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-bold transition-colors disabled:opacity-40
+                  {doc.visibility === 'public' && !isProtected(doc)
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                  : 'border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              >
+                {#if doc.visibility === 'public' && !isProtected(doc)}
+                  <Globe size={14} />
+                  <span class="hidden sm:inline">{m.asso_doc_visibility_public()}</span>
+                {:else}
+                  <EyeOff size={14} />
+                  <span class="hidden sm:inline">{m.asso_doc_visibility_private()}</span>
+                {/if}
+              </button>
+              <button
+                type="button"
+                onclick={() => openRename(doc)}
+                title={m.asso_doc_rename_title()}
+                class="inline-flex items-center justify-center rounded-xl border border-cn-border bg-[var(--cn-surface)] p-2 text-text-muted hover:text-text-main transition-colors"
+              >
+                <Pencil size={15} />
+              </button>
               <button
                 type="button"
                 onclick={() => handleDownload(doc)}
@@ -565,6 +685,61 @@
               class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
             >
               {pwPromptBusy ? m.asso_doc_decrypting() : m.asso_doc_open_button()}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if renameDoc}
+  <div use:portal>
+    <div
+      class="fixed inset-0 z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      role="presentation"
+      onclick={(e) => e.target === e.currentTarget && !renameBusy && (renameDoc = null)}
+    >
+      <div
+        class="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-doc-title"
+      >
+        <h3 id="rename-doc-title" class="text-lg font-bold text-text-main flex items-center gap-2">
+          <Pencil size={18} class="text-cn-dark" />
+          {m.asso_doc_rename_title()}
+        </h3>
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            void submitRename();
+          }}
+          class="space-y-3"
+        >
+          <Input
+            label={m.asso_doc_rename_label()}
+            bind:value={renameValue}
+            placeholder={m.asso_doc_rename_placeholder()}
+          />
+          {#if renameError}
+            <p class="text-sm text-red-600">{renameError}</p>
+          {/if}
+          <div class="flex flex-wrap gap-2 justify-end pt-1">
+            <button
+              type="button"
+              onclick={() => (renameDoc = null)}
+              disabled={renameBusy}
+              class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
+            >
+              {m.common_cancel_button()}
+            </button>
+            <button
+              type="submit"
+              disabled={renameBusy || !renameValue.trim()}
+              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            >
+              {renameBusy ? m.common_saving_label() : m.common_save_button()}
             </button>
           </div>
         </form>

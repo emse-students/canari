@@ -17,11 +17,12 @@
     Activity,
     UserCog,
     Shield,
+    FolderOpen,
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { listMyAssociations } from '$lib/associations/api';
+  import { listMyAssociations, getReviewerAccess } from '$lib/associations/api';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -69,8 +70,14 @@
 
   let showAdminSection = $state(false);
   let isAdmin = $derived(isGlobalAdmin());
+  /** True when the user may review associations' public documents (school/MDE staff, admins, BDE). */
+  let hasReviewerAccess = $state(false);
 
   onMount(async () => {
+    // Reviewer access is independent of admin/association status (external staff).
+    void getReviewerAccess()
+      .then((v) => (hasReviewerAccess = v))
+      .catch(() => (hasReviewerAccess = false));
     if (isGlobalAdmin()) {
       showAdminSection = true;
       return;
@@ -193,6 +200,32 @@
       {/each}
     </div>
   </section>
+
+  <!-- Reviewer des documents administratifs (personnel Ecole/MDE, admins, BDE) -->
+  {#if hasReviewerAccess}
+    <section class="mb-8">
+      <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+        {m.reviewer_docs_dashboard_heading()}
+      </h2>
+      <a
+        href="/documents"
+        class="flex items-start gap-4 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        title={m.reviewer_docs_dashboard_label()}
+      >
+        <span
+          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+        >
+          <FolderOpen size={20} />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block font-bold text-text-main">{m.reviewer_docs_dashboard_label()}</span>
+          <span class="block text-sm text-text-muted mt-0.5">
+            {m.reviewer_docs_dashboard_desc()}
+          </span>
+        </span>
+      </a>
+    </section>
+  {/if}
 
   <!-- Administration (admins d'association et admins globaux) -->
   {#if showAdminSection || isAdmin}

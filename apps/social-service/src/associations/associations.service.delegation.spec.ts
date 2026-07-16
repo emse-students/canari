@@ -45,6 +45,7 @@ function makeService(seed: Record<string, Partial<Association>>) {
     undefined as never,
     undefined as never,
     undefined as never,
+    undefined as never, // reviewerGrantRepo (unused here)
     undefined as never,
     undefined as never,
     undefined as never,

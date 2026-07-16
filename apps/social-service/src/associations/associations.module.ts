@@ -7,6 +7,7 @@ import { AssociationMember } from './entities/association-member.entity';
 import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
+import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
@@ -19,6 +20,8 @@ import { ProductsService } from './products.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationRoleGuard } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
+import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
+import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { FollowsModule } from '../follows/follows.module';
 import { PushService } from '../push/push.service';
 import { UserTagModule } from '../users/user-tag.module';
@@ -34,6 +37,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
       AssociationCalendarEvent,
       AssociationCalendarEventCoOwner,
       AssociationDocument,
+      DocumentReviewerGrant,
       AssociationProduct,
       WebhookDelivery,
       AssociationRoleHistory,
@@ -51,6 +55,8 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     ProductsService,
     AssociationRoleGuard,
     GlobalAdminOrAssociationRoleGuard,
+    GlobalAdminOrBdeSuperAdminGuard,
+    ReviewerAccessGuard,
     PushService,
   ],
   controllers: [AssociationsController],

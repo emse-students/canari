@@ -2,8 +2,8 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { isGlobalAdmin } from '$lib/stores/user';
-  import { listMyAssociations } from '$lib/associations/api';
+  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { listMyAssociations, ensureAssociationSuperAdmin } from '$lib/associations/api';
   import {
     Shield,
     CalendarClock,
@@ -14,6 +14,7 @@
     Wrench,
     Building2,
     Wallet,
+    FileCheck2,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -22,11 +23,14 @@
   let ready = $state(false);
   let isGlobalAdminUser = $state(false);
   let isAssociationAdmin = $state(false);
+  let isSuperAdminUser = $state(false);
 
   const path = $derived(page.url.pathname);
 
   onMount(async () => {
     isGlobalAdminUser = isGlobalAdmin();
+    // Probe BDE super-admin in the background so the document-reviewers item can appear.
+    void ensureAssociationSuperAdmin().then((v) => (isSuperAdminUser = v));
     if (isGlobalAdminUser) {
       isAssociationAdmin = true;
       ready = true;
@@ -38,6 +42,7 @@
     } catch {
       isAssociationAdmin = false;
     }
+    isSuperAdminUser = isAssociationSuperAdmin();
     ready = true;
     if (!isAssociationAdmin) {
       void goto('/dashboard', { replaceState: true });
@@ -48,7 +53,15 @@
     const items: {
       href: string;
       label: string;
-      icon: 'agenda' | 'status' | 'moderation' | 'users' | 'platform' | 'associations' | 'cercle';
+      icon:
+        | 'agenda'
+        | 'status'
+        | 'moderation'
+        | 'users'
+        | 'platform'
+        | 'associations'
+        | 'cercle'
+        | 'doc-reviewers';
     }[] = [{ href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: 'agenda' }];
     if (isGlobalAdminUser) {
       items.push(
@@ -59,6 +72,14 @@
         { href: '/admin/cercle', label: m.admin_cercle_label(), icon: 'cercle' },
         { href: '/admin/users', label: m.admin_admins_label(), icon: 'users' }
       );
+    }
+    // Document-reviewer grants: global admins and BDE super-admins.
+    if (isGlobalAdminUser || isSuperAdminUser) {
+      items.push({
+        href: '/admin/document-reviewers',
+        label: m.docreview_nav_label(),
+        icon: 'doc-reviewers',
+      });
     }
     return items;
   });
@@ -128,6 +149,8 @@
             <Wrench size={15} />
           {:else if item.icon === 'cercle'}
             <Wallet size={15} />
+          {:else if item.icon === 'doc-reviewers'}
+            <FileCheck2 size={15} />
           {:else}
             <Activity size={15} />
           {/if}

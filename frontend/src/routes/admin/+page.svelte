@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isGlobalAdmin } from '$lib/stores/user';
-  import { listPendingCalendarEvents } from '$lib/associations/api';
+  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { listPendingCalendarEvents, ensureAssociationSuperAdmin } from '$lib/associations/api';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import {
@@ -15,17 +15,20 @@
     ShieldAlert,
     UserCog,
     Wrench,
+    FileCheck2,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
   let isGlobalAdminUser = $state(false);
+  let isSuperAdminUser = $state(false);
   let pendingCount = $state<number | null>(null);
   let isPushTestRunning = $state(false);
   let pushTestResult = $state('');
 
   onMount(async () => {
     isGlobalAdminUser = isGlobalAdmin();
+    void ensureAssociationSuperAdmin().then((v) => (isSuperAdminUser = v));
     try {
       const pending = await listPendingCalendarEvents();
       pendingCount = pending.events.length;
@@ -78,7 +81,8 @@
     | 'users'
     | 'associations'
     | 'create-association'
-    | 'calendar';
+    | 'calendar'
+    | 'doc-reviewers';
 
   interface AdminCard {
     href?: string;
@@ -154,6 +158,15 @@
           globalOnly: true,
         }
       );
+    }
+    // Document-reviewer grants: global admins and BDE super-admins.
+    if (isGlobalAdminUser || isSuperAdminUser) {
+      list.push({
+        href: '/admin/document-reviewers',
+        kind: 'doc-reviewers',
+        label: m.docreview_card_label(),
+        description: m.docreview_card_desc(),
+      });
     }
     return list;
   });

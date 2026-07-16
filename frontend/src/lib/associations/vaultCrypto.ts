@@ -90,6 +90,21 @@ export function randomPwSalt(): string {
 }
 
 /**
+ * Imports a hex-encoded 32-byte AES-256-GCM key for decryption. Used on the
+ * document-reviewer page, where the server derives a per-document CEK for public
+ * documents and returns it directly (the raw vault key is never exposed).
+ */
+export async function importRawAesKey(hexKey: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    hexToBytes(hexKey),
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+}
+
+/**
  * Parses the metadata markers stored in a document's `description` field.
  * Format: `[s:<cekSalt>]` optionally followed by `[pw:<pwSaltHex>]` for
  * password-protected documents.

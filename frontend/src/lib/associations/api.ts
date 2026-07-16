@@ -685,6 +685,10 @@ export interface AssociationDocument {
   mimeType: string;
   size: number;
   uploadedBy: string;
+  /** `private` = association only; `public` = also visible to document reviewers. */
+  visibility: 'private' | 'public';
+  /** Original uploaded file name (with extension), preserved across renames. */
+  originalFilename?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -701,6 +705,8 @@ export interface CreateDocumentPayload {
   mediaId: string;
   mimeType: string;
   size: number;
+  /** Original uploaded file name (with extension), preserved for downloads. */
+  originalFilename?: string;
 }
 
 /**
@@ -773,6 +779,83 @@ export async function deleteDocument(
 ): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(
     `/api/associations/${encodeURIComponent(associationId)}/documents/${encodeURIComponent(docId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/**
+ * Renames a document (display name) and/or changes its visibility (private/public).
+ * Rejected (400) when making a password-protected document public. Requires MANAGE_DOCUMENTS.
+ */
+export async function updateDocument(
+  associationId: string,
+  docId: string,
+  patch: { name?: string; visibility?: 'private' | 'public' }
+): Promise<AssociationDocument> {
+  return request<AssociationDocument>(
+    `/api/associations/${encodeURIComponent(associationId)}/documents/${encodeURIComponent(docId)}`,
+    { method: 'PATCH', body: JSON.stringify(patch) }
+  );
+}
+
+// ── Document reviewers (cross-association public-document access) ─────────────
+
+/** A global document-reviewer grant (school / Maison des eleves staff). */
+export interface DocumentReviewerGrant {
+  userId: string;
+  grantedBy: string;
+  createdAt: string;
+}
+
+/** A public document exposed to a reviewer, with its server-derived hex CEK. */
+export interface ReviewerDocument {
+  id: string;
+  name: string;
+  originalFilename: string | null;
+  mimeType: string;
+  size: number;
+  mediaId: string;
+  cek: string;
+  createdAt: string;
+}
+
+/** Public documents of one association for the cross-association reviewer page. */
+export interface ReviewerDocumentGroup {
+  associationId: string;
+  associationName: string;
+  slug: string;
+  logoUrl: string | null;
+  documents: ReviewerDocument[];
+}
+
+/** Probe whether the current user may access the cross-association reviewer page. */
+export async function getReviewerAccess(): Promise<boolean> {
+  const res = await request<{ hasAccess: boolean }>('/api/associations/reviewer/access');
+  return res.hasAccess;
+}
+
+/** Lists every association's public documents (reviewer-gated). */
+export async function listReviewerDocuments(): Promise<ReviewerDocumentGroup[]> {
+  return request<ReviewerDocumentGroup[]>('/api/associations/reviewer/documents');
+}
+
+/** Lists all document-reviewer grants. Global admins / BDE super-admins only. */
+export async function listDocumentReviewers(): Promise<DocumentReviewerGrant[]> {
+  return request<DocumentReviewerGrant[]>('/api/associations/document-reviewers');
+}
+
+/** Grants document-reviewer access to a user. Global admins / BDE super-admins only. */
+export async function addDocumentReviewer(userId: string): Promise<DocumentReviewerGrant> {
+  return request<DocumentReviewerGrant>('/api/associations/document-reviewers', {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+}
+
+/** Revokes a user's document-reviewer access. Global admins / BDE super-admins only. */
+export async function removeDocumentReviewer(userId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/associations/document-reviewers/${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
   );
 }

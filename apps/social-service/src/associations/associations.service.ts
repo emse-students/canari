@@ -10,13 +10,14 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
-import { randomBytes } from 'crypto';
+import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
 import { AssociationMember, AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationDocument } from './entities/association-document.entity';
+import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import {
   AssociationCalendarEvent,
@@ -32,6 +33,7 @@ import {
   AddMemberDto,
   CreateAssociationDto,
   CreateAssociationDocumentDto,
+  UpdateAssociationDocumentDto,
   CreateAssociationCalendarEventDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
@@ -44,6 +46,28 @@ import { sanitizeLog } from '../common/log.utils';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+/** A single public document exposed to a reviewer, with its server-derived CEK. */
+export interface ReviewerDocument {
+  id: string;
+  name: string;
+  originalFilename: string | null;
+  mimeType: string;
+  size: number;
+  mediaId: string;
+  /** Hex AES-256-GCM content key derived server-side from the vault key. */
+  cek: string;
+  createdAt: Date;
+}
+
+/** Public documents of one association, for the cross-association reviewer page. */
+export interface ReviewerDocumentGroup {
+  associationId: string;
+  associationName: string;
+  slug: string;
+  logoUrl: string | null;
+  documents: ReviewerDocument[];
+}
 
 /** CRUD, logo management, membership, and Stripe helpers for student associations. */
 @Injectable()
@@ -64,6 +88,8 @@ export class AssociationsService {
     private readonly coOwnerRepo: Repository<AssociationCalendarEventCoOwner>,
     @InjectRepository(AssociationDocument)
     private readonly docRepo: Repository<AssociationDocument>,
+    @InjectRepository(DocumentReviewerGrant)
+    private readonly reviewerGrantRepo: Repository<DocumentReviewerGrant>,
     @InjectRepository(Post)
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Form)
@@ -1534,6 +1560,8 @@ export class AssociationsService {
           mimeType: true,
           size: true,
           uploadedBy: true,
+          visibility: true,
+          originalFilename: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -1609,6 +1637,9 @@ export class AssociationsService {
       mimeType: dto.mimeType,
       size: dto.size,
       uploadedBy: userId,
+      // New documents are private until the association explicitly shares them.
+      visibility: 'private',
+      originalFilename: dto.originalFilename?.trim() || dto.name.trim(),
     });
     const saved = await this.docRepo.save(doc);
     this.logger.debug(
@@ -1645,6 +1676,178 @@ export class AssociationsService {
       await this.deleteMediaBestEffort(doc.mediaId, bearer);
     }
     return { ok: true };
+  }
+
+  /**
+   * Renames a document's display name and/or changes its visibility (private/public).
+   * A password-protected document (has a `[pw:…]` marker) can never be made public:
+   * the server lacks the password, so a reviewer could not derive its CEK. Requires
+   * MANAGE_DOCUMENTS (enforced by the controller guard).
+   */
+  async updateDocument(
+    associationId: string,
+    docId: string,
+    dto: UpdateAssociationDocumentDto
+  ) {
+    await this.findById(associationId);
+    const doc = await this.docRepo.findOne({ where: { id: docId, associationId } });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    const patch: Partial<AssociationDocument> = {};
+
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException('Document name cannot be empty');
+      const clash = await this.docRepo
+        .createQueryBuilder('d')
+        .where('d.associationId = :associationId', { associationId })
+        .andWhere('d.id <> :docId', { docId })
+        .andWhere('LOWER(d.name) = LOWER(:name)', { name })
+        .getOne();
+      if (clash) {
+        throw new ConflictException(
+          `A document named "${clash.name}" already exists in this vault`
+        );
+      }
+      patch.name = name;
+    }
+
+    if (dto.visibility !== undefined) {
+      if (dto.visibility === 'public' && this.hasPasswordMarker(doc.description)) {
+        throw new BadRequestException('A password-protected document cannot be made public');
+      }
+      patch.visibility = dto.visibility;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await this.docRepo.update({ id: docId, associationId }, patch);
+      this.logger.debug(
+        `Vault document ${sanitizeLog(docId)} updated (${Object.keys(patch).join(', ')})`
+      );
+    }
+    const updated = await this.docRepo.findOne({ where: { id: docId, associationId } });
+    return { ...updated!, size: Number(updated!.size) };
+  }
+
+  // ── Document reviewers (cross-association public-document access) ────────────
+
+  /** True when a `[pw:<hex>]` password-protection marker is present. */
+  private hasPasswordMarker(description: string | null): boolean {
+    return /\[pw:[0-9a-f]+\]/.test(description ?? '');
+  }
+
+  /** Extracts the CEK salt from a leading `[s:<salt>]` marker, or null when absent. */
+  private parseCekSalt(description: string | null): string | null {
+    return description?.match(/^\[s:([^\]]+)\]/)?.[1] ?? null;
+  }
+
+  /**
+   * Server-side mirror of the client's `deriveDocumentCek`: derives the 32-byte
+   * AES-256-GCM content key for a non password-protected document via
+   * HKDF-SHA256(vaultKey, salt=utf8(cekSalt), info="doc-vault"), returned as hex.
+   * Used only for documents the association has marked public - the raw vault key
+   * (which would unlock every document) is never handed to a reviewer.
+   */
+  private deriveDocumentCekHex(vaultKeyHex: string, cekSalt: string): string {
+    const vaultKey = Buffer.from(vaultKeyHex, 'hex');
+    const salt = Buffer.from(cekSalt, 'utf8');
+    const info = Buffer.from('doc-vault', 'utf8');
+    const derived = hkdfSync('sha256', vaultKey, salt, info, 32);
+    return Buffer.from(derived).toString('hex');
+  }
+
+  /** True when the user holds a global document-reviewer grant. */
+  async isDocumentReviewer(userId: string): Promise<boolean> {
+    return (await this.reviewerGrantRepo.count({ where: { userId } })) > 0;
+  }
+
+  /** Lists all document-reviewer grants, newest first (admin/BDE management view). */
+  async listDocumentReviewers() {
+    const grants = await this.reviewerGrantRepo.find({ order: { createdAt: 'DESC' } });
+    return grants.map((g) => ({
+      userId: g.userId,
+      grantedBy: g.grantedBy,
+      createdAt: g.createdAt,
+    }));
+  }
+
+  /** Grants document-reviewer access to a user (idempotent upsert). */
+  async addDocumentReviewer(userId: string, grantedBy: string) {
+    const target = userId.trim();
+    if (!target) throw new BadRequestException('userId is required');
+    const existing = await this.reviewerGrantRepo.findOne({ where: { userId: target } });
+    if (existing) {
+      return { userId: existing.userId, grantedBy: existing.grantedBy, createdAt: existing.createdAt };
+    }
+    const grant = await this.reviewerGrantRepo.save(
+      this.reviewerGrantRepo.create({ userId: target, grantedBy })
+    );
+    this.logger.debug(
+      `Document-reviewer granted to ${sanitizeLog(target)} by ${sanitizeLog(grantedBy)}`
+    );
+    return { userId: grant.userId, grantedBy: grant.grantedBy, createdAt: grant.createdAt };
+  }
+
+  /** Revokes a user's document-reviewer grant. */
+  async removeDocumentReviewer(userId: string): Promise<{ ok: boolean }> {
+    await this.reviewerGrantRepo.delete({ userId });
+    this.logger.debug(`Document-reviewer revoked from ${sanitizeLog(userId)}`);
+    return { ok: true };
+  }
+
+  /**
+   * Returns every association's *public* documents grouped by association, each
+   * with a server-derived per-document CEK (hex) so an authorized reviewer can
+   * decrypt them client-side. Private and password-protected documents are
+   * excluded, and the raw vault key is never exposed.
+   */
+  async listReviewerDocuments() {
+    const docs = await this.docRepo.find({
+      where: { visibility: 'public' },
+      order: { createdAt: 'DESC' },
+    });
+    if (docs.length === 0) return [];
+
+    const assoIds = [...new Set(docs.map((d) => d.associationId))];
+    const assos = await this.assoRepo.find({
+      where: { id: In(assoIds) },
+      select: { id: true, name: true, slug: true, logoUrl: true, documentVaultKey: true },
+    });
+    const assoById = new Map(assos.map((a) => [a.id, a]));
+
+    const groups = new Map<string, ReviewerDocumentGroup>();
+
+    for (const doc of docs) {
+      const asso = assoById.get(doc.associationId);
+      if (!asso?.documentVaultKey) continue;
+      const cekSalt = this.parseCekSalt(doc.description);
+      // Defensive: a public doc should never be password-protected, but skip if so.
+      if (!cekSalt || this.hasPasswordMarker(doc.description)) continue;
+
+      if (!groups.has(asso.id)) {
+        groups.set(asso.id, {
+          associationId: asso.id,
+          associationName: asso.name,
+          slug: asso.slug,
+          logoUrl: asso.logoUrl ?? null,
+          documents: [],
+        });
+      }
+      groups.get(asso.id)!.documents.push({
+        id: doc.id,
+        name: doc.name,
+        originalFilename: doc.originalFilename ?? null,
+        mimeType: doc.mimeType,
+        size: Number(doc.size),
+        mediaId: doc.mediaId,
+        cek: this.deriveDocumentCekHex(asso.documentVaultKey, cekSalt),
+        createdAt: doc.createdAt,
+      });
+    }
+
+    return [...groups.values()]
+      .filter((g) => g.documents.length > 0)
+      .sort((a, b) => a.associationName.localeCompare(b.associationName));
   }
 
   // ── Forms ─────────────────────────────────────────────────────────────────

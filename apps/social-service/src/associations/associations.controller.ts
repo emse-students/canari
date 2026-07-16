@@ -23,6 +23,8 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { PERM_FLAG_KEY } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
+import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
+import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
@@ -30,7 +32,9 @@ import { FollowsService } from '../follows/follows.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
+  AddDocumentReviewerDto,
   CreateAssociationDocumentDto,
+  UpdateAssociationDocumentDto,
   UpdateAssociationNotesDto,
   CreateAssociationCalendarEventDto,
   CreateProductDto,
@@ -63,6 +67,62 @@ export class AssociationsController {
     private readonly userTagService: UserTagService,
     private readonly userProfileService: UserProfileService
   ) {}
+
+  // ── Document reviewers & cross-association review ────────────────────────────
+  // NOTE: these static-prefixed routes are declared BEFORE the `:id` routes below
+  // so Express does not shadow e.g. `reviewer/documents` with `:id/documents`.
+
+  /**
+   * Probe for the current user's document-reviewer entitlement (global admin,
+   * BDE super-admin, or an explicit grant). Any logged-in user may call it; it
+   * returns a boolean rather than 403 so the frontend can gate the `/documents` route.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('reviewer/access')
+  async reviewerAccess(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const hasAccess =
+      globalAdmin === 'true' ||
+      (await this.service.isAssociationSuperAdmin(userId)) ||
+      (await this.service.isDocumentReviewer(userId));
+    return { hasAccess };
+  }
+
+  /**
+   * Lists every association's public documents (grouped by association) with a
+   * server-derived per-document CEK for client-side decryption. Reviewer-gated.
+   */
+  @UseGuards(NginxAuthGuard, ReviewerAccessGuard)
+  @Get('reviewer/documents')
+  listReviewerDocuments() {
+    return this.service.listReviewerDocuments();
+  }
+
+  /** Lists all document-reviewer grants. Global admins and BDE super-admins only. */
+  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
+  @Get('document-reviewers')
+  listDocumentReviewers() {
+    return this.service.listDocumentReviewers();
+  }
+
+  /** Grants document-reviewer access to a user. Global admins and BDE super-admins only. */
+  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
+  @Post('document-reviewers')
+  addDocumentReviewer(
+    @Headers('x-user-id') grantedBy: string,
+    @Body() dto: AddDocumentReviewerDto
+  ) {
+    return this.service.addDocumentReviewer(dto.userId, grantedBy);
+  }
+
+  /** Revokes a user's document-reviewer access. Global admins and BDE super-admins only. */
+  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
+  @Delete('document-reviewers/:userId')
+  removeDocumentReviewer(@Param('userId') userId: string) {
+    return this.service.removeDocumentReviewer(userId);
+  }
 
   // ── Public ────────────────────────────────────────────────────────────────
 
@@ -676,6 +736,21 @@ export class AssociationsController {
   @Get(':id/documents/:docId')
   getDocumentDetail(@Param('id') id: string, @Param('docId') docId: string) {
     return this.service.getDocumentDetail(id, docId);
+  }
+
+  /**
+   * Renames a document (display name) and/or toggles its visibility (private/public).
+   * Returns 400 when trying to make a password-protected document public.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_DOCUMENTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Patch(':id/documents/:docId')
+  updateDocument(
+    @Param('id') id: string,
+    @Param('docId') docId: string,
+    @Body() dto: UpdateAssociationDocumentDto
+  ) {
+    return this.service.updateDocument(id, docId, dto);
   }
 
   /** Deletes a document record and its media blob. */
