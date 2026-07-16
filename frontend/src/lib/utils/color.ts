@@ -36,7 +36,7 @@ export function contrastColor(color: string): string {
 
 /**
  * Converts any color (hex or HSL) to a hex string.
- * Useful when a guaranteed hex value is needed (e.g. for html2canvas inline styles).
+ * Useful when a guaranteed hex value is needed (e.g. for inline styles in the PDF exports).
  */
 export function toHex(color: string): string {
   return color.startsWith('#') ? color : hslToHex(color);

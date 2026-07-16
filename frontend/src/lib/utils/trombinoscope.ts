@@ -1,19 +1,17 @@
 import { generateAvatarColor, getInitials } from './avatar';
+import { rasterizeElementToCanvas } from './pdfRaster';
 import type { Association, AssociationMember } from '$lib/associations/api';
 
 /**
  * Renders the association trombinoscope to an A4 PDF and triggers a direct download.
- * Uses html2canvas + jsPDF; no new tab or print dialog.
+ * Uses snapdom + jsPDF; no new tab or print dialog.
  */
 export async function exportTrombinoscope(
   asso: Association,
   members: AssociationMember[],
   resolvedMemberNames: Record<string, string>
 ): Promise<void> {
-  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-    import('html2canvas'),
-    import('jspdf'),
-  ]);
+  const { default: jsPDF } = await import('jspdf');
 
   const container = document.createElement('div');
   Object.assign(container.style, {
@@ -76,33 +74,11 @@ export async function exportTrombinoscope(
   document.body.appendChild(container);
 
   try {
-    // Wait for all images (avatars + logo)
-    await Promise.all(
-      Array.from(container.querySelectorAll<HTMLImageElement>('img')).map(
-        (img) =>
-          new Promise<void>((resolve) => {
-            if (img.complete) resolve();
-            else {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            }
-          })
-      )
-    );
-
-    // Force-load the app's *Variable* families so html2canvas rasterises the real Canari
-    // fonts instead of a fallback (otherwise the PDF font differs from the app).
-    await Promise.all([
-      document.fonts.load("700 28px 'Fredoka Variable'"),
-      document.fonts.load("700 12px 'Nunito Variable'"),
-    ]).catch(() => {});
-    await document.fonts.ready;
-
-    const canvas = await html2canvas(container, {
+    const canvas = await rasterizeElementToCanvas(container, {
       scale: 2,
-      useCORS: false,
       backgroundColor: '#ffffff',
-      logging: false,
+      // The app's *Variable* families, so the real Canari fonts are embedded (not a fallback).
+      fonts: ["700 28px 'Fredoka Variable'", "700 12px 'Nunito Variable'"],
     });
 
     const imgData = canvas.toDataURL('image/jpeg', 0.92);

@@ -22,9 +22,9 @@
         "@tauri-apps/plugin-sql": "^2.4.0",
         "@tauri-apps/plugin-store": "^2.4.3",
         "@tauri-apps/plugin-websocket": "^2.4.2",
+        "@zumer/snapdom": "^2.16.0",
         "emoji-picker-element": "^1.29.1",
         "highlight.js": "^11.11.1",
-        "html2canvas": "^1.4.1",
         "jspdf": "^4.2.1",
         "jsqr": "^1.4.0",
         "qrcode": "^1.5.4",
@@ -443,6 +443,8 @@
     "@vitest/spy": ["@vitest/spy@4.1.9", "", {}, "sha512-fHpsS6mIi+PiEW+vcRVOMkX1oSaPKne3VOclSFICPcGOmfKgXPU5iAah+wcNcj2xPrCCmfq99IDGf+EojhhvhA=="],
 
     "@vitest/utils": ["@vitest/utils@4.1.9", "", { "dependencies": { "@vitest/pretty-format": "4.1.9", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.1.0" } }, "sha512-A51o8ymO5PpqlWNnBP9ZHPXDIpuMtTLlGSjN7la4US+LJzoUMyhwjA5QXlm39JexgwHKW4Xjs8Z2d3dLCXOeuA=="],
+
+    "@zumer/snapdom": ["@zumer/snapdom@2.16.0", "", {}, "sha512-ZfN3o6kcxb+jDhYe/JHFZf3g4UfDv3MGyTiK/sWvFU+vYlxa2KZVLZH7DxhKkobwGp66KMhRnXTqIKmaSgM50Q=="],
 
     "acorn": ["acorn@8.16.0", "", { "bin": "bin/acorn" }, ""],
 

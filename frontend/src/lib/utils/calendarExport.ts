@@ -1,5 +1,6 @@
 import { contrastColor, toHex } from './color';
 import { generateAvatarColor } from './avatar';
+import { rasterizeElementToCanvas } from './pdfRaster';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -380,9 +381,9 @@ export const CALENDAR_CONTAINER_WIDTH = 1080;
  * Builds the live-preview inner HTML, rendered *in the app document* (not an iframe) so it inherits
  * the application's actual fonts ('Fredoka Variable' / 'Nunito Variable'). This is the key to a
  * preview that matches the export pixel-for-pixel: the export rasterises the same markup with the
- * same fonts and the same wrapper (width, background, font-family) via html2canvas. Logos use direct
- * same-origin URLs (no CORS issue in-document); the export swaps them for pre-fetched data URLs only
- * because html2canvas runs with `useCORS:false`.
+ * same fonts and the same wrapper (width, background, font-family) via snapdom (which serialises the
+ * DOM into an SVG foreignObject and lets the browser paint it). Logos use direct same-origin URLs in
+ * the preview; the export pre-fetches them as data: URLs so snapdom reliably embeds them in the SVG.
  */
 export function buildPreviewInnerHtml(
   events: AssociationCalendarFeedEvent[],
@@ -402,7 +403,7 @@ export function buildPreviewInnerHtml(
  *
  * - Optional background image at configurable opacity.
  * - All colours are fully configurable via `options`; defaults match the original design.
- * - Association logos appear as circular watermarks (pre-fetched as data: URLs for html2canvas).
+ * - Association logos appear as circular watermarks (pre-fetched as data: URLs so snapdom embeds them).
  */
 export async function exportCalendarMonth(
   events: AssociationCalendarFeedEvent[],
@@ -411,15 +412,12 @@ export async function exportCalendarMonth(
 ): Promise<void> {
   const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
 
-  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-    import('html2canvas'),
-    import('jspdf'),
-  ]);
+  const { default: jsPDF } = await import('jspdf');
 
   const year = focusDate.getFullYear();
   const month = focusDate.getMonth();
 
-  // Logos primaires ET co-owners, pour que le PDF (data-URLs) affiche tous les logos.
+  // Primary AND co-owner logos, pre-fetched as data URLs so the PDF shows every logo.
   const uniqueLogoUrls = [
     ...new Set(
       events.flatMap((ev) => [
@@ -462,35 +460,16 @@ export async function exportCalendarMonth(
   }
 
   try {
-    await Promise.all(
-      Array.from(container.querySelectorAll<HTMLImageElement>('img')).map(
-        (img) =>
-          new Promise<void>((resolve) => {
-            if (img.complete) resolve();
-            else {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            }
-          })
-      )
-    );
-
-    // Force-load the exact families used by the export (the app registers the *Variable*
-    // families) so html2canvas rasterises the real fonts instead of a fallback - otherwise
-    // the PDF font and text positions drift from the live preview.
-    await Promise.all([
-      document.fonts.load("700 30px 'Fredoka Variable'"),
-      document.fonts.load("700 13px 'Nunito Variable'"),
-      document.fonts.load("800 13px 'Nunito Variable'"),
-    ]).catch(() => {});
-    await document.fonts.ready;
-
-    const canvas = await html2canvas(container, {
+    const canvas = await rasterizeElementToCanvas(container, {
       scale: 2,
-      useCORS: false,
       // Match the preview wrapper background exactly so preview and export render identically.
       backgroundColor: '#f0f4f8',
-      logging: false,
+      // The *Variable* families the app registers, so the real Canari fonts are embedded (not a fallback).
+      fonts: [
+        "700 30px 'Fredoka Variable'",
+        "700 13px 'Nunito Variable'",
+        "800 13px 'Nunito Variable'",
+      ],
     });
 
     const imgData = canvas.toDataURL('image/png');
