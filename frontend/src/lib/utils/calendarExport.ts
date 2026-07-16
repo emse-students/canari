@@ -4,6 +4,7 @@ import { rasterizeElementToCanvas } from './pdfRaster';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+const WEEKDAYS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 const HEADER_H = 68;
 const WEEKDAY_ROW_H = 40;
 const GRID_PAD_BOTTOM = 20;
@@ -51,6 +52,20 @@ export interface CalendarExportOptions {
   textShadowColor?: string;
   /** Block-shadow offset in pixels (applied on both x and y for a diagonal translation). Default: 2. */
   textShadowOffset?: number;
+  /**
+   * Dark scrim opacity in percent (0-100) laid over the background IMAGE for text legibility (the
+   * Justine-style "full-bleed photo + readable text" look). Default: 0 (no scrim). Only has an
+   * effect when `bgDataUrl` is set.
+   */
+  scrimOpacity?: number;
+  /** Scrim overlay color (hex). Default: '#0b1220'. */
+  scrimColor?: string;
+  /** Full French weekday names (Lundi...Dimanche) instead of abbreviations (Lun...Dim). Default: false. */
+  weekdayFullNames?: boolean;
+  /** Break (vacation / no-course) full-cell tint opacity in percent (0-100). Default: 14. */
+  breakTintOpacity?: number;
+  /** Page (container) background color behind the whole calendar (hex). Default: '#f0f4f8'. */
+  pageBg?: string;
 }
 
 /** Default values matching the original hardcoded design. */
@@ -72,6 +87,11 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   enableTextShadow: false,
   textShadowColor: '#f5c518',
   textShadowOffset: 2,
+  scrimOpacity: 0,
+  scrimColor: '#0b1220',
+  weekdayFullNames: false,
+  breakTintOpacity: 14,
+  pageBg: '#f0f4f8',
 };
 
 type ResolvedOpts = Required<CalendarExportOptions>;
@@ -237,10 +257,16 @@ function buildCalendarHtml(
     ? `text-shadow:${opts.textShadowOffset}px ${opts.textShadowOffset}px 0 ${opts.textShadowColor};`
     : '';
   const labelShadow = blockShadow;
-  const headerRow = WEEKDAYS.map(
-    (w, i) =>
-      `<div style="padding:11px 6px;text-align:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
-  ).join('');
+  const weekdayNames = opts.weekdayFullNames ? WEEKDAYS_FULL : WEEKDAYS;
+  // Full names are wider, so tighten letter-spacing and drop the font a touch to keep them on one line.
+  const weekdayFontSize = opts.weekdayFullNames ? 11 : 12;
+  const weekdayLetterSpacing = opts.weekdayFullNames ? '.02em' : '.09em';
+  const headerRow = weekdayNames
+    .map(
+      (w, i) =>
+        `<div style="padding:11px 6px;text-align:center;font-size:${weekdayFontSize}px;font-weight:800;text-transform:uppercase;letter-spacing:${weekdayLetterSpacing};color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
+    )
+    .join('');
 
   const cellBgNormal = hexToRgba(opts.cellBg, opts.cellBgOpacity);
   const cellBgWeekend = hexToRgba(opts.weekendCellBg, opts.weekendCellBgOpacity);
@@ -266,9 +292,10 @@ function buildCalendarHtml(
       const breakBand = breakColor
         ? `<div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:${breakColor};"></div>`
         : '';
-      // A faint full-cell tint so a break reads across days behind events.
+      // A full-cell tint so a break reads across days behind events. Opacity is configurable so a
+      // theme with a busy background image can strengthen it enough to stay visible.
       const breakTint = breakColor
-        ? `<div style="position:absolute;inset:0;background:${breakColor};opacity:0.14;pointer-events:none;"></div>`
+        ? `<div style="position:absolute;inset:0;background:${breakColor};opacity:${(opts.breakTintOpacity / 100).toFixed(2)};pointer-events:none;"></div>`
         : '';
 
       if (dayEvents.length === 0) {
@@ -324,21 +351,21 @@ function buildCalendarHtml(
             return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;flex-direction:column;box-sizing:border-box;">
               ${watermark}
               <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:5px 0 0 6px;position:relative;"><span style="font-size:11px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
-              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${clampCss}">${safe(ev.title)}</span></div>
+              <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${blockShadow}${clampCss}">${safe(ev.title)}</span></div>
             </div>`;
           } else {
             // Subsequent slots: no day number, title fully centred.
             const { fontSize, clampCss, ph } = fitEventText(slotH);
             return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;align-items:center;justify-content:center;padding:0 ${ph}px;box-sizing:border-box;">
               ${watermark}
-              <span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${clampCss}">${safe(ev.title)}</span>
+              <span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${blockShadow}${clampCss}">${safe(ev.title)}</span>
             </div>`;
           }
         }),
         ...(overflowCount > 0
           ? (() => {
               return [
-                `<div style="height:${slotH}px;background:#f0f4f8;display:flex;align-items:center;justify-content:center;overflow:hidden;"><span style="font-size:9px;font-weight:800;color:#607188;">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+                `<div style="height:${slotH}px;background:${opts.pageBg};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span style="font-size:9px;font-weight:800;color:#607188;${blockShadow}">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
               ];
             })()
           : []),
@@ -349,10 +376,16 @@ function buildCalendarHtml(
     .join('');
 
   const bgOpacityVal = (opts.bgOpacity / 100).toFixed(2);
+  // Optional dark scrim over the image so text stays legible on a busy full-bleed photo. Nested in
+  // the same [data-full-bg] layer so the export's single height patch covers it too.
+  const scrimLayer =
+    opts.scrimOpacity > 0
+      ? `<div style="position:absolute;inset:0;background:${opts.scrimColor};opacity:${(opts.scrimOpacity / 100).toFixed(2)};"></div>`
+      : '';
   // Full-page background image behind everything.
   // Height is patched in JS after DOM insertion for the export path.
   const fullBgHtml = opts.bgDataUrl
-    ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${opts.bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:${bgOpacityVal};" /></div>`
+    ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${opts.bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:${bgOpacityVal};" />${scrimLayer}</div>`
     : '';
 
   const faviconHtml = faviconUrl
@@ -395,7 +428,7 @@ export function buildPreviewInnerHtml(
   const body = buildCalendarHtml(events, year, month, opts, 'direct', '/favicon.png');
   // Wrapper mirrors the export container exactly (width, background, font-family) so the two render
   // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
-  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;background:#f0f4f8;font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;border-radius:12px;overflow:hidden;box-sizing:border-box;">${body}</div>`;
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;border-radius:12px;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -442,7 +475,7 @@ export async function exportCalendarMonth(
     top: '0',
     left: '-9999px',
     width: '1080px',
-    background: '#f0f4f8',
+    background: opts.pageBg,
     color: '#111111',
     fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
@@ -463,7 +496,7 @@ export async function exportCalendarMonth(
     const canvas = await rasterizeElementToCanvas(container, {
       scale: 2,
       // Match the preview wrapper background exactly so preview and export render identically.
-      backgroundColor: '#f0f4f8',
+      backgroundColor: opts.pageBg,
       // The *Variable* families the app registers, so the real Canari fonts are embedded (not a fallback).
       fonts: [
         "700 30px 'Fredoka Variable'",

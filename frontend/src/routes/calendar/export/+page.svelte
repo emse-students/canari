@@ -14,7 +14,17 @@
     fileToDataUrl,
     type CalendarExportOptions,
   } from '$lib/utils/calendarExport';
-  import { ChevronLeft, ChevronRight, FileDown, ImagePlus, X, RotateCcw } from '@lucide/svelte';
+  import { CALENDAR_THEMES, DEFAULT_THEME_ID } from '$lib/utils/calendarThemes';
+  import {
+    ChevronLeft,
+    ChevronRight,
+    FileDown,
+    ImagePlus,
+    X,
+    RotateCcw,
+    Check,
+    SlidersHorizontal,
+  } from '@lucide/svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -69,8 +79,23 @@
     bgDataUrl: null,
   });
 
+  // ── Themes ───────────────────────────────────────────────────────
+  let selectedThemeId = $state(DEFAULT_THEME_ID);
+  /** When true, the fine-grained color/opacity controls are shown (collapsed by default). */
+  let showAdvanced = $state(false);
+
+  /** Applies a theme's full option set, preserving the user's uploaded background image. */
+  function applyTheme(id: string) {
+    const theme = CALENDAR_THEMES.find((t) => t.id === id);
+    if (!theme) return;
+    selectedThemeId = id;
+    opts = { ...theme.options, bgDataUrl: opts.bgDataUrl };
+  }
+
+  /** Re-applies the current theme's colors (keeps the uploaded background). */
   function resetOptions() {
-    opts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null };
+    const theme = CALENDAR_THEMES.find((t) => t.id === selectedThemeId);
+    opts = { ...(theme?.options ?? DEFAULT_EXPORT_OPTIONS), bgDataUrl: opts.bgDataUrl };
   }
 
   async function handleBgChange(e: Event) {
@@ -164,6 +189,38 @@
 
       <hr class="border-cn-border/60" />
 
+      <!-- Theme picker -->
+      <div class="space-y-2">
+        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+          {m.calendar_export_theme_label()}
+        </p>
+        <div class="grid grid-cols-3 gap-2">
+          {#each CALENDAR_THEMES as theme (theme.id)}
+            <button
+              type="button"
+              onclick={() => applyTheme(theme.id)}
+              class="relative rounded-xl border p-2 transition-colors {selectedThemeId === theme.id
+                ? 'border-cn-yellow ring-2 ring-cn-yellow/40'
+                : 'border-cn-border hover:bg-cn-bg'}"
+            >
+              <span
+                class="mb-1 block h-8 w-full rounded-md"
+                style="background:linear-gradient(135deg, {theme.options.pageBg} 55%, {theme.options
+                  .weekendLabelColor} 55%);"
+              ></span>
+              <span class="block text-center text-[11px] font-semibold text-text-main"
+                >{theme.name()}</span
+              >
+              {#if selectedThemeId === theme.id}
+                <span class="absolute right-1 top-1 text-cn-yellow"><Check size={12} /></span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <hr class="border-cn-border/60" />
+
       <!-- Background image -->
       <div class="space-y-3">
         <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
@@ -202,28 +259,30 @@
             class="w-28 accent-cn-dark"
           />
         </div>
+        {#if opts.bgDataUrl}
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-text-muted"
+              >{m.calendar_export_scrim({ value: opts.scrimOpacity })}</span
+            >
+            <input
+              type="range"
+              min="0"
+              max="80"
+              bind:value={opts.scrimOpacity}
+              class="w-28 accent-cn-dark"
+            />
+          </div>
+        {/if}
       </div>
 
       <hr class="border-cn-border/60" />
 
-      <!-- Header -->
+      <!-- Text shadows (kept simple: Justine relies on them) -->
       <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-          {m.calendar_export_header_label()}
-        </p>
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_bg_field()}</span>
-          <ColorPicker bind:value={opts.headerBg} label={m.calendar_export_bg_field()} />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_month_title_color()}</span>
-          <ColorPicker
-            bind:value={opts.monthTitleColor}
-            label={m.calendar_export_month_title_color()}
-          />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_text_shadow()}</span>
+          <span class="text-xs font-bold uppercase tracking-wider text-text-muted"
+            >{m.calendar_export_text_shadow()}</span
+          >
           <button
             type="button"
             role="switch"
@@ -266,101 +325,179 @@
 
       <hr class="border-cn-border/60" />
 
-      <!-- Weekday row -->
-      <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-          {m.calendar_export_weekday_row_label()}
-        </p>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_bg_field()}</span>
-          <ColorPicker
-            bind:value={opts.weekdayRowBg}
-            label={m.calendar_export_weekday_row_label()}
-          />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_weekday_labels()}</span>
-          <ColorPicker
-            bind:value={opts.weekdayLabelColor}
-            label={m.calendar_export_weekday_labels()}
-          />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_weekend_labels()}</span>
-          <ColorPicker
-            bind:value={opts.weekendLabelColor}
-            label={m.calendar_export_weekend_labels()}
-          />
-        </div>
-      </div>
+      <!-- Advanced (fine-grained) controls, collapsed by default -->
+      <details bind:open={showAdvanced}>
+        <summary
+          class="flex cursor-pointer list-none items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-muted"
+        >
+          <SlidersHorizontal size={14} />
+          {m.calendar_export_advanced()}
+        </summary>
+        <div class="mt-4 space-y-5">
+          <!-- Header -->
+          <div class="space-y-2">
+            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+              {m.calendar_export_header_label()}
+            </p>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_bg_field()}</span>
+              <ColorPicker bind:value={opts.headerBg} label={m.calendar_export_bg_field()} />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_month_title_color()}</span>
+              <ColorPicker
+                bind:value={opts.monthTitleColor}
+                label={m.calendar_export_month_title_color()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_page_bg()}</span>
+              <ColorPicker bind:value={opts.pageBg} label={m.calendar_export_page_bg()} />
+            </div>
+          </div>
 
-      <hr class="border-cn-border/60" />
+          <hr class="border-cn-border/60" />
 
-      <!-- Cells -->
-      <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-          {m.calendar_export_cells_label()}
-        </p>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_cell_bg_normal()}</span>
-          <ColorPicker bind:value={opts.cellBg} label={m.calendar_export_cell_bg_normal()} />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted"
-            >{m.calendar_export_cell_opacity_normal({ value: opts.cellBgOpacity })}</span
-          >
-          <input
-            type="range"
-            min="0"
-            max="100"
-            bind:value={opts.cellBgOpacity}
-            class="w-28 accent-cn-dark"
-          />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_cell_bg_weekend()}</span>
-          <ColorPicker
-            bind:value={opts.weekendCellBg}
-            label={m.calendar_export_cell_bg_weekend()}
-          />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted"
-            >{m.calendar_export_cell_opacity_weekend({ value: opts.weekendCellBgOpacity })}</span
-          >
-          <input
-            type="range"
-            min="0"
-            max="100"
-            bind:value={opts.weekendCellBgOpacity}
-            class="w-28 accent-cn-dark"
-          />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_empty_day_color()}</span>
-          <ColorPicker
-            bind:value={opts.emptyDayColor}
-            label={m.calendar_export_empty_day_color()}
-          />
-        </div>
-      </div>
+          <!-- Weekday row -->
+          <div class="space-y-2">
+            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+              {m.calendar_export_weekday_row_label()}
+            </p>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_bg_field()}</span>
+              <ColorPicker
+                bind:value={opts.weekdayRowBg}
+                label={m.calendar_export_weekday_row_label()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_weekday_labels()}</span>
+              <ColorPicker
+                bind:value={opts.weekdayLabelColor}
+                label={m.calendar_export_weekday_labels()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_weekend_labels()}</span>
+              <ColorPicker
+                bind:value={opts.weekendLabelColor}
+                label={m.calendar_export_weekend_labels()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_weekday_fullnames()}</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={opts.weekdayFullNames}
+                onclick={() => (opts.weekdayFullNames = !opts.weekdayFullNames)}
+                aria-label={m.calendar_export_weekday_fullnames()}
+                class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.weekdayFullNames
+                  ? 'bg-cn-yellow'
+                  : 'bg-cn-border'}"
+              >
+                <span
+                  class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.weekdayFullNames
+                    ? 'translate-x-4'
+                    : 'translate-x-0'}"
+                ></span>
+              </button>
+            </div>
+          </div>
 
-      <hr class="border-cn-border/60" />
+          <hr class="border-cn-border/60" />
 
-      <!-- Grid borders -->
-      <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-          {m.calendar_export_grid_label()}
-        </p>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_inner_borders()}</span>
-          <ColorPicker bind:value={opts.borderColor} label={m.calendar_export_inner_borders()} />
+          <!-- Cells -->
+          <div class="space-y-2">
+            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+              {m.calendar_export_cells_label()}
+            </p>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_cell_bg_normal()}</span>
+              <ColorPicker bind:value={opts.cellBg} label={m.calendar_export_cell_bg_normal()} />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted"
+                >{m.calendar_export_cell_opacity_normal({ value: opts.cellBgOpacity })}</span
+              >
+              <input
+                type="range"
+                min="0"
+                max="100"
+                bind:value={opts.cellBgOpacity}
+                class="w-28 accent-cn-dark"
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_cell_bg_weekend()}</span>
+              <ColorPicker
+                bind:value={opts.weekendCellBg}
+                label={m.calendar_export_cell_bg_weekend()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted"
+                >{m.calendar_export_cell_opacity_weekend({
+                  value: opts.weekendCellBgOpacity,
+                })}</span
+              >
+              <input
+                type="range"
+                min="0"
+                max="100"
+                bind:value={opts.weekendCellBgOpacity}
+                class="w-28 accent-cn-dark"
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_empty_day_color()}</span>
+              <ColorPicker
+                bind:value={opts.emptyDayColor}
+                label={m.calendar_export_empty_day_color()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted"
+                >{m.calendar_export_break_tint({ value: opts.breakTintOpacity })}</span
+              >
+              <input
+                type="range"
+                min="0"
+                max="60"
+                bind:value={opts.breakTintOpacity}
+                class="w-28 accent-cn-dark"
+              />
+            </div>
+          </div>
+
+          <hr class="border-cn-border/60" />
+
+          <!-- Grid borders -->
+          <div class="space-y-2">
+            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+              {m.calendar_export_grid_label()}
+            </p>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_inner_borders()}</span>
+              <ColorPicker
+                bind:value={opts.borderColor}
+                label={m.calendar_export_inner_borders()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_outer_border()}</span>
+              <ColorPicker
+                bind:value={opts.gridOuterBorder}
+                label={m.calendar_export_outer_border()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-text-muted">{m.calendar_export_scrim_color()}</span>
+              <ColorPicker bind:value={opts.scrimColor} label={m.calendar_export_scrim_color()} />
+            </div>
+          </div>
         </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted">{m.calendar_export_outer_border()}</span>
-          <ColorPicker bind:value={opts.gridOuterBorder} label={m.calendar_export_outer_border()} />
-        </div>
-      </div>
+      </details>
 
       <hr class="border-cn-border/60" />
 
