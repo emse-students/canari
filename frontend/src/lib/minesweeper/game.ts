@@ -34,11 +34,24 @@ export interface MinesweeperConfig {
   mineCount: number;
 }
 
-/** Beginner board that fits a settings modal. */
+/** Challenge board: 18×32 with 150 mines (~26% density, no-guess). */
+export const CHALLENGE: MinesweeperConfig = { width: 18, height: 32, mineCount: 150 };
+
+/** Default easter-egg difficulty. */
+export const DEFAULT_CONFIG: MinesweeperConfig = CHALLENGE;
+
+/** @deprecated Prefer DEFAULT_CONFIG / CHALLENGE. */
+export const INTERMEDIATE: MinesweeperConfig = CHALLENGE;
+
+/** @deprecated Prefer DEFAULT_CONFIG / CHALLENGE. */
 export const BEGINNER: MinesweeperConfig = { width: 9, height: 9, mineCount: 10 };
 
-/** Max random layouts tried before accepting a fallback (should almost never hit). */
-const MAX_GENERATION_ATTEMPTS = 400;
+/** Full board restarts when perturbation loops stall. */
+const MAX_GENERATION_RESTARTS = 60;
+/** Mine migrations / reshuffles per restart while the solver is stuck. */
+const MAX_PERTURBATIONS = 120;
+/** Cheaper CSP during generation (full MAX_CSP_VARS used for final verify). */
+const GENERATION_CSP_VARS = 12;
 
 /** Frontier CSP enumeration limit; larger components are split or skipped. */
 const MAX_CSP_VARS = 16;
@@ -67,7 +80,7 @@ function inBounds(
 }
 
 /** Creates an empty board; mines are placed on the first reveal. */
-export function createBoard(config: MinesweeperConfig = BEGINNER): MinesweeperBoard {
+export function createBoard(config: MinesweeperConfig = DEFAULT_CONFIG): MinesweeperBoard {
   const { width, height, mineCount } = config;
   const total = width * height;
   const cappedMines = Math.max(1, Math.min(mineCount, total - 1));
@@ -413,7 +426,10 @@ function deduceForced(
 }
 
 /** Frontier CSP + sea mine-count deductions. Returns whether anything changed. */
-function applyCspAssists(board: SolveState | MinesweeperBoard): boolean {
+function applyCspAssists(
+  board: SolveState | MinesweeperBoard,
+  maxVars: number = MAX_CSP_VARS
+): boolean {
   const { constraints, frontier, sea } = collectConstraints(board);
   if (frontier.length === 0 && sea.length === 0) return false;
 
@@ -464,30 +480,18 @@ function applyCspAssists(board: SolveState | MinesweeperBoard): boolean {
     return changed;
   }
 
-  // Prefer one joint enumeration when the frontier is small enough (accurate global bounds).
-  if (frontier.length <= MAX_CSP_VARS) {
+  // Always split into components — joint 2^n on a wide frontier is too costly at high density.
+  for (const component of frontierComponents(constraints, frontier)) {
+    if (component.length > maxVars) continue;
     const { forcedMines, forcedSafe } = deduceForced(
-      frontier,
+      component,
       constraints,
       remaining,
       sea.length,
-      true
+      component.length === frontier.length
     );
     if (applyForced(forcedMines, forcedSafe)) changed = true;
     if (board.status === 'lost') return true;
-  } else {
-    for (const component of frontierComponents(constraints, frontier)) {
-      if (component.length > MAX_CSP_VARS) continue;
-      const { forcedMines, forcedSafe } = deduceForced(
-        component,
-        constraints,
-        remaining,
-        sea.length,
-        false
-      );
-      if (applyForced(forcedMines, forcedSafe)) changed = true;
-      if (board.status === 'lost') return true;
-    }
   }
 
   return changed;
@@ -495,9 +499,13 @@ function applyCspAssists(board: SolveState | MinesweeperBoard): boolean {
 
 /**
  * Runs logical assists until the board stabilizes (basic chords + CSP).
- * Used both during play and when verifying no-guess generation.
+ * Used only for no-guess generation verification — not during player turns
+ * (chording is manual via {@link chordCell}).
  */
-export function runAutoAssists(board: MinesweeperBoard | SolveState): void {
+export function runAutoAssists(
+  board: MinesweeperBoard | SolveState,
+  maxCspVars: number = MAX_CSP_VARS
+): void {
   if (board.status !== 'playing') return;
   if ('minesPlaced' in board && !board.minesPlaced) return;
 
@@ -507,7 +515,7 @@ export function runAutoAssists(board: MinesweeperBoard | SolveState): void {
     guard++;
     changed = applyBasicAssists(board);
     if (board.status !== 'playing') return;
-    if (applyCspAssists(board)) changed = true;
+    if (applyCspAssists(board, maxCspVars)) changed = true;
   }
 
   if ('minesPlaced' in board && board.status === 'playing') {
@@ -516,36 +524,258 @@ export function runAutoAssists(board: MinesweeperBoard | SolveState): void {
 }
 
 /**
+ * Manual chord on a revealed number: if adjacent flags == the number, open
+ * every remaining hidden neighbor. Does nothing when the flag count mismatches.
+ * Not triggered automatically after dig/flag — only on explicit player action.
+ */
+export function chordCell(board: MinesweeperBoard, x: number, y: number): MinesweeperBoard {
+  if (board.status !== 'playing' || !inBounds(board, x, y)) return board;
+
+  const cell = board.cells[idx(board, x, y)];
+  if (cell.state !== 'revealed' || cell.adjacent === 0) return board;
+
+  let flagged = 0;
+  const hiddenCoords: Array<[number, number]> = [];
+  forEachNeighbor(board, x, y, (nx, ny, n) => {
+    if (n.state === 'flagged') flagged++;
+    else if (n.state === 'hidden') hiddenCoords.push([nx, ny]);
+  });
+
+  if (flagged !== cell.adjacent || hiddenCoords.length === 0) return board;
+
+  for (const [nx, ny] of hiddenCoords) {
+    const n = board.cells[idx(board, nx, ny)];
+    if (n.state !== 'hidden') continue;
+    if (n.mine) {
+      n.state = 'revealed';
+      board.revealedCount++;
+      board.status = 'lost';
+      revealAllMines(board);
+      return board;
+    }
+    revealFlood(board, nx, ny);
+  }
+
+  if (board.status === 'playing') checkWin(board);
+  return board;
+}
+
+/**
  * Returns true when a logical player can clear the board from `startIndex`
  * without guessing (first click + deductions only).
  */
 export function isSolvableWithoutGuessing(board: MinesweeperBoard, startIndex: number): boolean {
-  const sim = cloneSolveState(board);
-  const sx = startIndex % board.width;
-  const sy = Math.floor(startIndex / board.width);
-  if (sim.cells[startIndex].mine) return false;
+  const progress = solveUntilStuck(board, startIndex);
+  return progress.won;
+}
 
-  revealFlood(sim, sx, sy);
-  runAutoAssists(sim);
-
-  return sim.status !== 'lost' && isWon(sim);
+interface SolveProgress {
+  won: boolean;
+  lost: boolean;
+  revealedCount: number;
+  /** Cell indices the solver proved empty (revealed). */
+  knownEmpty: number[];
+  /** Cell indices the solver proved are mines (flagged). */
+  knownMines: number[];
 }
 
 /**
- * Places a no-guess mine layout for the given first-click cell.
- * Retries random layouts until the logical solver can finish the board.
+ * Runs the logical solver from `startIndex` until it wins, loses, or stalls.
+ * Used by no-guess generation to decide where mines may still be reshuffled.
+ */
+function solveUntilStuck(
+  board: MinesweeperBoard,
+  startIndex: number,
+  maxCspVars: number = MAX_CSP_VARS
+): SolveProgress {
+  const sim = cloneSolveState(board);
+  const sx = startIndex % board.width;
+  const sy = Math.floor(startIndex / board.width);
+
+  if (sim.cells[startIndex].mine) {
+    return { won: false, lost: true, revealedCount: 0, knownEmpty: [], knownMines: [] };
+  }
+
+  revealFlood(sim, sx, sy);
+  runAutoAssists(sim, maxCspVars);
+
+  const knownEmpty: number[] = [];
+  const knownMines: number[] = [];
+  for (let i = 0; i < sim.cells.length; i++) {
+    if (sim.cells[i].state === 'revealed') knownEmpty.push(i);
+    else if (sim.cells[i].state === 'flagged') knownMines.push(i);
+  }
+
+  return {
+    won: sim.status !== 'lost' && isWon(sim),
+    lost: sim.status === 'lost',
+    revealedCount: sim.revealedCount,
+    knownEmpty,
+    knownMines,
+  };
+}
+
+/** First-click cell and its neighborhood must never contain mines. */
+function safeZone(board: MinesweeperBoard, safeIndex: number): Set<number> {
+  const forbidden = new Set<number>([safeIndex]);
+  const sx = safeIndex % board.width;
+  const sy = Math.floor(safeIndex / board.width);
+  forEachNeighbor(board, sx, sy, (_nx, _ny, _c, i) => {
+    forbidden.add(i);
+  });
+  return forbidden;
+}
+
+function shuffleInPlace<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+}
+
+/**
+ * Targeted migration: move mines off the numbered frontier into the deep sea.
+ * This is the main unstick strategy for dense boards (much cheaper than full reshuffles).
+ */
+function migrateFrontierMinesToSea(
+  board: MinesweeperBoard,
+  safeIndex: number,
+  knownEmpty: number[],
+  knownMines: number[]
+): boolean {
+  const lockedEmpty = safeZone(board, safeIndex);
+  for (const i of knownEmpty) lockedEmpty.add(i);
+  const lockedMine = new Set<number>(knownMines);
+  const revealed = new Set<number>(knownEmpty);
+
+  const frontier: number[] = [];
+  const sea: number[] = [];
+
+  for (let i = 0; i < board.cells.length; i++) {
+    if (lockedEmpty.has(i) || lockedMine.has(i)) continue;
+    const x = i % board.width;
+    const y = Math.floor(i / board.width);
+    let touchesRevealed = false;
+    forEachNeighbor(board, x, y, (_nx, _ny, _n, ni) => {
+      if (revealed.has(ni)) touchesRevealed = true;
+    });
+    if (touchesRevealed) frontier.push(i);
+    else sea.push(i);
+  }
+
+  const frontierMines = frontier.filter((i) => board.cells[i].mine);
+  const seaEmpty = sea.filter((i) => !board.cells[i].mine);
+  if (frontierMines.length === 0 || seaEmpty.length === 0) return false;
+
+  shuffleInPlace(frontierMines);
+  shuffleInPlace(seaEmpty);
+  const moves = Math.min(1 + Math.floor(Math.random() * 3), frontierMines.length, seaEmpty.length);
+  for (let m = 0; m < moves; m++) {
+    board.cells[frontierMines[m]].mine = false;
+    board.cells[seaEmpty[m]].mine = true;
+  }
+  computeAdjacents(board);
+  return true;
+}
+
+/**
+ * Reshuffles mines among cells the solver has not yet proven, while keeping
+ * known empties empty and known mines fixed. Preserves the first-click safe zone.
+ */
+function perturbUnknownMines(
+  board: MinesweeperBoard,
+  safeIndex: number,
+  knownEmpty: number[],
+  knownMines: number[]
+): boolean {
+  const lockedEmpty = safeZone(board, safeIndex);
+  for (const i of knownEmpty) lockedEmpty.add(i);
+
+  const lockedMine = new Set<number>(knownMines);
+
+  const flexible: number[] = [];
+  for (let i = 0; i < board.cells.length; i++) {
+    if (lockedEmpty.has(i) || lockedMine.has(i)) continue;
+    flexible.push(i);
+  }
+
+  const minesNeeded = board.mineCount - lockedMine.size;
+  if (minesNeeded < 0 || minesNeeded > flexible.length) return false;
+
+  for (const i of flexible) board.cells[i].mine = false;
+  for (const i of lockedMine) board.cells[i].mine = true;
+  for (const i of lockedEmpty) board.cells[i].mine = false;
+
+  shuffleInPlace(flexible);
+  for (let m = 0; m < minesNeeded; m++) {
+    board.cells[flexible[m]].mine = true;
+  }
+
+  computeAdjacents(board);
+  return true;
+}
+
+/** Retries random layouts until the opening cell is a zero (large flood). */
+function placeMinesWithZeroOpening(board: MinesweeperBoard, safeIndex: number): void {
+  for (let i = 0; i < 80; i++) {
+    placeMinesRandom(board, safeIndex);
+    if (board.cells[safeIndex].adjacent === 0) return;
+  }
+  placeMinesRandom(board, safeIndex);
+}
+
+/**
+ * No-guess generation (Tatham-style with frontier→sea migration):
+ * 1. Prefer a zero opening around the first click.
+ * 2. Solve logically until stuck or cleared.
+ * 3. If stuck, move frontier mines into the deep sea (or reshuffle unknowns).
+ * 4. If progress stalls, start from a fresh layout.
  */
 function placeMines(board: MinesweeperBoard, safeIndex: number): void {
-  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
-    placeMinesRandom(board, safeIndex);
-    if (isSolvableWithoutGuessing(board, safeIndex)) {
-      board.minesPlaced = true;
-      return;
+  for (let restart = 0; restart < MAX_GENERATION_RESTARTS; restart++) {
+    placeMinesWithZeroOpening(board, safeIndex);
+
+    let stagnant = 0;
+    let bestRevealed = 0;
+
+    for (let step = 0; step < MAX_PERTURBATIONS; step++) {
+      const progress = solveUntilStuck(board, safeIndex, GENERATION_CSP_VARS);
+      if (progress.won) {
+        // Final verify with the full CSP budget used in play-time solvability checks.
+        if (solveUntilStuck(board, safeIndex, MAX_CSP_VARS).won) {
+          board.minesPlaced = true;
+          return;
+        }
+      }
+      if (progress.lost) break;
+
+      if (progress.revealedCount > bestRevealed) {
+        bestRevealed = progress.revealedCount;
+        stagnant = 0;
+      } else {
+        stagnant++;
+      }
+
+      if (stagnant >= 16) break;
+
+      const migrated = migrateFrontierMinesToSea(
+        board,
+        safeIndex,
+        progress.knownEmpty,
+        progress.knownMines
+      );
+      if (!migrated) {
+        if (!perturbUnknownMines(board, safeIndex, progress.knownEmpty, progress.knownMines)) {
+          break;
+        }
+      }
     }
   }
 
-  // Extremely unlikely on beginner density; keep the last layout rather than hang.
-  placeMinesRandom(board, safeIndex);
+  // Last resort: accept a zero-opening random layout (may require a guess).
+  placeMinesWithZeroOpening(board, safeIndex);
   board.minesPlaced = true;
 }
 
@@ -558,7 +788,7 @@ function revealAllMines(board: MinesweeperBoard): void {
   }
 }
 
-/** Left-click / short press: reveal a cell (or chord if already revealed). */
+/** Left-click / short press: reveal a hidden cell, or chord if already revealed. */
 export function revealCell(board: MinesweeperBoard, x: number, y: number): MinesweeperBoard {
   if (board.status !== 'playing' || !inBounds(board, x, y)) return board;
 
@@ -568,8 +798,7 @@ export function revealCell(board: MinesweeperBoard, x: number, y: number): Mines
   if (cell.state === 'flagged') return board;
 
   if (cell.state === 'revealed') {
-    runAutoAssists(board);
-    return board;
+    return chordCell(board, x, y);
   }
 
   if (!board.minesPlaced) placeMines(board, i);
@@ -584,19 +813,15 @@ export function revealCell(board: MinesweeperBoard, x: number, y: number): Mines
 
   revealFlood(board, x, y);
   checkWin(board);
-  runAutoAssists(board);
   return board;
 }
 
-/** Right-click / long press: toggle flag on a hidden cell. */
+/** Right-click / long press: toggle flag on a hidden cell (no auto-chord). */
 export function toggleFlag(board: MinesweeperBoard, x: number, y: number): MinesweeperBoard {
   if (board.status !== 'playing' || !inBounds(board, x, y)) return board;
 
   const cell = board.cells[idx(board, x, y)];
-  if (cell.state === 'revealed') {
-    runAutoAssists(board);
-    return board;
-  }
+  if (cell.state === 'revealed') return board;
 
   if (cell.state === 'flagged') {
     cell.state = 'hidden';
@@ -606,7 +831,6 @@ export function toggleFlag(board: MinesweeperBoard, x: number, y: number): Mines
     board.flagCount++;
   }
 
-  runAutoAssists(board);
   return board;
 }
 

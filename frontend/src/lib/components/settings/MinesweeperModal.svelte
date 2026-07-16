@@ -5,7 +5,7 @@
     revealCell,
     toggleFlag,
     remainingMines,
-    BEGINNER,
+    DEFAULT_CONFIG,
     type MinesweeperBoard,
   } from '$lib/minesweeper/game';
   import { Bomb, Flag, RotateCcw } from '@lucide/svelte';
@@ -35,7 +35,7 @@
     8: 'text-text-muted',
   };
 
-  let board = $state<MinesweeperBoard>(createBoard(BEGINNER));
+  let board = $state<MinesweeperBoard>(createBoard(DEFAULT_CONFIG));
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   let longPressed = false;
 
@@ -46,7 +46,7 @@
   });
 
   function newGame() {
-    board = createBoard(BEGINNER);
+    board = createBoard(DEFAULT_CONFIG);
   }
 
   /**
@@ -108,7 +108,7 @@
   }
 </script>
 
-<Modal {open} title={m.minesweeper_title()} {onClose} maxWidth="max-w-sm">
+<Modal {open} title={m.minesweeper_title()} {onClose} maxWidth="max-w-2xl">
   <div class="flex items-center justify-between gap-2 mb-3">
     <div class="flex items-center gap-1.5 text-sm font-bold text-text-main">
       <Bomb size={16} class="text-cn-dark" />
@@ -125,42 +125,47 @@
     </button>
   </div>
 
-  <div class="grid grid-cols-9 gap-0.5 w-fit mx-auto" style="touch-action: manipulation;">
-    {#each board.cells as cell, i (i)}
-      {@const x = i % board.width}
-      {@const y = Math.floor(i / board.width)}
-      <button
-        type="button"
-        disabled={board.status !== 'playing'}
-        onclick={() => handleCellClick(x, y)}
-        oncontextmenu={(e) => handleContextMenu(e, x, y)}
-        onpointerdown={(e) => handlePointerDown(e, x, y)}
-        onpointerup={handlePointerRelease}
-        onpointerleave={handlePointerRelease}
-        onpointercancel={handlePointerRelease}
-        class="size-8 flex items-center justify-center select-none touch-manipulation rounded-md border font-mono font-bold text-sm
-          {cell.state === 'hidden'
-          ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
-          : cell.state === 'flagged'
+  <div class="max-h-[min(70dvh,36rem)] overflow-auto overscroll-contain">
+    <div
+      class="grid gap-px w-fit mx-auto"
+      style="grid-template-columns: repeat({board.width}, minmax(0, 1fr)); touch-action: manipulation;"
+    >
+      {#each board.cells as cell, i (i)}
+        {@const x = i % board.width}
+        {@const y = Math.floor(i / board.width)}
+        <button
+          type="button"
+          disabled={board.status !== 'playing'}
+          onclick={() => handleCellClick(x, y)}
+          oncontextmenu={(e) => handleContextMenu(e, x, y)}
+          onpointerdown={(e) => handlePointerDown(e, x, y)}
+          onpointerup={handlePointerRelease}
+          onpointerleave={handlePointerRelease}
+          onpointercancel={handlePointerRelease}
+          class="size-5 sm:size-6 flex items-center justify-center select-none touch-manipulation rounded-sm border font-mono font-bold text-[0.6rem] sm:text-[0.65rem]
+            {cell.state === 'hidden'
             ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
-            : cell.mine
-              ? 'bg-red-500/80 border-transparent'
-              : cell.adjacent === 0
-                ? 'bg-cn-bg/60 border-transparent'
-                : 'bg-cn-bg/80 border-transparent'}
-          {cell.state === 'revealed' && !cell.mine && cell.adjacent > 0
-          ? NUMBER_COLORS[cell.adjacent]
-          : ''}"
-      >
-        {#if cell.state === 'flagged'}
-          <Flag size={14} class="text-cn-dark" />
-        {:else if cell.state === 'revealed' && cell.mine}
-          <Bomb size={14} class="text-white" />
-        {:else if cell.state === 'revealed' && cell.adjacent > 0}
-          {cell.adjacent}
-        {/if}
-      </button>
-    {/each}
+            : cell.state === 'flagged'
+              ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
+              : cell.mine
+                ? 'bg-red-500/80 border-transparent'
+                : cell.adjacent === 0
+                  ? 'bg-cn-bg/60 border-transparent'
+                  : 'bg-cn-bg/80 border-transparent'}
+            {cell.state === 'revealed' && !cell.mine && cell.adjacent > 0
+            ? NUMBER_COLORS[cell.adjacent]
+            : ''}"
+        >
+          {#if cell.state === 'flagged'}
+            <Flag size={11} class="text-cn-dark" />
+          {:else if cell.state === 'revealed' && cell.mine}
+            <Bomb size={11} class="text-white" />
+          {:else if cell.state === 'revealed' && cell.adjacent > 0}
+            {cell.adjacent}
+          {/if}
+        </button>
+      {/each}
+    </div>
   </div>
 
   <div class="mt-3 space-y-0.5 text-center">
