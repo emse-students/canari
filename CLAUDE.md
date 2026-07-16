@@ -79,6 +79,8 @@ No open code work. Shipped this cycle, pending ON-DEVICE verification only (impl
 
 Residual otherwise = on-device MLS mobile native verification only.
 
+* \[x\] **Cotisation tag UI de-systemized (7efd1247):** raw slugs (`cotisant:bde` / "Sans expiration") now render as an enriched row - issuing-asso avatar+name + "Cotisant - Permanente|Expire le X" subtitle. Shared `formatCotisationTag()` + memoized `resolveIssuingAssociation()` in `frontend/src/lib/associations/cotisationTag.ts`; shared `CotisationTagRow.svelte` on profile subs section + `/account/purchases`; admin roster (EditMembersTab) just prettifies the label (no redundant own-logo). 4 new FR/EN keys (`cotisation_tag_*`). GOTCHA: all 3 tag render sites go through the shared helper - keep new ones consistent. Verify: logged-in cotisant sees asso logo/name (not slug).
+
 * \[x\] **Minesweeper ranked leaderboard (shipped, d1061bee..85398570):** on **social-service** (`/api/minesweeper`), seeded challenges + move-replay anti-cheat, guess-free grid generation, auto-flagging disabled. Score = server wall-clock only. Access = hidden easter egg: `/settings`, tap the device-id footer 5x quickly (`onDeviceIdTap` -> `MinesweeperModal`). GOTCHA: keep `apps/social-service/src/minesweeper/engine/game.ts` synced with `frontend/src/lib/minesweeper/game.ts` (dual engine, must stay 1:1). Migration `018_minesweeper_leaderboard.sql`.
 
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
