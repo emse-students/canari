@@ -3,7 +3,14 @@
  * (basic chords + frontier CSP / "tank" enumeration) can clear the board from
  * the first click without guessing.
  *
- * During play, the same deductions power auto-flag / auto-reveal assists.
+ * Generation follows Simon Tatham's approach from SGT Puzzles `mines.c`
+ * (MIT): place mines, solve with local deductions, and when stuck call
+ * `mineperturb`-style set fill/empty swaps until the grid is uniquely
+ * soluble or a fresh layout is tried. See:
+ * https://www.chiark.greenend.org.uk/~sgtatham/puzzles/
+ *
+ * During play, deductions power manual chord verification only — auto-flag /
+ * auto-reveal assists run solely inside generation / solvability checks.
  */
 
 export type CellState = 'hidden' | 'revealed' | 'flagged';
@@ -47,9 +54,11 @@ export const INTERMEDIATE: MinesweeperConfig = CHALLENGE;
 export const BEGINNER: MinesweeperConfig = { width: 9, height: 9, mineCount: 10 };
 
 /** Full board restarts when perturbation loops stall. */
-const MAX_GENERATION_RESTARTS = 60;
-/** Mine migrations / reshuffles per restart while the solver is stuck. */
-const MAX_PERTURBATIONS = 120;
+const MAX_GENERATION_RESTARTS = 80;
+/** Set fill/empty perturbations per restart while the solver is stuck. */
+const MAX_PERTURBATIONS = 200;
+/** After this many local set perturbs fail, allow whole-unknown reshuffles. */
+const BIG_PERTURB_AFTER = 40;
 /** Cheaper CSP during generation (full MAX_CSP_VARS used for final verify). */
 const GENERATION_CSP_VARS = 12;
 
@@ -577,6 +586,11 @@ interface SolveProgress {
   knownEmpty: number[];
   /** Cell indices the solver proved are mines (flagged). */
   knownMines: number[];
+  /**
+   * Remaining frontier constraint sets when stuck (unknown neighbors of a
+   * numbered cell). Used as Tatham `mineperturb` targets.
+   */
+  stuckSets: number[][];
 }
 
 /**
@@ -593,7 +607,14 @@ function solveUntilStuck(
   const sy = Math.floor(startIndex / board.width);
 
   if (sim.cells[startIndex].mine) {
-    return { won: false, lost: true, revealedCount: 0, knownEmpty: [], knownMines: [] };
+    return {
+      won: false,
+      lost: true,
+      revealedCount: 0,
+      knownEmpty: [],
+      knownMines: [],
+      stuckSets: [],
+    };
   }
 
   revealFlood(sim, sx, sy);
@@ -606,12 +627,31 @@ function solveUntilStuck(
     else if (sim.cells[i].state === 'flagged') knownMines.push(i);
   }
 
+  const won = sim.status !== 'lost' && isWon(sim);
+  const lost = sim.status === 'lost';
+  let stuckSets: number[][] = [];
+  if (!won && !lost) {
+    const { constraints } = collectConstraints(sim);
+    // Prefer mixed sets (both mines and clears) — uniform sets yield empty perturbs.
+    stuckSets = constraints
+      .map((c) => c.vars)
+      .filter((vars) => {
+        let mines = 0;
+        for (const i of vars) if (board.cells[i].mine) mines++;
+        return mines > 0 && mines < vars.length;
+      });
+    if (stuckSets.length === 0) {
+      stuckSets = constraints.map((c) => c.vars).filter((v) => v.length > 0);
+    }
+  }
+
   return {
-    won: sim.status !== 'lost' && isWon(sim),
-    lost: sim.status === 'lost',
+    won,
+    lost,
     revealedCount: sim.revealedCount,
     knownEmpty,
     knownMines,
+    stuckSets,
   };
 }
 
@@ -636,53 +676,127 @@ function shuffleInPlace<T>(arr: T[]): void {
 }
 
 /**
- * Targeted migration: move mines off the numbered frontier into the deep sea.
- * This is the main unstick strategy for dense boards (much cheaper than full reshuffles).
+ * Simon Tatham `mineperturb` (MIT, SGT Puzzles mines.c): make `targetSet`
+ * entirely mines or entirely clear by swapping with outside squares.
+ *
+ * Outside candidates are preference-ordered: unknown frontier, then deep sea,
+ * then already-known cells (last resort). The first-click 3×3 is never touched.
+ * Returns false when no effective swap is possible.
+ *
+ * @param targetSet - Frontier constraint vars to fill/empty, or `null` for a
+ *   big perturb over every cell the solver still treats as unknown.
  */
-function migrateFrontierMinesToSea(
+function tathamPerturb(
   board: MinesweeperBoard,
   safeIndex: number,
   knownEmpty: number[],
-  knownMines: number[]
+  knownMines: number[],
+  targetSet: number[] | null
 ): boolean {
-  const lockedEmpty = safeZone(board, safeIndex);
-  for (const i of knownEmpty) lockedEmpty.add(i);
-  const lockedMine = new Set<number>(knownMines);
-  const revealed = new Set<number>(knownEmpty);
+  const forbidden = safeZone(board, safeIndex);
+  const revealed = new Set(knownEmpty);
+  const knownMineSet = new Set(knownMines);
+  const knownAny = new Set<number>([...knownEmpty, ...knownMines]);
 
-  const frontier: number[] = [];
-  const sea: number[] = [];
+  let setCells: number[];
+  if (targetSet && targetSet.length > 0) {
+    setCells = targetSet.filter((i) => !forbidden.has(i));
+  } else {
+    setCells = [];
+    for (let i = 0; i < board.cells.length; i++) {
+      if (forbidden.has(i) || knownAny.has(i)) continue;
+      setCells.push(i);
+    }
+  }
 
+  if (setCells.length === 0) return false;
+
+  const inSet = new Set(setCells);
+  let nfull = 0;
+  let nempty = 0;
+  for (const i of setCells) {
+    if (board.cells[i].mine) nfull++;
+    else nempty++;
+  }
+  if (nfull === 0 && nempty === 0) return false;
+
+  type Cand = { index: number; type: number; rand: number };
+  const candidates: Cand[] = [];
   for (let i = 0; i < board.cells.length; i++) {
-    if (lockedEmpty.has(i) || lockedMine.has(i)) continue;
-    const x = i % board.width;
-    const y = Math.floor(i / board.width);
-    let touchesRevealed = false;
-    forEachNeighbor(board, x, y, (_nx, _ny, _n, ni) => {
-      if (revealed.has(ni)) touchesRevealed = true;
-    });
-    if (touchesRevealed) frontier.push(i);
-    else sea.push(i);
+    if (forbidden.has(i) || inSet.has(i)) continue;
+
+    let type: number;
+    if (knownAny.has(i)) {
+      type = 3; // already deduced — last resort swap partner
+    } else {
+      const x = i % board.width;
+      const y = Math.floor(i / board.width);
+      let touches = false;
+      forEachNeighbor(board, x, y, (_nx, _ny, _n, ni) => {
+        if (revealed.has(ni) || knownMineSet.has(ni)) touches = true;
+      });
+      type = touches ? 1 : 2;
+    }
+    candidates.push({ index: i, type, rand: Math.random() });
   }
 
-  const frontierMines = frontier.filter((i) => board.cells[i].mine);
-  const seaEmpty = sea.filter((i) => !board.cells[i].mine);
-  if (frontierMines.length === 0 || seaEmpty.length === 0) return false;
+  candidates.sort((a, b) => a.type - b.type || a.rand - b.rand);
 
-  shuffleInPlace(frontierMines);
-  shuffleInPlace(seaEmpty);
-  const moves = Math.min(1 + Math.floor(Math.random() * 3), frontierMines.length, seaEmpty.length);
-  for (let m = 0; m < moves; m++) {
-    board.cells[frontierMines[m]].mine = false;
-    board.cells[seaEmpty[m]].mine = true;
+  const tofill: number[] = [];
+  const toempty: number[] = [];
+  for (const c of candidates) {
+    if (board.cells[c.index].mine) toempty.push(c.index);
+    else tofill.push(c.index);
+    if (tofill.length === nfull || toempty.length === nempty) break;
   }
+
+  /** Deltas applied to the mine bitmap: +1 add mine, -1 remove mine. */
+  const changes: Array<{ index: number; delta: number }> = [];
+
+  if (tofill.length === nfull && nfull > 0) {
+    // Empty the set: move its mines onto `tofill` empties outside.
+    for (const i of tofill) changes.push({ index: i, delta: +1 });
+    for (const i of setCells) {
+      if (board.cells[i].mine) changes.push({ index: i, delta: -1 });
+    }
+  } else if (toempty.length === nempty && nempty > 0) {
+    // Fill the set: pull mines from `toempty` outside into empty set cells.
+    for (const i of toempty) changes.push({ index: i, delta: -1 });
+    for (const i of setCells) {
+      if (!board.cells[i].mine) changes.push({ index: i, delta: +1 });
+    }
+  } else if (toempty.length > 0 && nempty > toempty.length) {
+    // Partial fill (dense boards): fill a random subset of empty set cells.
+    const emptiesInSet = setCells.filter((i) => !board.cells[i].mine);
+    shuffleInPlace(emptiesInSet);
+    const n = toempty.length;
+    for (let k = 0; k < n; k++) {
+      changes.push({ index: toempty[k], delta: -1 });
+      changes.push({ index: emptiesInSet[k], delta: +1 });
+    }
+  } else {
+    return false;
+  }
+
+  if (changes.length === 0) return false;
+
+  // Validate the whole plan before mutating (avoid partial applies).
+  for (const { index, delta } of changes) {
+    const wantMine = delta > 0;
+    if (board.cells[index].mine === wantMine) return false;
+  }
+
+  for (const { index, delta } of changes) {
+    board.cells[index].mine = delta > 0;
+  }
+
   computeAdjacents(board);
   return true;
 }
 
 /**
- * Reshuffles mines among cells the solver has not yet proven, while keeping
- * known empties empty and known mines fixed. Preserves the first-click safe zone.
+ * Reshuffles mines among cells the solver has not yet proven, keeping known
+ * empties empty and known mines fixed. Used as Tatham "big perturb" fallback.
  */
 function perturbUnknownMines(
   board: MinesweeperBoard,
@@ -717,33 +831,29 @@ function perturbUnknownMines(
   return true;
 }
 
-/** Retries random layouts until the opening cell is a zero (large flood). */
+/** Random layout with a cleared first-click 3×3 (always a zero opening). */
 function placeMinesWithZeroOpening(board: MinesweeperBoard, safeIndex: number): void {
-  for (let i = 0; i < 80; i++) {
-    placeMinesRandom(board, safeIndex);
-    if (board.cells[safeIndex].adjacent === 0) return;
-  }
   placeMinesRandom(board, safeIndex);
 }
 
 /**
- * No-guess generation (Tatham-style with frontier→sea migration):
- * 1. Prefer a zero opening around the first click.
- * 2. Solve logically until stuck or cleared.
- * 3. If stuck, move frontier mines into the deep sea (or reshuffle unknowns).
- * 4. If progress stalls, start from a fresh layout.
+ * No-guess generation (Simon Tatham / SGT Puzzles mines.c, MIT):
+ * 1. Place mines with a cleared first-click neighbourhood (zero opening).
+ * 2. Solve with local deductions (+ capped CSP).
+ * 3. When stuck, fill or empty a random frontier set via `tathamPerturb`.
+ * 4. After many local failures, allow a whole-unknown reshuffle; else restart.
  */
 function placeMines(board: MinesweeperBoard, safeIndex: number): void {
   for (let restart = 0; restart < MAX_GENERATION_RESTARTS; restart++) {
     placeMinesWithZeroOpening(board, safeIndex);
 
-    let stagnant = 0;
+    let localFails = 0;
     let bestRevealed = 0;
+    let stagnant = 0;
 
     for (let step = 0; step < MAX_PERTURBATIONS; step++) {
       const progress = solveUntilStuck(board, safeIndex, GENERATION_CSP_VARS);
       if (progress.won) {
-        // Final verify with the full CSP budget used in play-time solvability checks.
         if (solveUntilStuck(board, safeIndex, MAX_CSP_VARS).won) {
           board.minesPlaced = true;
           return;
@@ -757,20 +867,41 @@ function placeMines(board: MinesweeperBoard, safeIndex: number): void {
       } else {
         stagnant++;
       }
+      if (stagnant >= 24) break;
 
-      if (stagnant >= 16) break;
+      const allowBig = restart >= 2 || localFails >= BIG_PERTURB_AFTER || step >= BIG_PERTURB_AFTER;
 
-      const migrated = migrateFrontierMinesToSea(
-        board,
-        safeIndex,
-        progress.knownEmpty,
-        progress.knownMines
-      );
-      if (!migrated) {
-        if (!perturbUnknownMines(board, safeIndex, progress.knownEmpty, progress.knownMines)) {
-          break;
+      let didPerturb = false;
+      if (progress.stuckSets.length > 0) {
+        const set = progress.stuckSets[Math.floor(Math.random() * progress.stuckSets.length)];
+        didPerturb = tathamPerturb(board, safeIndex, progress.knownEmpty, progress.knownMines, set);
+      }
+
+      if (!didPerturb && allowBig) {
+        didPerturb = tathamPerturb(
+          board,
+          safeIndex,
+          progress.knownEmpty,
+          progress.knownMines,
+          null
+        );
+        if (!didPerturb) {
+          didPerturb = perturbUnknownMines(
+            board,
+            safeIndex,
+            progress.knownEmpty,
+            progress.knownMines
+          );
         }
       }
+
+      if (!didPerturb) {
+        localFails++;
+        if (localFails > 8) break;
+        continue;
+      }
+
+      localFails = 0;
     }
   }
 
