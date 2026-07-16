@@ -18,6 +18,17 @@ import { PostNotificationsService } from './post-notifications.service';
 export class PostsService {
   private static readonly LIST_CACHE_TTL = 30; // seconds
 
+  /**
+   * Verification service account (Google/Apple app review). Its authored posts are hidden
+   * from the feed for everyone except global admins and the account itself. Configurable via
+   * the SERVICE_ACCOUNT_USER_ID env var (GitHub-secret backed). Only a hex user id is accepted
+   * so it can be safely inlined into raw SQL; anything else disables the restriction.
+   */
+  private readonly serviceAccountId = (() => {
+    const raw = process.env.SERVICE_ACCOUNT_USER_ID?.trim() ?? '';
+    return /^[a-f0-9]{1,128}$/i.test(raw) ? raw : '';
+  })();
+
   /** PostgreSQL BIGINT fields break JSON.stringify - convert to Number. */
   private stripBigIntForJson<T>(value: T): T {
     return JSON.parse(
@@ -354,6 +365,14 @@ export class PostsService {
     // Non-admin viewers cannot see posts hidden by moderation.
     const hiddenFilter = isAdmin ? '' : `AND NOT COALESCE(posts."hiddenByModeration", false)`;
 
+    // The verification service account is invisible in the feed to everyone except global
+    // admins and the account itself. serviceAccountId is validated as hex, so inlining is safe.
+    const canSeeServiceAccount = isAdmin || viewerUserId === this.serviceAccountId;
+    const serviceAccountFilter =
+      !this.serviceAccountId || canSeeServiceAccount
+        ? ''
+        : `AND posts."authorId" <> '${this.serviceAccountId}'`;
+
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional)
       rawPosts = await this.postRepo.manager.query(
@@ -363,6 +382,7 @@ export class PostsService {
        WHERE posts."associationId" IS NOT NULL
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${serviceAccountFilter}
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -376,6 +396,7 @@ export class PostsService {
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${serviceAccountFilter}
          ${promoSql(3)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -393,6 +414,7 @@ export class PostsService {
        )
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${serviceAccountFilter}
          ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,
@@ -410,6 +432,7 @@ export class PostsService {
          AND ($4::text IS NULL OR u.formation ILIKE ('%' || $4::text || '%'))
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
+         ${serviceAccountFilter}
          ${promoSql(5)}
        ORDER BY posts.pinned DESC, posts."createdAt" DESC
        LIMIT $1 OFFSET $2`,

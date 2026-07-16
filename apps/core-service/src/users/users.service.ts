@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 import axios from 'axios';
 import { User } from './entities/user.entity';
 import {
@@ -27,6 +27,13 @@ export class UsersService implements OnModuleInit {
   private readonly chatDeliveryUrl =
     process.env.CHAT_DELIVERY_URL ?? 'http://chat-delivery-service:3010';
   private readonly socialUrl = process.env.SOCIAL_URL ?? 'http://social-service:3014';
+  /**
+   * Verification service account used by Google/Apple app reviewers. It is hidden from
+   * non-admin users (search + directory) and can itself only discover global admins.
+   * Configurable via the SERVICE_ACCOUNT_USER_ID env var (GitHub-secret backed); empty
+   * disables all service-account restrictions.
+   */
+  private readonly serviceAccountId = process.env.SERVICE_ACCOUNT_USER_ID?.trim() ?? '';
 
   constructor(
     @InjectRepository(User)
@@ -154,6 +161,39 @@ export class UsersService implements OnModuleInit {
       .getMany();
   }
 
+  /** Returns whether the given user has global admin privileges. */
+  private async isUserAdmin(userId: string): Promise<boolean> {
+    if (!userId) return false;
+    const row = await this.userRepository
+      .createQueryBuilder('user')
+      .select('user.admin', 'admin')
+      .where('user.id = :id', { id: userId })
+      .getRawOne<{ admin: boolean }>();
+    return row?.admin === true;
+  }
+
+  /**
+   * Restricts a user query builder (alias `user`) to enforce service-account visibility:
+   * - The service account itself may only discover global admins.
+   * - Non-admin requesters never see the service account.
+   * - Global admins are unaffected. No-op when no service account is configured.
+   */
+  private async applyServiceAccountVisibility(
+    qb: SelectQueryBuilder<User>,
+    requesterId?: string
+  ): Promise<void> {
+    const sa = this.serviceAccountId;
+    if (!sa) return;
+    if (requesterId && requesterId === sa) {
+      // The verification account must not be able to browse the wider student body.
+      qb.andWhere('user.admin = :saAdminOnly', { saAdminOnly: true });
+      return;
+    }
+    if (!(await this.isUserAdmin(requesterId ?? ''))) {
+      qb.andWhere('user.id != :serviceAccountId', { serviceAccountId: sa });
+    }
+  }
+
   /**
    * Search users by displayName - case-insensitive, accent-insensitive, word-order-insensitive,
    * and typo-tolerant (trigram fuzzy matching). Results are ordered by closeness to the query.
@@ -179,6 +219,8 @@ export class UsersService implements OnModuleInit {
     if (excludeUserId) {
       qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
     }
+
+    await this.applyServiceAccountVisibility(qb, excludeUserId);
 
     return qb.take(10).getMany();
   }
@@ -240,6 +282,8 @@ export class UsersService implements OnModuleInit {
     if (excludeUserId) {
       qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
     }
+
+    await this.applyServiceAccountVisibility(qb, excludeUserId);
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {

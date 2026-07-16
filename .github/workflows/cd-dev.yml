@@ -429,6 +429,7 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          SERVICE_ACCOUNT_USER_ID: ${{ secrets.SERVICE_ACCOUNT_USER_ID }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
@@ -469,6 +470,12 @@ jobs:
           }
 
           upsert_env_var "JWT_SECRET" "$JWT_SECRET"
+
+          # Optional override of the verification service account id (default lives in .env.example).
+          if [ -n "$SERVICE_ACCOUNT_USER_ID" ]; then
+            upsert_env_var "SERVICE_ACCOUNT_USER_ID" "$SERVICE_ACCOUNT_USER_ID"
+          fi
+
           upsert_env_var "AUTHENTIK_BASE_URL" "$AUTHENTIK_BASE_URL"
           upsert_env_var "AUTHENTIK_CLIENT_ID" "$AUTHENTIK_CLIENT_ID"
           upsert_env_var "AUTHENTIK_CLIENT_SECRET" "$AUTHENTIK_CLIENT_SECRET"

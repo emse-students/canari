@@ -16,6 +16,7 @@
     UserCog,
     Wrench,
     FileCheck2,
+    BookUser,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -82,6 +83,7 @@
     | 'associations'
     | 'create-association'
     | 'calendar'
+    | 'directory'
     | 'doc-reviewers';
 
   interface AdminCard {
@@ -104,6 +106,12 @@
         label: m.admin_pending_agenda_label(),
         description: m.admin_card_agenda_desc(),
         badge: pendingCount !== null && pendingCount > 0 ? `${pendingCount}` : undefined,
+      },
+      {
+        href: '/directory',
+        kind: 'directory',
+        label: m.directory_heading(),
+        description: m.directory_subtitle(),
       },
     ];
     if (isGlobalAdminUser) {
@@ -197,6 +205,8 @@
               <Users size={20} />
             {:else if card.kind === 'create-association'}
               <PlusCircle size={20} />
+            {:else if card.kind === 'directory'}
+              <BookUser size={20} />
             {:else}
               <CalendarDays size={20} />
             {/if}

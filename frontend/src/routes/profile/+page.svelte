@@ -292,20 +292,11 @@
       class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
       style="animation-fill-mode: backwards;"
     >
-      <div class="flex items-center justify-between mb-5">
-        <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
-            <Building2 size={22} strokeWidth={2.5} />
-          </div>
-          <h2 class="text-lg font-extrabold text-text-main">{m.profile_assoc_heading()}</h2>
+      <div class="flex items-center gap-3 mb-5">
+        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+          <Building2 size={22} strokeWidth={2.5} />
         </div>
-        <a
-          href="/directory"
-          class="inline-flex items-center gap-1 text-xs font-bold text-cn-dark hover:underline"
-        >
-          <Users size={14} />
-          {m.profile_directory_link()}
-        </a>
+        <h2 class="text-lg font-extrabold text-text-main">{m.profile_assoc_heading()}</h2>
       </div>
       <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
     </div>

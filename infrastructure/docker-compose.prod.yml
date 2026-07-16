@@ -260,6 +260,7 @@ services:
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
       SKY_API_URL: ${SKY_API_URL:-https://sky.mitv.fr}
       SKY_API_KEY: ${SKY_API_KEY:-}
@@ -301,6 +302,7 @@ services:
       MEDIA_SERVICE_URL: http://media-service:3011
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
     depends_on:
       postgres:

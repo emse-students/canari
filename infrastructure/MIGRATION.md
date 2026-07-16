@@ -63,6 +63,12 @@ les recreer (Settings -> Secrets and variables -> Actions). Secrets necessaires 
 | Push / appels / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
 | API externe (Sky) | `EXTERNAL_API_KEY` (cle de `/api/external/*`, profil public ; doit etre identique a `CANARI_API_KEY` cote Sky) ; `SKY_API_KEY` (cle pour lire l arbre de parrainage Sky affiche sur les profils ; identique a `SKY_API_KEY` cote Sky) |
 
+Secret optionnel : `SERVICE_ACCOUNT_USER_ID` surcharge l id du compte de verification
+Google/Apple (masque des non-admins dans la recherche, l annuaire et le feed ; ne voit
+lui-meme que les admins). Non defini => valeur par defaut de `.env.example`. Ce n est pas
+un secret sensible, juste un id utilisateur, mais l exposer en secret permet de le changer
+sans commit.
+
 Generation de valeurs fortes : `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
 (`MICONNECT_AUTHENTIK_SECRET_KEY`).
 
