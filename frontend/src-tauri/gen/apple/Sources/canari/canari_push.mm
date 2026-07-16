@@ -1330,6 +1330,107 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
   });
 }
 
+// --- Channel (community) message push --------------------------------------
+
+// Generic body shown when a channel message cannot be decrypted (key missing or ciphertext omitted).
+static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
+  return [NSString stringWithFormat:@"Nouveau message dans #%@", channelName];
+}
+
+// Looks up the raw epoch key (base64) for a channel/keyVersion in the app-private channel_keys.json
+// mirror (written by the foreground), or nil. Shape: { "<channelId>": { "<keyVersion>": "<keyB64>" } }.
+static NSString *_Nullable CanariLookupChannelKey(NSString *channelId, NSString *keyVersion) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    return nil;
+  }
+  NSData *raw =
+      [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"channel_keys.json"]];
+  if (raw == nil) {
+    NSLog(@"[CanariPush] lookupChannelKey: channel_keys.json absent");
+    return nil;
+  }
+  id json = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
+  if (![json isKindOfClass:[NSDictionary class]]) {
+    return nil;
+  }
+  id byChannel = ((NSDictionary *)json)[channelId];
+  if (![byChannel isKindOfClass:[NSDictionary class]]) {
+    return nil;
+  }
+  id key = ((NSDictionary *)byChannel)[keyVersion];
+  return ([key isKindOfClass:[NSString class]] && [(NSString *)key length] > 0) ? key : nil;
+}
+
+// Decrypts a channel-message push (AES-256-GCM, not MLS) and shows a notification. The epoch key is
+// read from channel_keys.json; the inline ciphertext is decrypted natively so the plaintext never
+// transits FCM. Falls back to a generic body when the key is missing (channel not yet hydrated) or
+// the ciphertext was omitted server-side. Mirror of Android handleChannelMessage.
+static void CanariHandleChannelMessage(NSDictionary *data) {
+  NSString *channelId =
+      [data[@"channelId"] isKindOfClass:[NSString class]] ? data[@"channelId"] : @"";
+  NSString *channelName = ([data[@"channelName"] isKindOfClass:[NSString class]] &&
+                           [(NSString *)data[@"channelName"] length] > 0)
+                              ? data[@"channelName"]
+                              : @"Salon";
+  NSString *keyVersion =
+      [data[@"keyVersion"] isKindOfClass:[NSString class]] ? data[@"keyVersion"] : @"";
+  NSString *ciphertext =
+      [data[@"ciphertext"] isKindOfClass:[NSString class]] ? data[@"ciphertext"] : @"";
+  NSString *nonce = [data[@"nonce"] isKindOfClass:[NSString class]] ? data[@"nonce"] : @"";
+  NSString *senderId = [data[@"senderId"] isKindOfClass:[NSString class]] ? data[@"senderId"] : @"";
+  if (channelId.length == 0) {
+    NSLog(@"[CanariPush] handleChannelMessage: channelId manquant - abort");
+    return;
+  }
+  // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
+  NSString *conversationId = [NSString stringWithFormat:@"channel_%@", channelId];
+
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSString *body = nil;
+    NSString *keyB64 = (ciphertext.length > 0 && nonce.length > 0)
+                           ? CanariLookupChannelKey(channelId, keyVersion)
+                           : nil;
+    if (keyB64.length > 0) {
+      char *jsonPtr = canari_native_decrypt_channel_message(keyB64.UTF8String, nonce.UTF8String,
+                                                            ciphertext.UTF8String);
+      if (jsonPtr != nil) {
+        NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
+        canari_free_string(jsonPtr);
+        NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
+        id json = jsonData != nil
+                      ? [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil]
+                      : nil;
+        if ([json isKindOfClass:[NSDictionary class]] &&
+            [((NSDictionary *)json)[@"ok"] boolValue]) {
+          NSString *text = [((NSDictionary *)json)[@"text"] isKindOfClass:[NSString class]]
+                               ? ((NSDictionary *)json)[@"text"]
+                               : @"";
+          if (text.length > 200) {
+            text = [text substringToIndex:200];
+          }
+          body = text.length > 0 ? text : nil;
+        } else {
+          NSLog(@"[CanariPush] handleChannelMessage: decrypt ok=false channel=%@", channelId);
+        }
+      }
+    } else {
+      NSLog(@"[CanariPush] handleChannelMessage: pas de cle/ciphertext - notification generique "
+            @"channel=%@",
+            channelId);
+    }
+    if (body.length == 0) {
+      body = CanariBuildChannelFallbackText(channelName);
+    }
+
+    NSString *displayName = [NSString stringWithFormat:@"#%@", channelName];
+    dispatch_async(dispatch_get_main_queue(), ^{
+      // groupName empty + senderName "#<channel>" -> title is "#<channel>"; avatar from senderId.
+      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId);
+    });
+  });
+}
+
 static void CanariHandleFcmData(NSDictionary *data) {
   if (data.count == 0) {
     return;
@@ -1391,6 +1492,31 @@ static void CanariHandleFcmData(NSDictionary *data) {
     }
     NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
     CanariShowLocalNotification(title, body, deepLink, thread, 0, nil);
+    return;
+  }
+
+  // Community (channel) encrypted message: AES-256-GCM, key looked up in channel_keys.json.
+  // Not MLS: no mls.bin, no state lock - decryption is stateless and read-only.
+  if ([msgType isEqualToString:@"channel"]) {
+    NSLog(@"[CanariPush] type=channel channelId=%@ - notification channel background",
+          data[@"channelId"]);
+    CanariHandleChannelMessage(data);
+    return;
+  }
+
+  // Channel read on another of my devices: clear this device's notification for that channel
+  // (cross-device read-state sync, channel counterpart of the MLS silent-receipt path). The reading
+  // device is foreground and already returned above; only background sibling devices reach here.
+  if ([msgType isEqualToString:@"channel_read"]) {
+    NSString *channelId =
+        [data[@"channelId"] isKindOfClass:[NSString class]] ? data[@"channelId"] : @"";
+    if (channelId.length > 0) {
+      NSString *conversationId = [NSString stringWithFormat:@"channel_%@", channelId];
+      NSLog(@"[CanariPush] type=channel_read - clearing notification channel=%@", channelId);
+      dispatch_async(dispatch_get_main_queue(), ^{
+        CanariCancelConversationNotification(conversationId);
+      });
+    }
     return;
   }
 

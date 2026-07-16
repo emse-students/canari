@@ -42,6 +42,7 @@ Copier `GoogleService-Info.plist` dans `canari_iOS/` (non committe, voir `.gitig
 | `CanariFirebaseMessagingService.kt` | `canari_push.mm` |
 | `MlsBackgroundWorker` (janitor) | `canari_native_cleanup_pending_db` |
 | JNI welcome/send/outbox | FFI C dans `ios_ffi.rs` |
+| `nativeDecryptChannelMessage` (push channel) | `canari_native_decrypt_channel_message` |
 
 ## Phase 3 (welcome + outbox + worker)
 
@@ -65,6 +66,7 @@ FFI exposes :
 - `canari_native_decrypt_message`
 - `canari_native_group_epoch`
 - `canari_native_decrypt_message_with_commits`
+- `canari_native_decrypt_channel_message` (AES-256-GCM channel/communaute, hors MLS)
 - `canari_native_create_welcome_background`
 - `canari_native_process_welcome_background`
 - `canari_native_send_message_background`

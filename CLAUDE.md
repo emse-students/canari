@@ -75,6 +75,8 @@ No open code work. Shipped this cycle, pending ON-DEVICE verification only (impl
 * History refetch-storm bounded retry (finding C, 0de94457) + discovery-gap check (finding D, a365d96e, closed - not a gap) - verify: external joiner, storm stops, no message loss.
 * Server-authoritative admin-button gating on the community modal (71bfe02c) - verify: non-admin member sees no change-image/invite controls; admin does.
 
+**iOS native parity (background push).** The iOS FFI bridge now mirrors the full Android JNI surface. Last gap closed: channel/community background decryption. `decrypt_channel_message` (shared, `background.rs`) is now exposed to iOS via `canari_native_decrypt_channel_message` (`ios_ffi.rs` + `canari_rust_bridge.h`), and `canari_push.mm` routes `type=channel` (lookup key in `channel_keys.json` -> AES-256-GCM decrypt -> notif `#<channel>`, generic fallback if key/ciphertext absent) and `type=channel_read` (cancel `channel_<id>` notif, cross-device read sync). 1:1 with Android `handleChannelMessage`/`nativeDecryptChannelMessage`. **Cannot compile-verify on Windows host (mobile mod is `cfg(target_os=ios/android)`); needs Mac/CI build + on-device channel push test.** Léon owns secrets/CI/verify. iOS release workflow stays disabled until finalized.
+
 Residual otherwise = on-device MLS mobile native verification only.
 
 * \[~\] **Minesweeper ranked leaderboard (uncommitted):** on **social-service** (`/api/minesweeper`), seeded challenges + move-replay anti-cheat. Keep `apps/social-service/src/minesweeper/engine/game.ts` synced with `frontend/src/lib/minesweeper/game.ts`. Migration `apps/social-service/src/migrations/018_minesweeper_leaderboard.sql`. Score = server wall-clock only.

@@ -38,6 +38,11 @@ char *canari_native_decrypt_message_with_commits(
     const unsigned char *cipher_ptr,
     size_t cipher_len);
 
+char *canari_native_decrypt_channel_message(
+    const char *key_b64,
+    const char *nonce_b64,
+    const char *ciphertext_b64);
+
 char *canari_native_create_welcome_background(
     const char *files_dir,
     const unsigned char *state_ptr,

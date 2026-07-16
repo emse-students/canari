@@ -4,10 +4,12 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use super::background::{
     background_group_epoch, cleanup_pending_db, create_welcome_background, decode_commits_b64_json,
-    decrypt_push_message, decrypt_push_message_with_commits, process_welcome_background,
-    send_message_background,
+    decrypt_channel_message, decrypt_push_message, decrypt_push_message_with_commits,
+    process_welcome_background, send_message_background,
 };
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
@@ -168,6 +170,41 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
         &commits,
         ciphertext,
     ) {
+        Some(v) => json_to_c_string(v),
+        None => json_to_c_string(serde_json::json!({ "ok": false })),
+    }
+}
+
+/// Dechiffre un message channel/communaute (AES-256-GCM, hors MLS). Les trois arguments sont des
+/// chaines base64 : cle d'epoch brute (32 octets), nonce (12 octets), ciphertext (`ciphertext||tag`).
+/// Retourne le meme JSON que `canari_native_decrypt_message` (`{"ok":true,"text":...}`), ou
+/// `{"ok":false}`. Sans etat MLS ni verrou : le dechiffrement est stateless et en lecture seule.
+/// Miroir FFI du JNI Android `nativeDecryptChannelMessage`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_decrypt_channel_message(
+    key_b64: *const c_char,
+    nonce_b64: *const c_char,
+    ciphertext_b64: *const c_char,
+) -> *mut c_char {
+    if key_b64.is_null() || nonce_b64.is_null() || ciphertext_b64.is_null() {
+        return json_to_c_string(serde_json::json!({ "ok": false }));
+    }
+
+    let decode = |s: String| STANDARD.decode(s.trim()).ok();
+    let key = match decode(str_from_c_str(key_b64)) {
+        Some(v) => v,
+        None => return json_to_c_string(serde_json::json!({ "ok": false })),
+    };
+    let nonce = match decode(str_from_c_str(nonce_b64)) {
+        Some(v) => v,
+        None => return json_to_c_string(serde_json::json!({ "ok": false })),
+    };
+    let ciphertext = match decode(str_from_c_str(ciphertext_b64)) {
+        Some(v) => v,
+        None => return json_to_c_string(serde_json::json!({ "ok": false })),
+    };
+
+    match decrypt_channel_message(&key, &nonce, &ciphertext) {
         Some(v) => json_to_c_string(v),
         None => json_to_c_string(serde_json::json!({ "ok": false })),
     }
