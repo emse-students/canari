@@ -77,6 +77,8 @@
   let elapsedMs = $state(0);
   let startTimeMs = 0;
   let timerHandle: ReturnType<typeof setInterval> | null = null;
+  /** True while the first-dig challenge request is in flight, to guard against double-taps. */
+  let firstClickBusy = $state(false);
 
   let leaderboard = $state<LeaderboardEntry[]>([]);
   let leaderboardLoading = $state(false);
@@ -167,36 +169,68 @@
     panY = (vh - boardH * scale) / 2;
   }
 
-  /** Starts a fresh game: tries a ranked seeded challenge, falls back to casual on failure. */
-  async function startGame() {
+  /**
+   * Resets to a fresh, blank board. Mines aren't placed and no server challenge is
+   * requested yet - both happen lazily on the first dig, via `digWithSeedIfNeeded`.
+   */
+  function startGame() {
+    stopTimer();
     moves = [];
     submitMessage = null;
     submitError = false;
     personalBestMs = null;
+    challengeId = null;
+    rankedMode = false;
+    firstClickBusy = false;
+    elapsedMs = 0;
+    board = createBoard(DEFAULT_CONFIG, null);
+  }
 
-    console.debug('[minesweeper] attempting ranked challenge start');
-    try {
-      const challenge = await startMinesweeperChallenge();
-      board = createBoard(DEFAULT_CONFIG, challenge.seed);
-      challengeId = challenge.challengeId;
-      rankedMode = true;
-      console.debug('[minesweeper] ranked challenge started', {
-        challengeId: challenge.challengeId,
-      });
-    } catch (err) {
-      console.debug('[minesweeper] ranked start failed, falling back to casual', err);
-      board = createBoard(DEFAULT_CONFIG, null);
-      challengeId = null;
-      rankedMode = false;
-    }
-
-    startTimer();
+  /** Waits for the DOM to settle after a board change, then fits/centers the viewport. */
+  async function afterBoardChange() {
     await tick();
     centerView();
   }
 
   function newGame() {
-    void startGame();
+    startGame();
+    void afterBoardChange();
+  }
+
+  /**
+   * Ensures a real board exists before the very first reveal: tries a ranked seeded
+   * challenge, falling back to a casual unseeded board on failure, then performs the
+   * dig and starts the local timer. Once mines are placed, this just digs directly.
+   */
+  async function digWithSeedIfNeeded(x: number, y: number) {
+    if (board.minesPlaced) {
+      dig(x, y);
+      return;
+    }
+    if (firstClickBusy) return;
+    firstClickBusy = true;
+    try {
+      console.debug('[minesweeper] first dig, attempting ranked challenge start');
+      try {
+        const challenge = await startMinesweeperChallenge();
+        board = createBoard(DEFAULT_CONFIG, challenge.seed);
+        challengeId = challenge.challengeId;
+        rankedMode = true;
+        console.debug('[minesweeper] ranked challenge started', {
+          challengeId: challenge.challengeId,
+        });
+      } catch (err) {
+        console.debug('[minesweeper] ranked start failed, falling back to casual', err);
+        board = createBoard(DEFAULT_CONFIG, null);
+        challengeId = null;
+        rankedMode = false;
+      }
+      dig(x, y);
+      startTimer();
+      await afterBoardChange();
+    } finally {
+      firstClickBusy = false;
+    }
   }
 
   async function submitRankedResult() {
@@ -232,7 +266,8 @@
 
   $effect(() => {
     if (!open) return;
-    void startGame();
+    startGame();
+    void afterBoardChange();
     void loadLeaderboard();
     return () => {
       stopTimer();
@@ -272,20 +307,35 @@
     handlePostMove();
   }
 
-  /** Short press / left click: flags hidden cells when inverted, otherwise always digs (revealed cells still chord). */
+  /**
+   * Short press / left click: before mines are placed, the very first click always digs
+   * (safe-first-click + seeding happens in `digWithSeedIfNeeded`). Afterward, flags hidden
+   * cells when inverted, otherwise always digs (revealed cells still chord).
+   */
   function primaryAction(x: number, y: number) {
+    if (!board.minesPlaced) {
+      void digWithSeedIfNeeded(x, y);
+      return;
+    }
     if (flagPrimary) {
       const cell = board.cells[y * board.width + x];
-      if (cell.state === 'revealed') dig(x, y);
+      if (cell.state === 'revealed') void digWithSeedIfNeeded(x, y);
       else flag(x, y);
     } else {
-      dig(x, y);
+      void digWithSeedIfNeeded(x, y);
     }
   }
 
-  /** Long press / right click: digs when inverted, otherwise flags. */
+  /**
+   * Long press / right click: before mines are placed, always digs (same reasoning as
+   * `primaryAction`). Afterward, digs when inverted, otherwise flags.
+   */
   function secondaryAction(x: number, y: number) {
-    if (flagPrimary) dig(x, y);
+    if (!board.minesPlaced) {
+      void digWithSeedIfNeeded(x, y);
+      return;
+    }
+    if (flagPrimary) void digWithSeedIfNeeded(x, y);
     else flag(x, y);
   }
 
@@ -563,22 +613,22 @@
       style="transform: translate({panX}px, {panY}px) scale({scale}); transform-origin: 0 0;"
     >
       <div
-        class="grid gap-px w-fit mx-auto"
-        style="grid-template-columns: repeat({board.width}, minmax(0, 1fr));"
+        class="grid gap-px w-max [--ms-cell:1.75rem] sm:[--ms-cell:2rem]"
+        style="grid-template-columns: repeat({board.width}, var(--ms-cell));"
       >
         {#each board.cells as cell, i (i)}
           {@const x = i % board.width}
           {@const y = Math.floor(i / board.width)}
           <button
             type="button"
-            disabled={board.status !== 'playing'}
+            disabled={board.status !== 'playing' || firstClickBusy}
             onclick={() => handleCellClick(x, y)}
             oncontextmenu={(e) => handleContextMenu(e, x, y)}
             onpointerdown={(e) => handlePointerDown(e, x, y)}
             onpointerup={handlePointerRelease}
             onpointerleave={handlePointerRelease}
             onpointercancel={handlePointerRelease}
-            class="size-7 sm:size-8 flex items-center justify-center select-none touch-manipulation rounded-sm border font-mono font-bold text-xs sm:text-sm
+            class="h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 box-border flex items-center justify-center select-none touch-manipulation rounded-sm border font-mono font-bold text-xs sm:text-sm
               {cell.state === 'hidden'
               ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
               : cell.state === 'flagged'
