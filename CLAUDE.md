@@ -79,7 +79,7 @@ No open code work. Shipped this cycle, pending ON-DEVICE verification only (impl
 
 Residual otherwise = on-device MLS mobile native verification only.
 
-* \[~\] **Minesweeper ranked leaderboard (uncommitted):** on **social-service** (`/api/minesweeper`), seeded challenges + move-replay anti-cheat. Keep `apps/social-service/src/minesweeper/engine/game.ts` synced with `frontend/src/lib/minesweeper/game.ts`. Migration `apps/social-service/src/migrations/018_minesweeper_leaderboard.sql`. Score = server wall-clock only.
+* \[x\] **Minesweeper ranked leaderboard (shipped, d1061bee..85398570):** on **social-service** (`/api/minesweeper`), seeded challenges + move-replay anti-cheat, guess-free grid generation, auto-flagging disabled. Score = server wall-clock only. Access = hidden easter egg: `/settings`, tap the device-id footer 5x quickly (`onDeviceIdTap` -> `MinesweeperModal`). GOTCHA: keep `apps/social-service/src/minesweeper/engine/game.ts` synced with `frontend/src/lib/minesweeper/game.ts` (dual engine, must stay 1:1). Migration `018_minesweeper_leaderboard.sql`.
 
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
