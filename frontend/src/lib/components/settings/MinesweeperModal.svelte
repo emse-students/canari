@@ -77,6 +77,8 @@
   let elapsedMs = $state(0);
   let startTimeMs = 0;
   let timerHandle: ReturnType<typeof setInterval> | null = null;
+  /** Measured RTT of POST /challenges; sent on submit to size network credit. */
+  let challengeRoundTripMs = $state<number | undefined>(undefined);
   /** True while the first-dig challenge request is in flight, to guard against double-taps. */
   let firstClickBusy = $state(false);
 
@@ -181,6 +183,7 @@
     personalBestMs = null;
     challengeId = null;
     rankedMode = false;
+    challengeRoundTripMs = undefined;
     firstClickBusy = false;
     elapsedMs = 0;
     board = createBoard(DEFAULT_CONFIG, null);
@@ -212,18 +215,22 @@
     try {
       console.debug('[minesweeper] first dig, attempting ranked challenge start');
       try {
+        const t0 = performance.now();
         const challenge = await startMinesweeperChallenge();
+        challengeRoundTripMs = Math.round(performance.now() - t0);
         board = createBoard(DEFAULT_CONFIG, challenge.seed);
         challengeId = challenge.challengeId;
         rankedMode = true;
         console.debug('[minesweeper] ranked challenge started', {
           challengeId: challenge.challengeId,
+          challengeRoundTripMs,
         });
       } catch (err) {
         console.debug('[minesweeper] ranked start failed, falling back to casual', err);
         board = createBoard(DEFAULT_CONFIG, null);
         challengeId = null;
         rankedMode = false;
+        challengeRoundTripMs = undefined;
       }
       dig(x, y);
       startTimer();
@@ -242,7 +249,12 @@
       claimedDurationMs,
     });
     try {
-      const result = await submitMinesweeperChallenge(challengeId, moves, claimedDurationMs);
+      const result = await submitMinesweeperChallenge(
+        challengeId,
+        moves,
+        claimedDurationMs,
+        challengeRoundTripMs
+      );
       personalBestMs = result.personalBestMs;
       submitError = false;
       submitMessage = m.minesweeper_submit_ok({ time: formatDurationMs(result.durationMs) });

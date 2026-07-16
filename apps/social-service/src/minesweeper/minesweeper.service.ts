@@ -21,9 +21,44 @@ import {
 const MIN_DURATION_MS = 8_000;
 /** Open challenges expire after this window. */
 const CHALLENGE_TTL_MS = 2 * 60 * 60 * 1000;
-/** Client claim cannot exceed server elapsed by more than this skew. */
-const CLIENT_CLOCK_SKEW_MS = 2_000;
+/** Claimed time may exceed server elapsed by at most this (clock / ms jitter). */
+const CLIENT_CLOCK_SKEW_MS = 500;
+/**
+ * Max amount by which we may credit the client timer below server wall-clock
+ * (covers challenge RTT + mine generation + submit travel). Hard cap so a
+ * forged short claim cannot collapse a long server window.
+ */
+const MAX_NETWORK_CREDIT_MS = 4_000;
+/** Extra slack beyond measured challenge RTT for submit hop + generation. */
+const NETWORK_CREDIT_SLACK_MS = 1_000;
 const LEADERBOARD_LIMIT = 25;
+
+/**
+ * Picks the scored duration: prefer the client timer when it sits in
+ * `[server - credit, server + skew]`, otherwise fall back to server elapsed.
+ *
+ * The server cannot know true request emit time — only arrival — so limited
+ * trust in `claimedDurationMs` is the practical way to strip network lag.
+ */
+function resolveScoredDurationMs(
+  serverDurationMs: number,
+  claimedDurationMs: number,
+  challengeRoundTripMs: number | undefined
+): number {
+  const measuredCredit =
+    challengeRoundTripMs === undefined
+      ? MAX_NETWORK_CREDIT_MS
+      : challengeRoundTripMs + NETWORK_CREDIT_SLACK_MS;
+  const credit = Math.min(MAX_NETWORK_CREDIT_MS, Math.max(0, measuredCredit));
+  const floor = Math.max(MIN_DURATION_MS, serverDurationMs - credit);
+  const ceiling = serverDurationMs + CLIENT_CLOCK_SKEW_MS;
+
+  if (claimedDurationMs >= floor && claimedDurationMs <= ceiling) {
+    return Math.max(MIN_DURATION_MS, claimedDurationMs);
+  }
+  return serverDurationMs;
+}
+
 
 /** Ranked Minesweeper: issue seeds, verify solves by replay, store best times. */
 @Injectable()
@@ -107,7 +142,7 @@ export class MinesweeperService {
       throw new BadRequestException('Solve too fast to be plausible');
     }
 
-    // Client cannot have played longer than the server window (plus small skew).
+    // Reject claims that beat the server clock by more than tiny skew (impossible play).
     if (dto.claimedDurationMs > serverDurationMs + CLIENT_CLOCK_SKEW_MS) {
       challenge.status = 'rejected';
       await this.challenges.save(challenge);
@@ -135,28 +170,35 @@ export class MinesweeperService {
       throw new BadRequestException(`Solve verification failed: ${result.reason ?? 'invalid'}`);
     }
 
+    const durationMs = resolveScoredDurationMs(
+      serverDurationMs,
+      dto.claimedDurationMs,
+      dto.challengeRoundTripMs
+    );
+
     challenge.status = 'submitted';
     await this.challenges.save(challenge);
 
     const score = this.scores.create({
       challengeId: challenge.id,
       userId,
-      durationMs: serverDurationMs,
+      durationMs,
       moveCount: moves.length,
       verifiedAt: now,
     });
     await this.scores.save(score);
     this.logger.log(
-      `minesweeper score ok user=${userId} id=${challengeId} ms=${serverDurationMs} moves=${moves.length}`
+      `minesweeper score ok user=${userId} id=${challengeId} scored=${durationMs} server=${serverDurationMs} claimed=${dto.claimedDurationMs} rtt=${dto.challengeRoundTripMs ?? 'n/a'} moves=${moves.length}`
     );
 
     const personalBest = await this.getPersonalBest(userId);
     return {
       accepted: true,
-      durationMs: serverDurationMs,
+      durationMs,
+      serverDurationMs,
       moveCount: moves.length,
-      personalBestMs: personalBest?.durationMs ?? serverDurationMs,
-      isPersonalBest: !personalBest || serverDurationMs <= personalBest.durationMs,
+      personalBestMs: personalBest?.durationMs ?? durationMs,
+      isPersonalBest: !personalBest || durationMs <= personalBest.durationMs,
     };
   }
 

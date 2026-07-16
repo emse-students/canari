@@ -14,6 +14,8 @@ export interface MinesweeperChallengeResponse {
 export interface MinesweeperSubmitResponse {
   accepted: boolean;
   durationMs: number;
+  /** Raw server wall-clock (challenge create → submit arrival); for debugging. */
+  serverDurationMs?: number;
   moveCount: number;
   personalBestMs: number;
   isPersonalBest: boolean;
@@ -47,11 +49,16 @@ export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeR
 export async function submitMinesweeperChallenge(
   challengeId: string,
   moves: MinesweeperMove[],
-  claimedDurationMs: number
+  claimedDurationMs: number,
+  challengeRoundTripMs?: number
 ): Promise<MinesweeperSubmitResponse> {
   const res = await apiFetch(`${minesweeperBase()}/challenges/${challengeId}/submit`, {
     method: 'POST',
-    body: JSON.stringify({ moves, claimedDurationMs }),
+    body: JSON.stringify({
+      moves,
+      claimedDurationMs,
+      ...(challengeRoundTripMs !== undefined ? { challengeRoundTripMs } : {}),
+    }),
   });
   if (!res.ok) {
     const body = await res.text();

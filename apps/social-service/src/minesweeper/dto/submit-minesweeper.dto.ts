@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsOptional,
   Max,
   Min,
   ValidateNested,
@@ -27,8 +28,8 @@ export class MinesweeperMoveDto {
 }
 
 /**
- * Ranked submit body. `claimedDurationMs` is ignored for scoring (anti-cheat);
- * the server uses wall-clock elapsed since challenge start.
+ * Ranked submit body. The client timer is trusted only when it stays within a
+ * capped window below the server wall-clock (network / generation lag).
  */
 export class SubmitMinesweeperDto {
   @IsArray()
@@ -38,9 +39,20 @@ export class SubmitMinesweeperDto {
   @Type(() => MinesweeperMoveDto)
   moves!: MinesweeperMoveDto[];
 
-  /** Client timer — accepted only as a soft upper bound sanity check. */
+  /** Local play timer from first dig to win (preferred when plausible). */
   @IsInt()
   @Min(0)
   @Max(7_200_000)
   claimedDurationMs!: number;
+
+  /**
+   * Measured client RTT for `POST /challenges` (request start → response).
+   * Used to size the network credit; the server never trusts emit timestamps
+   * directly (it only sees arrival time).
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60_000)
+  challengeRoundTripMs?: number;
 }
