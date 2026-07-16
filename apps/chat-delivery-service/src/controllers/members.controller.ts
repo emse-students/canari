@@ -8,6 +8,7 @@ import {
   Inject,
   UseGuards,
   Headers,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -20,7 +21,11 @@ import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
+import {
+  sanitizeQueryValue,
+  sanitizeOptionalQueryValue,
+  assertCallerOwnsUserId,
+} from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 
 /** Group membership management: add/remove members, list members, list user groups. */
@@ -44,6 +49,49 @@ export class MembersController {
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+
+  /**
+   * Authorizes an add/remove membership mutation on `safeGroupId`. The caller (nginx-injected,
+   * HMAC-bound `x-user-id`) is allowed only when one of the following holds:
+   *  - it is a platform global admin (`x-global-admin: true`);
+   *  - it is already a member of the group - covers invites, welcome_request re-adds, and the
+   *    inviter/joiner backfill paths, which all run as an existing member (the inviter registers
+   *    an invitee BEFORE sending the Welcome, so the invitee is a member by the time it self-heals);
+   *  - (add only) the group has no members yet AND the caller is adding itself - the group-creation
+   *    bootstrap, where the creator registers its own userId first before anyone else exists.
+   *
+   * Blocks the self-join escalation (audit S1): a non-member cannot insert itself into a populated
+   * group's `dm_group_members` and then external-join via the served GroupInfo, nor remove others
+   * from a group it does not belong to (audit S5). When `x-user-id` is absent (deployments without
+   * INTERNAL_SHARED_SECRET), the check is a no-op to preserve legacy behavior, matching
+   * `assertCallerOwnsUserId`.
+   */
+  private async assertCallerMayMutateMembership(
+    safeGroupId: string,
+    targetUserId: string,
+    headerUserId: string | undefined,
+    headerGlobalAdmin: string | undefined,
+    allowCreationBootstrap: boolean
+  ): Promise<void> {
+    if (headerGlobalAdmin === 'true') return;
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (!caller) return;
+
+    const callerMemberships = await this.groupMemberRepo.count({
+      where: { groupId: safeGroupId, userId: caller },
+    });
+    if (callerMemberships > 0) return;
+
+    // Group-creation bootstrap: the creator adds its own userId while the group is still empty.
+    if (allowCreationBootstrap && caller === targetUserId) {
+      const memberCount = await this.groupMemberRepo.count({
+        where: { groupId: safeGroupId },
+      });
+      if (memberCount === 0) return;
+    }
+
+    throw new ForbiddenException('Caller is not authorized to modify this group membership');
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -169,10 +217,22 @@ export class MembersController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups/:groupId/members')
   /** Adds a member to a group and registers their device-group membership as pending. */
-  async addGroupMember(@Param('groupId') groupId: string, @Body() body: { userId: string }) {
+  async addGroupMember(
+    @Param('groupId') groupId: string,
+    @Body() body: { userId: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
     const traceId = this.makeTraceId('add-member');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    await this.assertCallerMayMutateMembership(
+      safeGroupId,
+      safeUserId,
+      headerUserId,
+      headerGlobalAdmin,
+      true // allow the group-creation bootstrap (creator registers itself into an empty group)
+    );
     this.logger.log(`[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`);
 
     // Atomic upsert: INSERT ... ON CONFLICT DO UPDATE avoids the findOne+save race.

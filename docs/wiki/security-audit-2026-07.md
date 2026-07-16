@@ -21,7 +21,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 
 | ID | Sev | Title | Status |
 |----|-----|-------|--------|
-| S1 | CRITICAL | Self-join any MLS group via unauth `addGroupMember` | TODO |
+| S1 | CRITICAL | Self-join any MLS group via unauth `addGroupMember` | FIXED (cf8..) |
 | S2 | CRITICAL | Identity spoof via unbound `register-device` | TODO |
 | S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | TODO |
 | S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | TODO |
@@ -43,6 +43,12 @@ ratchet tree); the attacker forges an external-join commit and reads plaintext a
 current epoch. No online peer required. Also lets an excluded member rejoin.
 Fix: require caller to be an existing authorized member/admin of the group; group-creation
 first-add must still work (creator adds self).
+FIXED: `assertCallerMayMutateMembership` in `members.controller.ts` gates `addGroupMember` on
+`x-user-id` (HMAC-bound by HeaderAuthGuard) being a global admin, an existing member, or the
+creator bootstrapping an empty group (caller==target, 0 members). The inviter registers an
+invitee BEFORE sending the Welcome, so a freshly-Welcomed joiner is already a member when its
+redundant self-registration runs; only the rare inviter-registration-lost edge loses that
+safety net (reliability, not security). Legacy no-op when `x-user-id` absent.
 
 ### S2 - CRITICAL - Identity spoof via unbound register-device
 `POST /api/mls/register-device` - `apps/chat-delivery-service/src/controllers/devices.controller.ts:108`.
