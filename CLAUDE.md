@@ -81,6 +81,8 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 
 Residual otherwise = on-device MLS mobile native verification only.
 
+* \[~\] **Minesweeper ranked leaderboard (uncommitted):** on **social-service** (`/api/minesweeper`), seeded challenges + move-replay anti-cheat. Keep `apps/social-service/src/minesweeper/engine/game.ts` synced with `frontend/src/lib/minesweeper/game.ts`. Migration `apps/social-service/src/migrations/018_minesweeper_leaderboard.sql`. Score = server wall-clock only.
+
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
 ---

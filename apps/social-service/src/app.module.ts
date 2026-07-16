@@ -13,6 +13,7 @@ import { ModerationModule } from './moderation/moderation.module';
 import { InternalModule } from './internal/internal.module';
 import { PublicModule } from './public/public.module';
 import { RedisModule } from './common/redis';
+import { MinesweeperModule } from './minesweeper/minesweeper.module';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
 @Module({
@@ -47,6 +48,7 @@ import { RedisModule } from './common/redis';
     ModerationModule,
     InternalModule,
     PublicModule,
+    MinesweeperModule,
   ],
   controllers: [],
 })

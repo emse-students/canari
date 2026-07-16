@@ -402,6 +402,25 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     \n\
+    # Minesweeper ranked leaderboard (core-service)
+    location /api/minesweeper {\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    set $upstream_minesweeper social-service:3014;\n\
+    proxy_pass http://$upstream_minesweeper;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
     # User Service\n\
     location /api/users {\n\
     auth_request /internal/auth/verify;\n\

@@ -1,3 +1,4 @@
+/** KEEP IN SYNC with frontend/src/lib/minesweeper/game.ts (ranked anti-cheat replay). */
 /**
  * No-guess Minesweeper: mine layouts are accepted only when a logical solver
  * (basic chords + frontier CSP / "tank" enumeration) can clear the board from
@@ -827,7 +828,7 @@ function tathamPerturb(
       });
       type = touches ? 1 : 2;
     }
-    candidates.push({ index: i, type, rand: rngOf(board)() });
+  candidates.push({ index: i, type, rand: rngOf(board)() });
   }
 
   candidates.sort((a, b) => a.type - b.type || a.rand - b.rand);
@@ -963,7 +964,8 @@ function placeMines(board: MinesweeperBoard, safeIndex: number): void {
 
       let didPerturb = false;
       if (progress.stuckSets.length > 0) {
-        const set = progress.stuckSets[Math.floor(rngOf(board)() * progress.stuckSets.length)];
+        const set =
+          progress.stuckSets[Math.floor(rngOf(board)() * progress.stuckSets.length)];
         didPerturb = tathamPerturb(board, safeIndex, progress.knownEmpty, progress.knownMines, set);
       }
 

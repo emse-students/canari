@@ -6,6 +6,7 @@ import {
   chordCell,
   runAutoAssists,
   isSolvableWithoutGuessing,
+  verifySolve,
   DEFAULT_CONFIG,
   CHALLENGE,
   type MinesweeperBoard,
@@ -64,7 +65,7 @@ describe('minesweeper', () => {
     expect(board.status).not.toBe('lost');
   });
 
-  it('toggles flags and does not auto-chord after flagging', () => {
+  it('toggles flags and does not auto-open after flagging', () => {
     const board = makeBoard(3, 3, [[0, 0]]);
     for (const c of board.cells) c.state = 'hidden';
     cellAt(board, 1, 1).state = 'revealed';
@@ -85,6 +86,87 @@ describe('minesweeper', () => {
     toggleFlag(board, 0, 0);
     expect(cellAt(board, 0, 0).state).toBe('flagged');
     expect(board.status).toBe('playing');
+  });
+
+  it('auto-flags when a number equals its remaining hidden neighbors', () => {
+    // Mine only at (0,0). Reveal everything else via revealCell so auto-flag runs.
+    const board = makeBoard(3, 3, [[0, 0]]);
+    for (const [x, y] of [
+      [0, 1],
+      [0, 2],
+      [1, 0],
+      [1, 1],
+      [1, 2],
+      [2, 0],
+      [2, 1],
+      [2, 2],
+    ] as const) {
+      revealCell(board, x, y);
+    }
+    expect(cellAt(board, 0, 0).state).toBe('flagged');
+    expect(board.flagCount).toBeGreaterThanOrEqual(1);
+    expect(board.status).toBe('won');
+  });
+
+  it('auto-flags a forced mine without opening neighbors', () => {
+    // Mines at top corners. Manually reveal the ring so (1,0) has adj=2 and
+    // exactly two hidden neighbors — auto-flag must not open the remaining safe cell.
+    const board = makeBoard(3, 3, [
+      [0, 0],
+      [2, 0],
+    ]);
+    for (const c of board.cells) c.state = 'hidden';
+    for (const [x, y] of [
+      [0, 1],
+      [1, 1],
+      [2, 1],
+      [0, 2],
+      [2, 2],
+    ] as const) {
+      cellAt(board, x, y).state = 'revealed';
+      board.revealedCount++;
+    }
+    revealCell(board, 1, 0);
+    expect(cellAt(board, 0, 0).state).toBe('flagged');
+    expect(cellAt(board, 2, 0).state).toBe('flagged');
+    expect(cellAt(board, 1, 2).state).toBe('hidden');
+    expect(board.status).toBe('playing');
+  });
+
+  it('clicking a number flags when hidden count matches, else opens when flags match', () => {
+    const board = makeBoard(3, 3, [
+      [0, 0],
+      [2, 0],
+    ]);
+    for (const c of board.cells) c.state = 'hidden';
+    for (const [x, y] of [
+      [0, 1],
+      [1, 0],
+      [1, 1],
+      [2, 1],
+      [0, 2],
+      [1, 2],
+      [2, 2],
+    ] as const) {
+      cellAt(board, x, y).state = 'revealed';
+      board.revealedCount++;
+    }
+    // (1,0) shows 2 with exactly two hidden neighbors → click places flags only.
+    revealCell(board, 1, 0);
+    expect(cellAt(board, 0, 0).state).toBe('flagged');
+    expect(cellAt(board, 2, 0).state).toBe('flagged');
+    expect(board.status).toBe('playing');
+
+    // Fresh board: flags already match → click opens the rest.
+    const board2 = makeBoard(3, 3, [[0, 0]]);
+    for (const c of board2.cells) c.state = 'hidden';
+    cellAt(board2, 1, 1).state = 'revealed';
+    board2.revealedCount = 1;
+    cellAt(board2, 0, 0).state = 'flagged';
+    board2.flagCount = 1;
+    revealCell(board2, 1, 1);
+    expect(cellAt(board2, 2, 2).state).toBe('revealed');
+    expect(board2.status).toBe('won');
   });
 
   it('manual chord opens neighbors when flags match the number', () => {
@@ -157,5 +239,21 @@ describe('minesweeper', () => {
   it('detects a layout that still requires a guess after the opening', () => {
     const board = makeBoard(2, 2, [[0, 0]]);
     expect(isSolvableWithoutGuessing(board, 3)).toBe(false);
+  });
+
+  it('seeded generation is deterministic for the same first click', () => {
+    const seed = 'ranked-fixture-seed-001';
+    const a = createBoard({ width: 9, height: 9, mineCount: 10 }, seed);
+    const b = createBoard({ width: 9, height: 9, mineCount: 10 }, seed);
+    revealCell(a, 4, 4);
+    revealCell(b, 4, 4);
+    expect(a.cells.map((c) => (c.mine ? 1 : 0)).join('')).toBe(
+      b.cells.map((c) => (c.mine ? 1 : 0)).join('')
+    );
+  });
+
+  it('verifySolve rejects empty or incomplete move lists', () => {
+    expect(verifySolve('seed', []).ok).toBe(false);
+    expect(verifySolve('seed', [{ type: 'flag', x: 0, y: 0 }]).ok).toBe(false);
   });
 });
