@@ -22,7 +22,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | ID | Sev | Title | Status |
 |----|-----|-------|--------|
 | S1 | CRITICAL | Self-join any MLS group via unauth `addGroupMember` | FIXED (cf8..) |
-| S2 | CRITICAL | Identity spoof via unbound `register-device` | TODO |
+| S2 | CRITICAL | Identity spoof via unbound `register-device` | FIXED |
 | S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | TODO |
 | S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | TODO |
 | S5 | HIGH | Arbitrary group member removal + roster enumeration | TODO |
@@ -58,6 +58,11 @@ victim's `userId`; the handler auto-creates pending `DeviceGroupMembership` for 
 the victim is in (`devices.controller.ts:176-201`), so other members' clients send a Welcome
 to the fake "victim device" -> attacker joins all the victim's groups in cleartext.
 Fix: reject `body.userId !== caller` (or drop body.userId, use header); validate credential.
+FIXED: `registerDevice` and `registerDevicePrekeys` now call
+`assertCallerOwnsUserId(x-user-id, x-global-admin, body.userId)` - a device can only register
+under its own account (admins exempt; legacy no-op when `x-user-id` absent). KeyPackage
+credential cryptographic validation is NOT added here (would need WASM-side parsing); the
+identity binding closes the practical escalation.
 
 ### S3 - CRITICAL - Payment bypass via unguarded internal association routes
 `apps/social-service/src/associations/associations.controller.ts:1152-1178`:

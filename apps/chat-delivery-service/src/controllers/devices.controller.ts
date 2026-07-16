@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Inject,
+  Headers,
   BadRequestException,
   UseGuards,
   Logger,
@@ -29,6 +30,7 @@ import {
   sanitizeOptionalDeviceName,
   sanitizeOptionalDeviceOs,
   sanitizeOptionalDeviceAppVersion,
+  assertCallerOwnsUserId,
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 
@@ -116,10 +118,21 @@ export class DevicesController {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
-    }
+    },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // A device may only register under its own account (audit S2): binding to the HMAC-bound
+    // x-user-id prevents an attacker from registering a device under a victim's userId, which
+    // would auto-provision pending memberships for the victim's groups and phish Welcomes.
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      userId,
+      'Cannot register a device for another user'
+    );
     if (
       typeof body.keyPackage !== 'string' ||
       body.keyPackage.trim().length === 0 ||
@@ -210,10 +223,19 @@ export class DevicesController {
   @Post('mls/register-device/prekeys')
   /** Bulk-uploads one-time prekeys for the current device. */
   async registerDevicePrekeys(
-    @Body() body: { userId: string; deviceId: string; keyPackages: unknown }
+    @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // Prekeys may only be uploaded for the caller's own account (audit S2).
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      userId,
+      'Cannot upload prekeys for another user'
+    );
 
     if (!Array.isArray(body.keyPackages) || body.keyPackages.length === 0) {
       throw new BadRequestException('keyPackages must be a non-empty array');
