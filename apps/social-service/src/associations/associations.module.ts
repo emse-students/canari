@@ -8,6 +8,8 @@ import { AssociationCalendarEvent } from './entities/association-calendar-event.
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
+import { AssociationCategory } from './entities/association-category.entity';
+import { PosterProject } from './entities/poster-project.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
@@ -17,7 +19,11 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
+import { AssociationCategoriesService } from './association-categories.service';
+import { PosterService } from './poster.service';
 import { AssociationsController } from './associations.controller';
+import { AssociationCategoriesController } from './association-categories.controller';
+import { PosterController } from './poster.controller';
 import { AssociationRoleGuard } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
@@ -38,6 +44,8 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
       AssociationCalendarEventCoOwner,
       AssociationDocument,
       DocumentReviewerGrant,
+      AssociationCategory,
+      PosterProject,
       AssociationProduct,
       WebhookDelivery,
       AssociationRoleHistory,
@@ -53,13 +61,17 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     AssociationsService,
     UserProfileService,
     ProductsService,
+    AssociationCategoriesService,
+    PosterService,
     AssociationRoleGuard,
     GlobalAdminOrAssociationRoleGuard,
     GlobalAdminOrBdeSuperAdminGuard,
     ReviewerAccessGuard,
     PushService,
   ],
-  controllers: [AssociationsController],
+  // Category/poster controllers are listed FIRST so their literal `associations/categories`
+  // and `associations/poster` routes register before the `associations/:id` matcher.
+  controllers: [AssociationCategoriesController, PosterController, AssociationsController],
   exports: [AssociationsService, ProductsService, UserProfileService],
 })
 export class AssociationsModule {}

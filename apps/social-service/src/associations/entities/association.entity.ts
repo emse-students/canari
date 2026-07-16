@@ -93,6 +93,16 @@ export class Association {
   color: string | null;
 
   /**
+   * Primary thematic category (managed table {@link AssociationCategory}), used to group the
+   * association on the "Carte de la Vie Asso" poster and directory. Loose uuid (no FK
+   * constraint, matching the other reference columns here); nulled server-side when the
+   * referenced category is deleted. Null = uncategorised.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  @Index()
+  categoryId: string | null;
+
+  /**
    * Discriminates a regular association from a promo "list". Lists behave like
    * associations (members, events) minus the banking/shop/vault features.
    */

@@ -231,6 +231,10 @@ export class AssociationsService {
     if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
       patch.color = null;
     }
+    // Blank category id clears the association's thematic category back to null.
+    if (dto.categoryId !== undefined && (dto.categoryId === null || dto.categoryId === '')) {
+      patch.categoryId = null;
+    }
     if (
       dto.contactEmail !== undefined &&
       (dto.contactEmail === null || dto.contactEmail.trim() === '')
@@ -1684,11 +1688,7 @@ export class AssociationsService {
    * the server lacks the password, so a reviewer could not derive its CEK. Requires
    * MANAGE_DOCUMENTS (enforced by the controller guard).
    */
-  async updateDocument(
-    associationId: string,
-    docId: string,
-    dto: UpdateAssociationDocumentDto
-  ) {
+  async updateDocument(associationId: string, docId: string, dto: UpdateAssociationDocumentDto) {
     await this.findById(associationId);
     const doc = await this.docRepo.findOne({ where: { id: docId, associationId } });
     if (!doc) throw new NotFoundException('Document not found');
@@ -1777,7 +1777,11 @@ export class AssociationsService {
     if (!target) throw new BadRequestException('userId is required');
     const existing = await this.reviewerGrantRepo.findOne({ where: { userId: target } });
     if (existing) {
-      return { userId: existing.userId, grantedBy: existing.grantedBy, createdAt: existing.createdAt };
+      return {
+        userId: existing.userId,
+        grantedBy: existing.grantedBy,
+        createdAt: existing.createdAt,
+      };
     }
     const grant = await this.reviewerGrantRepo.save(
       this.reviewerGrantRepo.create({ userId: target, grantedBy })

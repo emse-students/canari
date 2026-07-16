@@ -128,6 +128,12 @@ export class UpdateAssociationDto {
   @Matches(/^(#[0-9A-Fa-f]{6})?$/)
   color?: string | null;
 
+  /** Primary thematic category id (managed table). Pass `""`/`null` to clear (uncategorised). */
+  @IsOptional()
+  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @IsUUID()
+  categoryId?: string | null;
+
   /** When true, archives the association (moves it to "Anciennes", hides from "Mes associations"). */
   @IsBoolean()
   @IsOptional()
