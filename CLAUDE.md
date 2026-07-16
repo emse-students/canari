@@ -70,6 +70,8 @@ Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): 
 
 ### CANARI
 
+* \[~\] **SECURITY AUDIT REMEDIATION (ACTIVE, tracker `docs/wiki/security-audit-2026-07.md`).** Read-only audit found a cluster that breaks E2EE + payments. Fix order: S1 -> S2 -> S3 -> S4 -> S5 -> S6, then S7/S8/B1. Each fix = its own commit; update the tracker status column as they land. Core invariant: nginx `auth_request` never blocks, so any client-exposed route with no guard/ownership check is abusable; `dm_group_members` is trusted by every MLS gate, so it must not be client-writable. VALIDATE each authz addition against the real call sites (group creation, invite, device register, recovery re-add) before tightening - see the tracker's "fix campaign" notes.
+
 No open code work. Shipped this cycle, pending ON-DEVICE verification only (implementation recoverable from git):
 * Pre-join history bundle durable cross-session retry (24b6480c) - verify: real 2nd device, peer offline at join, reconnect -> bundle arrives.
 * History refetch-storm bounded retry (finding C, 0de94457) + discovery-gap check (finding D, a365d96e, closed - not a gap) - verify: external joiner, storm stops, no message loss.
