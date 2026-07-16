@@ -1,5 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { fade, scale as scaleTransition } from 'svelte/transition';
+  import { backOut } from 'svelte/easing';
   import Modal from '$lib/components/shared/Modal.svelte';
   import {
     createBoard,
@@ -692,6 +694,50 @@
         <Maximize2 size={15} />
       </button>
     </div>
+
+    {#if board.status !== 'playing'}
+      {@const isWin = board.status === 'won'}
+      <!-- Game-over overlay: sits above the zoom controls, scoped to the viewport only so
+           the Modal header/close button above it stays reachable at all times. -->
+      <div
+        class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        transition:fade={{ duration: 200 }}
+      >
+        <div
+          class="pointer-events-auto flex flex-col items-center gap-2 rounded-2xl border px-6 py-6 text-center shadow-2xl bg-cn-surface/95 {isWin
+            ? 'border-cn-yellow/50 shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
+            : 'border-red-500/40 shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
+          transition:scaleTransition={{ duration: 280, start: 0.9, easing: backOut }}
+        >
+          {#if isWin}
+            <Trophy size={28} class="text-cn-yellow" />
+          {:else}
+            <Bomb size={28} class="text-red-500" />
+          {/if}
+          <p
+            class="text-2xl font-extrabold sm:text-3xl {isWin
+              ? 'ms-win-pulse text-cn-yellow'
+              : 'text-red-500'}"
+          >
+            {isWin ? m.minesweeper_status_won() : m.minesweeper_status_lost()}
+          </p>
+          {#if isWin}
+            <p class="flex items-center gap-1.5 font-mono text-sm font-semibold text-text-muted">
+              <Timer size={14} />
+              {m.minesweeper_time({ time: formatDurationMs(elapsedMs) })}
+            </p>
+          {/if}
+          <button
+            type="button"
+            onclick={newGame}
+            class="mt-1 flex items-center gap-1.5 rounded-lg bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark transition-colors hover:bg-cn-yellow-hover"
+          >
+            <RotateCcw size={15} strokeWidth={2.5} />
+            {m.minesweeper_new_game()}
+          </button>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <!--
@@ -748,3 +794,20 @@
     </div>
   </div>
 </Modal>
+
+<style>
+  /* One-shot glow pulse on the win title; kept CSS-only since it's cheaper than a JS-driven effect. */
+  @keyframes ms-win-pulse {
+    0%,
+    100% {
+      text-shadow: 0 0 0 rgba(246, 194, 50, 0);
+    }
+    50% {
+      text-shadow: 0 0 18px rgba(246, 194, 50, 0.85);
+    }
+  }
+
+  .ms-win-pulse {
+    animation: ms-win-pulse 900ms ease-out 150ms 1;
+  }
+</style>
