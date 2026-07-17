@@ -15,14 +15,10 @@ CREATE TABLE IF NOT EXISTS association_categories (
 
 CREATE INDEX IF NOT EXISTS idx_association_categories_slug ON association_categories (slug);
 
--- Seed the printed poster's sections (no-op when the slug already exists).
-INSERT INTO association_categories (label, slug, "sortOrder") VALUES
-  ('Ecole, Vie a la Me', 'ecole-vie-me', 0),
-  ('Cuisine, Decouverte culinaire', 'cuisine', 1),
-  ('Technologies, Entreprenariat', 'techno-entrepreneuriat', 2),
-  ('Culture, Arts', 'culture-arts', 3),
-  ('Sport, Humain, Societe', 'sport-humain-societe', 4)
-ON CONFLICT (slug) DO NOTHING;
+-- No categories are seeded: the printed poster's sections are created + managed exclusively from
+-- the admin UI. Seeding them here re-inserted rows an admin had deleted every time the migration
+-- was re-applied (a deleted slug no longer conflicts, so ON CONFLICT DO NOTHING did not protect
+-- it). The table therefore starts empty and stays entirely admin-driven.
 
 -- Each association may belong to one category (nullable = uncategorised).
 ALTER TABLE associations ADD COLUMN IF NOT EXISTS "categoryId" uuid;

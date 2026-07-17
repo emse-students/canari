@@ -7,6 +7,7 @@
     STAGE_HEIGHT,
     DIRECTORY_WIDTH,
     CARD_WIDTH,
+    CARD_HEIGHT,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
     type PositionedBubble,
@@ -79,17 +80,43 @@
   const CONTENT_MARGIN = 48;
 
   // ── Blob-unit geometry (poster px, at scale 1) ──────────────────────────────────────────
-  /** Center of the square unit box; the blob + radial ring are laid out around it. */
-  const UNIT_CENTER = CARD_WIDTH / 2;
-  /** Diameter of the colored association blob (holds the logo, name + president inside). */
+  // The unit is: a colored blob (hero logo + president inside) with the bureau polaroids fanned
+  // over its TOP arc IN FRONT of it (the blob deliberately sits behind them), and the association
+  // name in a band BELOW the blob (so a long name wraps + shrinks instead of being clipped).
+  /** Horizontal center of the unit box; the blob + bureau arc are centered on it. */
+  const UNIT_CX = CARD_WIDTH / 2;
+  /** Vertical center of the blob within the unit (leaves room for the name band below). */
+  const BLOB_CY = 172;
+  /** Diameter of the colored association blob (holds the hero logo + president inside). */
   const BLOB_SIZE = 210;
-  /** Center-to-polaroid-center radius of the bureau ring around the blob. */
-  const RING_RADIUS = 140;
+  /** Center-to-polaroid-center radius of the bureau arc; polaroids overlap the blob, in front. */
+  const RING_RADIUS = 125;
   /** Bureau polaroid footprint. */
-  const POLAROID_W = 76;
-  const POLAROID_H = 92;
-  /** Max bureau polaroids placed around a blob before the ring gets too crowded. */
-  const MAX_BUREAU = 12;
+  const POLAROID_W = 72;
+  const POLAROID_H = 88;
+  /** Max bureau polaroids fanned over the blob's top arc before it gets too crowded. */
+  const MAX_BUREAU = 10;
+  /** Hero logo diameter inside the blob. */
+  const LOGO_SIZE = 104;
+  /** President avatar diameter inside the blob. */
+  const PRES_SIZE = 46;
+
+  /** Length-based font size (px) for the association name below the blob, so long names shrink. */
+  function nameFontSize(name: string): number {
+    const n = name.length;
+    if (n <= 12) return 24;
+    if (n <= 18) return 21;
+    if (n <= 26) return 18;
+    if (n <= 36) return 15;
+    return 13;
+  }
+  /** Length-based font size (px) for a bureau polaroid caption (which wraps to two lines). */
+  function polaroidFontSize(name: string): number {
+    const n = name.length;
+    if (n <= 12) return 11;
+    if (n <= 20) return 10;
+    return 9;
+  }
 
   /** The stage element, used to convert client pointer coords into poster coords. */
   let stageEl = $state<HTMLElement>();
@@ -361,6 +388,39 @@
     { key: 'sw', pos: 'bottom:-7px;left:-7px;', cursor: 'nesw-resize' },
     { key: 'se', pos: 'bottom:-7px;right:-7px;', cursor: 'nwse-resize' },
   ];
+
+  // ── Adaptive directory font ─────────────────────────────────────────────────────────────
+  /** Base directory font size (px); item text uses em so it scales with this. */
+  const DIR_BASE_FONT = 13;
+  /** The directory body (fixed-height, clipped) and its multi-column content, for auto-fitting. */
+  let dirBodyEl = $state<HTMLElement>();
+  let dirContentEl = $state<HTMLElement>();
+
+  /**
+   * Shrinks the directory font until every member fits the fixed column (which would otherwise be
+   * clipped for a large roster). Sizes are applied imperatively (not via reactive state) so the
+   * measurement loop never re-triggers itself; item text is in em, so scaling the wrapper font-size
+   * scales the whole list. Re-runs when the roster or the directory visibility changes.
+   */
+  $effect(() => {
+    // Establish reactive deps.
+    const zones = model.zones;
+    const visible = directoryVisible;
+    const body = dirBodyEl;
+    const contentNode = dirContentEl;
+    if (!visible || !body || !contentNode || zones.length === 0) return;
+    const raf = requestAnimationFrame(() => {
+      const avail = body.clientHeight;
+      let font = DIR_BASE_FONT;
+      contentNode.style.fontSize = `${font}px`;
+      // Step down until it fits or we hit a readable floor.
+      while (contentNode.scrollHeight > avail && font > DIR_BASE_FONT * 0.5) {
+        font -= 0.5;
+        contentNode.style.fontSize = `${font}px`;
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  });
 </script>
 
 <!-- The poster IS the export target: a fixed A2-landscape frame, absolute layers, self-contained. -->
@@ -395,6 +455,7 @@
     bind:this={stageEl}
     style:position="absolute"
     style:inset="0"
+    style:isolation="isolate"
     onpointerdown={stagePointerDown}
   >
     <div
@@ -437,22 +498,110 @@
           style:top="{bubble.y}px"
           style:z-index={bubble.z}
           style:width="{CARD_WIDTH}px"
-          style:height="{CARD_WIDTH}px"
+          style:height="{CARD_HEIGHT}px"
           style:transform="scale({bubble.scale})"
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
           style:outline={selected ? '3px solid #f5c518' : 'none'}
           style:outline-offset="4px"
-          style:border-radius="12px"
+          style:border-radius="16px"
           onpointerdown={(e) =>
             beginMove(e, 'bubble', bubble.assoId, bubble.x, bubble.y, bubble.scale, CARD_WIDTH)}
         >
-          <!-- Bureau polaroids fanned radially around the blob. -->
+          <!-- The association blob, drawn FIRST so it sits BEHIND the bureau polaroids: brand-color
+               silhouette holding the hero logo + president. -->
+          <div
+            style:position="absolute"
+            style:left="{UNIT_CX - BLOB_SIZE / 2}px"
+            style:top="{BLOB_CY - BLOB_SIZE / 2}px"
+            style:width="{BLOB_SIZE}px"
+            style:height="{BLOB_SIZE}px"
+            style:border-radius={shapeRadius(bubble.shape)}
+            style:overflow="hidden"
+            style:background={color}
+            style:display="flex"
+            style:flex-direction="column"
+            style:align-items="center"
+            style:justify-content="center"
+            style:gap="8px"
+            style:padding="18px"
+            style:box-shadow="0 8px 22px rgba(0,0,0,0.22)"
+          >
+            <!-- Hero logo (initials behind as fallback). -->
+            <div
+              style:position="relative"
+              style:width="{LOGO_SIZE}px"
+              style:height="{LOGO_SIZE}px"
+              style:border-radius="50%"
+              style:overflow="hidden"
+              style:background="rgba(255,255,255,0.9)"
+              style:display="flex"
+              style:align-items="center"
+              style:justify-content="center"
+              style:color
+              style:font-weight="800"
+              style:font-size="34px"
+              style:flex="0 0 auto"
+            >
+              <span>{getInitials(data.name)}</span>
+              {#if data.logoUrl}
+                <img
+                  src={data.logoUrl}
+                  alt=""
+                  draggable="false"
+                  onerror={hideOnError}
+                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
+                />
+              {/if}
+            </div>
+
+            {#if bubble.showPresident && data.president}
+              <div
+                style:position="relative"
+                style:width="{PRES_SIZE}px"
+                style:height="{PRES_SIZE}px"
+                style:border-radius="50%"
+                style:overflow="hidden"
+                style:background="rgba(255,255,255,0.25)"
+                style:border="2px solid rgba(255,255,255,0.85)"
+                style:display="flex"
+                style:align-items="center"
+                style:justify-content="center"
+                style:color="#ffffff"
+                style:font-weight="800"
+                style:font-size="16px"
+                style:flex="0 0 auto"
+              >
+                <span>{getInitials(data.president.name)}</span>
+                <img
+                  src={`/api/users/${encodeURIComponent(data.president.userId)}/avatar`}
+                  alt=""
+                  draggable="false"
+                  onerror={hideOnError}
+                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
+                />
+              </div>
+              <p
+                style:margin="0"
+                style:max-width="{BLOB_SIZE - 40}px"
+                style:font-size="11px"
+                style:font-weight="700"
+                style:text-align="center"
+                style:line-height="1.1"
+                style:color="#ffffff"
+                style="overflow-wrap:break-word;"
+              >
+                {data.president.name}
+              </p>
+            {/if}
+          </div>
+
+          <!-- Bureau polaroids fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
-            {@const angle = -Math.PI / 2 + (i / bureau.length) * 2 * Math.PI}
-            {@const px = UNIT_CENTER + RING_RADIUS * Math.cos(angle) - POLAROID_W / 2}
-            {@const py = UNIT_CENTER + RING_RADIUS * Math.sin(angle) - POLAROID_H / 2}
+            {@const angle = -Math.PI + ((i + 0.5) / bureau.length) * Math.PI}
+            {@const px = UNIT_CX + RING_RADIUS * Math.cos(angle) - POLAROID_W / 2}
+            {@const py = BLOB_CY + RING_RADIUS * Math.sin(angle) - POLAROID_H / 2}
             <div
               style:position="absolute"
               style:left="{px}px"
@@ -488,114 +637,36 @@
               </div>
               <p
                 style:margin="4px 0 0"
-                style:font-size="9.5px"
+                style:font-size="{polaroidFontSize(member.name)}px"
                 style:font-weight="700"
                 style:text-align="center"
                 style:line-height="1.1"
                 style:color={theme.polaroidTextColor}
-                style:white-space="nowrap"
-                style:overflow="hidden"
-                style:text-overflow="ellipsis"
+                style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;"
               >
                 {member.name}
               </p>
             </div>
           {/each}
 
-          <!-- The association blob: brand-color silhouette holding the logo, name + president. -->
+          <!-- Association name in a band BELOW the blob: wraps + shrinks to fit, never clipped. -->
           <div
             style:position="absolute"
-            style:left="{UNIT_CENTER - BLOB_SIZE / 2}px"
-            style:top="{UNIT_CENTER - BLOB_SIZE / 2}px"
-            style:width="{BLOB_SIZE}px"
-            style:height="{BLOB_SIZE}px"
-            style:border-radius={shapeRadius(bubble.shape)}
-            style:overflow="hidden"
-            style:background={color}
-            style:display="flex"
-            style:flex-direction="column"
-            style:align-items="center"
-            style:justify-content="center"
-            style:gap="5px"
-            style:padding="16px"
-            style:box-shadow="0 8px 22px rgba(0,0,0,0.22)"
+            style:left="8px"
+            style:right="8px"
+            style:top="{BLOB_CY + BLOB_SIZE / 2 + 8}px"
+            style:text-align="center"
           >
-            <!-- Logo badge (initials behind as fallback). -->
-            <div
-              style:position="relative"
-              style:width="40px"
-              style:height="40px"
-              style:border-radius="50%"
-              style:overflow="hidden"
-              style:background="rgba(255,255,255,0.22)"
-              style:display="flex"
-              style:align-items="center"
-              style:justify-content="center"
-              style:color="#ffffff"
-              style:font-weight="800"
-              style:font-size="15px"
-              style:flex="0 0 auto"
-            >
-              <span>{getInitials(data.name)}</span>
-              {#if data.logoUrl}
-                <img
-                  src={data.logoUrl}
-                  alt=""
-                  draggable="false"
-                  onerror={hideOnError}
-                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
-                />
-              {/if}
-            </div>
-
             <p
               style:margin="0"
-              style:font-size="16px"
+              style:font-size="{nameFontSize(data.name)}px"
               style:font-weight="800"
-              style:text-align="center"
               style:line-height="1.15"
-              style:color="#ffffff"
+              style:color={theme.bubbleNameColor}
+              style="overflow-wrap:break-word;text-shadow:0 1px 2px rgba(255,255,255,0.55);"
             >
               {data.name}
             </p>
-
-            {#if bubble.showPresident && data.president}
-              <div
-                style:position="relative"
-                style:width="72px"
-                style:height="72px"
-                style:border-radius="50%"
-                style:overflow="hidden"
-                style:background="rgba(255,255,255,0.25)"
-                style:border="3px solid rgba(255,255,255,0.85)"
-                style:display="flex"
-                style:align-items="center"
-                style:justify-content="center"
-                style:color="#ffffff"
-                style:font-weight="800"
-                style:font-size="24px"
-                style:flex="0 0 auto"
-              >
-                <span>{getInitials(data.president.name)}</span>
-                <img
-                  src={`/api/users/${encodeURIComponent(data.president.userId)}/avatar`}
-                  alt=""
-                  draggable="false"
-                  onerror={hideOnError}
-                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
-                />
-              </div>
-              <p
-                style:margin="0"
-                style:font-size="12px"
-                style:font-weight="700"
-                style:text-align="center"
-                style:line-height="1.1"
-                style:color="#ffffff"
-              >
-                {data.president.name}
-              </p>
-            {/if}
           </div>
 
           {#if selected}
@@ -703,6 +774,8 @@
       style:right="48px"
       style:bottom="48px"
       style:width="{DIRECTORY_WIDTH - 96}px"
+      style:display="flex"
+      style:flex-direction="column"
       style:overflow="hidden"
       style:background={theme.directoryBg}
       style:border-radius="20px"
@@ -714,42 +787,49 @@
         style:font-size="24px"
         style:font-weight="800"
         style:margin="0 0 14px"
+        style:flex="0 0 auto"
         style:color={theme.directoryTextColor}
       >
         {m.carte_directory_heading()}
       </h2>
-      <div style="columns:2;column-gap:24px;">
-        {#each model.zones as zone (zone.categoryId ?? 'none')}
-          {#each zone.bubbles as asso (asso.assoId)}
-            <div style="break-inside:avoid;margin-bottom:12px;">
-              <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:3px;">
-                <span
-                  style:flex="0 0 auto"
-                  style:width="9px"
-                  style:height="9px"
-                  style:border-radius="50%"
-                  style:background={asso.color}
-                  style:transform="translateY(1px)"
-                ></span>
-                <span
-                  style="font-size:13px;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
-                >
-                  {asso.name}
-                </span>
+      <!-- Fixed-height, clipped body: the effect above shrinks the font here until every name fits. -->
+      <div bind:this={dirBodyEl} style="flex:1 1 auto;min-height:0;overflow:hidden;">
+        <div
+          bind:this={dirContentEl}
+          style="columns:2;column-gap:24px;font-size:{DIR_BASE_FONT}px;"
+        >
+          {#each model.zones as zone (zone.categoryId ?? 'none')}
+            {#each zone.bubbles as asso (asso.assoId)}
+              <div style="break-inside:avoid;margin-bottom:0.9em;">
+                <div style="display:flex;align-items:baseline;gap:0.5em;margin-bottom:0.2em;">
+                  <span
+                    style:flex="0 0 auto"
+                    style:width="0.7em"
+                    style:height="0.7em"
+                    style:border-radius="50%"
+                    style:background={asso.color}
+                    style:transform="translateY(0.08em)"
+                  ></span>
+                  <span
+                    style="font-size:1em;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
+                  >
+                    {asso.name}
+                  </span>
+                </div>
+                {#if asso.members.length > 0}
+                  <p
+                    style:margin="0 0 0 1.2em"
+                    style:font-size="0.82em"
+                    style:line-height="1.35"
+                    style:color={theme.directoryMutedColor}
+                  >
+                    {asso.members.map((mem) => mem.name).join(' - ')}
+                  </p>
+                {/if}
               </div>
-              {#if asso.members.length > 0}
-                <p
-                  style:margin="0 0 0 16px"
-                  style:font-size="10.5px"
-                  style:line-height="1.35"
-                  style:color={theme.directoryMutedColor}
-                >
-                  {asso.members.map((mem) => mem.name).join(' - ')}
-                </p>
-              {/if}
-            </div>
+            {/each}
           {/each}
-        {/each}
+        </div>
       </div>
     </aside>
   {/if}

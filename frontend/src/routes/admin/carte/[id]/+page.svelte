@@ -166,7 +166,7 @@
   function resetBubble(id: string) {
     if (!model) return;
     const seed = seedBubbleLayout(model).find((b) => b.assoId === id);
-    if (seed) patchBubble(id, { x: seed.x, y: seed.y, scale: 1 });
+    if (seed) patchBubble(id, { x: seed.x, y: seed.y, scale: seed.scale });
   }
 
   // ── Decoration mutations ────────────────────────────────────────────────────────
@@ -329,6 +329,18 @@
           ? 'fixed inset-0 z-50 overflow-auto bg-cn-bg p-5'
           : ''}"
       >
+        {#if isFullPage}
+          <!-- The header (with its exit toggle) is hidden behind this overlay, so surface a
+               floating exit control inside it. -->
+          <button
+            type="button"
+            onclick={toggleFullPage}
+            class="fixed right-5 top-5 z-[60] inline-flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-2 text-sm font-bold text-text-main shadow-lg hover:bg-cn-bg"
+          >
+            <Minimize size={16} />
+            {m.carte_fullpage_exit()}
+          </button>
+        {/if}
         <!-- Scaled poster preview (the node captured for PDF is the un-scaled inner element). -->
         <div
           bind:clientWidth={previewWidth}

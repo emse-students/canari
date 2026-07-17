@@ -37,8 +37,13 @@ export const STAGE_WIDTH = 1600;
 export const STAGE_HEIGHT = Math.round(STAGE_WIDTH / Math.SQRT2);
 /** Width of the right-hand directory column (poster px); bubbles are confined to the left of it. */
 export const DIRECTORY_WIDTH = 500;
-/** Base (scale 1) width of an association blob unit (blob + the radial bureau ring around it). */
-export const CARD_WIDTH = 380;
+/** Base (scale 1) width of an association blob unit (blob + the bureau arc + the name band). */
+export const CARD_WIDTH = 400;
+/**
+ * Base (scale 1) height of an association blob unit: the blob + bureau arc live in the upper part
+ * and the (wrapping) association name sits in a band below, so the unit is taller than it is wide.
+ */
+export const CARD_HEIGHT = 430;
 /** Base (scale 1) width of a free-text decoration box (used for wrapping + resize math). */
 export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
@@ -52,37 +57,58 @@ const GAP_X = 18;
 const ROW_GAP = 18;
 /** Extra vertical gap inserted between two category groups in the seed grid. */
 const ZONE_GAP = 14;
-/**
- * Seeded units start scaled down so a full roster of large blobs fits the left region as a
- * starting point; the author then hand-arranges + resizes (design doc: "auto-layout is a starting
- * grid, not the final look").
- */
-const SEED_SCALE = 0.6;
+/** Smallest / largest scale the auto-fit is allowed to seed at. */
+const SEED_MIN_SCALE = 0.2;
+const SEED_MAX_SCALE = 0.6;
 
 /** Left region width available for bubbles (the directory column is reserved on the right). */
 function bubbleRegionWidth(width: number): number {
   return width - DIRECTORY_WIDTH;
 }
 
-/** Columns that fit across the left region at the seed scale. */
-function columnCount(width: number): number {
-  const step = CARD_WIDTH * SEED_SCALE + GAP_X;
+/** Columns that fit across the left region at a given unit scale. */
+function columnCount(width: number, scale: number): number {
+  const step = CARD_WIDTH * scale + GAP_X;
   return Math.max(1, Math.floor((bubbleRegionWidth(width) - 2 * MARGIN + GAP_X) / step));
+}
+
+/** Total seed-grid height (poster px) the whole model would occupy at a given unit scale. */
+function seedGridHeight(model: PosterModel, width: number, scale: number): number {
+  const cols = columnCount(width, scale);
+  const stepY = CARD_HEIGHT * scale + ROW_GAP;
+  let rows = 0;
+  for (const zone of model.zones) rows += Math.max(1, Math.ceil(zone.bubbles.length / cols));
+  const gaps = Math.max(0, model.zones.length - 1) * ZONE_GAP;
+  return TITLE_BAND + rows * stepY + gaps;
+}
+
+/**
+ * Largest unit scale (within [{@link SEED_MIN_SCALE}, {@link SEED_MAX_SCALE}]) at which the whole
+ * roster still fits inside the fixed A2 frame, so a fresh project never seeds bubbles off-frame
+ * (the frame clips overflow, which otherwise made assos "disappear"). The author resizes from there.
+ */
+function fitSeedScale(model: PosterModel, width: number): number {
+  const limit = STAGE_HEIGHT - MARGIN;
+  for (let s = SEED_MAX_SCALE; s > SEED_MIN_SCALE; s -= 0.02) {
+    if (seedGridHeight(model, width, s) <= limit) return Math.round(s * 100) / 100;
+  }
+  return SEED_MIN_SCALE;
 }
 
 /**
  * Produces a deterministic starting grid for every bubble in the model, confined to the left
  * region (the directory column is reserved on the right): each category zone starts on a fresh row
- * and its bubbles wrap left-to-right at {@link SEED_SCALE}. z is the insertion order so later units
- * sit on top by default.
+ * and its bubbles wrap left-to-right at an auto-fitted scale so the whole roster fits the A2 frame.
+ * z is the insertion order so later units sit on top by default.
  */
 export function seedBubbleLayout(
   model: PosterModel,
   width: number = STAGE_WIDTH
 ): PositionedBubble[] {
-  const cols = columnCount(width);
-  const stepX = CARD_WIDTH * SEED_SCALE + GAP_X;
-  const stepY = CARD_WIDTH * SEED_SCALE + ROW_GAP;
+  const scale = fitSeedScale(model, width);
+  const cols = columnCount(width, scale);
+  const stepX = CARD_WIDTH * scale + GAP_X;
+  const stepY = CARD_HEIGHT * scale + ROW_GAP;
   const out: PositionedBubble[] = [];
   let y = TITLE_BAND;
 
@@ -97,7 +123,7 @@ export function seedBubbleLayout(
         assoId: bubble.assoId,
         x: MARGIN + col * stepX,
         y,
-        scale: SEED_SCALE,
+        scale,
         z: out.length + 1,
         colorOverride: null,
         showPresident: true,
@@ -129,11 +155,18 @@ export function mergeBubbleLayout(
   return seedBubbleLayout(model).map((seed) => {
     const prev = savedById.get(seed.assoId);
     if (!prev) return seed;
+    const scale = typeof prev.scale === 'number' && prev.scale > 0 ? prev.scale : seed.scale;
+    // Clamp saved positions back inside the A2 frame so a legacy layout saved against the old
+    // (taller) stage never leaves a unit off-frame where overflow:hidden would clip it away.
+    const maxX = Math.max(0, STAGE_WIDTH - DIRECTORY_WIDTH - CARD_WIDTH * scale);
+    const maxY = Math.max(0, STAGE_HEIGHT - CARD_HEIGHT * scale);
+    const rawX = typeof prev.x === 'number' ? prev.x : seed.x;
+    const rawY = typeof prev.y === 'number' ? prev.y : seed.y;
     return {
       assoId: seed.assoId,
-      x: typeof prev.x === 'number' ? prev.x : seed.x,
-      y: typeof prev.y === 'number' ? prev.y : seed.y,
-      scale: typeof prev.scale === 'number' && prev.scale > 0 ? prev.scale : seed.scale,
+      x: Math.min(Math.max(0, rawX), maxX),
+      y: Math.min(Math.max(0, rawY), maxY),
+      scale,
       z: typeof prev.z === 'number' ? prev.z : seed.z,
       colorOverride: typeof prev.colorOverride === 'string' ? prev.colorOverride : null,
       showPresident: prev.showPresident !== false,
