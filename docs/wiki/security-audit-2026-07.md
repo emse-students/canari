@@ -24,7 +24,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | S1 | CRITICAL | Self-join any MLS group via unauth `addGroupMember` | FIXED (cf8..) |
 | S2 | CRITICAL | Identity spoof via unbound `register-device` | FIXED |
 | S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | FIXED |
-| S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | TODO |
+| S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | FIXED |
 | S5 | HIGH | Arbitrary group member removal + roster enumeration | TODO |
 | S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | TODO |
 | S7 | MEDIUM | nginx does not reset identity headers on unauth locations | TODO |
@@ -92,6 +92,14 @@ KeyPackages/memberships/queued messages/push token and denylists re-registration
 ejected from all conversations.
 Fix: `assertCallerOwnsUserId(x-user-id, x-global-admin, targetUserId)` on all user-scoped
 device routes.
+FIXED: the four write/delete routes - `updateDeviceMetadata` (PATCH metadata),
+`purgeDevicePrekeys` (DELETE prekeys), `pruneDevicePrekeys` (POST prekeys/prune) and
+`deleteDevice` (DELETE :userId/:deviceId) - now take `x-user-id`/`x-global-admin` headers and
+call `assertCallerOwnsUserId` against the sanitized path `userId` (admins exempt; legacy no-op
+when `x-user-id` absent). These are self-service device-management flows, so the owner binding
+does not break any legitimate call site. The GET routes (`getUserDevices`,
+`getDeviceKeyPackage`, `getPrekeyCount`, `listDevicePrekeys`) deliberately stay cross-user open
+- invite/welcome flows must read other users' KeyPackages.
 
 ### S5 - HIGH - Arbitrary group member removal + roster enumeration
 `members.controller.ts`: `DELETE mls/groups/:groupId/members/:userId` (:263,

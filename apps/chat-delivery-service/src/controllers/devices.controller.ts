@@ -264,10 +264,21 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Body()
-    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
+    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    // A device's metadata may only be edited by its owner (audit S4): the userId is a path
+    // param, so without this binding any authenticated user could rewrite another user's
+    // device name/OS. Admins exempt; legacy no-op when x-user-id absent.
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot update another user device metadata'
+    );
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
@@ -372,9 +383,22 @@ export class DevicesController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId/prekeys')
   /** Purges all one-time prekeys for a device (used when resetting a device's key material). */
-  async purgeDevicePrekeys(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
+  async purgeDevicePrekeys(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    // Prekeys may only be purged for the caller's own device (audit S4): purging a victim's
+    // one-time KeyPackages would degrade their invite availability. Admins exempt.
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot purge another user device prekeys'
+    );
     const result = await this.oneTimeKeyPackageRepo.delete({
       userId: safeUserId,
       deviceId: safeDeviceId,
@@ -415,10 +439,19 @@ export class DevicesController {
   async pruneDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Body() body: { ids: unknown }
+    @Body() body: { ids: unknown },
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<{ status: string; deleted: number }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    // Prekeys may only be pruned for the caller's own device (audit S4). Admins exempt.
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot prune another user device prekeys'
+    );
     if (!Array.isArray(body.ids) || body.ids.length === 0) {
       throw new BadRequestException('ids must be a non-empty array');
     }
@@ -444,9 +477,24 @@ export class DevicesController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId')
   /** Completely delete a device from the user's account. Purges all per-device state (memberships, KeyPackages, OneTimeKeyPackages, push tokens, queued messages) and denylists the device against immediate re-registration. */
-  async deleteDevice(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
+  async deleteDevice(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    // A device may only be deleted by its owner (audit S4): this route purges the full
+    // per-device footprint (memberships, KeyPackages, queued messages, push token) and
+    // denylists re-registration, so without this binding any user could eject a victim from
+    // every conversation. Admins exempt; legacy no-op when x-user-id absent.
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot delete another user device'
+    );
 
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC).
     const purge = await this.messagingService.purgeDeviceFootprint(safeUserId, safeDeviceId);
