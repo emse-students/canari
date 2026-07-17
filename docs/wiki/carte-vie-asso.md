@@ -163,7 +163,7 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   guide and records the line; dashed guide lines render in the stage while dragging (gated on
   `editable`, so export never rasterises them). Roots carry `data-el-id` for self-exclusion. Holding
   **Alt** bypasses snapping (free placement); the editor hint (`carte_editor_hint`) documents it.
-- **P3d - Background blobs** (gates green; browser-verify pending): a third decoration kind
+- **P3d - Background blobs** (8b0665f7, gates green; browser-verify pending): a third decoration kind
   (`BlobDecoration`: kind/shape/color/opacity) riding the P3a drag/resize machinery. New module
   `frontend/src/lib/carte/blobs.ts` holds the `BLOB_SHAPES` catalog (6 organic silhouettes as CSS
   `border-radius` shorthands - fully self-contained so snapdom rasterises them, no SVG/asset),
