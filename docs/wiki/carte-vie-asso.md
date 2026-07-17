@@ -153,7 +153,7 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   `selectedTextDeco` narrowed derived so text-only controls (content/bold/align) are gated while
   color/front/back/delete stay common. New i18n `carte_doodles_label` + `carte_doodle_*` (FR+EN). No
   migration (layout stays an opaque JSON blob).
-- **P3c - Snap guides** (gates green; browser-verify pending): alignment guides during element
+- **P3c - Snap guides** (e8907cbd, gates green; browser-verify pending): alignment guides during element
   moves, fully inside `PosterCanvas.svelte` (no data model / migration / persisted state). On
   `beginMove`, `collectGuides` snapshots the live DOM rects of every other `[data-el-root]` (so
   variable-height bubbles contribute accurate edges), converts them to poster px, and offers their
