@@ -115,7 +115,19 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   `carte_poster_subtitle`/`carte_directory_heading`/`carte_theme_*`/`carte_background_*`/
   `carte_scrim_label`/`carte_save_*`/`carte_export_*`/`carte_zone_uncategorized`/`carte_empty`/
   `carte_settings_heading`/`carte_generated_note` keys (FR+EN). No editing/drag yet (that is P2).
-- **P2 - Editor**: drag / resize / z-index / per-bubble property panel; save & load project.
+- **P2 - Editor** (DONE, gates green; browser-verify pending): the poster is now a freeform
+  absolute canvas. `frontend/src/lib/carte/layout.ts` adds `PositionedBubble` (x/y/scale/z +
+  colorOverride/showPresident), `seedBubbleLayout` (auto-grid from the P1 zones), `mergeBubbleLayout`
+  (reconciles saved positions with the live model - keeps hand-placed spots, adds new assos, drops
+  removed ones), `indexBubbleContent`, and `stageHeight`. `PosterLayout` gained `bubbles?` +
+  `directoryVisible?`. `PosterCanvas.svelte` was rewritten into a draggable stage: cards drag (pointer
+  events, poster-space delta = client delta / viewScale), resize via 4 corner handles (uniform,
+  center-fixed scale), z-index, a selection outline, and click-empty-to-deselect; the directory is a
+  toggleable fixed footer. The editor page holds `positioned[]` + `selectedId`, renders a per-bubble
+  property panel (color override + reset, president toggle, bring-to-front / send-to-back, reset
+  position), persists `layout.bubbles` + `directoryVisible`, and nulls the selection before export so
+  the handles are not rasterised. New i18n: `carte_directory_toggle` / `carte_editor_hint` /
+  `carte_panel_*` (FR+EN). No migration (layout is an opaque JSON blob).
 - **P3 - Polish**: doodle palette, theme presets, free text, background blobs, snap guides.
 
 ## Reuse map

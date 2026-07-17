@@ -2,9 +2,10 @@ import { generateAvatarColor } from '$lib/utils/avatar';
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
 
 /**
- * The persisted poster layout ("project.layout"). P1 stores only chrome (theme + background);
- * the bubbles are re-generated from live data on every open so a reopened map is always current.
- * P2 will extend this with hand-placed `bubbles[]` positions.
+ * The persisted poster layout ("project.layout"). Stores the chrome (theme + background) plus the
+ * hand-placed bubble positions (P2); the bubble *content* (name, logo, president) is re-resolved
+ * from live data on every open, so a reopened map is always current while keeping its arrangement.
+ * See {@link PositionedBubble} for the placement shape (kept in `layout.ts` to avoid a cycle).
  */
 export interface PosterLayout {
   /** Schema version for forward-compatible migrations. */
@@ -18,6 +19,14 @@ export interface PosterLayout {
     /** Scrim overlay opacity (0-100) over the background image. */
     scrimOpacity: number;
   };
+  /**
+   * Hand-placed bubble positions (P2). Typed as {@link PositionedBubble}[] at the call sites;
+   * declared structurally here to keep `generator.ts` free of a `layout.ts` import cycle. Absent
+   * on legacy projects -> the editor seeds a fresh grid.
+   */
+  bubbles?: unknown[];
+  /** Whether the text directory footer is rendered (default true). */
+  directoryVisible?: boolean;
 }
 
 /** A president/roster reference resolved to a display name + role for rendering. */

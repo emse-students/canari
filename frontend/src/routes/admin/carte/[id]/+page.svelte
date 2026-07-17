@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
@@ -15,9 +15,26 @@
   } from '$lib/associations/api';
   import { CARTE_THEMES, resolveCarteTheme, DEFAULT_CARTE_THEME_ID } from '$lib/carte/theme';
   import { buildPosterModel, type PosterModel, type PosterLayout } from '$lib/carte/generator';
+  import {
+    mergeBubbleLayout,
+    seedBubbleLayout,
+    indexBubbleContent,
+    stageHeight,
+    type PositionedBubble,
+  } from '$lib/carte/layout';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
-  import { ArrowLeft, Download, Save, ImagePlus, X, Check } from '@lucide/svelte';
+  import {
+    ArrowLeft,
+    Download,
+    Save,
+    ImagePlus,
+    X,
+    Check,
+    BringToFront,
+    SendToBack,
+    RotateCcw,
+  } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let ready = $state(false);
@@ -30,6 +47,11 @@
   let themeId = $state(DEFAULT_CARTE_THEME_ID);
   let bgDataUrl = $state<string | null>(null);
   let scrimOpacity = $state(20);
+  let directoryVisible = $state(true);
+
+  // ── Freeform bubble placement (persisted as layout.bubbles) ───────────────────
+  let positioned = $state<PositionedBubble[]>([]);
+  let selectedId = $state<string | null>(null);
 
   let saving = $state(false);
   let saved = $state(false);
@@ -38,6 +60,10 @@
   const projectId = $derived(page.params.id ?? '');
   const theme = $derived(resolveCarteTheme(themeId));
   const background = $derived({ dataUrl: bgDataUrl, scrimOpacity });
+  const content = $derived(model ? indexBubbleContent(model) : {});
+  const canvasHeight = $derived(stageHeight(positioned));
+  const selectedBubble = $derived(positioned.find((b) => b.assoId === selectedId) ?? null);
+  const selectedContent = $derived(selectedId ? content[selectedId] : undefined);
 
   // ── Scaled preview (poster renders at its natural 1600px width, scaled to fit) ──
   let previewWidth = $state(0);
@@ -75,6 +101,7 @@
         bg && typeof bg.scrimOpacity === 'number'
           ? bg.scrimOpacity
           : resolveCarteTheme(themeId).scrimOpacity;
+      directoryVisible = layout.directoryVisible !== false;
 
       // Resolve rosters (for president detection); tolerate per-asso failures.
       const rosters = await Promise.all(
@@ -83,17 +110,42 @@
       const membersByAsso: Record<string, AssociationMember[]> = {};
       associations.forEach((a, i) => (membersByAsso[a.id] = rosters[i]));
 
-      model = buildPosterModel(
+      const built = buildPosterModel(
         associations,
         categories,
         membersByAsso,
         m.carte_zone_uncategorized()
       );
+      model = built;
+
+      // Reconcile saved positions with the live model (adds new assos, drops removed ones).
+      const savedBubbles = Array.isArray(layout.bubbles)
+        ? (layout.bubbles as PositionedBubble[])
+        : [];
+      positioned = mergeBubbleLayout(savedBubbles, built);
     } catch (e) {
       error = e instanceof Error ? e.message : m.common_load_error();
     } finally {
       loading = false;
     }
+  }
+
+  // ── Bubble mutations ──────────────────────────────────────────────────────────
+  function patchBubble(id: string, patch: Partial<PositionedBubble>) {
+    positioned = positioned.map((b) => (b.assoId === id ? { ...b, ...patch } : b));
+  }
+  function bringToFront(id: string) {
+    const max = positioned.reduce((acc, b) => Math.max(acc, b.z), 0);
+    patchBubble(id, { z: max + 1 });
+  }
+  function sendToBack(id: string) {
+    const min = positioned.reduce((acc, b) => Math.min(acc, b.z), 0);
+    patchBubble(id, { z: min - 1 });
+  }
+  function resetBubble(id: string) {
+    if (!model) return;
+    const seed = seedBubbleLayout(model).find((b) => b.assoId === id);
+    if (seed) patchBubble(id, { x: seed.x, y: seed.y, scale: 1 });
   }
 
   function onBackgroundFile(event: Event) {
@@ -118,6 +170,8 @@
         version: 1,
         theme: themeId,
         background: { dataUrl: bgDataUrl, scrimOpacity },
+        bubbles: positioned,
+        directoryVisible,
       };
       project = await updatePosterProject(project.id, {
         layout: layout as unknown as Record<string, unknown>,
@@ -135,6 +189,9 @@
     if (!posterEl || !project || exporting) return;
     exporting = true;
     error = null;
+    // Clear the selection so the outline + resize handles are not captured in the PDF.
+    selectedId = null;
+    await tick();
     try {
       await exportPosterPdf(posterEl, project.name);
     } catch (e) {
@@ -207,72 +264,171 @@
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
 
-      <!-- Settings -->
-      <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-4">
-        <h3 class="text-sm font-bold text-text-main">{m.carte_settings_heading()}</h3>
-
-        <div class="space-y-2">
-          <span class="block text-xs font-semibold text-text-muted">{m.carte_theme_label()}</span>
-          <div class="flex flex-wrap gap-2">
-            {#each CARTE_THEMES as t (t.id)}
-              <button
-                type="button"
-                onclick={() => (themeId = t.id)}
-                class="rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors
-                {themeId === t.id
-                  ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
-                  : 'border-cn-border text-text-muted hover:text-text-main'}"
-              >
-                {t.name()}
-              </button>
-            {/each}
+      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <!-- Scaled poster preview (the node captured for PDF is the un-scaled inner element). -->
+        <div
+          bind:clientWidth={previewWidth}
+          class="overflow-hidden rounded-2xl border border-cn-border"
+          style:height="{posterHeight * scale}px"
+        >
+          <div style:transform="scale({scale})" style:transform-origin="top left">
+            <PosterCanvas
+              bind:el={posterEl}
+              {model}
+              {content}
+              bubbles={positioned}
+              {theme}
+              {background}
+              {canvasHeight}
+              {directoryVisible}
+              editable
+              viewScale={scale}
+              {selectedId}
+              title={project.name}
+              onSelect={(id) => (selectedId = id)}
+              onChange={patchBubble}
+            />
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-3">
-          <span class="block text-xs font-semibold text-text-muted"
-            >{m.carte_background_label()}</span
-          >
-          <label
-            class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-cn-bg"
-          >
-            <ImagePlus size={15} />
-            {m.carte_background_upload()}
-            <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
-          </label>
-          {#if bgDataUrl}
-            <button
-              type="button"
-              onclick={() => (bgDataUrl = null)}
-              class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-muted hover:text-text-main"
-            >
-              <X size={15} />
-              {m.carte_background_clear()}
-            </button>
-            <label class="inline-flex items-center gap-2 text-xs text-text-muted">
-              {m.carte_scrim_label()}
-              <input
-                type="range"
-                min="0"
-                max="80"
-                bind:value={scrimOpacity}
-                class="accent-cn-yellow"
-              />
+        <!-- Settings + per-bubble property panel -->
+        <div class="space-y-4">
+          <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-4">
+            <h3 class="text-sm font-bold text-text-main">{m.carte_settings_heading()}</h3>
+
+            <div class="space-y-2">
+              <span class="block text-xs font-semibold text-text-muted"
+                >{m.carte_theme_label()}</span
+              >
+              <div class="flex flex-wrap gap-2">
+                {#each CARTE_THEMES as t (t.id)}
+                  <button
+                    type="button"
+                    onclick={() => (themeId = t.id)}
+                    class="rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors
+                    {themeId === t.id
+                      ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
+                      : 'border-cn-border text-text-muted hover:text-text-main'}"
+                  >
+                    {t.name()}
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="block text-xs font-semibold text-text-muted"
+                >{m.carte_background_label()}</span
+              >
+              <label
+                class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-cn-bg"
+              >
+                <ImagePlus size={15} />
+                {m.carte_background_upload()}
+                <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
+              </label>
+              {#if bgDataUrl}
+                <button
+                  type="button"
+                  onclick={() => (bgDataUrl = null)}
+                  class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-muted hover:text-text-main"
+                >
+                  <X size={15} />
+                  {m.carte_background_clear()}
+                </button>
+                <label class="inline-flex items-center gap-2 text-xs text-text-muted">
+                  {m.carte_scrim_label()}
+                  <input
+                    type="range"
+                    min="0"
+                    max="80"
+                    bind:value={scrimOpacity}
+                    class="accent-cn-yellow"
+                  />
+                </label>
+              {/if}
+            </div>
+
+            <label class="inline-flex items-center gap-2 text-xs font-semibold text-text-muted">
+              <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
+              {m.carte_directory_toggle()}
             </label>
-          {/if}
-        </div>
 
-        <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
-      </section>
+            <p class="text-xs text-text-muted">{m.carte_editor_hint()}</p>
+            <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
+          </section>
 
-      <!-- Scaled poster preview (the node captured for PDF is the un-scaled inner element). -->
-      <div
-        bind:clientWidth={previewWidth}
-        class="overflow-hidden rounded-2xl border border-cn-border"
-        style:height="{posterHeight * scale}px"
-      >
-        <div style:transform="scale({scale})" style:transform-origin="top left">
-          <PosterCanvas bind:el={posterEl} {model} {theme} {background} title={project.name} />
+          <!-- Selected-bubble property panel -->
+          <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
+            <h3 class="text-sm font-bold text-text-main">{m.carte_panel_heading()}</h3>
+            {#if selectedBubble && selectedContent}
+              <p class="text-sm font-extrabold text-text-main">{selectedContent.name}</p>
+
+              <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                {m.carte_panel_color()}
+                <input
+                  type="color"
+                  value={selectedBubble.colorOverride ?? selectedContent.color}
+                  oninput={(e) =>
+                    patchBubble(selectedBubble.assoId, { colorOverride: e.currentTarget.value })}
+                  class="h-7 w-10 cursor-pointer rounded border border-cn-border bg-transparent"
+                />
+                {#if selectedBubble.colorOverride}
+                  <button
+                    type="button"
+                    onclick={() => patchBubble(selectedBubble.assoId, { colorOverride: null })}
+                    class="text-text-muted underline hover:text-text-main"
+                  >
+                    {m.carte_panel_color_reset()}
+                  </button>
+                {/if}
+              </label>
+
+              {#if selectedContent.president}
+                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                  <input
+                    type="checkbox"
+                    checked={selectedBubble.showPresident}
+                    onchange={(e) =>
+                      patchBubble(selectedBubble.assoId, {
+                        showPresident: e.currentTarget.checked,
+                      })}
+                    class="accent-cn-yellow"
+                  />
+                  {m.carte_panel_president_toggle()}
+                </label>
+              {/if}
+
+              <div class="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onclick={() => bringToFront(selectedBubble.assoId)}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                >
+                  <BringToFront size={13} />
+                  {m.carte_panel_front()}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => sendToBack(selectedBubble.assoId)}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                >
+                  <SendToBack size={13} />
+                  {m.carte_panel_back()}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => resetBubble(selectedBubble.assoId)}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                >
+                  <RotateCcw size={13} />
+                  {m.carte_panel_reset()}
+                </button>
+              </div>
+            {:else}
+              <p class="text-xs text-text-muted">{m.carte_panel_empty()}</p>
+            {/if}
+          </section>
         </div>
       </div>
     {/if}
