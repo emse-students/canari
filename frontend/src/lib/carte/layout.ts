@@ -32,6 +32,8 @@ export const CARD_WIDTH = 190;
 export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
 export const TEXT_BASE_SIZE = 34;
+/** Base (scale 1) side of a square doodle box (used for rendering + resize math). */
+export const DOODLE_BASE_SIZE = 120;
 
 // Seed-grid geometry (poster px). Kept here so the editor can recompute stage height + resets.
 const MARGIN = 56;
@@ -137,8 +139,9 @@ export function stageHeight(bubbles: PositionedBubble[], decorations: Decoration
     bottom = Math.max(bottom, b.y + b.scale * NOMINAL_CARD_HEIGHT);
   }
   for (const d of decorations) {
-    // Rough per-decoration lower bound; a few lines of text at the element's scale.
-    bottom = Math.max(bottom, d.y + d.scale * TEXT_BASE_SIZE * 4);
+    // Rough per-decoration lower bound at the element's scale (a few text lines / one doodle box).
+    const extent = d.kind === 'doodle' ? DOODLE_BASE_SIZE : TEXT_BASE_SIZE * 4;
+    bottom = Math.max(bottom, d.y + d.scale * extent);
   }
   return Math.ceil(bottom + MARGIN);
 }
@@ -174,8 +177,17 @@ export interface TextDecoration extends DecorationBase {
   align: 'left' | 'center' | 'right';
 }
 
-/** Any placeable decoration. The union is extended in later phases (doodles, blobs). */
-export type Decoration = TextDecoration;
+/** A decorative shape (rendered as an inline lucide SVG) the author can drag, resize and recolor. */
+export interface DoodleDecoration extends DecorationBase {
+  kind: 'doodle';
+  /** Shape key into the doodle catalog (see `doodles.ts`). */
+  shape: string;
+  /** Fill/stroke color (hex). */
+  color: string;
+}
+
+/** Any placeable decoration. The union is extended in later phases (blobs). */
+export type Decoration = TextDecoration | DoodleDecoration;
 
 /** Builds a new empty text decoration at the given poster coordinates. */
 export function createTextDecoration(
@@ -198,6 +210,17 @@ export function createTextDecoration(
   };
 }
 
+/** Builds a new doodle decoration for the given shape at the given poster coordinates. */
+export function createDoodleDecoration(
+  shape: string,
+  x: number,
+  y: number,
+  z: number,
+  color: string
+): DoodleDecoration {
+  return { id: crypto.randomUUID(), kind: 'doodle', x, y, scale: 1, z, shape, color };
+}
+
 /** Defensively parses persisted decorations, dropping anything malformed or of an unknown kind. */
 export function sanitizeDecorations(raw: unknown): Decoration[] {
   if (!Array.isArray(raw)) return [];
@@ -205,19 +228,32 @@ export function sanitizeDecorations(raw: unknown): Decoration[] {
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const r = item as Record<string, unknown>;
-    if (r.kind !== 'text' || typeof r.id !== 'string') continue;
-    out.push({
+    if (typeof r.id !== 'string') continue;
+    // Placement fields are shared by every kind; parse them once.
+    const base = {
       id: r.id,
-      kind: 'text',
       x: typeof r.x === 'number' ? r.x : 0,
       y: typeof r.y === 'number' ? r.y : 0,
       scale: typeof r.scale === 'number' && r.scale > 0 ? r.scale : 1,
       z: typeof r.z === 'number' ? r.z : 1,
-      content: typeof r.content === 'string' ? r.content : '',
-      color: typeof r.color === 'string' ? r.color : '#ffffff',
-      bold: r.bold !== false,
-      align: r.align === 'left' || r.align === 'right' ? r.align : 'center',
-    });
+    };
+    if (r.kind === 'text') {
+      out.push({
+        ...base,
+        kind: 'text',
+        content: typeof r.content === 'string' ? r.content : '',
+        color: typeof r.color === 'string' ? r.color : '#ffffff',
+        bold: r.bold !== false,
+        align: r.align === 'left' || r.align === 'right' ? r.align : 'center',
+      });
+    } else if (r.kind === 'doodle' && typeof r.shape === 'string') {
+      out.push({
+        ...base,
+        kind: 'doodle',
+        shape: r.shape,
+        color: typeof r.color === 'string' ? r.color : '#ffffff',
+      });
+    }
   }
   return out;
 }

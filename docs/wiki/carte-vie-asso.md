@@ -142,7 +142,18 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   (content textarea, color, bold, align left/center/right, front/back, delete); export nulls both
   selections. New i18n `carte_elements_heading`/`carte_add_text`/`carte_text_placeholder`/
   `carte_deco_*`/`carte_align_*` (FR+EN). No migration (layout stays an opaque JSON blob).
-- **P3 remaining - Polish**: doodle palette, theme background blobs, snap guides.
+- **P3b - Doodle palette** (b36e8b03, gates green; browser-verify pending): a second decoration kind
+  (`DoodleDecoration`: kind/shape/color) riding the P3a drag/resize machinery. New module
+  `frontend/src/lib/carte/doodles.ts` holds the curated `DOODLE_SHAPES` catalog (12 lucide shapes),
+  `doodleIcon(key)` (Star fallback), and `isDoodleShape`; doodles render as inline lucide SVGs so
+  they stay self-contained (snapdom-safe) and honour the "lucide only" rule. `layout.ts` adds
+  `DOODLE_BASE_SIZE`, `createDoodleDecoration`, and branches `sanitizeDecorations` + `stageHeight` per
+  kind. `PosterCanvas.svelte` gained a `{:else if deco.kind === 'doodle'}` branch (scalable/recolorable
+  box + 4 corner handles). The editor page adds `addDoodle`, a doodle button grid in the palette, and a
+  `selectedTextDeco` narrowed derived so text-only controls (content/bold/align) are gated while
+  color/front/back/delete stay common. New i18n `carte_doodles_label` + `carte_doodle_*` (FR+EN). No
+  migration (layout stays an opaque JSON blob).
+- **P3 remaining - Polish**: theme background blobs, snap guides.
 
 ## Reuse map
 

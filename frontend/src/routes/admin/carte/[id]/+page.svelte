@@ -21,11 +21,14 @@
     indexBubbleContent,
     stageHeight,
     createTextDecoration,
+    createDoodleDecoration,
     sanitizeDecorations,
     TEXT_BASE_WIDTH,
+    DOODLE_BASE_SIZE,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
+  import { DOODLE_SHAPES } from '$lib/carte/doodles';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import {
@@ -79,6 +82,10 @@
   const selectedContent = $derived(selectedId ? content[selectedId] : undefined);
   const selectedDecoration = $derived(
     decorations.find((d) => d.id === selectedDecorationId) ?? null
+  );
+  /** The selected decoration narrowed to a text box, or null (drives the text-only controls). */
+  const selectedTextDeco = $derived(
+    selectedDecoration?.kind === 'text' ? selectedDecoration : null
   );
 
   // ── Scaled preview (poster renders at its natural 1600px width, scaled to fit) ──
@@ -167,12 +174,27 @@
 
   // ── Decoration mutations ────────────────────────────────────────────────────────
   function patchDecoration(id: string, patch: Partial<Decoration>) {
-    decorations = decorations.map((d) => (d.id === id ? { ...d, ...patch } : d));
+    // The spread keeps d's own kind; cast reassures TS the union member stays intact.
+    decorations = decorations.map((d) => (d.id === id ? ({ ...d, ...patch } as Decoration) : d));
   }
   /** Adds a new text box near the top-center of the stage and selects it. */
   function addText() {
     const z = decorations.reduce((acc, d) => Math.max(acc, d.z), 0) + 1;
     const deco = createTextDecoration((1600 - TEXT_BASE_WIDTH) / 2, 140, z, theme.titleColor);
+    decorations = [...decorations, deco];
+    selectedId = null;
+    selectedDecorationId = deco.id;
+  }
+  /** Adds a doodle of the given shape near the top-center of the stage and selects it. */
+  function addDoodle(shape: string) {
+    const z = decorations.reduce((acc, d) => Math.max(acc, d.z), 0) + 1;
+    const deco = createDoodleDecoration(
+      shape,
+      (1600 - DOODLE_BASE_SIZE) / 2,
+      140,
+      z,
+      theme.titleColor
+    );
     decorations = [...decorations, deco];
     selectedId = null;
     selectedDecorationId = deco.id;
@@ -417,6 +439,25 @@
               <Type size={15} />
               {m.carte_add_text()}
             </button>
+
+            <div class="space-y-2">
+              <span class="block text-xs font-semibold text-text-muted"
+                >{m.carte_doodles_label()}</span
+              >
+              <div class="flex flex-wrap gap-1.5">
+                {#each DOODLE_SHAPES as shape (shape.key)}
+                  <button
+                    type="button"
+                    aria-label={shape.label()}
+                    title={shape.label()}
+                    onclick={() => addDoodle(shape.key)}
+                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-cn-border text-text-muted hover:bg-cn-bg hover:text-text-main"
+                  >
+                    <shape.icon size={18} />
+                  </button>
+                {/each}
+              </div>
+            </div>
           </section>
 
           {#if selectedDecoration}
@@ -426,18 +467,20 @@
             >
               <h3 class="text-sm font-bold text-text-main">{m.carte_deco_heading()}</h3>
 
-              <label class="block space-y-1">
-                <span class="block text-xs font-semibold text-text-muted"
-                  >{m.carte_deco_content()}</span
-                >
-                <textarea
-                  value={selectedDecoration.content}
-                  oninput={(e) =>
-                    patchDecoration(selectedDecoration.id, { content: e.currentTarget.value })}
-                  rows="2"
-                  class="w-full resize-y rounded-lg border border-cn-border bg-transparent px-2 py-1.5 text-sm text-text-main"
-                ></textarea>
-              </label>
+              {#if selectedTextDeco}
+                <label class="block space-y-1">
+                  <span class="block text-xs font-semibold text-text-muted"
+                    >{m.carte_deco_content()}</span
+                  >
+                  <textarea
+                    value={selectedTextDeco.content}
+                    oninput={(e) =>
+                      patchDecoration(selectedTextDeco.id, { content: e.currentTarget.value })}
+                    rows="2"
+                    class="w-full resize-y rounded-lg border border-cn-border bg-transparent px-2 py-1.5 text-sm text-text-main"
+                  ></textarea>
+                </label>
+              {/if}
 
               <div class="flex flex-wrap items-center gap-3">
                 <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
@@ -450,36 +493,40 @@
                     class="h-7 w-10 cursor-pointer rounded border border-cn-border bg-transparent"
                   />
                 </label>
-                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
-                  <input
-                    type="checkbox"
-                    checked={selectedDecoration.bold}
-                    onchange={(e) =>
-                      patchDecoration(selectedDecoration.id, { bold: e.currentTarget.checked })}
-                    class="accent-cn-yellow"
-                  />
-                  {m.carte_deco_bold()}
-                </label>
+                {#if selectedTextDeco}
+                  <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={selectedTextDeco.bold}
+                      onchange={(e) =>
+                        patchDecoration(selectedTextDeco.id, { bold: e.currentTarget.checked })}
+                      class="accent-cn-yellow"
+                    />
+                    {m.carte_deco_bold()}
+                  </label>
+                {/if}
               </div>
 
-              <div class="flex flex-wrap items-center gap-1.5">
-                {#each [{ v: 'left', icon: AlignLeft, label: m.carte_align_left() }, { v: 'center', icon: AlignCenter, label: m.carte_align_center() }, { v: 'right', icon: AlignRight, label: m.carte_align_right() }] as opt (opt.v)}
-                  <button
-                    type="button"
-                    aria-label={opt.label}
-                    onclick={() =>
-                      patchDecoration(selectedDecoration.id, {
-                        align: opt.v as 'left' | 'center' | 'right',
-                      })}
-                    class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
-                    {selectedDecoration.align === opt.v
-                      ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
-                      : 'border-cn-border text-text-muted hover:text-text-main'}"
-                  >
-                    <opt.icon size={14} />
-                  </button>
-                {/each}
-              </div>
+              {#if selectedTextDeco}
+                <div class="flex flex-wrap items-center gap-1.5">
+                  {#each [{ v: 'left', icon: AlignLeft, label: m.carte_align_left() }, { v: 'center', icon: AlignCenter, label: m.carte_align_center() }, { v: 'right', icon: AlignRight, label: m.carte_align_right() }] as opt (opt.v)}
+                    <button
+                      type="button"
+                      aria-label={opt.label}
+                      onclick={() =>
+                        patchDecoration(selectedTextDeco.id, {
+                          align: opt.v as 'left' | 'center' | 'right',
+                        })}
+                      class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
+                      {selectedTextDeco.align === opt.v
+                        ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
+                        : 'border-cn-border text-text-muted hover:text-text-main'}"
+                    >
+                      <opt.icon size={14} />
+                    </button>
+                  {/each}
+                </div>
+              {/if}
 
               <div class="flex flex-wrap gap-2 pt-1">
                 <button

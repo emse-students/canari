@@ -7,9 +7,11 @@
     CARD_WIDTH,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
+    DOODLE_BASE_SIZE,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
+  import { doodleIcon } from '$lib/carte/doodles';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -505,6 +507,50 @@
                     deco.y,
                     deco.scale,
                     TEXT_BASE_WIDTH
+                  )}
+              ></div>
+            {/each}
+          {/if}
+        </div>
+      {:else if deco.kind === 'doodle'}
+        {@const dsel = editable && selectedDecorationId === deco.id}
+        {@const Doodle = doodleIcon(deco.shape)}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          data-el-root
+          style:position="absolute"
+          style:left="{deco.x}px"
+          style:top="{deco.y}px"
+          style:z-index={deco.z}
+          style:width="{DOODLE_BASE_SIZE}px"
+          style:height="{DOODLE_BASE_SIZE}px"
+          style:transform="scale({deco.scale})"
+          style:transform-origin="top left"
+          style:touch-action="none"
+          style:cursor={editable ? 'grab' : 'default'}
+          style:outline={dsel ? '3px solid #f5c518' : 'none'}
+          style:outline-offset="4px"
+          style:border-radius="6px"
+          onpointerdown={(e) =>
+            beginMove(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, DOODLE_BASE_SIZE)}
+        >
+          <Doodle size={DOODLE_BASE_SIZE} color={deco.color} absoluteStrokeWidth strokeWidth={2} />
+
+          {#if dsel}
+            {#each CORNERS as corner (corner.key)}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                role="presentation"
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
+                onpointerdown={(e) =>
+                  beginResize(
+                    e,
+                    'decoration',
+                    deco.id,
+                    deco.x,
+                    deco.y,
+                    deco.scale,
+                    DOODLE_BASE_SIZE
                   )}
               ></div>
             {/each}
