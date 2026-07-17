@@ -1,15 +1,7 @@
-import {
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Headers,
-  ForbiddenException,
-  Logger,
-} from '@nestjs/common';
+import { Controller, Delete, Get, Param, Headers, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import * as crypto from 'crypto';
+import { assertInternalSecret } from './internal-secret.util';
 import { Post as PostEntity } from '../posts/entities/post.entity';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
 import { ChannelMessage } from '../channels/entities/channel-message.entity';
@@ -31,7 +23,6 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
 @Controller('internal')
 export class InternalController {
   private readonly logger = new Logger(InternalController.name);
-  private readonly secret = process.env.INTERNAL_SECRET ?? '';
 
   constructor(
     @InjectRepository(PostEntity)
@@ -60,26 +51,13 @@ export class InternalController {
     private readonly reportRepo: Repository<ContentReport>
   ) {}
 
-  /** Throws ForbiddenException unless the header matches INTERNAL_SECRET (timing-safe). */
-  private assertInternal(headerSecret: string): void {
-    const expected = Buffer.from(this.secret);
-    const received = Buffer.from(headerSecret ?? '');
-    if (
-      expected.length === 0 ||
-      received.length !== expected.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
-      throw new ForbiddenException();
-    }
-  }
-
   /** Returns member user IDs for an association (core-service directory filter). */
   @Get('associations/:associationId/member-user-ids')
   async listMemberUserIds(
     @Param('associationId') associationId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
-    this.assertInternal(headerSecret);
+    assertInternalSecret(headerSecret);
     const rows = await this.assocMemberRepo.find({
       where: { associationId },
       select: { userId: true },
@@ -97,7 +75,7 @@ export class InternalController {
     @Param('userId') userId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
-    this.assertInternal(headerSecret);
+    assertInternalSecret(headerSecret);
 
     const members = await this.assocMemberRepo.find({ where: { userId } });
     const history = await this.roleHistoryRepo.find({
@@ -167,7 +145,7 @@ export class InternalController {
     @Param('userId') userId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
-    this.assertInternal(headerSecret);
+    assertInternalSecret(headerSecret);
 
     this.logger.log(`[INTERNAL_DELETE] starting social data for user=${userId}`);
 

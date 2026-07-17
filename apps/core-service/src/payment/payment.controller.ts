@@ -161,7 +161,7 @@ export class PaymentController {
         await axios.post(
           `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/stripe-account`,
           { stripeAccountId: result.accountId },
-          { maxRedirects: 0 }
+          internalSocialRequestConfig()
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
@@ -232,7 +232,7 @@ export class PaymentController {
         await axios.post(
           `${socialBase}/api/associations/${encodeURIComponent(associationId)}/stripe-complete`,
           undefined,
-          { maxRedirects: 0, timeout: 15_000 }
+          { ...internalSocialRequestConfig(), timeout: 15_000 }
         );
         dbOnboardingComplete = true;
         this.logger.log(

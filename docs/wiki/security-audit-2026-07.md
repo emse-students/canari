@@ -23,7 +23,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 |----|-----|-------|--------|
 | S1 | CRITICAL | Self-join any MLS group via unauth `addGroupMember` | FIXED (cf8..) |
 | S2 | CRITICAL | Identity spoof via unbound `register-device` | FIXED |
-| S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | TODO |
+| S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | FIXED |
 | S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | TODO |
 | S5 | HIGH | Arbitrary group member removal + roster enumeration | TODO |
 | S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | TODO |
@@ -75,6 +75,14 @@ without paying; idempotence keys only on client-supplied `paymentIntentId`
 account on an asso (payout hijack / payment DoS).
 Fix: verify `X-Internal-Secret` (timing-safe, like `internal.controller.ts`) and have the
 core-service callers send it. Confirm each caller and the Stripe webhook path.
+FIXED: extracted `assertInternalSecret` into `apps/social-service/src/internal/internal-secret.util.ts`
+(timing-safe, fails closed when `INTERNAL_SECRET` unset); `internal.controller.ts` now delegates to
+it, and all three association routes (`stripe-account`, `stripe-complete`,
+`products/:productId/purchase-completed`) call it via a new `x-internal-secret` header param. Send
+side: the four core-service callers (payment.controller `stripe-account`/`stripe-complete`,
+webhook.controller `purchase-completed`/`stripe-complete`) now pass `internalSocialRequestConfig()`
+(already used for form/deletion calls), which attaches the shared secret. `INTERNAL_SECRET` is
+already provisioned to both services in every compose file - no infra change.
 
 ### S4 - HIGH - Arbitrary device deletion/manipulation
 `apps/chat-delivery-service/src/controllers/devices.controller.ts`: `DELETE :userId/:deviceId`

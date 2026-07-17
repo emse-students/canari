@@ -28,6 +28,7 @@ import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
+import { assertInternalSecret } from '../internal/internal-secret.util';
 import { FollowsService } from '../follows/follows.service';
 import {
   AddMemberDto,
@@ -1146,29 +1147,41 @@ export class AssociationsController {
     return this.service.rejectPaymentDelegation(id, childId);
   }
 
-  // ── Internal (called by core-service, bypass nginx auth in Docker network) ─
+  // ── Internal (called by core-service) ───────────────────────────────────────
+  // These sit on the nginx-exposed /api/associations prefix (no infra change), so
+  // they can be reached by any authenticated client. They grant entitlements and set
+  // payout accounts, so each verifies the shared X-Internal-Secret (timing-safe) and
+  // only accepts genuine server-to-server calls from core-service.
 
   /** Sets the Stripe account ID for an association; called internally by core-service. */
   @Post(':id/stripe-account')
-  setStripeAccount(@Param('id') id: string, @Body() body: { stripeAccountId: string }) {
+  setStripeAccount(
+    @Param('id') id: string,
+    @Body() body: { stripeAccountId: string },
+    @Headers('x-internal-secret') internalSecret: string
+  ) {
+    assertInternalSecret(internalSecret);
     return this.service.setStripeAccountId(id, body.stripeAccountId);
   }
 
   /** Marks Stripe onboarding as complete for an association; called internally by core-service. */
   @Post(':id/stripe-complete')
-  markStripeComplete(@Param('id') id: string) {
+  markStripeComplete(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') internalSecret: string
+  ) {
+    assertInternalSecret(internalSecret);
     return this.service.markStripeOnboardingComplete(id);
   }
 
-  /**
-   * Called by core-service Stripe webhook when a product purchase completes.
-   * No auth guard - only reachable from the internal Docker network.
-   */
+  /** Called by core-service Stripe webhook when a product purchase completes. */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(
     @Param('productId') productId: string,
-    @Body() body: { userId: string; amountCents: number; paymentIntentId: string }
+    @Body() body: { userId: string; amountCents: number; paymentIntentId: string },
+    @Headers('x-internal-secret') internalSecret: string
   ) {
+    assertInternalSecret(internalSecret);
     return this.productsService.handlePurchaseCompleted(
       productId,
       body.userId,

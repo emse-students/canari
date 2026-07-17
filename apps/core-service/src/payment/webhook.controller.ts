@@ -186,7 +186,7 @@ export class PaymentWebhookController {
                 typeof session.payment_intent === 'string' ? session.payment_intent : '',
             },
             {
-              maxRedirects: 0,
+              ...internalSocialRequestConfig(),
               timeout: 15_000,
               validateStatus: (s) => s >= 200 && s < 300,
             }
@@ -264,7 +264,7 @@ export class PaymentWebhookController {
               `${parsedBase.origin}/`
             ).href;
             await axios.post(url, undefined, {
-              maxRedirects: 0,
+              ...internalSocialRequestConfig(),
               timeout: 15_000,
               validateStatus: (s) => s >= 200 && s < 300,
             });
