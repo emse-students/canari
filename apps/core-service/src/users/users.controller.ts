@@ -7,7 +7,6 @@ import {
   Param,
   Headers,
   UseGuards,
-  Req,
   Query,
   Post,
   Delete,
@@ -22,15 +21,6 @@ import { CreateUserDto, UpdateUserDto, UpdateNotesDto, DirectoryQueryDto } from 
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 
-interface JwtUser {
-  sub?: string;
-  id?: string;
-}
-
-interface RequestWithUser {
-  user?: JwtUser;
-}
-
 /** Controller handling user profile CRUD, search, and avatar proxy. */
 @Controller('users')
 export class UsersController {
@@ -43,10 +33,10 @@ export class UsersController {
    * Search users by id or displayName for autocomplete.
    * Usage: GET /users/search?q=jol
    */
+  @UseGuards(NginxAuthGuard)
   @Get('search')
-  search(@Query('q') query: string, @Req() req: RequestWithUser) {
-    // Exclude current user from results if authenticated
-    const currentUserId = req.user?.sub || req.user?.id;
+  search(@Query('q') query: string, @Headers('x-user-id') currentUserId: string) {
+    // Exclude the authenticated caller (nginx-injected identity) from results.
     return this.usersService.search(query, currentUserId);
   }
 

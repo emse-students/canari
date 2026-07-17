@@ -29,7 +29,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | FIXED |
 | S7 | MEDIUM | nginx does not reset identity headers on unauth locations | FIXED |
 | S8 | MEDIUM | welcome/history-request trust body `requesterUserId` | FIXED |
-| B1 | LOW/BUG | users `search` reads never-populated `req.user`; route unguarded | TODO |
+| B1 | LOW/BUG | users `search` reads never-populated `req.user`; route unguarded | FIXED |
 | S9 | INFO | `canari_ws_token` access token JS-readable (accepted tradeoff) | ACCEPTED |
 | S10 | INFO | Document vault is server-custody, not E2E (document as such) | ACCEPTED |
 
@@ -181,6 +181,13 @@ is never populated (header auth, no interceptor sets it) -> `currentUserId` alwa
 undefined: self-exclusion never applies and service-account visibility can't identify an
 admin caller on search. Route also lacks `@UseGuards(NginxAuthGuard)` -> de-facto anonymous
 user enumeration. Fix: read `@Headers('x-user-id')`; add the guard.
+
+FIXED: `search` now carries `@UseGuards(NginxAuthGuard)` and reads `@Headers('x-user-id')
+currentUserId` (mirrors the sibling `directory` route). The dead `@Req()`/`RequestWithUser`/
+`JwtUser` plumbing is deleted. Self-exclusion + service-account visibility now get the real
+caller id, and anonymous enumeration is closed. All 3 frontend callers (mention autocomplete,
+`UserAutocomplete`, `user.ts searchUsers`) use `apiFetch` (authenticated) from logged-in-only
+UI, so the guard breaks no legitimate flow.
 
 ### S9 / S10 - accepted
 S9: `canari_ws_token` holds the access token in a JS-readable cookie (needed for WS); any XSS
