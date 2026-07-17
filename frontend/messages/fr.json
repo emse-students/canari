@@ -1021,7 +1021,6 @@
   "carte_project_delete_confirm": "Supprimer l'affiche « {name} » ?",
   "carte_project_updated_at": "Modifiée le {date}",
   "carte_editor_back": "Retour à la Carte de la Vie Asso",
-  "carte_editor_coming_soon": "L'éditeur d'affiche arrive bientôt.",
   "carte_poster_subtitle": "{count} associations sur la carte",
   "carte_empty": "Aucune association à afficher.",
   "carte_directory_heading": "Annuaire",

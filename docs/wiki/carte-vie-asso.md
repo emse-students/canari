@@ -100,9 +100,21 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   dashboard card + nav item; `categoryId` picker in the association profile settings; typed API
   client (`listAssociationCategories`, poster CRUD, ...) + FR/EN i18n. Editor page
   `/admin/carte/[id]` is a stub until P1.
-- **P1 - Generator + static render**: "auto-populate" one bubble per asso pre-grouped by
-  category; render bubbles + polaroids + themed text directory; PDF export. Presentable map
-  with no editing yet.
+- **P1 - Generator + static render** (DONE, gates green; browser-verify pending):
+  auto-populates one bubble per asso pre-grouped by category; renders bubbles + president
+  polaroids + a themed text directory; theme picker + background image/scrim; PDF export via
+  snapdom. Files: `frontend/src/lib/carte/theme.ts` (3 `CarteTheme` presets colorful/dark/minimal
+  + `resolveCarteTheme`), `frontend/src/lib/carte/generator.ts` (`PosterLayout` persisted shape +
+  `buildPosterModel` grouping + president detection by role containing "presid"),
+  `frontend/src/lib/carte/export.ts` (`exportPosterPdf` = rasterize + jsPDF landscape/paginate),
+  `frontend/src/lib/components/carte/PosterCanvas.svelte` (the fixed-1600px DOM that is BOTH the
+  preview and the snapdom capture target; initials-behind fallback for broken logo/avatar imgs),
+  and the rewritten `/admin/carte/[id]/+page.svelte` (loads project + categories + associations +
+  rosters, scaled preview via `transform: scale`, Save persists `{version,theme,background}` into
+  `project.layout`, Export PDF). Removed the `carte_editor_coming_soon` i18n key; added the
+  `carte_poster_subtitle`/`carte_directory_heading`/`carte_theme_*`/`carte_background_*`/
+  `carte_scrim_label`/`carte_save_*`/`carte_export_*`/`carte_zone_uncategorized`/`carte_empty`/
+  `carte_settings_heading`/`carte_generated_note` keys (FR+EN). No editing/drag yet (that is P2).
 - **P2 - Editor**: drag / resize / z-index / per-bubble property panel; save & load project.
 - **P3 - Polish**: doodle palette, theme presets, free text, background blobs, snap guides.
 

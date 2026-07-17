@@ -1006,7 +1006,6 @@
   "carte_project_delete_confirm": "Delete the poster \"{name}\"?",
   "carte_project_updated_at": "Edited on {date}",
   "carte_editor_back": "Back to the Association Life Map",
-  "carte_editor_coming_soon": "The poster editor is coming soon.",
   "carte_poster_subtitle": "{count} associations on the map",
   "carte_empty": "No associations to display.",
   "carte_directory_heading": "Directory",
