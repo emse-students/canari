@@ -1041,7 +1041,7 @@
   "carte_export_button": "Exporter en PDF",
   "carte_exporting_label": "Export en cours...",
   "carte_directory_toggle": "Afficher l'annuaire",
-  "carte_editor_hint": "Glissez les bulles pour les déplacer ; utilisez les coins pour les redimensionner.",
+  "carte_editor_hint": "Glissez les bulles pour les déplacer ; utilisez les coins pour les redimensionner. Les repères d'alignement s'accrochent automatiquement (maintenez Alt pour un placement libre).",
   "carte_panel_heading": "Bulle sélectionnée",
   "carte_panel_empty": "Cliquez une bulle sur la carte pour la modifier.",
   "carte_panel_color": "Couleur",

@@ -153,7 +153,17 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   `selectedTextDeco` narrowed derived so text-only controls (content/bold/align) are gated while
   color/front/back/delete stay common. New i18n `carte_doodles_label` + `carte_doodle_*` (FR+EN). No
   migration (layout stays an opaque JSON blob).
-- **P3 remaining - Polish**: theme background blobs, snap guides.
+- **P3c - Snap guides** (gates green; browser-verify pending): alignment guides during element
+  moves, fully inside `PosterCanvas.svelte` (no data model / migration / persisted state). On
+  `beginMove`, `collectGuides` snapshots the live DOM rects of every other `[data-el-root]` (so
+  variable-height bubbles contribute accurate edges), converts them to poster px, and offers their
+  left/center/right + top/center/bottom plus the stage center-x and content margins as guide lines;
+  the dragged element's own footprint (`w0`/`h0`) is captured for center/right/bottom anchors. In
+  `onWindowMove`, `nearestSnap` pulls the closest edge/center within `SNAP_THRESHOLD` (8 px) onto a
+  guide and records the line; dashed guide lines render in the stage while dragging (gated on
+  `editable`, so export never rasterises them). Roots carry `data-el-id` for self-exclusion. Holding
+  **Alt** bypasses snapping (free placement); the editor hint (`carte_editor_hint`) documents it.
+- **P3 remaining - Polish**: theme background blobs.
 
 ## Reuse map
 

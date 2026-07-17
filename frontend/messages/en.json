@@ -1026,7 +1026,7 @@
   "carte_export_button": "Export to PDF",
   "carte_exporting_label": "Exporting...",
   "carte_directory_toggle": "Show directory",
-  "carte_editor_hint": "Drag bubbles to move them; use the corners to resize.",
+  "carte_editor_hint": "Drag bubbles to move them; use the corners to resize. Alignment guides snap automatically (hold Alt for free placement).",
   "carte_panel_heading": "Selected bubble",
   "carte_panel_empty": "Click a bubble on the map to edit it.",
   "carte_panel_color": "Color",

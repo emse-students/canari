@@ -75,9 +75,16 @@
 
   const MIN_SCALE = 0.4;
   const MAX_SCALE = 2.6;
+  /** How close (poster px) an edge/center must be to a guide before it snaps. */
+  const SNAP_THRESHOLD = 8;
+  /** Stage side padding shared by the title + directory, offered as alignment guides. */
+  const CONTENT_MARGIN = 56;
 
   /** The stage element, used to convert client pointer coords into poster coords. */
   let stageEl = $state<HTMLElement>();
+
+  /** Active alignment guide lines shown during a move (poster px), or null when not aligned. */
+  let snapLines = $state<{ x: number | null; y: number | null }>({ x: null, y: null });
 
   /** Which layer a gesture is acting on, so a change routes to the right callback. */
   type DragTarget = 'bubble' | 'decoration';
@@ -96,6 +103,12 @@
         py0: number;
         rectLeft: number;
         rectTop: number;
+        /** Dragged element footprint in poster px (for center/right/bottom anchors). */
+        w0: number;
+        h0: number;
+        /** Vertical / horizontal guide lines (poster px) collected from the other elements. */
+        vGuides: number[];
+        hGuides: number[];
       }
     | {
         mode: 'resize';
@@ -158,6 +171,48 @@
     }
   }
 
+  /**
+   * Snapshots the vertical/horizontal alignment guides offered by every element except the one
+   * being dragged, plus the stage center + content margins. Rects are read live from the DOM (so
+   * variable-height bubbles contribute accurate edges) and converted into poster px.
+   */
+  function collectGuides(stageRect: DOMRect, draggedId: string): { v: number[]; h: number[] } {
+    const v = [STAGE_WIDTH / 2, CONTENT_MARGIN, STAGE_WIDTH - CONTENT_MARGIN];
+    const h: number[] = [];
+    if (!stageEl) return { v, h };
+    for (const node of stageEl.querySelectorAll<HTMLElement>('[data-el-root]')) {
+      if (node.dataset.elId === draggedId) continue;
+      const r = node.getBoundingClientRect();
+      const left = (r.left - stageRect.left) / viewScale;
+      const top = (r.top - stageRect.top) / viewScale;
+      const w = r.width / viewScale;
+      const hgt = r.height / viewScale;
+      v.push(left, left + w / 2, left + w);
+      h.push(top, top + hgt / 2, top + hgt);
+    }
+    return { v, h };
+  }
+
+  /**
+   * Finds the closest guide within {@link SNAP_THRESHOLD} of any anchor. Returns the delta to add
+   * to align the anchor onto that guide, plus the guide coordinate (to draw), or null if none.
+   */
+  function nearestSnap(
+    anchors: number[],
+    guides: number[]
+  ): { delta: number; line: number } | null {
+    let best: { delta: number; line: number; dist: number } | null = null;
+    for (const a of anchors) {
+      for (const line of guides) {
+        const dist = Math.abs(line - a);
+        if (dist <= SNAP_THRESHOLD && (!best || dist < best.dist)) {
+          best = { delta: line - a, line, dist };
+        }
+      }
+    }
+    return best ? { delta: best.delta, line: best.line } : null;
+  }
+
   /** Begins moving a bubble or decoration. */
   function beginMove(
     event: PointerEvent,
@@ -172,6 +227,8 @@
     event.stopPropagation();
     select(target, id);
     const rect = stageEl.getBoundingClientRect();
+    const self = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const guides = collectGuides(rect, id);
     drag = {
       mode: 'move',
       target,
@@ -184,6 +241,10 @@
       py0: (event.clientY - rect.top) / viewScale,
       rectLeft: rect.left,
       rectTop: rect.top,
+      w0: self.width / viewScale,
+      h0: self.height / viewScale,
+      vGuides: guides.v,
+      hGuides: guides.h,
     };
     attachWindow();
   }
@@ -233,8 +294,24 @@
     const py = (event.clientY - drag.rectTop) / viewScale;
     if (drag.mode === 'move') {
       const maxX = Math.max(0, STAGE_WIDTH - drag.baseWidth * drag.scale);
-      const nx = clamp(drag.originX + (px - drag.px0), 0, maxX);
-      const ny = Math.max(0, drag.originY + (py - drag.py0));
+      let nx = clamp(drag.originX + (px - drag.px0), 0, maxX);
+      let ny = Math.max(0, drag.originY + (py - drag.py0));
+      // Alt bypasses snapping for free placement; otherwise pull edges/centers onto guides.
+      let vLine: number | null = null;
+      let hLine: number | null = null;
+      if (!event.altKey) {
+        const sx = nearestSnap([nx, nx + drag.w0 / 2, nx + drag.w0], drag.vGuides);
+        if (sx) {
+          nx = clamp(nx + sx.delta, 0, maxX);
+          vLine = sx.line;
+        }
+        const sy = nearestSnap([ny, ny + drag.h0 / 2, ny + drag.h0], drag.hGuides);
+        if (sy) {
+          ny = Math.max(0, ny + sy.delta);
+          hLine = sy.line;
+        }
+      }
+      snapLines = { x: vLine, y: hLine };
       emitChange(drag.target, drag.id, { x: nx, y: ny });
     } else {
       const r = Math.max(1, Math.hypot(px - drag.cx, py - drag.cy));
@@ -249,6 +326,7 @@
 
   function onWindowUp() {
     drag = null;
+    snapLines = { x: null, y: null };
     detachWindow();
   }
 
@@ -322,6 +400,7 @@
         <div
           class="carte-card"
           data-el-root
+          data-el-id={bubble.assoId}
           style:position="absolute"
           style:left="{bubble.x}px"
           style:top="{bubble.y}px"
@@ -455,13 +534,14 @@
       {/if}
     {/each}
 
-    <!-- Free-form decoration layer (text; later doodles + blobs). -->
+    <!-- Free-form decoration layer (text + doodles; blobs later). -->
     {#each decorations as deco (deco.id)}
       {#if deco.kind === 'text'}
         {@const dsel = editable && selectedDecorationId === deco.id}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           data-el-root
+          data-el-id={deco.id}
           style:position="absolute"
           style:left="{deco.x}px"
           style:top="{deco.y}px"
@@ -518,6 +598,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           data-el-root
+          data-el-id={deco.id}
           style:position="absolute"
           style:left="{deco.x}px"
           style:top="{deco.y}px"
@@ -558,6 +639,18 @@
         </div>
       {/if}
     {/each}
+
+    <!-- Alignment guides: shown only during an editable drag, never rasterised (no active drag on export). -->
+    {#if editable && snapLines.x !== null}
+      <div
+        style="position:absolute;top:0;bottom:0;left:{snapLines.x}px;width:0;border-left:1px dashed #f5c518;pointer-events:none;z-index:9999;"
+      ></div>
+    {/if}
+    {#if editable && snapLines.y !== null}
+      <div
+        style="position:absolute;left:0;right:0;top:{snapLines.y}px;height:0;border-top:1px dashed #f5c518;pointer-events:none;z-index:9999;"
+      ></div>
+    {/if}
   </div>
 
   {#if directoryVisible && model.totalAssos > 0}
