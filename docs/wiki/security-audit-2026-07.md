@@ -27,7 +27,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | FIXED |
 | S5 | HIGH | Arbitrary group member removal + roster enumeration | FIXED |
 | S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | FIXED |
-| S7 | MEDIUM | nginx does not reset identity headers on unauth locations | TODO |
+| S7 | MEDIUM | nginx does not reset identity headers on unauth locations | FIXED |
 | S8 | MEDIUM | welcome/history-request trust body `requesterUserId` | TODO |
 | B1 | LOW/BUG | users `search` reads never-populated `req.user`; route unguarded | TODO |
 | S9 | INFO | `canari_ws_token` access token JS-readable (accepted tradeoff) | ACCEPTED |
@@ -148,6 +148,15 @@ per-media CEK delivered E2E, so a raw-ciphertext IDOR leaks nothing usable.
 `X-Global-Admin "false"` resets. Client-injected identity headers reach these upstreams. Not
 exploitable today (handlers use params/api-key) but a latent trap for any future header read.
 Fix: reset these headers unconditionally at server scope (or in each public location).
+
+**FIXED.** Per-location reset (server-scope reset does NOT propagate here: nginx inherits
+`proxy_set_header` from an outer scope only when a location defines *none* of its own, and every
+one of these 5 locations sets `Host`/`X-Real-IP`/... - so the server-level `X-User-Id ""` block
+is dropped). Each of the 5 public locations now strips the full trust-header set the backends
+read - `X-User-Id`, `X-User-Logged-In`, `X-Global-Admin`, `X-Internal-Token` - to `""`/`"false"`.
+`/api/auth` and `/api/external` previously reset only `X-User-Id`/`X-User-Logged-In`, still
+leaking a spoofed `X-Global-Admin`/`X-Internal-Token`; now normalized to the same 4-line block.
+Single source of truth is `infrastructure/local/Dockerfile.frontend` (no infra/env change).
 
 ### S8 - MEDIUM - welcome/history-request trust body requester identity
 `apps/chat-delivery-service/src/controllers/messaging.controller.ts:124` and `:133` take

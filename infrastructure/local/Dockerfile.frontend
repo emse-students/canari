@@ -229,6 +229,12 @@ RUN printf 'server {\n\
     return 204;\n\
     }\n\
     add_header Access-Control-Allow-Origin "*" always;\n\
+    # Strip client-supplied trust headers: this public location defines its own\n\
+    # proxy_set_header directives, so nginx does NOT inherit the server-level resets.\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
     set $upstream_public social-service:3014;\n\
     proxy_pass http://$upstream_public;\n\
     proxy_set_header Host $host;\n\
@@ -237,6 +243,11 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     }\n\
     location /api/media/public/ {\n\
+    # Strip client-supplied trust headers (no server-level inheritance here).\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
     set $upstream_media_public media-service:3011;\n\
     proxy_pass http://$upstream_media_public;\n\
     proxy_set_header Host $host;\n\
@@ -317,6 +328,11 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location = /api/associations/calendar/feed.ics {\n\
+    # Public ICS feed - strip client-supplied trust headers (no server-level inheritance).\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
     set $upstream_asso social-service:3014;\n\
     proxy_pass http://$upstream_asso;\n\
     proxy_set_header Host $host;\n\
@@ -362,8 +378,11 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location /api/auth {\n\
+    # Unauthenticated - strip the full client-supplied trust-header set (no server-level inheritance).\n\
     proxy_set_header X-User-Id "";\n\
-    proxy_set_header X-User-Logged-In "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
     set $upstream_auth core-service:3012;\n\
     proxy_pass http://$upstream_auth;\n\
     proxy_set_header Host $host;\n\
@@ -374,8 +393,11 @@ RUN printf 'server {\n\
     \n\
     # External profile API (x-api-key, no session) - consumed by Sky\n\
     location /api/external {\n\
+    # x-api-key auth, no session - strip the full client-supplied trust-header set.\n\
     proxy_set_header X-User-Id "";\n\
-    proxy_set_header X-User-Logged-In "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
     set $upstream_external core-service:3012;\n\
     proxy_pass http://$upstream_external;\n\
     proxy_set_header Host $host;\n\
