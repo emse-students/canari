@@ -26,7 +26,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | FIXED |
 | S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | FIXED |
 | S5 | HIGH | Arbitrary group member removal + roster enumeration | FIXED |
-| S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | TODO |
+| S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | FIXED |
 | S7 | MEDIUM | nginx does not reset identity headers on unauth locations | TODO |
 | S8 | MEDIUM | welcome/history-request trust body `requesterUserId` | TODO |
 | B1 | LOW/BUG | users `search` reads never-populated `req.user`; route unguarded | TODO |
@@ -122,6 +122,24 @@ etc. are public via `/api/public/associations` -> enumerate + delete asso logos,
 images, doc/chat blobs. `GET /media/:id` (:236) also lacks ACL (ciphertext IDOR, lower
 impact - confidentiality holds via CEK, but metadata leak / defense-in-depth gap).
 Fix: bind media rows to an owner and check it on DELETE (and ideally GET).
+FIXED (internal-secret, not owner-binding - see rationale): the audit suggested per-media owner
+rows, but media-service has no DB (flat `media_metadata.json`, no owner column) and, more
+importantly, owner-binding is the wrong layer for public assets - association logos are managed
+by *any* asso admin, so "uploader == deleter" would silently break cross-admin logo/event-image
+replacement (the delete is best-effort, so mismatches would leak old blobs, not error). The real
+authorization already lives in social-service (association-admin guards). The ONLY caller of
+`DELETE /api/media/:id` anywhere is social-service `deleteMediaBestEffort` (logo/event/form/doc
+cleanup, server-to-server, Docker-internal); no client deletes media directly. So the fix trusts
+that boundary: `DELETE /media/:id` now requires `x-internal-secret` (new
+`apps/media-service/src/media/internal-secret.util.ts`, timing-safe, fails closed when unset,
+mirrors social-service's util) on top of the existing JWT check; `deleteMediaBestEffort` attaches
+`process.env.INTERNAL_SECRET`. `INTERNAL_SECRET` added to the media-service env block in all 3
+compose files (prod/dev `${INTERNAL_SECRET:-}`, local dev default). cd.yml already upserts the
+secret into the deployed `.env` (prod full-function); cd-dev leaves it empty -> dev delete
+fail-closes (best-effort, non-fatal, same tradeoff S3 accepted). GET `/media/:id` deliberately
+stays open: gating it needs a per-recipient ACL the flat store lacks and would break legit
+cross-user media fetches (recipient downloads sender's blob); confidentiality already rests on the
+per-media CEK delivered E2E, so a raw-ciphertext IDOR leaks nothing usable.
 
 ### S7 - MEDIUM - nginx identity headers not reset on unauth locations
 `infrastructure/local/Dockerfile.frontend`: `/api/public/`, `/api/media/public/`,

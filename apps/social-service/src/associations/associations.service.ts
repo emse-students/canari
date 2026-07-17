@@ -330,12 +330,20 @@ export class AssociationsService {
     }
   }
 
-  /** Tries to delete a media object; silently ignores errors (the object may already be gone). */
+  /**
+   * Tries to delete a media object; silently ignores errors (the object may already be gone).
+   * Sends `x-internal-secret` so media-service accepts the server-to-server deletion: that route
+   * rejects direct client calls, trusting social-service to have already enforced association-admin
+   * authz on the logo/event-image/form-banner/document being replaced.
+   */
   async deleteMediaBestEffort(mediaId: string, authorization: string): Promise<void> {
     try {
       await firstValueFrom(
         this.httpService.delete(`${this.mediaBaseUrl}/api/media/${mediaId}`, {
-          headers: { Authorization: authorization },
+          headers: {
+            Authorization: authorization,
+            'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
+          },
         })
       );
     } catch {

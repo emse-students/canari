@@ -215,6 +215,8 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       FRONTEND_URL: ${FRONTEND_URL:-}
       JWT_SECRET: ${JWT_SECRET}
+      # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: "${MINIO_PORT:-9000}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"

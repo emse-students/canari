@@ -4,10 +4,12 @@
  * Endpoints:
  *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
- *   DELETE /media/:id   - Remove a blob (owner only; simplified auth check)
+ *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
- * The token carries `sub` (userId); future work can enforce per-user ACL.
+ * The token carries `sub` (userId). Deletion additionally requires the shared
+ * X-Internal-Secret so only social-service (which owns association-admin authz) can
+ * remove blobs - a logged-in client cannot delete another association's public assets.
  *
  * Size limit: configurable via MEDIA_MAX_SIZE_MB (default 20 MB).
  * The service never inspects the ciphertext content.
@@ -20,6 +22,7 @@ import {
   Param,
   Res,
   Req,
+  Headers,
   UseInterceptors,
   UploadedFile,
   NotFoundException,
@@ -34,6 +37,7 @@ import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import sharp from 'sharp';
 import { MediaService } from './media.service';
+import { assertInternalSecret } from './internal-secret.util';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
 const POLICY_MAX_MEDIA_MB = 100;
@@ -263,8 +267,16 @@ export class MediaController {
   // DELETE /media/:id
   // ---------------------------------------------------------------------------
   @Delete(':id')
-  async remove(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
+  async remove(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Headers('x-internal-secret') internalSecret?: string
+  ): Promise<{ ok: boolean }> {
     this.verifyToken(req);
+    // Deletion is server-to-server only (social-service cleanup). The shared secret is the
+    // authorization gate - the JWT above merely proves an authenticated user triggered it.
+    // Blocks a logged-in client from deleting enumerable public media (asso logos, etc.).
+    assertInternalSecret(internalSecret);
     await this.mediaService.remove(id);
     return { ok: true };
   }
