@@ -22,7 +22,7 @@ const MIN_DURATION_MS = 8_000;
 /** Open challenges expire after this window. */
 const CHALLENGE_TTL_MS = 2 * 60 * 60 * 1000;
 /** Claimed time may exceed server elapsed by at most this (clock / ms jitter). */
-const CLIENT_CLOCK_SKEW_MS = 500;
+const CLIENT_CLOCK_SKEW_MS = 1_500;
 /**
  * Max amount by which we may credit the client timer below server wall-clock
  * (covers challenge RTT + mine generation + submit travel). Hard cap so a

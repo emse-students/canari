@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -40,6 +40,7 @@ export class SubmitMinesweeperDto {
   moves!: MinesweeperMoveDto[];
 
   /** Local play timer from first dig to win (preferred when plausible). */
+  @Transform(({ value }) => Math.round(Number(value)))
   @IsInt()
   @Min(0)
   @Max(7_200_000)
@@ -51,6 +52,9 @@ export class SubmitMinesweeperDto {
    * directly (it only sees arrival time).
    */
   @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null ? undefined : Math.round(Number(value))
+  )
   @IsInt()
   @Min(0)
   @Max(60_000)
