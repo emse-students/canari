@@ -293,7 +293,11 @@ async function _doRefresh(): Promise<string> {
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗${res.status} ${Date.now() - t0}ms`);
-    throw new SessionExpiredError();
+    // Only 401/403 prove the refresh cookie is dead. Any other status (e.g. 502/503
+    // while the backend restarts during a deploy) is transient: throwing
+    // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
+    if (res.status === 401 || res.status === 403) throw new SessionExpiredError();
+    throw new Error(`Token refresh failed (HTTP ${res.status})`);
   }
 
   const data = (await res.json()) as { access_token: string };

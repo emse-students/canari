@@ -40,6 +40,8 @@
     // Group management
     /** List of member user IDs in the current group conversation. */
     groupMembers?: string[];
+    /** User IDs with an invite currently in flight (optimistic pending rows). */
+    pendingInvites?: string[];
     /** ID of the currently authenticated user. */
     currentUserId?: string;
     /** Callback to rename the group. */
@@ -77,6 +79,7 @@
     onInviteMembers,
     onBack,
     groupMembers = [],
+    pendingInvites = [],
     currentUserId = '',
     onGroupRename,
     onGroupSetImage,
@@ -283,6 +286,7 @@
     {imageMediaId}
     currentUserId={currentUserId ?? ''}
     {groupMembers}
+    {pendingInvites}
     onClose={() => {
       showPanel = false;
     }}

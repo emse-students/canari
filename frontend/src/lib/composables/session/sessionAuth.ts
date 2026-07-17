@@ -16,6 +16,7 @@ import {
 } from '$lib/utils/chat/pinChange';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { solicitHistory, cancelAllHistorySolicit } from '$lib/utils/chat/historySolicit';
@@ -274,15 +275,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       accessToken = await getToken();
     } catch (err) {
       ctx.setIsLoginInProgress(false);
-      // A SessionExpiredError means the refresh cookie is dead - the session cannot be
-      // recovered by re-entering the PIN. Surface it as a session loss (logout + redirect
-      // to /login) rather than a retryable message stuck in the PIN modal. Any other error
-      // (transient network failure) stays retryable in the modal.
-      if (err instanceof SessionExpiredError && cb.onSessionExpired) {
-        cb.onSessionExpired();
+      // A SessionExpiredError means the refresh cookie is dead (HTTP 401/403) - the session
+      // cannot be recovered by re-entering the PIN. Surface it as a session loss (logout +
+      // redirect to /login); fall back to a direct redirect when no callback is wired so
+      // the user is never stranded in the PIN modal with a dead session.
+      if (err instanceof SessionExpiredError) {
+        if (cb.onSessionExpired) cb.onSessionExpired();
+        else void goto('/login', { replaceState: true });
         return;
       }
-      const msg = 'Session expired. Please sign in again.';
+      // Anything else is transient (network down, backend restarting): keep the PIN modal
+      // open with a truthful retryable message - do NOT claim the session expired.
+      const msg = m.auth_server_unreachable();
       ctx.setLoginError(msg);
       // Notify the caller so a PIN-modal spinner does not hang forever.
       cb.onLoginFailed?.(msg);
@@ -830,9 +834,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     clearUserLocally();
     clearPin();
     // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
-    // hand it to onSessionExpired so the caller logs out and redirects to /login.
-    if (_e instanceof SessionExpiredError && cb.onSessionExpired) {
-      cb.onSessionExpired();
+    // hand it to onSessionExpired so the caller logs out and redirects to /login. When no
+    // callback is wired, redirect directly so the user is never stranded in the modal.
+    if (_e instanceof SessionExpiredError) {
+      if (cb.onSessionExpired) cb.onSessionExpired();
+      else void goto('/login', { replaceState: true });
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(msg);
     } else {

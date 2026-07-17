@@ -815,6 +815,7 @@
           isLoadingHistory={convs.isLoadingHistory}
           isCatchingUpMessages={messaging.isMessageCatchupActive}
           groupMembers={convs.groupMembers}
+          pendingInvites={convs.pendingGroupInvites}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}

@@ -3,6 +3,7 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { Search } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface User {
     id: string;
@@ -22,15 +23,21 @@
     inputId?: string;
     /** Called when the user presses Enter with a valid selection. */
     onSubmit?: () => void;
+    /** When true, the input resets after each selection (multi-add usage, e.g. MultiUserSelector). */
+    clearOnSelect?: boolean;
+    /** User IDs to hide from the suggestion list (e.g. already-selected users). */
+    excludeIds?: string[];
   }
 
   let {
     value: _value,
     onValueChange,
     onSelect,
-    placeholder = 'Rechercher un utilisateur…',
+    placeholder = m.user_search_placeholder(),
     inputId = 'user-autocomplete',
     onSubmit,
+    clearOnSelect = false,
+    excludeIds = [],
   }: Props = $props();
 
   let suggestions = $state<User[]>([]);
@@ -57,7 +64,8 @@
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
       if (res.ok) {
-        suggestions = await res.json();
+        const all: User[] = await res.json();
+        suggestions = all.filter((u) => !excludeIds.includes(u.id));
         showDropdown = suggestions.length > 0;
         selectedIndex = -1;
       }
@@ -92,6 +100,12 @@
     suggestions = [];
     selectedIndex = -1;
     onSelect?.(user);
+    if (clearOnSelect) {
+      // Multi-add usage: the parent stored the pick via onSelect; reset for the next search.
+      selectedUser = null;
+      inputText = '';
+      onValueChange('');
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {

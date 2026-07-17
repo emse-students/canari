@@ -195,6 +195,12 @@ no catch-up, the existing worker-retry + fallback stands.
 4. Creator: `addMembersBulk(groupId, devices, excludeDeviceIds)` -> one staged transaction (C7-A): stage the Add, validate the epoch (`POST /api/mls/commit`), merge on accept and broadcast the commit / roll back on reject. Returns `{ welcome, ratchetTree, addedDeviceIds, skippedDeviceIds }` (the ratchet tree is exported post-merge).
 5. Creator: `sendWelcome(welcome, peerId, groupId, deviceId, ratchetTree)` -> POST `/api/mls/welcome`
 6. Creator: `registerMember(groupId, peerId)` + `registerMember(groupId, userId)`
+
+Only the bulk commit must stay unique (staged under the add-lock). Everything around it is
+plain HTTP and runs in parallel (`groupCreation.ts` / `deliverWelcomes` in `groupActions.ts`):
+device fetches across invited users, Welcome deliveries across devices (same blob, order-free),
+and `registerMember` deduplicated per user. Group invites surface optimistic "pending" member
+rows in the group panel while the flow runs (`pendingGroupInvites` in `useConversations`).
 7. Peer: Welcome arrives via WS or pending queue -> `processWelcome(bytes, ratchetTree)` -> group joined in WASM
 8. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(..., 'active')`
 9. Peer: `saveState(pin)` -> persisted to IndexedDB

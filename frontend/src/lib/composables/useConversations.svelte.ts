@@ -82,6 +82,9 @@ export function useConversations() {
   let isChannelMembersDrawerOpen = $state(false);
   let isChannelSettingsModalOpen = $state(false);
   let groupMembers = $state<string[]>([]);
+  // Optimistic invite feedback: user IDs with an add-member operation in flight,
+  // keyed by group so a mid-invite conversation switch never leaks pending rows.
+  let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
   let isLoadingHistory = $state(false);
   // True once the initial IndexedDB restore has populated the map, so consumers (e.g. the
   // /posts mini-panel) can treat the live map as authoritative and reflect deletions
@@ -803,18 +806,25 @@ export function useConversations() {
       ...new SvelteSet(memberIds.map((id) => id.trim().toLowerCase()).filter(Boolean)),
     ];
     if (normalized.length === 0) return;
-    await inviteMembersToGroup(normalized, convo, {
-      mlsService: ctx.ensureMls(),
-      storage: ctx.storage,
-      userId: ctx.userId,
-      pin: ctx.pin,
-      historyBaseUrl: ctx.historyBaseUrl,
-      conversations,
-      selectConversation: (name) => selectConversationWithCtx(name, ctx),
-      saveConversation: (name) => saveConversation(name, ctx),
-      log: ctx.log,
-    });
-    await loadGroupMembers(convo.id, ctx);
+    // Optimistic UI: expose the invitees as pending immediately; the invite flow
+    // (device fetch + bulk commit + welcomes) takes several seconds.
+    pendingInvites = { groupId: convo.id, ids: normalized };
+    try {
+      await inviteMembersToGroup(normalized, convo, {
+        mlsService: ctx.ensureMls(),
+        storage: ctx.storage,
+        userId: ctx.userId,
+        pin: ctx.pin,
+        historyBaseUrl: ctx.historyBaseUrl,
+        conversations,
+        selectConversation: (name) => selectConversationWithCtx(name, ctx),
+        saveConversation: (name) => saveConversation(name, ctx),
+        log: ctx.log,
+      });
+      await loadGroupMembers(convo.id, ctx);
+    } finally {
+      pendingInvites = null;
+    }
   }
 
   /** Opens or creates a direct 1-to-1 conversation with the given user. */
@@ -1004,6 +1014,12 @@ export function useConversations() {
     },
     set groupMembers(v: string[]) {
       groupMembers = v;
+    },
+    /** User IDs with an invite in flight for the currently selected group (optimistic UI). */
+    get pendingGroupInvites(): string[] {
+      if (!pendingInvites || !selectedContact) return [];
+      const convo = conversations.get(selectedContact);
+      return convo && convo.id === pendingInvites.groupId ? pendingInvites.ids : [];
     },
     /** True while history is being fetched and decrypted for the selected conversation. */
     get isLoadingHistory() {

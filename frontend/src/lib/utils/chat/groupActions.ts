@@ -29,6 +29,53 @@ export function warnSkippedKeyPackages(
   );
 }
 
+/**
+ * Delivers a Welcome to every added device in parallel. Each delivery is an independent
+ * HTTP call carrying the same Welcome blob, so ordering is irrelevant for MLS - only the
+ * preceding bulk commit must stay unique. Failures are logged per device without
+ * aborting the remaining deliveries.
+ *
+ * @param ownerOf Resolves the owner userId of a device; devices without an owner are skipped.
+ * @returns The set of owner userIds with at least one successfully delivered device.
+ */
+export async function deliverWelcomes(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  bulk: { welcome?: Uint8Array; ratchetTree?: Uint8Array; addedDeviceIds: string[] };
+  ownerOf: (deviceId: string) => string | undefined;
+  tag: string;
+  log: (msg: string) => void;
+}): Promise<Set<string>> {
+  const { mlsService, groupId, bulk, ownerOf, tag, log } = params;
+  const delivered = new Set<string>();
+  if (!bulk.welcome) {
+    log(`${tag} addMembersBulk returned no welcome (${bulk.addedDeviceIds.length} device(s))`);
+    console.warn(`${tag} addMembersBulk returned no welcome`);
+    return delivered;
+  }
+  const welcome = bulk.welcome;
+  await Promise.all(
+    bulk.addedDeviceIds.map(async (did) => {
+      const owner = ownerOf(did);
+      if (!owner) return;
+      try {
+        await mlsService.sendWelcome(welcome, owner, groupId, did, bulk.ratchetTree);
+        delivered.add(owner);
+        log(`${tag} Welcome -> ${owner}:${did} OK`);
+      } catch (e) {
+        log(
+          `${tag} Welcome failed -> ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
+        );
+        console.warn(
+          `${tag} sendWelcome failed for ${owner}:${did}:`,
+          e instanceof Error ? e.message : e
+        );
+      }
+    })
+  );
+  return delivered;
+}
+
 /** Returns the deduplicated list of userId strings that are members of a group (a user can have multiple devices). */
 export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: string) {
   const members = await mlsService.getGroupMembers(groupId);

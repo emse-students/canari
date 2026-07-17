@@ -47,6 +47,8 @@
     currentUserId: string;
     /** List of member user IDs in the group. */
     groupMembers: string[];
+    /** User IDs with an invite currently in flight, shown as optimistic pending rows. */
+    pendingInvites?: string[];
     /** Callback to close the panel (parent clears showPanel). */
     onClose: () => void;
     /** Callback to rename the group, receiving the new trimmed name. */
@@ -73,6 +75,7 @@
     imageMediaId = null,
     currentUserId,
     groupMembers,
+    pendingInvites = [],
     onClose,
     onRename,
     onSetImage,
@@ -87,6 +90,11 @@
   let showInviteModal = $state(false);
   let newMembers = $state<string[]>([]);
   let renameInput = $state('');
+
+  // Optimistic rows: invitees still in flight and not yet in the authoritative member list.
+  const pendingDisplay = $derived(
+    pendingInvites.filter((id) => !groupMembers.some((mem) => mem.toLowerCase() === id))
+  );
 
   // ── Group avatar upload ─────────────────────────────────────────────────────
   let imageUploading = $state(false);
@@ -400,7 +408,7 @@
               </button>
             </div>
 
-            {#if groupMembers.length > 0}
+            {#if groupMembers.length > 0 || pendingDisplay.length > 0}
               <div
                 class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 overflow-hidden shadow-sm"
               >
@@ -408,7 +416,7 @@
                   {#each groupMembers as member, index (member)}
                     <li
                       class="flex items-center justify-between gap-3 px-4 py-3.5 {index !==
-                      groupMembers.length - 1
+                        groupMembers.length - 1 || pendingDisplay.length > 0
                         ? 'border-b border-black/5 dark:border-white/5'
                         : ''}"
                     >
@@ -436,6 +444,26 @@
                           <UserMinus size={16} />
                         </button>
                       {/if}
+                    </li>
+                  {/each}
+                  {#each pendingDisplay as pending, index (pending)}
+                    <li
+                      class="flex items-center justify-between gap-3 px-4 py-3.5 opacity-70 {index !==
+                      pendingDisplay.length - 1
+                        ? 'border-b border-black/5 dark:border-white/5'
+                        : ''}"
+                    >
+                      <div class="flex items-center gap-3 min-w-0">
+                        <Avatar userId={pending} size="sm" />
+                        <UserName
+                          userId={pending}
+                          class="text-[0.9rem] font-semibold text-text-main truncate"
+                        />
+                      </div>
+                      <span
+                        class="text-[0.65rem] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0 animate-pulse"
+                        >{m.chat_group_invite_pending_label()}</span
+                      >
                     </li>
                   {/each}
                 </ul>
@@ -566,7 +594,6 @@
       onUsersChange={(users) => {
         newMembers = users;
       }}
-      placeholder={m.chat_group_user_id_placeholder()}
     />
 
     <button

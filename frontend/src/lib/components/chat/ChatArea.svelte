@@ -73,6 +73,8 @@
     // Group management
     /** List of member user IDs in the current group conversation. */
     groupMembers?: string[];
+    /** User IDs with an invite currently in flight (optimistic pending rows). */
+    pendingInvites?: string[];
     /** Error message to display when the last send operation failed. */
     sendError?: string;
     /** Callback to rename the group conversation. */
@@ -160,6 +162,7 @@
     onOpenSettings,
     isHidden = false,
     groupMembers = [],
+    pendingInvites = [],
     sendError = '',
     onGroupRename,
     onGroupSetImage,
@@ -645,6 +648,7 @@
         {onBack}
         {onOpenSettings}
         {groupMembers}
+        {pendingInvites}
         {currentUserId}
         {onGroupRename}
         {onGroupSetImage}

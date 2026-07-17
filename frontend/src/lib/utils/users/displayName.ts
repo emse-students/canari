@@ -1,4 +1,5 @@
 import { currentUserId, fetchUserProfile, getSavedDisplayName } from '$lib/stores/user';
+import { m } from '$lib/paraglide/messages';
 
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
@@ -45,6 +46,15 @@ function formatProfileDisplayName(profile: {
   return profile.id;
 }
 
+/**
+ * Seeds the display-name cache with an already-known name (e.g. from a search result),
+ * so subsequent sync reads show the name instantly instead of the raw user ID.
+ */
+export function seedUserDisplayName(userId: string, name: string): void {
+  const trimmed = name.trim();
+  if (trimmed) displayNameCache.set(normalizeUserId(userId), trimmed);
+}
+
 export function getUserDisplayNameSync(userId: string, fallback?: string): string {
   const normalized = normalizeUserId(userId);
   const cached = displayNameCache.get(normalized);
@@ -61,7 +71,7 @@ export function getUserDisplayNameSync(userId: string, fallback?: string): strin
 
   // During the failure backoff window, surface the "unknown" label synchronously
   // so the UI doesn't flicker between the raw ID and the async-resolved label.
-  if (shouldSkipRetry(normalized)) return 'Utilisateur inconnu';
+  if (shouldSkipRetry(normalized)) return m.user_unknown_label();
 
   return fallback?.trim() || userId;
 }
@@ -90,7 +100,7 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
     })
     .catch(() => {
       failedAt.set(normalized, Date.now());
-      return 'Utilisateur inconnu';
+      return m.user_unknown_label();
     })
     .finally(() => {
       inFlight.delete(normalized);

@@ -1,7 +1,11 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
-import { persistMlsStateAfterMutation, warnSkippedKeyPackages } from '$lib/utils/chat/groupActions';
+import {
+  deliverWelcomes,
+  persistMlsStateAfterMutation,
+  warnSkippedKeyPackages,
+} from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
@@ -55,13 +59,15 @@ function toUiDiscussionError(error: unknown): string {
 /**
  * Fetches the list of registered devices for a user, retrying up to `attempts` times
  * before giving up. Returns an empty array if no devices are found after all retries.
- * Used before creating a group to confirm the peer is reachable.
+ * Targets are always picked from the user autocomplete (they exist and have signed in),
+ * so the retry only covers a transient network blip - keep it short: a long retry loop
+ * here blocks the whole invite flow.
  */
 async function fetchDevicesWithRetry(
   mlsService: IMlsService,
   userId: string,
   log: (msg: string) => void,
-  attempts = 6,
+  attempts = 2,
   delayMs = 1500
 ) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -138,21 +144,15 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         );
         warnSkippedKeyPackages(bulk.skippedDeviceIds, groupId, '[GROUP]', log);
 
-        if (bulk.welcome) {
-          for (const did of bulk.addedDeviceIds) {
-            try {
-              log(`[GROUP] Sending Welcome to ${userId}:${did}...`);
-              await mlsService.sendWelcome(bulk.welcome, userId, groupId, did, bulk.ratchetTree);
-              log(`[GROUP] Welcome sent to ${did}`);
-            } catch (e) {
-              log(`[GROUP] Welcome failed for ${did}: ${e}`);
-              console.error(`[GROUP] Welcome failed for ${did}:`, e);
-            }
-          }
-        } else {
-          log('[GROUP] No welcome in bulk result!');
-          console.warn('[GROUP] addMembersBulk returned no welcome for own devices');
-        }
+        // All added devices belong to the current user; deliveries run in parallel.
+        await deliverWelcomes({
+          mlsService,
+          groupId,
+          bulk,
+          ownerOf: () => userId,
+          tag: '[GROUP]',
+          log,
+        });
 
         // Save MLS state after the merged commit (crash-safety).
         await persistMlsStateAfterMutation(mlsService, userId, pin, log);
@@ -227,12 +227,18 @@ async function processBulkAddition(
   try {
     await mlsService.registerMember(conversation.id, userId);
 
-    // Collect devices for ALL users
+    // Collect devices for ALL users. Fetches are independent reads (no MLS constraint),
+    // so they run in parallel instead of one sequential retry loop per user.
     const allDevices: any[] = [];
     const userMap = new Map<string, string>(); // deviceId -> userId
 
-    for (const targetUser of targetUsers) {
-      const devices = await fetchDevicesWithRetry(mlsService, targetUser, log);
+    const deviceFetches = await Promise.all(
+      targetUsers.map(async (targetUser) => ({
+        targetUser,
+        devices: await fetchDevicesWithRetry(mlsService, targetUser, log),
+      }))
+    );
+    for (const { targetUser, devices } of deviceFetches) {
       if (devices.length === 0) {
         log(`[WARN] Skipped: no devices found for ${targetUser}.`);
         console.warn(`[SYNC] No devices found for ${targetUser}, skipping`);
@@ -263,7 +269,7 @@ async function processBulkAddition(
 
     // Track delivery success per user. We only register server membership when a
     // Welcome has been successfully accepted by delivery service for that device.
-    const deliveredUsers = new Set<string>();
+    const announcedUsers = new Set<string>();
 
     try {
       // Add all devices in one staged MLS commit (C7-A): exclude every candidate device from the
@@ -280,47 +286,37 @@ async function processBulkAddition(
 
       await persistMlsStateAfterMutation(mlsService, userId, pin, log);
 
-      // Send welcomes per-device; do not abort all recipients on one failure.
-      log(
-        `[SYNC] bulk.welcome exists: ${!!bulk.welcome}, bulk.welcome length: ${bulk.welcome?.length ?? 0}`
-      );
+      // Deliver welcomes per-device in parallel; one failure never aborts the others.
       log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
+      const deliveredUsers = await deliverWelcomes({
+        mlsService,
+        groupId: conversation.id,
+        bulk,
+        ownerOf: (did) => userMap.get(did),
+        tag: '[SYNC]',
+        log,
+      });
 
-      if (bulk.welcome) {
-        for (const did of bulk.addedDeviceIds) {
-          const tUser = userMap.get(did);
-          if (!tUser) continue;
+      // registerMember is a user-level upsert: once per delivered user (not per device),
+      // in parallel. Only users whose registration succeeded get announced below.
+      await Promise.all(
+        [...deliveredUsers].map(async (tUser) => {
           try {
-            log(`[SYNC] Sending Welcome to ${tUser}:${did} for group ${conversation.id}...`);
-            await mlsService.sendWelcome(
-              bulk.welcome,
-              tUser,
-              conversation.id,
-              did,
-              bulk.ratchetTree
-            );
             await mlsService.registerMember(conversation.id, tUser);
-            deliveredUsers.add(tUser);
-            log(`[SYNC] Welcome sent successfully to ${tUser}:${did}`);
+            announcedUsers.add(tUser);
           } catch (err) {
             log(
-              `[WARN] Welcome not delivered to ${tUser}:${did} - ${
-                err instanceof Error ? err.message : String(err)
-              }`
-            );
-            console.warn(
-              `[SYNC] sendWelcome failed for ${tUser}:${did}:`,
-              err instanceof Error ? err.message : err
+              `[WARN] registerMember failed for ${tUser}: ${err instanceof Error ? err.message : String(err)}`
             );
           }
-        }
-      }
+        })
+      );
 
       log(
-        `[OK] Added: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} device(s)). (${deliveredUsers.size} user(s) delivered)`
+        `[OK] Added: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} device(s)). (${announcedUsers.size} user(s) delivered)`
       );
       console.log(
-        `[SYNC] Members added: ${targetUsers.join(', ')} (${deliveredUsers.size}/${targetUsers.length} delivered)`
+        `[SYNC] Members added: ${targetUsers.join(', ')} (${announcedUsers.size}/${targetUsers.length} delivered)`
       );
     } finally {
       if (lockAcquired) await mlsService.releaseAddLock(conversation.id).catch(() => {});
@@ -328,10 +324,10 @@ async function processBulkAddition(
 
     // Broadcast member addition notification (one generic or multiple specific?)
     // Let's send one generic message listing all new users
-    if (deliveredUsers.size > 0) {
+    if (announcedUsers.size > 0) {
       try {
         const controlMsg = encodeAppMessage(
-          mkSystem('memberAdded', JSON.stringify({ newUsers: [...deliveredUsers] }))
+          mkSystem('memberAdded', JSON.stringify({ newUsers: [...announcedUsers] }))
         );
         await mlsService.sendMessage(conversation.id, controlMsg);
         await persistMlsStateAfterMutation(mlsService, userId, pin, log);
@@ -382,35 +378,19 @@ async function performDirectAdd(
 
     // registerMember is user-level (upsert GroupMember): one call per userId is enough.
     // Calling once per device generates N-1 redundant transactions for a multi-device user.
-    const registeredOwners = new Set<string>();
-    for (const did of bulk.addedDeviceIds) {
-      const owner = contactDeviceIds.has(did) ? contact : userId;
-      if (!registeredOwners.has(owner)) {
-        registeredOwners.add(owner);
-        await mlsService.registerMember(groupId, owner);
-      }
-    }
+    const owners = new Set(
+      bulk.addedDeviceIds.map((did) => (contactDeviceIds.has(did) ? contact : userId))
+    );
+    await Promise.all([...owners].map((owner) => mlsService.registerMember(groupId, owner)));
 
-    if (bulk.welcome) {
-      for (const did of bulk.addedDeviceIds) {
-        const owner = contactDeviceIds.has(did) ? contact : userId;
-        try {
-          await mlsService.sendWelcome(bulk.welcome, owner, groupId, did, bulk.ratchetTree);
-          log(`[ADD] Welcome → ${owner}:${did} ✓`);
-        } catch (e) {
-          log(
-            `[ADD] Welcome failed → ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
-          );
-          console.warn(
-            `[ADD] sendWelcome failed for ${owner}:${did}:`,
-            e instanceof Error ? e.message : e
-          );
-        }
-      }
-    } else {
-      log('[ADD] addMembersBulk returned welcome=null');
-      console.warn('[ADD] addMembersBulk returned no welcome');
-    }
+    await deliverWelcomes({
+      mlsService,
+      groupId,
+      bulk,
+      ownerOf: (did) => (contactDeviceIds.has(did) ? contact : userId),
+      tag: '[ADD]',
+      log,
+    });
 
     // Save MLS state after the merged commit (crash-safety).
     await persistMlsStateAfterMutation(mlsService, userId, pin, log);
