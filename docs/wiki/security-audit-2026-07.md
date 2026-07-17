@@ -25,7 +25,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | S2 | CRITICAL | Identity spoof via unbound `register-device` | FIXED |
 | S3 | CRITICAL | Payment bypass / entitlement grant via unguarded "internal" association routes | FIXED |
 | S4 | HIGH | Arbitrary device deletion/manipulation (no ownership) | FIXED |
-| S5 | HIGH | Arbitrary group member removal + roster enumeration | TODO |
+| S5 | HIGH | Arbitrary group member removal + roster enumeration | FIXED |
 | S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | TODO |
 | S7 | MEDIUM | nginx does not reset identity headers on unauth locations | TODO |
 | S8 | MEDIUM | welcome/history-request trust body `requesterUserId` | TODO |
@@ -107,6 +107,13 @@ does not break any legitimate call site. The GET routes (`getUserDevices`,
 `getGroupUserMembers` (:228) and `getGroupMembers` (:253) return any group's roster without
 a membership check.
 Fix: require caller be an authorized member/admin to remove; gate roster reads on membership.
+FIXED: `removeGroupMember` now calls `assertCallerMayMutateMembership(...,allowCreationBootstrap=false)`
+- the caller must be a global admin or an existing member of the group (self-leave passes; mirrors
+MLS remove-commit semantics). Roster reads `getGroupUserMembers` (dm_group_members) and
+`getGroupMembers` (active DeviceGroupMembership) now take `x-user-id`/`x-global-admin` and call a new
+`assertCallerIsGroupMember` gate (global admin or member; freshly-invited joiners are registered as
+members before their Welcome, so recovery/re-invite reads still pass). Legacy no-op when `x-user-id`
+absent, matching `assertCallerOwnsUserId`.
 
 ### S6 - MEDIUM - Arbitrary media blob deletion (IDOR)
 `apps/media-service/src/media/media.controller.ts:265` `DELETE /media/:id` - only

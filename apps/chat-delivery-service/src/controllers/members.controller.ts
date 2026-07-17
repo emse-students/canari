@@ -94,6 +94,29 @@ export class MembersController {
     throw new ForbiddenException('Caller is not authorized to modify this group membership');
   }
 
+  /**
+   * Authorizes a roster read on `safeGroupId`. The caller (nginx-injected, HMAC-bound `x-user-id`)
+   * must be a platform global admin or an existing member of the group. Blocks roster enumeration
+   * by non-members (audit S5): the user list and active-device list are group metadata that leak
+   * social graph / device topology. Freshly-invited joiners are registered as members BEFORE their
+   * Welcome, so recovery/re-invite reads still pass. No-op when `x-user-id` is absent (legacy
+   * deployments without INTERNAL_SHARED_SECRET), matching `assertCallerOwnsUserId`.
+   */
+  private async assertCallerIsGroupMember(
+    safeGroupId: string,
+    headerUserId: string | undefined,
+    headerGlobalAdmin: string | undefined
+  ): Promise<void> {
+    if (headerGlobalAdmin === 'true') return;
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (!caller) return;
+    const callerMemberships = await this.groupMemberRepo.count({
+      where: { groupId: safeGroupId, userId: caller },
+    });
+    if (callerMemberships > 0) return;
+    throw new ForbiddenException('Caller is not a member of this group');
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Get('mls/users/:userId/groups')
   /**
@@ -285,8 +308,13 @@ export class MembersController {
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/user-members')
   /** Returns user-level membership from dm_group_members (no device-status filter). */
-  async getGroupUserMembers(@Param('groupId') groupId: string) {
+  async getGroupUserMembers(
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
     const rows = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
       select: { userId: true },
@@ -310,21 +338,43 @@ export class MembersController {
    * (e.g. after a device fresh-start clears all DeviceGroupMembership rows). Use
    * `GET mls/groups/:groupId/user-members` (dm_group_members) for that purpose.
    */
-  async getGroupMembers(@Param('groupId') groupId: string) {
+  async getGroupMembers(
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    await this.assertCallerIsGroupMember(safeGroupId, headerUserId, headerGlobalAdmin);
     const rows = await this.deviceGroupRepo.find({
-      where: { groupId, status: 'active' as const },
+      where: { groupId: safeGroupId, status: 'active' as const },
       select: { userId: true, deviceId: true },
     });
-    this.logger.log(`[GET_MEMBERS] group=${groupId} count=${rows.length}`);
+    this.logger.log(`[GET_MEMBERS] group=${safeGroupId} count=${rows.length}`);
     return rows;
   }
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId/members/:userId')
   /** Removes a user from a group server-side (deletes their GroupMember record). */
-  async removeGroupMember(@Param('groupId') groupId: string, @Param('userId') userId: string) {
+  async removeGroupMember(
+    @Param('groupId') groupId: string,
+    @Param('userId') userId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
+    // Only an existing member/admin of the group may remove a user (audit S5): mirrors the MLS
+    // remove-commit semantics (removes are issued by members) and blocks the delivery-level DoS
+    // where a non-member kicks anyone. Self-leave passes (the caller is a member). No creation
+    // bootstrap on removal (a group is never emptied by adding-self), hence allowCreationBootstrap=false.
+    await this.assertCallerMayMutateMembership(
+      safeGroupId,
+      safeUserId,
+      headerUserId,
+      headerGlobalAdmin,
+      false
+    );
 
     // Remove all per-device memberships for this user in the group to keep
     // server-side metadata aligned with the MLS remove commit semantics.
