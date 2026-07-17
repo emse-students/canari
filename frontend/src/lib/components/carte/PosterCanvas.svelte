@@ -1,19 +1,15 @@
 <script lang="ts">
   import { getInitials } from '$lib/utils/avatar';
-  import type { CarteTheme } from '$lib/carte/theme';
+  import type { CarteStyle } from '$lib/carte/theme';
   import type { PosterModel, PosterBubble } from '$lib/carte/generator';
   import {
     STAGE_WIDTH,
     CARD_WIDTH,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
-    DOODLE_BASE_SIZE,
-    BLOB_BASE_SIZE,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
-  import { doodleIcon } from '$lib/carte/doodles';
-  import { blobRadius } from '$lib/carte/blobs';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -23,9 +19,9 @@
     content: Record<string, PosterBubble>;
     /** Hand-placed bubble positions to render on the stage. */
     bubbles: PositionedBubble[];
-    /** Free-form decorations (text, doodles, background blobs) rendered on the same stage. */
+    /** Free-form decorations (free text) rendered on the same stage. */
     decorations: Decoration[];
-    theme: CarteTheme;
+    theme: CarteStyle;
     /** Poster title (the project name). */
     title: string;
     /** Optional background image + scrim. */
@@ -227,9 +223,14 @@
   ) {
     if (!editable || !stageEl) return;
     event.stopPropagation();
+    // Suppress the browser's native image drag / text selection so the pointer gesture is not
+    // hijacked (the "component only drops on the next click" bug); capture keeps events flowing.
+    event.preventDefault();
+    const grabEl = event.currentTarget as HTMLElement;
+    grabEl.setPointerCapture?.(event.pointerId);
     select(target, id);
     const rect = stageEl.getBoundingClientRect();
-    const self = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const self = grabEl.getBoundingClientRect();
     const guides = collectGuides(rect, id);
     drag = {
       mode: 'move',
@@ -263,9 +264,10 @@
   ) {
     if (!editable || !stageEl) return;
     event.stopPropagation();
-    const root = (event.currentTarget as HTMLElement).closest(
-      '[data-el-root]'
-    ) as HTMLElement | null;
+    event.preventDefault();
+    const handleEl = event.currentTarget as HTMLElement;
+    handleEl.setPointerCapture?.(event.pointerId);
+    const root = handleEl.closest('[data-el-root]') as HTMLElement | null;
     if (!root) return;
     const rect = stageEl.getBoundingClientRect();
     const ch = root.getBoundingClientRect().height / viewScale; // scaled height in poster px
@@ -354,7 +356,8 @@
     <img
       src={background.dataUrl}
       alt=""
-      style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"
+      draggable="false"
+      style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
     />
     <div
       style:position="absolute"
@@ -382,9 +385,6 @@
       >
         {title}
       </h1>
-      <p style:margin="0" style:font-size="18px" style:opacity="0.75">
-        {m.carte_poster_subtitle({ count: model.totalAssos })}
-      </p>
     </div>
 
     {#if model.totalAssos === 0}
@@ -442,8 +442,9 @@
               <img
                 src={data.logoUrl}
                 alt=""
+                draggable="false"
                 onerror={hideOnError}
-                style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"
+                style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
               />
             {/if}
           </div>
@@ -487,8 +488,9 @@
                 <img
                   src={`/api/users/${encodeURIComponent(data.president.userId)}/avatar`}
                   alt=""
+                  draggable="false"
                   onerror={hideOnError}
-                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"
+                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
                 />
               </div>
               <p
@@ -536,7 +538,7 @@
       {/if}
     {/each}
 
-    <!-- Free-form decoration layer (text + doodles + background blobs). -->
+    <!-- Free-form decoration layer (free text). -->
     {#each decorations as deco (deco.id)}
       {#if deco.kind === 'text'}
         {@const dsel = editable && selectedDecorationId === deco.id}
@@ -590,94 +592,6 @@
                     deco.scale,
                     TEXT_BASE_WIDTH
                   )}
-              ></div>
-            {/each}
-          {/if}
-        </div>
-      {:else if deco.kind === 'doodle'}
-        {@const dsel = editable && selectedDecorationId === deco.id}
-        {@const Doodle = doodleIcon(deco.shape)}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          data-el-root
-          data-el-id={deco.id}
-          style:position="absolute"
-          style:left="{deco.x}px"
-          style:top="{deco.y}px"
-          style:z-index={deco.z}
-          style:width="{DOODLE_BASE_SIZE}px"
-          style:height="{DOODLE_BASE_SIZE}px"
-          style:transform="scale({deco.scale})"
-          style:transform-origin="top left"
-          style:touch-action="none"
-          style:cursor={editable ? 'grab' : 'default'}
-          style:outline={dsel ? '3px solid #f5c518' : 'none'}
-          style:outline-offset="4px"
-          style:border-radius="6px"
-          onpointerdown={(e) =>
-            beginMove(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, DOODLE_BASE_SIZE)}
-        >
-          <Doodle size={DOODLE_BASE_SIZE} color={deco.color} absoluteStrokeWidth strokeWidth={2} />
-
-          {#if dsel}
-            {#each CORNERS as corner (corner.key)}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
-                onpointerdown={(e) =>
-                  beginResize(
-                    e,
-                    'decoration',
-                    deco.id,
-                    deco.x,
-                    deco.y,
-                    deco.scale,
-                    DOODLE_BASE_SIZE
-                  )}
-              ></div>
-            {/each}
-          {/if}
-        </div>
-      {:else if deco.kind === 'blob'}
-        {@const dsel = editable && selectedDecorationId === deco.id}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          data-el-root
-          data-el-id={deco.id}
-          style:position="absolute"
-          style:left="{deco.x}px"
-          style:top="{deco.y}px"
-          style:z-index={deco.z}
-          style:width="{BLOB_BASE_SIZE}px"
-          style:height="{BLOB_BASE_SIZE}px"
-          style:transform="scale({deco.scale})"
-          style:transform-origin="top left"
-          style:touch-action="none"
-          style:cursor={editable ? 'grab' : 'default'}
-          style:outline={dsel ? '3px solid #f5c518' : 'none'}
-          style:outline-offset="4px"
-          style:border-radius="12px"
-          onpointerdown={(e) =>
-            beginMove(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, BLOB_BASE_SIZE)}
-        >
-          <!-- Soft organic wash: a colored box with an organic border-radius (snapdom-safe). -->
-          <div
-            style:width="100%"
-            style:height="100%"
-            style:border-radius={blobRadius(deco.shape)}
-            style:background={deco.color}
-            style:opacity={deco.opacity / 100}
-          ></div>
-
-          {#if dsel}
-            {#each CORNERS as corner (corner.key)}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
-                onpointerdown={(e) =>
-                  beginResize(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, BLOB_BASE_SIZE)}
               ></div>
             {/each}
           {/if}

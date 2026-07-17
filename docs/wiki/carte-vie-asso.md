@@ -177,6 +177,20 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   narrowed derived (color/front/back/delete stay common with the other decorations). New i18n
   `carte_blobs_label` + `carte_blob_*` (FR+EN). No migration (layout stays an opaque JSON blob).
   This closes P3; the carte editor now covers text, doodles, snap guides and background blobs.
+- **Refonte (user feedback 2026-07-17), 3 steps:**
+  - **Step 1 - Cleanup + UX (DONE, gates green):** dropped the 3 theme presets - `theme.ts` now exports a
+    single fixed `CARTE_STYLE` (the warm "vitamine" look); an uploaded background image simply replaces it.
+    Removed the "N associations" subtitle. Removed the doodle + background-blob decoration kinds (deleted
+    `doodles.ts` + `blobs.ts`; `Decoration` is now just `TextDecoration` - free text is kept). Added a
+    **fullscreen** toggle on the editor (Fullscreen API). Fixed the drag bug where a component only dropped
+    on the next click: the browser's native image drag is now suppressed (`draggable=false` +
+    `-webkit-user-drag:none` on every img) and `beginMove`/`beginResize` call `preventDefault()` +
+    `setPointerCapture()`. No migration (layout stays an opaque JSON blob; `layout.theme` is now ignored).
+  - **Step 2 - Export (TODO):** one A2 landscape page, background full-bleed to the bottom (no white bar);
+    same single-page + full-bleed fix applied to the agenda PDF export.
+  - **Step 3 - Visual redesign (TODO):** each asso becomes a large shape-configurable blob with the
+    president inside and the bureau (asso admins) auto-arranged as polaroids around it; the directory moves
+    to a right-hand column listing ALL members grouped by asso (so everyone appears).
 
 ## Reuse map
 

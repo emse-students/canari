@@ -13,7 +13,7 @@
     type PosterProject,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { CARTE_THEMES, resolveCarteTheme, DEFAULT_CARTE_THEME_ID } from '$lib/carte/theme';
+  import { CARTE_STYLE, DEFAULT_SCRIM_OPACITY } from '$lib/carte/theme';
   import { buildPosterModel, type PosterModel, type PosterLayout } from '$lib/carte/generator';
   import {
     mergeBubbleLayout,
@@ -21,17 +21,11 @@
     indexBubbleContent,
     stageHeight,
     createTextDecoration,
-    createDoodleDecoration,
-    createBlobDecoration,
     sanitizeDecorations,
     TEXT_BASE_WIDTH,
-    DOODLE_BASE_SIZE,
-    BLOB_BASE_SIZE,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
-  import { DOODLE_SHAPES } from '$lib/carte/doodles';
-  import { BLOB_SHAPES } from '$lib/carte/blobs';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import {
@@ -49,6 +43,8 @@
     AlignLeft,
     AlignCenter,
     AlignRight,
+    Maximize,
+    Minimize,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -59,10 +55,11 @@
   let model = $state<PosterModel | null>(null);
 
   // ── Layout controls (persisted) ──────────────────────────────────────────────
-  let themeId = $state(DEFAULT_CARTE_THEME_ID);
   let bgDataUrl = $state<string | null>(null);
-  let scrimOpacity = $state(20);
+  let scrimOpacity = $state(DEFAULT_SCRIM_OPACITY);
   let directoryVisible = $state(true);
+  // Single fixed poster style (the theme picker was dropped); the bg image, if any, replaces it.
+  const theme = CARTE_STYLE;
 
   // ── Freeform bubble placement (persisted as layout.bubbles) ───────────────────
   let positioned = $state<PositionedBubble[]>([]);
@@ -76,8 +73,24 @@
   let saved = $state(false);
   let exporting = $state(false);
 
+  // ── Fullscreen editing ────────────────────────────────────────────────────────
+  let editorEl = $state<HTMLElement>();
+  let isFullscreen = $state(false);
+
+  /** Toggles native fullscreen on the editor container so authoring can use the whole screen. */
+  function toggleFullscreen() {
+    if (!editorEl) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void editorEl.requestFullscreen();
+  }
+
+  $effect(() => {
+    const onChange = () => (isFullscreen = document.fullscreenElement === editorEl);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  });
+
   const projectId = $derived(page.params.id ?? '');
-  const theme = $derived(resolveCarteTheme(themeId));
   const background = $derived({ dataUrl: bgDataUrl, scrimOpacity });
   const content = $derived(model ? indexBubbleContent(model) : {});
   const canvasHeight = $derived(stageHeight(positioned, decorations));
@@ -89,10 +102,6 @@
   /** The selected decoration narrowed to a text box, or null (drives the text-only controls). */
   const selectedTextDeco = $derived(
     selectedDecoration?.kind === 'text' ? selectedDecoration : null
-  );
-  /** The selected decoration narrowed to a background blob, or null (drives the opacity control). */
-  const selectedBlobDeco = $derived(
-    selectedDecoration?.kind === 'blob' ? selectedDecoration : null
   );
 
   // ── Scaled preview (poster renders at its natural 1600px width, scaled to fit) ──
@@ -124,13 +133,10 @@
 
       // Hydrate persisted chrome from the opaque layout blob (defensive parse).
       const layout = proj.layout as Partial<PosterLayout>;
-      themeId = typeof layout.theme === 'string' ? layout.theme : DEFAULT_CARTE_THEME_ID;
       const bg = layout.background;
       bgDataUrl = bg && typeof bg.dataUrl === 'string' ? bg.dataUrl : null;
       scrimOpacity =
-        bg && typeof bg.scrimOpacity === 'number'
-          ? bg.scrimOpacity
-          : resolveCarteTheme(themeId).scrimOpacity;
+        bg && typeof bg.scrimOpacity === 'number' ? bg.scrimOpacity : DEFAULT_SCRIM_OPACITY;
       directoryVisible = layout.directoryVisible !== false;
       decorations = sanitizeDecorations(layout.decorations);
 
@@ -192,34 +198,6 @@
     selectedId = null;
     selectedDecorationId = deco.id;
   }
-  /** Adds a doodle of the given shape near the top-center of the stage and selects it. */
-  function addDoodle(shape: string) {
-    const z = decorations.reduce((acc, d) => Math.max(acc, d.z), 0) + 1;
-    const deco = createDoodleDecoration(
-      shape,
-      (1600 - DOODLE_BASE_SIZE) / 2,
-      140,
-      z,
-      theme.titleColor
-    );
-    decorations = [...decorations, deco];
-    selectedId = null;
-    selectedDecorationId = deco.id;
-  }
-  /** Adds a background blob (placed behind the bubbles by default) and selects it. */
-  function addBlob(shape: string) {
-    const minZ = Math.min(0, ...positioned.map((b) => b.z), ...decorations.map((d) => d.z));
-    const deco = createBlobDecoration(
-      shape,
-      (1600 - BLOB_BASE_SIZE) / 2,
-      200,
-      minZ - 1,
-      theme.titleColor
-    );
-    decorations = [...decorations, deco];
-    selectedId = null;
-    selectedDecorationId = deco.id;
-  }
   function deleteDecoration(id: string) {
     decorations = decorations.filter((d) => d.id !== id);
     if (selectedDecorationId === id) selectedDecorationId = null;
@@ -253,7 +231,6 @@
     try {
       const layout: PosterLayout = {
         version: 1,
-        theme: themeId,
         background: { dataUrl: bgDataUrl, scrimOpacity },
         bubbles: positioned,
         directoryVisible,
@@ -323,6 +300,18 @@
         <div class="flex items-center gap-2">
           <button
             type="button"
+            onclick={toggleFullscreen}
+            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg"
+          >
+            {#if isFullscreen}
+              <Minimize size={16} />
+            {:else}
+              <Maximize size={16} />
+            {/if}
+            {isFullscreen ? m.carte_fullscreen_exit() : m.carte_fullscreen_enter()}
+          </button>
+          <button
+            type="button"
             onclick={handleSave}
             disabled={saving}
             class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
@@ -351,7 +340,12 @@
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
 
-      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <div
+        bind:this={editorEl}
+        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] {isFullscreen
+          ? 'overflow-auto bg-cn-bg p-5'
+          : ''}"
+      >
         <!-- Scaled poster preview (the node captured for PDF is the un-scaled inner element). -->
         <div
           bind:clientWidth={previewWidth}
@@ -386,26 +380,6 @@
         <div class="space-y-4">
           <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-4">
             <h3 class="text-sm font-bold text-text-main">{m.carte_settings_heading()}</h3>
-
-            <div class="space-y-2">
-              <span class="block text-xs font-semibold text-text-muted"
-                >{m.carte_theme_label()}</span
-              >
-              <div class="flex flex-wrap gap-2">
-                {#each CARTE_THEMES as t (t.id)}
-                  <button
-                    type="button"
-                    onclick={() => (themeId = t.id)}
-                    class="rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors
-                    {themeId === t.id
-                      ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
-                      : 'border-cn-border text-text-muted hover:text-text-main'}"
-                  >
-                    {t.name()}
-                  </button>
-                {/each}
-              </div>
-            </div>
 
             <div class="flex flex-wrap items-center gap-3">
               <span class="block text-xs font-semibold text-text-muted"
@@ -460,44 +434,6 @@
               <Type size={15} />
               {m.carte_add_text()}
             </button>
-
-            <div class="space-y-2">
-              <span class="block text-xs font-semibold text-text-muted"
-                >{m.carte_doodles_label()}</span
-              >
-              <div class="flex flex-wrap gap-1.5">
-                {#each DOODLE_SHAPES as shape (shape.key)}
-                  <button
-                    type="button"
-                    aria-label={shape.label()}
-                    title={shape.label()}
-                    onclick={() => addDoodle(shape.key)}
-                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-cn-border text-text-muted hover:bg-cn-bg hover:text-text-main"
-                  >
-                    <shape.icon size={18} />
-                  </button>
-                {/each}
-              </div>
-            </div>
-
-            <div class="space-y-2">
-              <span class="block text-xs font-semibold text-text-muted"
-                >{m.carte_blobs_label()}</span
-              >
-              <div class="flex flex-wrap gap-1.5">
-                {#each BLOB_SHAPES as shape (shape.key)}
-                  <button
-                    type="button"
-                    aria-label={shape.label()}
-                    title={shape.label()}
-                    onclick={() => addBlob(shape.key)}
-                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-cn-border hover:bg-cn-bg"
-                  >
-                    <span class="h-5 w-5 bg-text-muted" style:border-radius={shape.radius}></span>
-                  </button>
-                {/each}
-              </div>
-            </div>
           </section>
 
           {#if selectedDecoration}
@@ -546,23 +482,6 @@
                   </label>
                 {/if}
               </div>
-
-              {#if selectedBlobDeco}
-                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
-                  {m.carte_blob_opacity()}
-                  <input
-                    type="range"
-                    min="10"
-                    max="100"
-                    value={selectedBlobDeco.opacity}
-                    oninput={(e) =>
-                      patchDecoration(selectedBlobDeco.id, {
-                        opacity: Number(e.currentTarget.value),
-                      })}
-                    class="accent-cn-yellow"
-                  />
-                </label>
-              {/if}
 
               {#if selectedTextDeco}
                 <div class="flex flex-wrap items-center gap-1.5">

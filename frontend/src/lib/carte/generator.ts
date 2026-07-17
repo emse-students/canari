@@ -2,7 +2,7 @@ import { generateAvatarColor } from '$lib/utils/avatar';
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
 
 /**
- * The persisted poster layout ("project.layout"). Stores the chrome (theme + background) plus the
+ * The persisted poster layout ("project.layout"). Stores the chrome (background) plus the
  * hand-placed bubble positions (P2); the bubble *content* (name, logo, president) is re-resolved
  * from live data on every open, so a reopened map is always current while keeping its arrangement.
  * See {@link PositionedBubble} for the placement shape (kept in `layout.ts` to avoid a cycle).
@@ -10,8 +10,8 @@ import type { Association, AssociationCategory, AssociationMember } from '$lib/a
 export interface PosterLayout {
   /** Schema version for forward-compatible migrations. */
   version: number;
-  /** Selected theme id (see {@link CARTE_THEMES}). */
-  theme: string;
+  /** Legacy theme id (the theme picker was dropped; ignored on load, kept for old projects). */
+  theme?: string;
   /** Optional background image + scrim. */
   background: {
     /** Data-URL of the uploaded background image, or null for a flat page color. */
@@ -28,8 +28,8 @@ export interface PosterLayout {
   /** Whether the text directory footer is rendered (default true). */
   directoryVisible?: boolean;
   /**
-   * Free-form decorations (P3: text, later doodles + blobs). Typed as {@link Decoration}[] at the
-   * call sites; declared structurally here for the same no-import-cycle reason as {@link bubbles}.
+   * Free-form decorations (free text). Typed as {@link Decoration}[] at the call sites; declared
+   * structurally here for the same no-import-cycle reason as {@link bubbles}.
    */
   decorations?: unknown[];
 }
