@@ -142,7 +142,7 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   (content textarea, color, bold, align left/center/right, front/back, delete); export nulls both
   selections. New i18n `carte_elements_heading`/`carte_add_text`/`carte_text_placeholder`/
   `carte_deco_*`/`carte_align_*` (FR+EN). No migration (layout stays an opaque JSON blob).
-- **P3b - Doodle palette** (70395056, gates green; browser-verify pending): a second decoration kind
+- **P3b - Doodle palette** (0dae97ac, gates green; browser-verify pending): a second decoration kind
   (`DoodleDecoration`: kind/shape/color) riding the P3a drag/resize machinery. New module
   `frontend/src/lib/carte/doodles.ts` holds the curated `DOODLE_SHAPES` catalog (12 lucide shapes),
   `doodleIcon(key)` (Star fallback), and `isDoodleShape`; doodles render as inline lucide SVGs so
@@ -153,7 +153,7 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   `selectedTextDeco` narrowed derived so text-only controls (content/bold/align) are gated while
   color/front/back/delete stay common. New i18n `carte_doodles_label` + `carte_doodle_*` (FR+EN). No
   migration (layout stays an opaque JSON blob).
-- **P3c - Snap guides** (e8907cbd, gates green; browser-verify pending): alignment guides during element
+- **P3c - Snap guides** (dfadadec, gates green; browser-verify pending): alignment guides during element
   moves, fully inside `PosterCanvas.svelte` (no data model / migration / persisted state). On
   `beginMove`, `collectGuides` snapshots the live DOM rects of every other `[data-el-root]` (so
   variable-height bubbles contribute accurate edges), converts them to poster px, and offers their
@@ -163,7 +163,7 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   guide and records the line; dashed guide lines render in the stage while dragging (gated on
   `editable`, so export never rasterises them). Roots carry `data-el-id` for self-exclusion. Holding
   **Alt** bypasses snapping (free placement); the editor hint (`carte_editor_hint`) documents it.
-- **P3d - Background blobs** (8b0665f7, gates green; browser-verify pending): a third decoration kind
+- **P3d - Background blobs** (668412f8, gates green; browser-verify pending): a third decoration kind
   (`BlobDecoration`: kind/shape/color/opacity) riding the P3a drag/resize machinery. New module
   `frontend/src/lib/carte/blobs.ts` holds the `BLOB_SHAPES` catalog (6 organic silhouettes as CSS
   `border-radius` shorthands - fully self-contained so snapdom rasterises them, no SVG/asset),
