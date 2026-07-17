@@ -1049,6 +1049,8 @@
   "carte_panel_president_toggle": "Afficher le/la président(e)",
   "carte_shape_label": "Forme",
   "carte_shape_option": "Forme {n}",
+  "carte_logo_shape_label": "Forme du logo",
+  "carte_logo_shape_option": "Forme du logo {n}",
   "carte_panel_front": "Premier plan",
   "carte_panel_back": "Arrière-plan",
   "carte_panel_reset": "Réinitialiser la position",

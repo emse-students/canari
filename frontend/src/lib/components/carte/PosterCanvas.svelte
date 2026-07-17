@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getInitials } from '$lib/utils/avatar';
   import type { CarteStyle } from '$lib/carte/theme';
-  import type { PosterModel, PosterBubble } from '$lib/carte/generator';
+  import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
   import {
     STAGE_WIDTH,
     STAGE_HEIGHT,
@@ -13,7 +13,7 @@
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
-  import { shapeRadius } from '$lib/carte/shapes';
+  import { shapeRadius, logoShape } from '$lib/carte/shapes';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -80,26 +80,28 @@
   const CONTENT_MARGIN = 48;
 
   // ── Blob-unit geometry (poster px, at scale 1) ──────────────────────────────────────────
-  // The unit is: a colored blob (hero logo + president inside) with the bureau polaroids fanned
-  // over its TOP arc IN FRONT of it (the blob deliberately sits behind them), and the association
-  // name in a band BELOW the blob (so a long name wraps + shrinks instead of being clipped).
-  /** Horizontal center of the unit box; the blob + bureau arc are centered on it. */
+  // The unit layers, from back to front: a colored blob (silhouette); the hero logo centered on it
+  // (its own shape, allowed to overflow the blob); the president as a card overlapping the blob
+  // bottom; the bureau as cards fanned over the blob's TOP arc; and the association name in a band
+  // BELOW the blob (so a long name wraps + shrinks instead of being clipped).
+  /** Horizontal center of the unit box; the blob + logo + bureau arc are centered on it. */
   const UNIT_CX = CARD_WIDTH / 2;
   /** Vertical center of the blob within the unit (leaves room for the name band below). */
-  const BLOB_CY = 172;
-  /** Diameter of the colored association blob (holds the hero logo + president inside). */
-  const BLOB_SIZE = 210;
-  /** Center-to-polaroid-center radius of the bureau arc; polaroids overlap the blob, in front. */
-  const RING_RADIUS = 125;
-  /** Bureau polaroid footprint. */
-  const POLAROID_W = 72;
-  const POLAROID_H = 88;
-  /** Max bureau polaroids fanned over the blob's top arc before it gets too crowded. */
-  const MAX_BUREAU = 10;
-  /** Hero logo diameter inside the blob. */
-  const LOGO_SIZE = 104;
-  /** President avatar diameter inside the blob. */
-  const PRES_SIZE = 46;
+  const BLOB_CY = 168;
+  /** Diameter of the colored association blob. */
+  const BLOB_SIZE = 200;
+  /** Base logo size (px); the logo shape scales this by its w/h ratio and may overflow the blob. */
+  const LOGO_BASE = 112;
+  /** Logo center Y (slightly above the blob center to leave room for the president card below). */
+  const LOGO_CY = BLOB_CY - 16;
+  /** Center-to-card-center radius of the bureau arc; cards overlap the blob, in front. */
+  const RING_RADIUS = 124;
+  /** Bureau member-card width. */
+  const CARD_W = 78;
+  /** President member-card width (a touch larger; sits at the blob bottom). */
+  const PRES_CARD_W = 104;
+  /** Max bureau cards fanned over the blob's top arc before it gets too crowded. */
+  const MAX_BUREAU = 9;
 
   /** Length-based font size (px) for the association name below the blob, so long names shrink. */
   function nameFontSize(name: string): number {
@@ -110,12 +112,12 @@
     if (n <= 36) return 15;
     return 13;
   }
-  /** Length-based font size (px) for a bureau polaroid caption (which wraps to two lines). */
-  function polaroidFontSize(name: string): number {
+  /** Length-based name font size (px) for a member card (bureau / president), which wraps. */
+  function cardNameFontSize(name: string, base: number): number {
     const n = name.length;
-    if (n <= 12) return 11;
-    if (n <= 20) return 10;
-    return 9;
+    if (n <= 14) return base;
+    if (n <= 24) return base - 1;
+    return base - 2;
   }
 
   /** The stage element, used to convert client pointer coords into poster coords. */
@@ -428,6 +430,65 @@
   });
 </script>
 
+<!-- A member card (bureau / president): square photo + full name (wraps, never truncated) + role. -->
+{#snippet memberCard(person: PosterMemberRef, cardW: number, color: string, nameBase: number)}
+  <div
+    style:width="{cardW}px"
+    style:background={theme.polaroidBg}
+    style:border-radius="9px"
+    style:padding="6px 6px 7px"
+    style:box-shadow="0 4px 11px rgba(0,0,0,0.22)"
+  >
+    <div
+      style:position="relative"
+      style:width="{cardW - 12}px"
+      style:height="{cardW - 12}px"
+      style:border-radius="7px"
+      style:overflow="hidden"
+      style:background={color}
+      style:display="flex"
+      style:align-items="center"
+      style:justify-content="center"
+      style:color="#ffffff"
+      style:font-weight="800"
+      style:font-size="22px"
+    >
+      <span>{getInitials(person.name)}</span>
+      <img
+        src={`/api/users/${encodeURIComponent(person.userId)}/avatar`}
+        alt=""
+        draggable="false"
+        onerror={hideOnError}
+        style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
+      />
+    </div>
+    <p
+      style:margin="4px 0 0"
+      style:font-size="{cardNameFontSize(person.name, nameBase)}px"
+      style:font-weight="700"
+      style:text-align="center"
+      style:line-height="1.1"
+      style:color={theme.polaroidTextColor}
+      style="overflow-wrap:break-word;"
+    >
+      {person.name}
+    </p>
+    {#if person.role}
+      <p
+        style:margin="1px 0 0"
+        style:font-size="{nameBase - 2.5}px"
+        style:font-weight="600"
+        style:text-align="center"
+        style:line-height="1.05"
+        style:color={theme.polaroidTextColor}
+        style="opacity:0.72;overflow-wrap:break-word;"
+      >
+        {person.role}
+      </p>
+    {/if}
+  </div>
+{/snippet}
+
 <!-- The poster IS the export target: a fixed A2-landscape frame, absolute layers, self-contained. -->
 <div
   bind:this={el}
@@ -493,6 +554,9 @@
         {@const color = bubble.colorOverride ?? data.color}
         {@const selected = editable && selectedId === bubble.assoId}
         {@const bureau = data.bureau.slice(0, MAX_BUREAU)}
+        {@const ls = logoShape(bubble.logoShape)}
+        {@const lw = LOGO_BASE * ls.w}
+        {@const lh = LOGO_BASE * ls.h}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="carte-unit"
@@ -514,8 +578,7 @@
           onpointerdown={(e) =>
             beginMove(e, 'bubble', bubble.assoId, bubble.x, bubble.y, bubble.scale, CARD_WIDTH)}
         >
-          <!-- The association blob, drawn FIRST so it sits BEHIND the bureau polaroids: brand-color
-               silhouette holding the hero logo + president. -->
+          <!-- Blob silhouette (back layer): a plain brand-color shape the other layers sit on. -->
           <div
             style:position="absolute"
             style:left="{UNIT_CX - BLOB_SIZE / 2}px"
@@ -523,143 +586,67 @@
             style:width="{BLOB_SIZE}px"
             style:height="{BLOB_SIZE}px"
             style:border-radius={shapeRadius(bubble.shape)}
-            style:overflow="hidden"
             style:background={color}
+            style:box-shadow="0 8px 22px rgba(0,0,0,0.22)"
+          ></div>
+
+          <!-- Hero logo: its own frame shape, centered on the blob, allowed to overflow it. -->
+          <div
+            style:position="absolute"
+            style:left="{UNIT_CX - lw / 2}px"
+            style:top="{LOGO_CY - lh / 2}px"
+            style:width="{lw}px"
+            style:height="{lh}px"
+            style:border-radius={ls.radius}
+            style:overflow="hidden"
+            style:background="rgba(255,255,255,0.94)"
             style:display="flex"
-            style:flex-direction="column"
             style:align-items="center"
             style:justify-content="center"
-            style:gap="8px"
-            style:padding="18px"
-            style:box-shadow="0 8px 22px rgba(0,0,0,0.22)"
+            style:color
+            style:font-weight="800"
+            style:font-size="36px"
+            style:box-shadow="0 4px 14px rgba(0,0,0,0.2)"
           >
-            <!-- Hero logo (initials behind as fallback). -->
-            <div
-              style:position="relative"
-              style:width="{LOGO_SIZE}px"
-              style:height="{LOGO_SIZE}px"
-              style:border-radius="50%"
-              style:overflow="hidden"
-              style:background="rgba(255,255,255,0.9)"
-              style:display="flex"
-              style:align-items="center"
-              style:justify-content="center"
-              style:color
-              style:font-weight="800"
-              style:font-size="34px"
-              style:flex="0 0 auto"
-            >
-              <span>{getInitials(data.name)}</span>
-              {#if data.logoUrl}
-                <img
-                  src={data.logoUrl}
-                  alt=""
-                  draggable="false"
-                  onerror={hideOnError}
-                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
-                />
-              {/if}
-            </div>
-
-            {#if bubble.showPresident && data.president}
-              <div
-                style:position="relative"
-                style:width="{PRES_SIZE}px"
-                style:height="{PRES_SIZE}px"
-                style:border-radius="50%"
-                style:overflow="hidden"
-                style:background="rgba(255,255,255,0.25)"
-                style:border="2px solid rgba(255,255,255,0.85)"
-                style:display="flex"
-                style:align-items="center"
-                style:justify-content="center"
-                style:color="#ffffff"
-                style:font-weight="800"
-                style:font-size="16px"
-                style:flex="0 0 auto"
-              >
-                <span>{getInitials(data.president.name)}</span>
-                <img
-                  src={`/api/users/${encodeURIComponent(data.president.userId)}/avatar`}
-                  alt=""
-                  draggable="false"
-                  onerror={hideOnError}
-                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
-                />
-              </div>
-              <p
-                style:margin="0"
-                style:max-width="{BLOB_SIZE - 40}px"
-                style:font-size="11px"
-                style:font-weight="700"
-                style:text-align="center"
-                style:line-height="1.1"
-                style:color="#ffffff"
-                style="overflow-wrap:break-word;"
-              >
-                {data.president.name}
-              </p>
+            <span>{getInitials(data.name)}</span>
+            {#if data.logoUrl}
+              <img
+                src={data.logoUrl}
+                alt=""
+                draggable="false"
+                onerror={hideOnError}
+                style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
+              />
             {/if}
           </div>
 
-          <!-- Bureau polaroids fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
+          <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
             {@const angle = -Math.PI + ((i + 0.5) / bureau.length) * Math.PI}
-            {@const px = UNIT_CX + RING_RADIUS * Math.cos(angle) - POLAROID_W / 2}
-            {@const py = BLOB_CY + RING_RADIUS * Math.sin(angle) - POLAROID_H / 2}
-            <div
-              style:position="absolute"
-              style:left="{px}px"
-              style:top="{py}px"
-              style:width="{POLAROID_W}px"
-              style:background={theme.polaroidBg}
-              style:border-radius="9px"
-              style:padding="6px 6px 7px"
-              style:box-shadow="0 4px 11px rgba(0,0,0,0.22)"
-            >
-              <div
-                style:position="relative"
-                style:width="{POLAROID_W - 12}px"
-                style:height="{POLAROID_W - 12}px"
-                style:border-radius="7px"
-                style:overflow="hidden"
-                style:background={color}
-                style:display="flex"
-                style:align-items="center"
-                style:justify-content="center"
-                style:color="#ffffff"
-                style:font-weight="800"
-                style:font-size="22px"
-              >
-                <span>{getInitials(member.name)}</span>
-                <img
-                  src={`/api/users/${encodeURIComponent(member.userId)}/avatar`}
-                  alt=""
-                  draggable="false"
-                  onerror={hideOnError}
-                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
-                />
-              </div>
-              <p
-                style:margin="4px 0 0"
-                style:font-size="{polaroidFontSize(member.name)}px"
-                style:font-weight="700"
-                style:text-align="center"
-                style:line-height="1.1"
-                style:color={theme.polaroidTextColor}
-                style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;"
-              >
-                {member.name}
-              </p>
+            {@const px = UNIT_CX + RING_RADIUS * Math.cos(angle) - CARD_W / 2}
+            {@const py = BLOB_CY + RING_RADIUS * Math.sin(angle) - CARD_W / 2}
+            <div style:position="absolute" style:left="{px}px" style:top="{py}px">
+              {@render memberCard(member, CARD_W, color, 10.5)}
             </div>
           {/each}
+
+          <!-- President always a card (photo + full name + role), at the blob bottom, in front. -->
+          {#if bubble.showPresident && data.president}
+            <div
+              style:position="absolute"
+              style:left="{UNIT_CX - PRES_CARD_W / 2}px"
+              style:top="{BLOB_CY + 28}px"
+            >
+              {@render memberCard(data.president, PRES_CARD_W, color, 12)}
+            </div>
+          {/if}
 
           <!-- Association name in a band BELOW the blob: wraps + shrinks to fit, never clipped. -->
           <div
             style:position="absolute"
             style:left="8px"
             style:right="8px"
-            style:top="{BLOB_CY + BLOB_SIZE / 2 + 8}px"
+            style:top="{BLOB_CY + BLOB_SIZE / 2 + 92}px"
             style:text-align="center"
           >
             <p
@@ -828,7 +815,9 @@
                     style:line-height="1.35"
                     style:color={theme.directoryMutedColor}
                   >
-                    {asso.members.map((mem) => mem.name).join(' - ')}
+                    {asso.members
+                      .map((mem) => (mem.role ? `${mem.name} (${mem.role})` : mem.name))
+                      .join(' - ')}
                   </p>
                 {/if}
               </div>

@@ -1034,6 +1034,8 @@
   "carte_panel_president_toggle": "Show president",
   "carte_shape_label": "Shape",
   "carte_shape_option": "Shape {n}",
+  "carte_logo_shape_label": "Logo shape",
+  "carte_logo_shape_option": "Logo shape {n}",
   "carte_panel_front": "Bring to front",
   "carte_panel_back": "Send to back",
   "carte_panel_reset": "Reset position",

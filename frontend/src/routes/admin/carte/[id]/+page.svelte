@@ -26,7 +26,7 @@
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
-  import { CARTE_SHAPES, shapeRadius } from '$lib/carte/shapes';
+  import { CARTE_SHAPES, shapeRadius, LOGO_SHAPES, logoShape } from '$lib/carte/shapes';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
@@ -657,6 +657,33 @@
                       <span
                         class="block h-full w-full bg-current"
                         style:border-radius={shapeRadius(sh.key)}
+                      ></span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="space-y-1.5">
+                <span class="block text-xs font-semibold text-text-muted"
+                  >{m.carte_logo_shape_label()}</span
+                >
+                <div class="flex flex-wrap gap-1.5">
+                  {#each LOGO_SHAPES as ls, i (ls.key)}
+                    {@const max = Math.max(ls.w, ls.h)}
+                    <button
+                      type="button"
+                      aria-label={m.carte_logo_shape_option({ n: i + 1 })}
+                      onclick={() => patchBubble(selectedBubble.assoId, { logoShape: ls.key })}
+                      class="flex h-8 w-8 items-center justify-center border p-1 transition-colors {selectedBubble.logoShape ===
+                      ls.key
+                        ? 'border-cn-yellow text-cn-yellow'
+                        : 'border-cn-border text-text-muted hover:text-text-main'}"
+                    >
+                      <span
+                        class="block bg-current"
+                        style:width="{(ls.w / max) * 100}%"
+                        style:height="{(ls.h / max) * 100}%"
+                        style:border-radius={logoShape(ls.key).radius}
                       ></span>
                     </button>
                   {/each}

@@ -38,3 +38,41 @@ export function shapeRadius(key: string): string {
 export function isShapeKey(key: string): boolean {
   return CARTE_SHAPES.some((s) => s.key === key);
 }
+
+/**
+ * Logo frame shapes: a small dedicated set (unlike the organic blob silhouettes) so a rectangular
+ * logo is not cropped by an organic outline. Each carries an aspect ratio ({@link LogoShape.w} x
+ * {@link LogoShape.h}, multipliers of the base logo size) plus a `border-radius`, so the logo can be
+ * a circle, a rounded square, or a rounded rectangle in landscape / portrait.
+ */
+export interface LogoShape {
+  /** Stable key persisted on the positioned bubble. */
+  key: string;
+  /** Width multiplier of the base logo size. */
+  w: number;
+  /** Height multiplier of the base logo size. */
+  h: number;
+  /** CSS `border-radius` value for the frame. */
+  radius: string;
+}
+
+/** The dedicated logo frame shapes (round, rounded square, rounded rectangle landscape/portrait). */
+export const LOGO_SHAPES: LogoShape[] = [
+  { key: 'circle', w: 1, h: 1, radius: '50%' },
+  { key: 'squircle', w: 1, h: 1, radius: '26%' },
+  { key: 'wide', w: 1.5, h: 0.92, radius: '18%' },
+  { key: 'tall', w: 0.92, h: 1.42, radius: '18%' },
+];
+
+/** Default logo shape key applied to freshly-seeded bubbles. */
+export const DEFAULT_LOGO_SHAPE = LOGO_SHAPES[0].key;
+
+/** Resolves a logo shape key to its {@link LogoShape}, falling back to the default (first) shape. */
+export function logoShape(key: string): LogoShape {
+  return LOGO_SHAPES.find((s) => s.key === key) ?? LOGO_SHAPES[0];
+}
+
+/** Whether a persisted logo shape key is a known logo shape. */
+export function isLogoShapeKey(key: string): boolean {
+  return LOGO_SHAPES.some((s) => s.key === key);
+}

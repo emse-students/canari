@@ -1,5 +1,5 @@
 import type { PosterModel, PosterBubble } from './generator';
-import { DEFAULT_SHAPE, isShapeKey } from './shapes';
+import { DEFAULT_SHAPE, isShapeKey, DEFAULT_LOGO_SHAPE, isLogoShapeKey } from './shapes';
 
 /**
  * A single association placed on the freeform poster canvas. Positions are stored in the
@@ -25,6 +25,8 @@ export interface PositionedBubble {
   showPresident: boolean;
   /** Blob silhouette key (see {@link CARTE_SHAPES}); falls back to the default when unknown. */
   shape: string;
+  /** Logo frame shape key (see {@link LOGO_SHAPES}); falls back to the default when unknown. */
+  logoShape: string;
 }
 
 /**
@@ -128,6 +130,7 @@ export function seedBubbleLayout(
         colorOverride: null,
         showPresident: true,
         shape: DEFAULT_SHAPE,
+        logoShape: DEFAULT_LOGO_SHAPE,
       });
       col++;
     }
@@ -171,6 +174,10 @@ export function mergeBubbleLayout(
       colorOverride: typeof prev.colorOverride === 'string' ? prev.colorOverride : null,
       showPresident: prev.showPresident !== false,
       shape: typeof prev.shape === 'string' && isShapeKey(prev.shape) ? prev.shape : DEFAULT_SHAPE,
+      logoShape:
+        typeof prev.logoShape === 'string' && isLogoShapeKey(prev.logoShape)
+          ? prev.logoShape
+          : DEFAULT_LOGO_SHAPE,
     };
   });
 }
