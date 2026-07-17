@@ -12,6 +12,8 @@ export interface PosterLayout {
   version: number;
   /** Legacy theme id (the theme picker was dropped; ignored on load, kept for old projects). */
   theme?: string;
+  /** Optional override for the poster title color (hex); falls back to the theme's title color. */
+  titleColor?: string;
   /** Optional background image + scrim. */
   background: {
     /** Data-URL of the uploaded background image, or null for a flat page color. */

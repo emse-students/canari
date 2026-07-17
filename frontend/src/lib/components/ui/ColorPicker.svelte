@@ -38,7 +38,15 @@
     value = $bindable('#3b82f6'),
     label = undefined,
     class: className = '',
-  }: { value?: string; label?: string; class?: string } = $props();
+    onChange = undefined,
+  }: {
+    value?: string;
+    label?: string;
+    class?: string;
+    /** Optional callback fired with the new hex on every user-driven change (in addition to the
+     * two-way `value` binding), so callers that don't bind can still react. */
+    onChange?: (hex: string) => void;
+  } = $props();
 
   // Initialise HSV from the incoming value; track the last value we emitted
   // to avoid re-parsing on our own updates (prevents floating-point drift loops).
@@ -66,6 +74,7 @@
     lastEmitted = hex;
     value = hex;
     hexInput = hex;
+    onChange?.(hex);
   }
 
   // ── Hex input ─────────────────────────────────────────────────────
@@ -82,6 +91,7 @@
       v = nv;
       lastEmitted = cleaned;
       value = cleaned;
+      onChange?.(cleaned);
     }
   }
 
@@ -275,6 +285,7 @@
               s = ns;
               v = nv;
               hexInput = preset;
+              onChange?.(preset);
             }}
             class="w-full aspect-square rounded-lg border-2 transition-transform hover:scale-110 active:scale-95"
             style="background:{preset}; border-color:{value === preset

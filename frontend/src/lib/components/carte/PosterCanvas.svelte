@@ -344,22 +344,27 @@
     const px = (event.clientX - drag.rectLeft) / viewScale;
     const py = (event.clientY - drag.rectTop) / viewScale;
     if (drag.mode === 'move') {
-      const maxX = Math.max(0, drag.limitX - drag.baseWidth * drag.scale);
-      const maxY = Math.max(0, STAGE_HEIGHT - drag.h0);
-      let nx = clamp(drag.originX + (px - drag.px0), 0, maxX);
-      let ny = clamp(drag.originY + (py - drag.py0), 0, maxY);
+      // Elements may be pushed right up to (and partly past) any edge - only KEEP px must stay
+      // on-frame - so the margins are fully usable. The directory column is no longer a hard limit.
+      const KEEP = 40;
+      const minX = -(drag.w0 - KEEP);
+      const maxX = STAGE_WIDTH - KEEP;
+      const minY = -(drag.h0 - KEEP);
+      const maxY = STAGE_HEIGHT - KEEP;
+      let nx = clamp(drag.originX + (px - drag.px0), minX, maxX);
+      let ny = clamp(drag.originY + (py - drag.py0), minY, maxY);
       // Alt bypasses snapping for free placement; otherwise pull edges/centers onto guides.
       let vLine: number | null = null;
       let hLine: number | null = null;
       if (!event.altKey) {
         const sx = nearestSnap([nx, nx + drag.w0 / 2, nx + drag.w0], drag.vGuides);
         if (sx) {
-          nx = clamp(nx + sx.delta, 0, maxX);
+          nx = clamp(nx + sx.delta, minX, maxX);
           vLine = sx.line;
         }
         const sy = nearestSnap([ny, ny + drag.h0 / 2, ny + drag.h0], drag.hGuides);
         if (sy) {
-          ny = clamp(ny + sy.delta, 0, maxY);
+          ny = clamp(ny + sy.delta, minY, maxY);
           hLine = sy.line;
         }
       }

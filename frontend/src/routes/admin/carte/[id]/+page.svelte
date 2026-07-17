@@ -29,6 +29,7 @@
   import { CARTE_SHAPES, shapeRadius } from '$lib/carte/shapes';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
+  import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
     ArrowLeft,
     Download,
@@ -46,6 +47,8 @@
     AlignRight,
     Maximize,
     Minimize,
+    ZoomIn,
+    ZoomOut,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -59,8 +62,11 @@
   let bgDataUrl = $state<string | null>(null);
   let scrimOpacity = $state(DEFAULT_SCRIM_OPACITY);
   let directoryVisible = $state(true);
+  /** Poster title color (persisted override of the theme default). */
+  let titleColor = $state(CARTE_STYLE.titleColor);
   // Single fixed poster style (the theme picker was dropped); the bg image, if any, replaces it.
-  const theme = CARTE_STYLE;
+  // Only the title color is author-overridable, so the theme is derived from it.
+  const theme = $derived({ ...CARTE_STYLE, titleColor });
 
   // ── Freeform bubble placement (persisted as layout.bubbles) ───────────────────
   let positioned = $state<PositionedBubble[]>([]);
@@ -73,6 +79,10 @@
   let saving = $state(false);
   let saved = $state(false);
   let exporting = $state(false);
+  /** True once a project has finished loading, so autosave never fires on the initial hydration. */
+  let hydrated = $state(false);
+  /** Pending debounced-autosave timer (cleared on every change). */
+  let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   // ── Full-page editing ─────────────────────────────────────────────────────────
   // An in-app overlay (fixed inset-0) that fills the browser window while keeping its chrome - NOT
@@ -100,9 +110,20 @@
   // ── Scaled preview (poster renders at its natural A2 frame, scaled to fit the column width) ──
   let previewWidth = $state(0);
   let posterEl = $state<HTMLElement>();
-  const scale = $derived(previewWidth > 0 ? Math.min(1, previewWidth / 1600) : 1);
-  // The frame is a fixed-height A2 landscape, so the scaled wrapper height is deterministic.
-  const previewHeight = $derived(STAGE_HEIGHT * scale);
+  /** User zoom multiplier on top of the fit-to-width scale (1 = fit; >1 scrolls the preview). */
+  let zoom = $state(1);
+  const MIN_ZOOM = 0.4;
+  const MAX_ZOOM = 4;
+  /** Scale that fits the whole A2 width into the preview column. */
+  const fitScale = $derived(previewWidth > 0 ? Math.min(1, previewWidth / 1600) : 1);
+  /** Effective on-screen scale (fit * zoom); drives the poster transform + pointer math. */
+  const viewScale = $derived(fitScale * zoom);
+  // The wrapper keeps the fit height so the page layout is stable; zoom overflows + scrolls inside.
+  const previewHeight = $derived(STAGE_HEIGHT * fitScale);
+
+  function zoomBy(delta: number) {
+    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom + delta) * 100) / 100));
+  }
 
   async function loadData() {
     loading = true;
@@ -122,6 +143,8 @@
       scrimOpacity =
         bg && typeof bg.scrimOpacity === 'number' ? bg.scrimOpacity : DEFAULT_SCRIM_OPACITY;
       directoryVisible = layout.directoryVisible !== false;
+      titleColor =
+        typeof layout.titleColor === 'string' ? layout.titleColor : CARTE_STYLE.titleColor;
       decorations = sanitizeDecorations(layout.decorations);
 
       // Resolve rosters (for president detection); tolerate per-asso failures.
@@ -144,6 +167,8 @@
         ? (layout.bubbles as PositionedBubble[])
         : [];
       positioned = mergeBubbleLayout(savedBubbles, built);
+      // Arm autosave only now, so hydrating the state above doesn't schedule a spurious save.
+      hydrated = true;
     } catch (e) {
       error = e instanceof Error ? e.message : m.common_load_error();
     } finally {
@@ -215,6 +240,7 @@
     try {
       const layout: PosterLayout = {
         version: 1,
+        titleColor,
         background: { dataUrl: bgDataUrl, scrimOpacity },
         bubbles: positioned,
         directoryVisible,
@@ -231,6 +257,24 @@
       saving = false;
     }
   }
+
+  /**
+   * Debounced autosave: 4s after the last change to any persisted field, save silently. Reads only
+   * the content fields (not `project`), so the save's own `project` update never re-triggers it.
+   */
+  $effect(() => {
+    // Track every persisted field so any edit re-arms the timer.
+    void positioned;
+    void decorations;
+    void bgDataUrl;
+    void scrimOpacity;
+    void directoryVisible;
+    void titleColor;
+    if (!hydrated) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => void handleSave(), 4000);
+    return () => clearTimeout(autosaveTimer);
+  });
 
   async function handleExport() {
     if (!posterEl || !project || exporting) return;
@@ -284,18 +328,6 @@
         <div class="flex items-center gap-2">
           <button
             type="button"
-            onclick={toggleFullPage}
-            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg"
-          >
-            {#if isFullPage}
-              <Minimize size={16} />
-            {:else}
-              <Maximize size={16} />
-            {/if}
-            {isFullPage ? m.carte_fullpage_exit() : m.carte_fullpage_enter()}
-          </button>
-          <button
-            type="button"
             onclick={handleSave}
             disabled={saving}
             class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
@@ -329,51 +361,90 @@
           ? 'fixed inset-0 z-50 overflow-auto bg-cn-bg p-5'
           : ''}"
       >
-        {#if isFullPage}
-          <!-- The header (with its exit toggle) is hidden behind this overlay, so surface a
-               floating exit control inside it. -->
-          <button
-            type="button"
-            onclick={toggleFullPage}
-            class="fixed right-5 top-5 z-[60] inline-flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-2 text-sm font-bold text-text-main shadow-lg hover:bg-cn-bg"
+        <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->
+        <div class="space-y-2">
+          <div class="flex items-center gap-1.5">
+            <button
+              type="button"
+              onclick={() => zoomBy(-0.25)}
+              aria-label={m.carte_zoom_out()}
+              class="inline-flex items-center justify-center rounded-lg border border-cn-border p-1.5 text-text-muted hover:text-text-main hover:bg-cn-bg"
+            >
+              <ZoomOut size={15} />
+            </button>
+            <button
+              type="button"
+              onclick={() => (zoom = 1)}
+              class="min-w-[3.5rem] rounded-lg border border-cn-border px-2 py-1 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              onclick={() => zoomBy(0.25)}
+              aria-label={m.carte_zoom_in()}
+              class="inline-flex items-center justify-center rounded-lg border border-cn-border p-1.5 text-text-muted hover:text-text-main hover:bg-cn-bg"
+            >
+              <ZoomIn size={15} />
+            </button>
+          </div>
+          <!-- Scrollable stage: the outer div is sized to the scaled poster so zoom overflows +
+               scrolls; the inner (un-scaled) element is the exact node captured for PDF export. -->
+          <div
+            bind:clientWidth={previewWidth}
+            class="overflow-auto rounded-2xl border border-cn-border"
+            style:height="{previewHeight}px"
           >
-            <Minimize size={16} />
-            {m.carte_fullpage_exit()}
-          </button>
-        {/if}
-        <!-- Scaled poster preview (the node captured for PDF is the un-scaled inner element). -->
-        <div
-          bind:clientWidth={previewWidth}
-          class="overflow-hidden rounded-2xl border border-cn-border"
-          style:height="{previewHeight}px"
-        >
-          <div style:transform="scale({scale})" style:transform-origin="top left">
-            <PosterCanvas
-              bind:el={posterEl}
-              {model}
-              {content}
-              bubbles={positioned}
-              {decorations}
-              {theme}
-              {background}
-              {directoryVisible}
-              editable
-              viewScale={scale}
-              {selectedId}
-              {selectedDecorationId}
-              title={project.name}
-              onSelect={(id) => (selectedId = id)}
-              onSelectDecoration={(id) => (selectedDecorationId = id)}
-              onChange={patchBubble}
-              onChangeDecoration={patchDecoration}
-            />
+            <div style:width="{1600 * viewScale}px" style:height="{STAGE_HEIGHT * viewScale}px">
+              <div
+                style:transform="scale({viewScale})"
+                style:transform-origin="top left"
+                style:width="1600px"
+                style:height="{STAGE_HEIGHT}px"
+              >
+                <PosterCanvas
+                  bind:el={posterEl}
+                  {model}
+                  {content}
+                  bubbles={positioned}
+                  {decorations}
+                  {theme}
+                  {background}
+                  {directoryVisible}
+                  editable
+                  {viewScale}
+                  {selectedId}
+                  {selectedDecorationId}
+                  title={project.name}
+                  onSelect={(id) => (selectedId = id)}
+                  onSelectDecoration={(id) => (selectedDecorationId = id)}
+                  onChange={patchBubble}
+                  onChangeDecoration={patchDecoration}
+                />
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- Settings + per-bubble property panel -->
         <div class="space-y-4">
           <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-4">
-            <h3 class="text-sm font-bold text-text-main">{m.carte_settings_heading()}</h3>
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-bold text-text-main">{m.carte_settings_heading()}</h3>
+              <button
+                type="button"
+                onclick={toggleFullPage}
+                class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+              >
+                {#if isFullPage}
+                  <Minimize size={14} />
+                  {m.carte_fullpage_exit()}
+                {:else}
+                  <Maximize size={14} />
+                  {m.carte_fullpage_enter()}
+                {/if}
+              </button>
+            </div>
 
             <div class="flex flex-wrap items-center gap-3">
               <span class="block text-xs font-semibold text-text-muted"
@@ -412,6 +483,11 @@
               <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
               {m.carte_directory_toggle()}
             </label>
+
+            <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+              <span>{m.carte_title_color_label()}</span>
+              <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
+            </div>
 
             <p class="text-xs text-text-muted">{m.carte_editor_hint()}</p>
             <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
@@ -453,16 +529,14 @@
               {/if}
 
               <div class="flex flex-wrap items-center gap-3">
-                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
                   {m.carte_panel_color()}
-                  <input
-                    type="color"
+                  <ColorPicker
                     value={selectedDecoration.color}
-                    oninput={(e) =>
-                      patchDecoration(selectedDecoration.id, { color: e.currentTarget.value })}
-                    class="h-7 w-10 cursor-pointer rounded border border-cn-border bg-transparent"
+                    label={m.carte_panel_color()}
+                    onChange={(hex) => patchDecoration(selectedDecoration.id, { color: hex })}
                   />
-                </label>
+                </div>
                 {#if selectedTextDeco}
                   <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
                     <input
@@ -533,14 +607,12 @@
             {#if selectedBubble && selectedContent}
               <p class="text-sm font-extrabold text-text-main">{selectedContent.name}</p>
 
-              <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+              <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
                 {m.carte_panel_color()}
-                <input
-                  type="color"
+                <ColorPicker
                   value={selectedBubble.colorOverride ?? selectedContent.color}
-                  oninput={(e) =>
-                    patchBubble(selectedBubble.assoId, { colorOverride: e.currentTarget.value })}
-                  class="h-7 w-10 cursor-pointer rounded border border-cn-border bg-transparent"
+                  label={m.carte_panel_color()}
+                  onChange={(hex) => patchBubble(selectedBubble.assoId, { colorOverride: hex })}
                 />
                 {#if selectedBubble.colorOverride}
                   <button
@@ -551,7 +623,7 @@
                     {m.carte_panel_color_reset()}
                   </button>
                 {/if}
-              </label>
+              </div>
 
               {#if selectedContent.president}
                 <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
