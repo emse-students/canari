@@ -142,7 +142,7 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   (content textarea, color, bold, align left/center/right, front/back, delete); export nulls both
   selections. New i18n `carte_elements_heading`/`carte_add_text`/`carte_text_placeholder`/
   `carte_deco_*`/`carte_align_*` (FR+EN). No migration (layout stays an opaque JSON blob).
-- **P3b - Doodle palette** (b36e8b03, gates green; browser-verify pending): a second decoration kind
+- **P3b - Doodle palette** (70395056, gates green; browser-verify pending): a second decoration kind
   (`DoodleDecoration`: kind/shape/color) riding the P3a drag/resize machinery. New module
   `frontend/src/lib/carte/doodles.ts` holds the curated `DOODLE_SHAPES` catalog (12 lucide shapes),
   `doodleIcon(key)` (Star fallback), and `isDoodleShape`; doodles render as inline lucide SVGs so
