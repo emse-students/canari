@@ -8,9 +8,12 @@ const WEEKDAYS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samed
 const HEADER_H = 68;
 const WEEKDAY_ROW_H = 40;
 const GRID_PAD_BOTTOM = 20;
-/** Height of the A4 landscape calendar container in pixels (1080px logical width). */
-export const CALENDAR_CONTAINER_HEIGHT = Math.floor((210 * 1080) / 297) - 5; // ≈ 758
-const MAX_CELL_H = 130;
+/**
+ * Height of the A4 landscape calendar container in pixels (1080px logical width).
+ * Pinned to the EXACT A4 landscape ratio (297:210) so the rasterised canvas fills a standard A4
+ * page with no distortion and no white bar - the container itself is the page.
+ */
+export const CALENDAR_CONTAINER_HEIGHT = Math.round((210 * 1080) / 297); // = 764
 const MAX_SHOW = 3;
 
 /** Configurable visual options for the monthly calendar PDF export. */
@@ -246,9 +249,10 @@ function buildCalendarHtml(
 
   const cells = buildCalendarCells(year, month);
   const nRows = cells.length / 7;
-  const CELL_H = Math.min(
-    MAX_CELL_H,
-    Math.floor((CALENDAR_CONTAINER_HEIGHT - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows)
+  // Divide the FULL container height across the rows (no cap): a 4-row month gets taller cells that
+  // reach the bottom edge instead of leaving a white band, keeping the content A4-ratio exact.
+  const CELL_H = Math.floor(
+    (CALENDAR_CONTAINER_HEIGHT - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM) / nRows
   );
 
   // Canva-style block shadow: a hard-offset duplicate of the text (0 blur radius), not a diffuse
@@ -428,7 +432,7 @@ export function buildPreviewInnerHtml(
   const body = buildCalendarHtml(events, year, month, opts, 'direct', '/favicon.png');
   // Wrapper mirrors the export container exactly (width, background, font-family) so the two render
   // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
-  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;border-radius:12px;overflow:hidden;box-sizing:border-box;">${body}</div>`;
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;border-radius:12px;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -475,6 +479,7 @@ export async function exportCalendarMonth(
     top: '0',
     left: '-9999px',
     width: '1080px',
+    height: `${CALENDAR_CONTAINER_HEIGHT}px`,
     background: opts.pageBg,
     color: '#111111',
     fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
@@ -506,9 +511,12 @@ export async function exportCalendarMonth(
     });
 
     const imgData = canvas.toDataURL('image/png');
+    // Standard A4 landscape page; the canvas is already A4-ratio so it fills the whole page with no
+    // distortion and no white bar - and prints borderless on real A4 paper.
     const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageW = pdf.internal.pageSize.getWidth();
-    pdf.addImage(imgData, 'PNG', 0, 0, pageW, (canvas.height * pageW) / canvas.width);
+    const pageH = pdf.internal.pageSize.getHeight();
+    pdf.addImage(imgData, 'PNG', 0, 0, pageW, pageH);
     pdf.save(`canari-agenda-${year}-${String(month + 1).padStart(2, '0')}.pdf`);
   } finally {
     document.body.removeChild(container);

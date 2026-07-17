@@ -178,19 +178,39 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   `carte_blobs_label` + `carte_blob_*` (FR+EN). No migration (layout stays an opaque JSON blob).
   This closes P3; the carte editor now covers text, doodles, snap guides and background blobs.
 - **Refonte (user feedback 2026-07-17), 3 steps:**
-  - **Step 1 - Cleanup + UX (DONE, gates green):** dropped the 3 theme presets - `theme.ts` now exports a
+  - **Step 1 - Cleanup + UX (committed 0a468ded):** dropped the 3 theme presets - `theme.ts` now exports a
     single fixed `CARTE_STYLE` (the warm "vitamine" look); an uploaded background image simply replaces it.
     Removed the "N associations" subtitle. Removed the doodle + background-blob decoration kinds (deleted
-    `doodles.ts` + `blobs.ts`; `Decoration` is now just `TextDecoration` - free text is kept). Added a
-    **fullscreen** toggle on the editor (Fullscreen API). Fixed the drag bug where a component only dropped
-    on the next click: the browser's native image drag is now suppressed (`draggable=false` +
-    `-webkit-user-drag:none` on every img) and `beginMove`/`beginResize` call `preventDefault()` +
+    `doodles.ts` + `blobs.ts`; `Decoration` is now just `TextDecoration` - free text is kept). Fixed the drag
+    bug where a component only dropped on the next click: native image drag is suppressed (`draggable=false`
+    + `-webkit-user-drag:none` on every img) and `beginMove`/`beginResize` call `preventDefault()` +
     `setPointerCapture()`. No migration (layout stays an opaque JSON blob; `layout.theme` is now ignored).
-  - **Step 2 - Export (TODO):** one A2 landscape page, background full-bleed to the bottom (no white bar);
-    same single-page + full-bleed fix applied to the agenda PDF export.
-  - **Step 3 - Visual redesign (TODO):** each asso becomes a large shape-configurable blob with the
-    president inside and the bureau (asso admins) auto-arranged as polaroids around it; the directory moves
-    to a right-hand column listing ALL members grouped by asso (so everyone appears).
+    **CORRECTION PENDING (user 2026-07-17):** the editor "fullscreen" toggle currently uses the Fullscreen
+    API (hides the whole browser). **DONE:** replaced with an in-app **"pleine page"** overlay - an
+    `isFullPage` `$state` boolean toggling `fixed inset-0 z-50 overflow-auto bg-cn-bg p-5` on the editor grid
+    (browser chrome stays); dropped `requestFullscreen`/`exitFullscreen`, the `fullscreenchange` `$effect` and
+    the `editorEl` bind; renamed i18n `carte_fullscreen_*` -> `carte_fullpage_*` (FR "Pleine page"/"Quitter la
+    pleine page", EN "Full page"/"Exit full page"). Everything else in Step 1 verified good by the user.
+  - **Step 2 - Export (agenda DONE; carte deferred to Step 3):** GOAL: keep a STANDARD page format (so it
+    prints on real A4/A2 with no added borders) AND make the CONTENT the exact right ratio so it fills the
+    page with NO distortion and NO white bar.
+    - **Agenda (`utils/calendarExport.ts`) - DONE:** the calendar container is pinned to the EXACT A4-landscape
+      ratio - `CALENDAR_CONTAINER_HEIGHT = Math.round((210 * 1080) / 297)` (= 764), the export container AND
+      the `buildPreviewInnerHtml` wrapper carry an explicit `height` of that value, and the `MAX_CELL_H` clamp
+      is gone so `CELL_H = floor((H - HEADER_H - WEEKDAY_ROW_H - GRID_PAD_BOTTOM)/nRows)` always divides the
+      full height (4-row months get taller cells instead of a bottom white bar). Export is a STANDARD A4
+      landscape page filled whole: `format:'a4'`, `addImage(...,0,0,pageW,pageH)`. Container == A4 ratio => no
+      distortion, no white bar, bg to every edge; prints clean on A4.
+    - **Carte export:** folded into Step 3 (needs the fixed A2 frame so the content is A2-ratio). Until then
+      `carte/export.ts` stays at its committed version.
+  - **Step 3 - A2 frame + visual redesign (TODO):** make the poster stage a FIXED A2 landscape frame
+    (`STAGE_WIDTH` 1600 -> `STAGE_HEIGHT = round(1600 / Math.SQRT2)` = 1131, `overflow:hidden`, background
+    covering the whole frame). Fit the content INTO the frame: move the directory to a right-hand column
+    listing ALL members grouped by asso (so everyone appears); constrain bubbles to the left region. Each
+    asso becomes a large shape-configurable blob (re-create a border-radius shape catalog; per-asso shape
+    selector) with the president inside and the bureau (asso admins) auto-arranged as polaroids around it
+    (auto-radial). Then the carte export uses a STANDARD A2 landscape page filled whole (content is exactly
+    A2 ratio => no distortion, no white bar); replace the pagination loop with a single `addImage`.
 
 ## Reuse map
 

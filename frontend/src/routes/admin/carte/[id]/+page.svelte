@@ -73,22 +73,15 @@
   let saved = $state(false);
   let exporting = $state(false);
 
-  // ── Fullscreen editing ────────────────────────────────────────────────────────
-  let editorEl = $state<HTMLElement>();
-  let isFullscreen = $state(false);
+  // ── Full-page editing ─────────────────────────────────────────────────────────
+  // An in-app overlay (fixed inset-0) that fills the browser window while keeping its chrome - NOT
+  // the Fullscreen API, which hides the whole browser interface.
+  let isFullPage = $state(false);
 
-  /** Toggles native fullscreen on the editor container so authoring can use the whole screen. */
-  function toggleFullscreen() {
-    if (!editorEl) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void editorEl.requestFullscreen();
+  /** Toggles the in-app full-page overlay so authoring can use the whole window. */
+  function toggleFullPage() {
+    isFullPage = !isFullPage;
   }
-
-  $effect(() => {
-    const onChange = () => (isFullscreen = document.fullscreenElement === editorEl);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  });
 
   const projectId = $derived(page.params.id ?? '');
   const background = $derived({ dataUrl: bgDataUrl, scrimOpacity });
@@ -300,15 +293,15 @@
         <div class="flex items-center gap-2">
           <button
             type="button"
-            onclick={toggleFullscreen}
+            onclick={toggleFullPage}
             class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg"
           >
-            {#if isFullscreen}
+            {#if isFullPage}
               <Minimize size={16} />
             {:else}
               <Maximize size={16} />
             {/if}
-            {isFullscreen ? m.carte_fullscreen_exit() : m.carte_fullscreen_enter()}
+            {isFullPage ? m.carte_fullpage_exit() : m.carte_fullpage_enter()}
           </button>
           <button
             type="button"
@@ -341,9 +334,8 @@
       {/if}
 
       <div
-        bind:this={editorEl}
-        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] {isFullscreen
-          ? 'overflow-auto bg-cn-bg p-5'
+        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] {isFullPage
+          ? 'fixed inset-0 z-50 overflow-auto bg-cn-bg p-5'
           : ''}"
       >
         <!-- Scaled poster preview (the node captured for PDF is the un-scaled inner element). -->
