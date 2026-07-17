@@ -70,7 +70,7 @@ describe('MessagingService - notifyHistoryRequest', () => {
     redis.smembers.mockResolvedValue(['ua:da']);
     redis.exists.mockResolvedValue(1);
 
-    const res = await service.notifyHistoryRequest(body);
+    const res = await service.notifyHistoryRequest('reqU', body);
 
     expect(res).toEqual({ status: 'forwarded', target: 'ua:da' });
     expect(redis.publish).toHaveBeenCalledTimes(1);
@@ -80,7 +80,7 @@ describe('MessagingService - notifyHistoryRequest', () => {
     redis.smembers.mockResolvedValue(['ua:da', 'ub:db']);
     redis.exists.mockResolvedValue(0);
 
-    const res = await service.notifyHistoryRequest(body);
+    const res = await service.notifyHistoryRequest('reqU', body);
 
     expect(res).toEqual({ status: 'no_peer_online' });
     expect(redis.publish).not.toHaveBeenCalled();
@@ -90,10 +90,27 @@ describe('MessagingService - notifyHistoryRequest', () => {
     redis.smembers.mockResolvedValue(['reqU:reqD']);
     redis.exists.mockResolvedValue(1);
 
-    const res = await service.notifyHistoryRequest(body);
+    const res = await service.notifyHistoryRequest('reqU', body);
 
     expect(res).toEqual({ status: 'no_peer_online' });
     expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  it('rejects a caller that does not match the body requester (identity spoofing)', async () => {
+    redis.smembers.mockResolvedValue(['ua:da']);
+    redis.exists.mockResolvedValue(1);
+
+    await expect(service.notifyHistoryRequest('attacker', body)).rejects.toThrow();
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  it('skips the caller check when x-user-id is absent (legacy no-op)', async () => {
+    redis.smembers.mockResolvedValue(['ua:da']);
+    redis.exists.mockResolvedValue(1);
+
+    const res = await service.notifyHistoryRequest(undefined, body);
+
+    expect(res).toEqual({ status: 'forwarded', target: 'ua:da' });
   });
 
   it('randomizes the responder so retries rotate past a frozen-online peer', async () => {
@@ -104,7 +121,7 @@ describe('MessagingService - notifyHistoryRequest', () => {
     redis.exists.mockResolvedValue(1);
     const randSpy = jest.spyOn(Math, 'random').mockReturnValue(0);
 
-    const res = await service.notifyHistoryRequest(body);
+    const res = await service.notifyHistoryRequest('reqU', body);
 
     expect(res.status).toBe('forwarded');
     expect(res.target).not.toBe('ua:da');

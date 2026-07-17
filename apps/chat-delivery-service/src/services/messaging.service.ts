@@ -228,6 +228,34 @@ export class MessagingService {
     return `${scope}-${randomUUID().slice(0, 8)}`;
   }
 
+  /**
+   * Binds a client-supplied `requesterUserId` to the authenticated caller.
+   *
+   * The welcome/history-request fan-out relays a control frame naming the requester so that peers
+   * re-invite (or re-deliver history to) that identity. Because the requester device is typically
+   * NOT yet a group member, membership cannot be checked here - the only meaningful gate is that a
+   * caller may solicit re-invites/history for THEIR OWN identity only. Without this, a session
+   * holder could forge `requesterUserId` to spoof another user across the fan-out.
+   *
+   * `authUserIdRaw` is the `x-user-id` header injected by nginx after auth. When it is absent
+   * (legacy no-op, matching the rest of the authz campaign) the check is skipped; when present it
+   * must equal the body's requester, otherwise a ForbiddenException is thrown.
+   */
+  private assertRequesterMatchesCaller(
+    authUserIdRaw: string | undefined,
+    requesterUserId: string,
+    traceId: string,
+    scope: string
+  ): void {
+    const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
+    if (authUserId && authUserId !== requesterUserId) {
+      this.logger.warn(
+        `[${scope}][${traceId}] AUTHZ FAIL caller=${authUserId} != requester=${requesterUserId}`
+      );
+      throw new ForbiddenException('requesterUserId does not match the authenticated caller');
+    }
+  }
+
   private isTerminalPushTokenError(error: unknown): boolean {
     const rawCode =
       typeof error === 'object' && error && 'code' in error
@@ -1226,12 +1254,14 @@ export class MessagingService {
    * durable FCM wake.
    */
   async notifyHistoryRequest(
+    authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
   ): Promise<{ status: string; target?: string }> {
     const traceId = this.makeTraceId('history-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
+    this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'HISTORY_REQ');
 
     let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
@@ -1299,12 +1329,14 @@ export class MessagingService {
    * the Redis routing cache when the set is empty after a service restart.
    */
   async notifyWelcomeRequest(
+    authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
   ): Promise<{ status: string; target?: string }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
+    this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'WELCOME_REQ');
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that

@@ -28,7 +28,7 @@ status column as fixes land. CLAUDE.md references this file for the fix campaign
 | S5 | HIGH | Arbitrary group member removal + roster enumeration | FIXED |
 | S6 | MEDIUM | Arbitrary media blob deletion (IDOR) | FIXED |
 | S7 | MEDIUM | nginx does not reset identity headers on unauth locations | FIXED |
-| S8 | MEDIUM | welcome/history-request trust body `requesterUserId` | TODO |
+| S8 | MEDIUM | welcome/history-request trust body `requesterUserId` | FIXED |
 | B1 | LOW/BUG | users `search` reads never-populated `req.user`; route unguarded | TODO |
 | S9 | INFO | `canari_ws_token` access token JS-readable (accepted tradeoff) | ACCEPTED |
 | S10 | INFO | Document vault is server-custody, not E2E (document as such) | ACCEPTED |
@@ -163,6 +163,17 @@ Single source of truth is `infrastructure/local/Dockerfile.frontend` (no infra/e
 `requesterUserId`/`requesterDeviceId` from the body without matching the caller. Part of the
 S1 chain; standalone, lets an attacker trigger welcome/history fan-out under arbitrary ids.
 Fix: derive requester from `x-user-id`, or assert it matches.
+
+**FIXED.** Both controller routes now pass the `x-user-id` header into the service, and a shared
+`assertRequesterMatchesCaller` (private on `MessagingService`, near `makeTraceId`) throws
+`ForbiddenException` when the authenticated caller does not equal the body's `requesterUserId`.
+The requester device is typically NOT yet a group member (that is the reason for the re-invite /
+history request), so membership cannot be checked - the meaningful gate is that a session holder
+may only solicit fan-out for THEIR OWN identity. Legacy no-op when `x-user-id` is absent (matches
+the rest of the campaign). The internal caller (`invitations.controller.ts` invite-accept) passes
+`callerId`, which is already the requester, so it satisfies the check. Tests updated
+(`messaging.history-request.spec.ts`): existing cases pass the matching caller, plus a spoof-reject
+case and a legacy-absent no-op case (6 passing).
 
 ### B1 - LOW/BUG - users search dead auth context + unguarded
 `apps/core-service/src/users/users.controller.ts:47` reads `req.user?.sub`, but `req.user`

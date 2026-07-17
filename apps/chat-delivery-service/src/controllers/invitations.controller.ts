@@ -209,7 +209,7 @@ export class InvitationsController {
     // Best-effort - the pending rows above remain the durable fallback.
     for (const deviceId of deviceIds) {
       try {
-        await this.messagingService.notifyWelcomeRequest({
+        await this.messagingService.notifyWelcomeRequest(callerId, {
           groupId: group.id,
           requesterUserId: callerId,
           requesterDeviceId: deviceId,

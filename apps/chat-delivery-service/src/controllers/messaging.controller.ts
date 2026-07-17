@@ -123,19 +123,21 @@ export class MessagingController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/welcome-request')
   async notifyWelcomeRequest(
+    @Headers('x-user-id') authUserId: string | undefined,
     @Body()
     body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
   ) {
-    return this.messagingService.notifyWelcomeRequest(body);
+    return this.messagingService.notifyWelcomeRequest(authUserId, body);
   }
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/history-request')
   async notifyHistoryRequest(
+    @Headers('x-user-id') authUserId: string | undefined,
     @Body()
     body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
   ) {
-    return this.messagingService.notifyHistoryRequest(body);
+    return this.messagingService.notifyHistoryRequest(authUserId, body);
   }
 
   @UseGuards(HeaderAuthGuard)
