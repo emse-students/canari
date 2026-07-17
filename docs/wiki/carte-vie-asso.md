@@ -163,7 +163,20 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   guide and records the line; dashed guide lines render in the stage while dragging (gated on
   `editable`, so export never rasterises them). Roots carry `data-el-id` for self-exclusion. Holding
   **Alt** bypasses snapping (free placement); the editor hint (`carte_editor_hint`) documents it.
-- **P3 remaining - Polish**: theme background blobs.
+- **P3d - Background blobs** (gates green; browser-verify pending): a third decoration kind
+  (`BlobDecoration`: kind/shape/color/opacity) riding the P3a drag/resize machinery. New module
+  `frontend/src/lib/carte/blobs.ts` holds the `BLOB_SHAPES` catalog (6 organic silhouettes as CSS
+  `border-radius` shorthands - fully self-contained so snapdom rasterises them, no SVG/asset),
+  `blobRadius(key)` (first-shape fallback), and `isBlobShape`. `layout.ts` adds `BLOB_BASE_SIZE`
+  (280), `createBlobDecoration` (defaults opacity 50), and branches `sanitizeDecorations` +
+  `stageHeight` per kind. `PosterCanvas.svelte` gained a `{:else if deco.kind === 'blob'}` branch
+  rendering a scalable box whose inner div carries the organic border-radius + brand color +
+  `opacity/100`, on the same 4-corner handles. The editor page adds `addBlob` (drops the blob
+  behind everything via `min(z) - 1` so it washes under the bubbles), a "Blobs" palette (preview
+  swatches show each silhouette), and a blob-only opacity slider gated on a `selectedBlobDeco`
+  narrowed derived (color/front/back/delete stay common with the other decorations). New i18n
+  `carte_blobs_label` + `carte_blob_*` (FR+EN). No migration (layout stays an opaque JSON blob).
+  This closes P3; the carte editor now covers text, doodles, snap guides and background blobs.
 
 ## Reuse map
 

@@ -22,13 +22,16 @@
     stageHeight,
     createTextDecoration,
     createDoodleDecoration,
+    createBlobDecoration,
     sanitizeDecorations,
     TEXT_BASE_WIDTH,
     DOODLE_BASE_SIZE,
+    BLOB_BASE_SIZE,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
   import { DOODLE_SHAPES } from '$lib/carte/doodles';
+  import { BLOB_SHAPES } from '$lib/carte/blobs';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import {
@@ -86,6 +89,10 @@
   /** The selected decoration narrowed to a text box, or null (drives the text-only controls). */
   const selectedTextDeco = $derived(
     selectedDecoration?.kind === 'text' ? selectedDecoration : null
+  );
+  /** The selected decoration narrowed to a background blob, or null (drives the opacity control). */
+  const selectedBlobDeco = $derived(
+    selectedDecoration?.kind === 'blob' ? selectedDecoration : null
   );
 
   // ── Scaled preview (poster renders at its natural 1600px width, scaled to fit) ──
@@ -193,6 +200,20 @@
       (1600 - DOODLE_BASE_SIZE) / 2,
       140,
       z,
+      theme.titleColor
+    );
+    decorations = [...decorations, deco];
+    selectedId = null;
+    selectedDecorationId = deco.id;
+  }
+  /** Adds a background blob (placed behind the bubbles by default) and selects it. */
+  function addBlob(shape: string) {
+    const minZ = Math.min(0, ...positioned.map((b) => b.z), ...decorations.map((d) => d.z));
+    const deco = createBlobDecoration(
+      shape,
+      (1600 - BLOB_BASE_SIZE) / 2,
+      200,
+      minZ - 1,
       theme.titleColor
     );
     decorations = [...decorations, deco];
@@ -458,6 +479,25 @@
                 {/each}
               </div>
             </div>
+
+            <div class="space-y-2">
+              <span class="block text-xs font-semibold text-text-muted"
+                >{m.carte_blobs_label()}</span
+              >
+              <div class="flex flex-wrap gap-1.5">
+                {#each BLOB_SHAPES as shape (shape.key)}
+                  <button
+                    type="button"
+                    aria-label={shape.label()}
+                    title={shape.label()}
+                    onclick={() => addBlob(shape.key)}
+                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-cn-border hover:bg-cn-bg"
+                  >
+                    <span class="h-5 w-5 bg-text-muted" style:border-radius={shape.radius}></span>
+                  </button>
+                {/each}
+              </div>
+            </div>
           </section>
 
           {#if selectedDecoration}
@@ -506,6 +546,23 @@
                   </label>
                 {/if}
               </div>
+
+              {#if selectedBlobDeco}
+                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                  {m.carte_blob_opacity()}
+                  <input
+                    type="range"
+                    min="10"
+                    max="100"
+                    value={selectedBlobDeco.opacity}
+                    oninput={(e) =>
+                      patchDecoration(selectedBlobDeco.id, {
+                        opacity: Number(e.currentTarget.value),
+                      })}
+                    class="accent-cn-yellow"
+                  />
+                </label>
+              {/if}
 
               {#if selectedTextDeco}
                 <div class="flex flex-wrap items-center gap-1.5">

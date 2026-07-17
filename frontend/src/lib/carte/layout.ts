@@ -34,6 +34,8 @@ export const TEXT_BASE_WIDTH = 320;
 export const TEXT_BASE_SIZE = 34;
 /** Base (scale 1) side of a square doodle box (used for rendering + resize math). */
 export const DOODLE_BASE_SIZE = 120;
+/** Base (scale 1) side of a square background-blob box (used for rendering + resize math). */
+export const BLOB_BASE_SIZE = 280;
 
 // Seed-grid geometry (poster px). Kept here so the editor can recompute stage height + resets.
 const MARGIN = 56;
@@ -139,14 +141,19 @@ export function stageHeight(bubbles: PositionedBubble[], decorations: Decoration
     bottom = Math.max(bottom, b.y + b.scale * NOMINAL_CARD_HEIGHT);
   }
   for (const d of decorations) {
-    // Rough per-decoration lower bound at the element's scale (a few text lines / one doodle box).
-    const extent = d.kind === 'doodle' ? DOODLE_BASE_SIZE : TEXT_BASE_SIZE * 4;
+    // Rough per-decoration lower bound at the element's scale (a few text lines / one doodle or blob box).
+    const extent =
+      d.kind === 'doodle'
+        ? DOODLE_BASE_SIZE
+        : d.kind === 'blob'
+          ? BLOB_BASE_SIZE
+          : TEXT_BASE_SIZE * 4;
     bottom = Math.max(bottom, d.y + d.scale * extent);
   }
   return Math.ceil(bottom + MARGIN);
 }
 
-// ── Free-form decorations (text, later doodles + blobs) ─────────────────────────────────
+// ── Free-form decorations (text, doodles, background blobs) ─────────────────────────────
 // Decorations are pure canvas ornaments: unlike bubbles they carry their own content and are not
 // tied to live association data, so they need no merge step - only a defensive parse on load.
 
@@ -186,8 +193,19 @@ export interface DoodleDecoration extends DecorationBase {
   color: string;
 }
 
-/** Any placeable decoration. The union is extended in later phases (blobs). */
-export type Decoration = TextDecoration | DoodleDecoration;
+/** A soft organic background shape (CSS border-radius blob) the author can drag, resize and recolor. */
+export interface BlobDecoration extends DecorationBase {
+  kind: 'blob';
+  /** Shape key into the blob catalog (see `blobs.ts`). */
+  shape: string;
+  /** Fill color (hex). */
+  color: string;
+  /** Fill opacity (0-100), so a blob can wash behind bubbles without hiding them. */
+  opacity: number;
+}
+
+/** Any placeable decoration: a text label, a doodle icon, or a background blob. */
+export type Decoration = TextDecoration | DoodleDecoration | BlobDecoration;
 
 /** Builds a new empty text decoration at the given poster coordinates. */
 export function createTextDecoration(
@@ -221,6 +239,17 @@ export function createDoodleDecoration(
   return { id: crypto.randomUUID(), kind: 'doodle', x, y, scale: 1, z, shape, color };
 }
 
+/** Builds a new background blob for the given shape at the given poster coordinates. */
+export function createBlobDecoration(
+  shape: string,
+  x: number,
+  y: number,
+  z: number,
+  color: string
+): BlobDecoration {
+  return { id: crypto.randomUUID(), kind: 'blob', x, y, scale: 1, z, shape, color, opacity: 50 };
+}
+
 /** Defensively parses persisted decorations, dropping anything malformed or of an unknown kind. */
 export function sanitizeDecorations(raw: unknown): Decoration[] {
   if (!Array.isArray(raw)) return [];
@@ -252,6 +281,14 @@ export function sanitizeDecorations(raw: unknown): Decoration[] {
         kind: 'doodle',
         shape: r.shape,
         color: typeof r.color === 'string' ? r.color : '#ffffff',
+      });
+    } else if (r.kind === 'blob' && typeof r.shape === 'string') {
+      out.push({
+        ...base,
+        kind: 'blob',
+        shape: r.shape,
+        color: typeof r.color === 'string' ? r.color : '#ffffff',
+        opacity: typeof r.opacity === 'number' ? r.opacity : 50,
       });
     }
   }
