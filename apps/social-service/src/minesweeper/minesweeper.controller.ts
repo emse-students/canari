@@ -32,9 +32,22 @@ export class MinesweeperController {
     return this.minesweeperService.leaderboard(Number.isFinite(n) ? n : undefined);
   }
 
-  /** Caller's personal best, if any. */
+  /** Caller's personal best + rank, if any. */
   @Get('me')
   me(@Headers('x-user-id') userId: string) {
     return this.minesweeperService.me(userId);
+  }
+
+  /**
+   * Public standing for a profile badge: personal best + rank, or null body fields
+   * when the user has never submitted a verified clear.
+   */
+  @Get('users/:userId')
+  async userStanding(@Param('userId') targetUserId: string) {
+    const standing = await this.minesweeperService.userStanding(targetUserId);
+    if (!standing) {
+      return { personalBestMs: null as number | null, rank: null as number | null };
+    }
+    return standing;
   }
 }

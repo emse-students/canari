@@ -176,6 +176,12 @@ export class MinesweeperService {
       dto.challengeRoundTripMs
     );
 
+    // Snapshot standing before insert so we can report ranks gained.
+    const previousBest = await this.getPersonalBest(userId);
+    const previousRank = previousBest
+      ? await this.rankForDurationMs(previousBest.durationMs)
+      : null;
+
     challenge.status = 'submitted';
     await this.challenges.save(challenge);
 
@@ -191,14 +197,24 @@ export class MinesweeperService {
       `minesweeper score ok user=${userId} id=${challengeId} scored=${durationMs} server=${serverDurationMs} claimed=${dto.claimedDurationMs} rtt=${dto.challengeRoundTripMs ?? 'n/a'} moves=${moves.length}`
     );
 
-    const personalBest = await this.getPersonalBest(userId);
+    const personalBestMs = previousBest
+      ? Math.min(previousBest.durationMs, durationMs)
+      : durationMs;
+    const isPersonalBest = !previousBest || durationMs < previousBest.durationMs;
+    const rank = await this.rankForDurationMs(personalBestMs);
+    const ranksGained =
+      previousRank != null && rank < previousRank ? previousRank - rank : 0;
+
     return {
       accepted: true,
       durationMs,
       serverDurationMs,
       moveCount: moves.length,
-      personalBestMs: personalBest?.durationMs ?? durationMs,
-      isPersonalBest: !personalBest || durationMs <= personalBest.durationMs,
+      personalBestMs,
+      isPersonalBest,
+      rank,
+      previousRank,
+      ranksGained,
     };
   }
 
@@ -257,13 +273,43 @@ export class MinesweeperService {
     });
   }
 
-  async me(userId: string) {
+  /**
+   * Rank among distinct players: 1 + count of users with a strictly better (lower) PB.
+   * Equal times share the same rank band (tied players all get the same number).
+   */
+  async rankForDurationMs(durationMs: number): Promise<number> {
+    const rows: Array<{ cnt: string | number }> = await this.scores.query(
+      `
+      WITH bests AS (
+        SELECT MIN("durationMs") AS best
+        FROM minesweeper_scores
+        GROUP BY "userId"
+      )
+      SELECT COUNT(*)::int AS cnt FROM bests WHERE best < $1
+      `,
+      [durationMs]
+    );
+    return Number(rows[0]?.cnt ?? 0) + 1;
+  }
+
+  /** Standing for a user who has at least one verified score; null otherwise. */
+  async userStanding(userId: string) {
     const best = await this.getPersonalBest(userId);
-    if (!best) return { personalBestMs: null as number | null };
+    if (!best) return null;
+    const rank = await this.rankForDurationMs(best.durationMs);
     return {
       personalBestMs: best.durationMs,
       moveCount: best.moveCount,
       verifiedAt: best.verifiedAt.toISOString(),
+      rank,
     };
+  }
+
+  async me(userId: string) {
+    const standing = await this.userStanding(userId);
+    if (!standing) {
+      return { personalBestMs: null as number | null, rank: null as number | null };
+    }
+    return standing;
   }
 }

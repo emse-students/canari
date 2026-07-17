@@ -15,6 +15,7 @@
   import ProfileNotepadSection from '$lib/components/profile/ProfileNotepadSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
+  import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
   import {
     Edit3,
     Check,
@@ -192,6 +193,7 @@
         <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight truncate mb-1">
           {displayFallbackName}
         </h1>
+        <ProfileMinesweeperBadge userId={profile.id} />
         {#if profile.formation}
           <div
             class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cn-yellow/10 border border-cn-yellow/20 text-cn-dark text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"

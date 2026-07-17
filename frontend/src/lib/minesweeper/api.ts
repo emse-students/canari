@@ -19,6 +19,20 @@ export interface MinesweeperSubmitResponse {
   moveCount: number;
   personalBestMs: number;
   isPersonalBest: boolean;
+  /** Rank after this submit (based on personal best). */
+  rank: number;
+  /** Rank before this submit; null on first verified score. */
+  previousRank: number | null;
+  /** How many places the player climbed (0 if unchanged / first / worse). */
+  ranksGained: number;
+}
+
+/** Standing used on profile badges and the /me endpoint. */
+export interface MinesweeperStanding {
+  personalBestMs: number | null;
+  rank: number | null;
+  moveCount?: number;
+  verifiedAt?: string;
 }
 
 export interface LeaderboardEntry {
@@ -75,6 +89,24 @@ export async function fetchMinesweeperLeaderboard(limit = 25): Promise<Leaderboa
   }
   const data = (await res.json()) as { entries: LeaderboardEntry[] };
   return data.entries ?? [];
+}
+
+/** Caller's personal best + rank (nulls when never scored). */
+export async function fetchMinesweeperMe(): Promise<MinesweeperStanding> {
+  const res = await apiFetch(`${minesweeperBase()}/me`);
+  if (!res.ok) {
+    throw new Error(`Failed to load minesweeper standing (${res.status})`);
+  }
+  return res.json();
+}
+
+/** Standing for any user — used on public/own profile badges. */
+export async function fetchMinesweeperUserStanding(userId: string): Promise<MinesweeperStanding> {
+  const res = await apiFetch(`${minesweeperBase()}/users/${encodeURIComponent(userId)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load minesweeper standing (${res.status})`);
+  }
+  return res.json();
 }
 
 /** Formats a duration for the HUD / leaderboard. */
