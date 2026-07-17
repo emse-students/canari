@@ -27,6 +27,11 @@ export interface PosterLayout {
   bubbles?: unknown[];
   /** Whether the text directory footer is rendered (default true). */
   directoryVisible?: boolean;
+  /**
+   * Free-form decorations (P3: text, later doodles + blobs). Typed as {@link Decoration}[] at the
+   * call sites; declared structurally here for the same no-import-cycle reason as {@link bubbles}.
+   */
+  decorations?: unknown[];
 }
 
 /** A president/roster reference resolved to a display name + role for rendering. */

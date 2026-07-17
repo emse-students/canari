@@ -128,7 +128,21 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   position), persists `layout.bubbles` + `directoryVisible`, and nulls the selection before export so
   the handles are not rasterised. New i18n: `carte_directory_toggle` / `carte_editor_hint` /
   `carte_panel_*` (FR+EN). No migration (layout is an opaque JSON blob).
-- **P3 - Polish**: doodle palette, theme presets, free text, background blobs, snap guides.
+- **P3a - Free text + decoration layer** (DONE, gates green; browser-verify pending): a generic
+  decoration layer sharing the bubble drag/resize machinery. `frontend/src/lib/carte/layout.ts` adds
+  `Decoration` (union, currently just `TextDecoration`: id/x/y/scale/z + content/color/bold/align),
+  `TEXT_BASE_WIDTH`/`TEXT_BASE_SIZE`, `createTextDecoration`, `sanitizeDecorations` (defensive parse,
+  no merge - decorations are not tied to live data), and `stageHeight` now also fits decorations.
+  `PosterLayout` gained `decorations?`. `PosterCanvas.svelte` drag was generalized: the `Drag` union
+  carries a `target: 'bubble' | 'decoration'` + `baseWidth`, with shared `beginMove`/`beginResize`/
+  `emitChange`/`select` helpers routing to the right layer (elements carry a `data-el-root` attr so
+  the resize handle + empty-stage deselect find their root). A text decoration renders as an absolute,
+  draggable/resizable box (placeholder shown only when `editable` + empty). The editor page holds
+  `decorations[]` + `selectedDecorationId`, an "Elements" palette (Add text), and a decoration panel
+  (content textarea, color, bold, align left/center/right, front/back, delete); export nulls both
+  selections. New i18n `carte_elements_heading`/`carte_add_text`/`carte_text_placeholder`/
+  `carte_deco_*`/`carte_align_*` (FR+EN). No migration (layout stays an opaque JSON blob).
+- **P3 remaining - Polish**: doodle palette, theme background blobs, snap guides.
 
 ## Reuse map
 

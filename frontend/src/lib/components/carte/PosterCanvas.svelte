@@ -2,7 +2,14 @@
   import { getInitials } from '$lib/utils/avatar';
   import type { CarteTheme } from '$lib/carte/theme';
   import type { PosterModel, PosterBubble } from '$lib/carte/generator';
-  import { STAGE_WIDTH, CARD_WIDTH, type PositionedBubble } from '$lib/carte/layout';
+  import {
+    STAGE_WIDTH,
+    CARD_WIDTH,
+    TEXT_BASE_WIDTH,
+    TEXT_BASE_SIZE,
+    type PositionedBubble,
+    type Decoration,
+  } from '$lib/carte/layout';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -12,6 +19,8 @@
     content: Record<string, PosterBubble>;
     /** Hand-placed bubble positions to render on the stage. */
     bubbles: PositionedBubble[];
+    /** Free-form decorations (text, later doodles + blobs) rendered on the same stage. */
+    decorations: Decoration[];
     theme: CarteTheme;
     /** Poster title (the project name). */
     title: string;
@@ -27,10 +36,16 @@
     viewScale?: number;
     /** Currently selected bubble (shows outline + resize handles). */
     selectedId?: string | null;
+    /** Currently selected decoration (shows outline + resize handles). */
+    selectedDecorationId?: string | null;
     /** Fired when a bubble is picked (or the empty stage clears the selection with null). */
     onSelect?: (id: string | null) => void;
-    /** Fired continuously during a drag / resize with the changed placement fields. */
+    /** Fired when a decoration is picked (or the empty stage clears it with null). */
+    onSelectDecoration?: (id: string | null) => void;
+    /** Fired continuously during a bubble drag / resize with the changed placement fields. */
     onChange?: (id: string, patch: Partial<PositionedBubble>) => void;
+    /** Fired continuously during a decoration drag / resize with the changed placement fields. */
+    onChangeDecoration?: (id: string, patch: Partial<Decoration>) => void;
     /** Bound to the parent so it can rasterise this exact node for PDF export. */
     el?: HTMLElement;
   }
@@ -39,6 +54,7 @@
     model,
     content,
     bubbles,
+    decorations,
     theme,
     title,
     background,
@@ -47,8 +63,11 @@
     editable = false,
     viewScale = 1,
     selectedId = null,
+    selectedDecorationId = null,
     onSelect,
+    onSelectDecoration,
     onChange,
+    onChangeDecoration,
     el = $bindable(),
   }: Props = $props();
 
@@ -58,12 +77,17 @@
   /** The stage element, used to convert client pointer coords into poster coords. */
   let stageEl = $state<HTMLElement>();
 
-  /** Active drag/resize gesture, or null when idle. */
+  /** Which layer a gesture is acting on, so a change routes to the right callback. */
+  type DragTarget = 'bubble' | 'decoration';
+
+  /** Active drag/resize gesture, or null when idle. Shared by bubbles and decorations. */
   type Drag =
     | {
         mode: 'move';
+        target: DragTarget;
         id: string;
         scale: number;
+        baseWidth: number;
         originX: number;
         originY: number;
         px0: number;
@@ -73,7 +97,9 @@
       }
     | {
         mode: 'resize';
+        target: DragTarget;
         id: string;
+        baseWidth: number;
         cx: number;
         cy: number;
         baseH: number;
@@ -100,24 +126,58 @@
     window.removeEventListener('pointerup', onWindowUp);
   }
 
-  /** Clears the selection when the bare stage (not a card) is pressed. */
-  function stagePointerDown(event: PointerEvent) {
-    if (!editable) return;
-    if (!(event.target as HTMLElement).closest('.carte-card')) onSelect?.(null);
+  /** Routes a placement patch to the right layer's change callback. */
+  function emitChange(
+    target: DragTarget,
+    id: string,
+    patch: { x?: number; y?: number; scale?: number }
+  ) {
+    if (target === 'bubble') onChange?.(id, patch);
+    else onChangeDecoration?.(id, patch);
   }
 
-  /** Begins moving a card. */
-  function cardPointerDown(event: PointerEvent, bubble: PositionedBubble) {
+  /** Selects an element on one layer and clears the other layer's selection. */
+  function select(target: DragTarget, id: string) {
+    if (target === 'bubble') {
+      onSelectDecoration?.(null);
+      onSelect?.(id);
+    } else {
+      onSelect?.(null);
+      onSelectDecoration?.(id);
+    }
+  }
+
+  /** Clears both selections when the bare stage (not an element) is pressed. */
+  function stagePointerDown(event: PointerEvent) {
+    if (!editable) return;
+    if (!(event.target as HTMLElement).closest('[data-el-root]')) {
+      onSelect?.(null);
+      onSelectDecoration?.(null);
+    }
+  }
+
+  /** Begins moving a bubble or decoration. */
+  function beginMove(
+    event: PointerEvent,
+    target: DragTarget,
+    id: string,
+    x: number,
+    y: number,
+    scale: number,
+    baseWidth: number
+  ) {
     if (!editable || !stageEl) return;
     event.stopPropagation();
-    onSelect?.(bubble.assoId);
+    select(target, id);
     const rect = stageEl.getBoundingClientRect();
     drag = {
       mode: 'move',
-      id: bubble.assoId,
-      scale: bubble.scale,
-      originX: bubble.x,
-      originY: bubble.y,
+      target,
+      id,
+      scale,
+      baseWidth,
+      originX: x,
+      originY: y,
       px0: (event.clientX - rect.left) / viewScale,
       py0: (event.clientY - rect.top) / viewScale,
       rectLeft: rect.left,
@@ -126,28 +186,38 @@
     attachWindow();
   }
 
-  /** Begins resizing a card. Any corner drives a uniform, center-fixed scale. */
-  function handlePointerDown(event: PointerEvent, bubble: PositionedBubble) {
+  /** Begins resizing a bubble or decoration. Any corner drives a uniform, center-fixed scale. */
+  function beginResize(
+    event: PointerEvent,
+    target: DragTarget,
+    id: string,
+    x: number,
+    y: number,
+    scale: number,
+    baseWidth: number
+  ) {
     if (!editable || !stageEl) return;
     event.stopPropagation();
-    onSelect?.(bubble.assoId);
-    const card = (event.currentTarget as HTMLElement).closest('.carte-card') as HTMLElement | null;
-    if (!card) return;
+    const root = (event.currentTarget as HTMLElement).closest(
+      '[data-el-root]'
+    ) as HTMLElement | null;
+    if (!root) return;
     const rect = stageEl.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    const cw = cardRect.width / viewScale; // scaled card width in poster px
-    const ch = cardRect.height / viewScale;
-    const cx = bubble.x + cw / 2;
-    const cy = bubble.y + ch / 2;
+    const ch = root.getBoundingClientRect().height / viewScale; // scaled height in poster px
+    const cw = baseWidth * scale;
+    const cx = x + cw / 2;
+    const cy = y + ch / 2;
     const px = (event.clientX - rect.left) / viewScale;
     const py = (event.clientY - rect.top) / viewScale;
     drag = {
       mode: 'resize',
-      id: bubble.assoId,
+      target,
+      id,
+      baseWidth,
       cx,
       cy,
-      baseH: ch / bubble.scale, // unscaled content height, so scale maps back to px
-      startScale: bubble.scale,
+      baseH: ch / scale, // unscaled content height, so scale maps back to px
+      startScale: scale,
       r0: Math.max(1, Math.hypot(px - cx, py - cy)),
       rectLeft: rect.left,
       rectTop: rect.top,
@@ -160,16 +230,16 @@
     const px = (event.clientX - drag.rectLeft) / viewScale;
     const py = (event.clientY - drag.rectTop) / viewScale;
     if (drag.mode === 'move') {
-      const maxX = Math.max(0, STAGE_WIDTH - CARD_WIDTH * drag.scale);
+      const maxX = Math.max(0, STAGE_WIDTH - drag.baseWidth * drag.scale);
       const nx = clamp(drag.originX + (px - drag.px0), 0, maxX);
       const ny = Math.max(0, drag.originY + (py - drag.py0));
-      onChange?.(drag.id, { x: nx, y: ny });
+      emitChange(drag.target, drag.id, { x: nx, y: ny });
     } else {
       const r = Math.max(1, Math.hypot(px - drag.cx, py - drag.cy));
       const ns = clamp(drag.startScale * (r / drag.r0), MIN_SCALE, MAX_SCALE);
-      onChange?.(drag.id, {
+      emitChange(drag.target, drag.id, {
         scale: ns,
-        x: Math.max(0, drag.cx - (CARD_WIDTH * ns) / 2),
+        x: Math.max(0, drag.cx - (drag.baseWidth * ns) / 2),
         y: Math.max(0, drag.cy - (drag.baseH * ns) / 2),
       });
     }
@@ -249,6 +319,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="carte-card"
+          data-el-root
           style:position="absolute"
           style:left="{bubble.x}px"
           style:top="{bubble.y}px"
@@ -264,7 +335,8 @@
           style:outline={selected ? '3px solid #f5c518' : 'none'}
           style:outline-offset="6px"
           style:border-radius="12px"
-          onpointerdown={(e) => cardPointerDown(e, bubble)}
+          onpointerdown={(e) =>
+            beginMove(e, 'bubble', bubble.assoId, bubble.x, bubble.y, bubble.scale, CARD_WIDTH)}
         >
           <!-- Brand-color disc with the logo (initials behind as fallback). -->
           <div
@@ -364,7 +436,76 @@
               <div
                 role="presentation"
                 style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
-                onpointerdown={(e) => handlePointerDown(e, bubble)}
+                onpointerdown={(e) =>
+                  beginResize(
+                    e,
+                    'bubble',
+                    bubble.assoId,
+                    bubble.x,
+                    bubble.y,
+                    bubble.scale,
+                    CARD_WIDTH
+                  )}
+              ></div>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    {/each}
+
+    <!-- Free-form decoration layer (text; later doodles + blobs). -->
+    {#each decorations as deco (deco.id)}
+      {#if deco.kind === 'text'}
+        {@const dsel = editable && selectedDecorationId === deco.id}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          data-el-root
+          style:position="absolute"
+          style:left="{deco.x}px"
+          style:top="{deco.y}px"
+          style:z-index={deco.z}
+          style:width="{TEXT_BASE_WIDTH}px"
+          style:transform="scale({deco.scale})"
+          style:transform-origin="top left"
+          style:touch-action="none"
+          style:cursor={editable ? 'grab' : 'default'}
+          style:outline={dsel ? '3px solid #f5c518' : 'none'}
+          style:outline-offset="4px"
+          style:border-radius="6px"
+          onpointerdown={(e) =>
+            beginMove(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, TEXT_BASE_WIDTH)}
+        >
+          <div
+            style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
+            style:font-size="{TEXT_BASE_SIZE}px"
+            style:font-weight={deco.bold ? '800' : '500'}
+            style:text-align={deco.align}
+            style:line-height="1.25"
+            style:white-space="pre-wrap"
+            style:overflow-wrap="break-word"
+            style:color={deco.color}
+          >
+            {#if deco.content}{deco.content}{:else if editable}<span style:opacity="0.45"
+                >{m.carte_text_placeholder()}</span
+              >{/if}
+          </div>
+
+          {#if dsel}
+            {#each CORNERS as corner (corner.key)}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                role="presentation"
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
+                onpointerdown={(e) =>
+                  beginResize(
+                    e,
+                    'decoration',
+                    deco.id,
+                    deco.x,
+                    deco.y,
+                    deco.scale,
+                    TEXT_BASE_WIDTH
+                  )}
               ></div>
             {/each}
           {/if}

@@ -28,6 +28,10 @@ export interface PositionedBubble {
 export const STAGE_WIDTH = 1600;
 /** Base (scale 1) width of a bubble card column. Matches the P1 static column width. */
 export const CARD_WIDTH = 190;
+/** Base (scale 1) width of a free-text decoration box (used for wrapping + resize math). */
+export const TEXT_BASE_WIDTH = 320;
+/** Base (scale 1) font size of a free-text decoration in poster px. */
+export const TEXT_BASE_SIZE = 34;
 
 // Seed-grid geometry (poster px). Kept here so the editor can recompute stage height + resets.
 const MARGIN = 56;
@@ -123,14 +127,97 @@ export function indexBubbleContent(model: PosterModel): Record<string, PosterBub
 }
 
 /**
- * Computes the stage height needed to contain every placed bubble (with bottom margin), never
- * shorter than the seed grid. Uses the nominal card height as an upper bound per card so tall
- * (president-bearing) cards are not clipped.
+ * Computes the stage height needed to contain every placed bubble AND decoration (with bottom
+ * margin), never shorter than the seed grid. Uses generous per-element upper bounds so tall
+ * (president-bearing) cards or multi-line texts are not clipped.
  */
-export function stageHeight(bubbles: PositionedBubble[]): number {
+export function stageHeight(bubbles: PositionedBubble[], decorations: Decoration[] = []): number {
   let bottom = TITLE_BAND + NOMINAL_CARD_HEIGHT;
   for (const b of bubbles) {
     bottom = Math.max(bottom, b.y + b.scale * NOMINAL_CARD_HEIGHT);
   }
+  for (const d of decorations) {
+    // Rough per-decoration lower bound; a few lines of text at the element's scale.
+    bottom = Math.max(bottom, d.y + d.scale * TEXT_BASE_SIZE * 4);
+  }
   return Math.ceil(bottom + MARGIN);
+}
+
+// ── Free-form decorations (text, later doodles + blobs) ─────────────────────────────────
+// Decorations are pure canvas ornaments: unlike bubbles they carry their own content and are not
+// tied to live association data, so they need no merge step - only a defensive parse on load.
+
+/** Placement fields shared by every decoration. Positions are in poster coordinates (px). */
+interface DecorationBase {
+  /** Stable, client-generated unique id. */
+  id: string;
+  /** Top-left X in poster coordinates (px). */
+  x: number;
+  /** Top-left Y in poster coordinates (px). */
+  y: number;
+  /** Uniform scale (1 = natural size). Resized via the corner handles. */
+  scale: number;
+  /** Stacking order; higher renders on top. */
+  z: number;
+}
+
+/** A free-text label the author can drag, resize, restyle and edit. */
+export interface TextDecoration extends DecorationBase {
+  kind: 'text';
+  /** Rendered text; may contain line breaks. */
+  content: string;
+  /** Text color (hex). */
+  color: string;
+  /** Whether the text is bold. */
+  bold: boolean;
+  /** Horizontal alignment inside the box. */
+  align: 'left' | 'center' | 'right';
+}
+
+/** Any placeable decoration. The union is extended in later phases (doodles, blobs). */
+export type Decoration = TextDecoration;
+
+/** Builds a new empty text decoration at the given poster coordinates. */
+export function createTextDecoration(
+  x: number,
+  y: number,
+  z: number,
+  color: string
+): TextDecoration {
+  return {
+    id: crypto.randomUUID(),
+    kind: 'text',
+    x,
+    y,
+    scale: 1,
+    z,
+    content: '',
+    color,
+    bold: true,
+    align: 'center',
+  };
+}
+
+/** Defensively parses persisted decorations, dropping anything malformed or of an unknown kind. */
+export function sanitizeDecorations(raw: unknown): Decoration[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Decoration[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    if (r.kind !== 'text' || typeof r.id !== 'string') continue;
+    out.push({
+      id: r.id,
+      kind: 'text',
+      x: typeof r.x === 'number' ? r.x : 0,
+      y: typeof r.y === 'number' ? r.y : 0,
+      scale: typeof r.scale === 'number' && r.scale > 0 ? r.scale : 1,
+      z: typeof r.z === 'number' ? r.z : 1,
+      content: typeof r.content === 'string' ? r.content : '',
+      color: typeof r.color === 'string' ? r.color : '#ffffff',
+      bold: r.bold !== false,
+      align: r.align === 'left' || r.align === 'right' ? r.align : 'center',
+    });
+  }
+  return out;
 }

@@ -20,7 +20,11 @@
     seedBubbleLayout,
     indexBubbleContent,
     stageHeight,
+    createTextDecoration,
+    sanitizeDecorations,
+    TEXT_BASE_WIDTH,
     type PositionedBubble,
+    type Decoration,
   } from '$lib/carte/layout';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
@@ -34,6 +38,11 @@
     BringToFront,
     SendToBack,
     RotateCcw,
+    Type,
+    Trash2,
+    AlignLeft,
+    AlignCenter,
+    AlignRight,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -53,6 +62,10 @@
   let positioned = $state<PositionedBubble[]>([]);
   let selectedId = $state<string | null>(null);
 
+  // ── Free-form decorations (persisted as layout.decorations) ───────────────────
+  let decorations = $state<Decoration[]>([]);
+  let selectedDecorationId = $state<string | null>(null);
+
   let saving = $state(false);
   let saved = $state(false);
   let exporting = $state(false);
@@ -61,9 +74,12 @@
   const theme = $derived(resolveCarteTheme(themeId));
   const background = $derived({ dataUrl: bgDataUrl, scrimOpacity });
   const content = $derived(model ? indexBubbleContent(model) : {});
-  const canvasHeight = $derived(stageHeight(positioned));
+  const canvasHeight = $derived(stageHeight(positioned, decorations));
   const selectedBubble = $derived(positioned.find((b) => b.assoId === selectedId) ?? null);
   const selectedContent = $derived(selectedId ? content[selectedId] : undefined);
+  const selectedDecoration = $derived(
+    decorations.find((d) => d.id === selectedDecorationId) ?? null
+  );
 
   // ── Scaled preview (poster renders at its natural 1600px width, scaled to fit) ──
   let previewWidth = $state(0);
@@ -102,6 +118,7 @@
           ? bg.scrimOpacity
           : resolveCarteTheme(themeId).scrimOpacity;
       directoryVisible = layout.directoryVisible !== false;
+      decorations = sanitizeDecorations(layout.decorations);
 
       // Resolve rosters (for president detection); tolerate per-asso failures.
       const rosters = await Promise.all(
@@ -148,6 +165,31 @@
     if (seed) patchBubble(id, { x: seed.x, y: seed.y, scale: 1 });
   }
 
+  // ── Decoration mutations ────────────────────────────────────────────────────────
+  function patchDecoration(id: string, patch: Partial<Decoration>) {
+    decorations = decorations.map((d) => (d.id === id ? { ...d, ...patch } : d));
+  }
+  /** Adds a new text box near the top-center of the stage and selects it. */
+  function addText() {
+    const z = decorations.reduce((acc, d) => Math.max(acc, d.z), 0) + 1;
+    const deco = createTextDecoration((1600 - TEXT_BASE_WIDTH) / 2, 140, z, theme.titleColor);
+    decorations = [...decorations, deco];
+    selectedId = null;
+    selectedDecorationId = deco.id;
+  }
+  function deleteDecoration(id: string) {
+    decorations = decorations.filter((d) => d.id !== id);
+    if (selectedDecorationId === id) selectedDecorationId = null;
+  }
+  function decoBringToFront(id: string) {
+    const max = decorations.reduce((acc, d) => Math.max(acc, d.z), 0);
+    patchDecoration(id, { z: max + 1 });
+  }
+  function decoSendToBack(id: string) {
+    const min = decorations.reduce((acc, d) => Math.min(acc, d.z), 0);
+    patchDecoration(id, { z: min - 1 });
+  }
+
   function onBackgroundFile(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
@@ -172,6 +214,7 @@
         background: { dataUrl: bgDataUrl, scrimOpacity },
         bubbles: positioned,
         directoryVisible,
+        decorations,
       };
       project = await updatePosterProject(project.id, {
         layout: layout as unknown as Record<string, unknown>,
@@ -189,8 +232,9 @@
     if (!posterEl || !project || exporting) return;
     exporting = true;
     error = null;
-    // Clear the selection so the outline + resize handles are not captured in the PDF.
+    // Clear selections so no outline + resize handles are captured in the PDF.
     selectedId = null;
+    selectedDecorationId = null;
     await tick();
     try {
       await exportPosterPdf(posterEl, project.name);
@@ -277,6 +321,7 @@
               {model}
               {content}
               bubbles={positioned}
+              {decorations}
               {theme}
               {background}
               {canvasHeight}
@@ -284,9 +329,12 @@
               editable
               viewScale={scale}
               {selectedId}
+              {selectedDecorationId}
               title={project.name}
               onSelect={(id) => (selectedId = id)}
+              onSelectDecoration={(id) => (selectedDecorationId = id)}
               onChange={patchBubble}
+              onChangeDecoration={patchDecoration}
             />
           </div>
         </div>
@@ -357,6 +405,110 @@
             <p class="text-xs text-text-muted">{m.carte_editor_hint()}</p>
             <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
           </section>
+
+          <!-- Add-element palette -->
+          <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
+            <h3 class="text-sm font-bold text-text-main">{m.carte_elements_heading()}</h3>
+            <button
+              type="button"
+              onclick={addText}
+              class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-cn-bg"
+            >
+              <Type size={15} />
+              {m.carte_add_text()}
+            </button>
+          </section>
+
+          {#if selectedDecoration}
+            <!-- Selected-decoration property panel -->
+            <section
+              class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3"
+            >
+              <h3 class="text-sm font-bold text-text-main">{m.carte_deco_heading()}</h3>
+
+              <label class="block space-y-1">
+                <span class="block text-xs font-semibold text-text-muted"
+                  >{m.carte_deco_content()}</span
+                >
+                <textarea
+                  value={selectedDecoration.content}
+                  oninput={(e) =>
+                    patchDecoration(selectedDecoration.id, { content: e.currentTarget.value })}
+                  rows="2"
+                  class="w-full resize-y rounded-lg border border-cn-border bg-transparent px-2 py-1.5 text-sm text-text-main"
+                ></textarea>
+              </label>
+
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                  {m.carte_panel_color()}
+                  <input
+                    type="color"
+                    value={selectedDecoration.color}
+                    oninput={(e) =>
+                      patchDecoration(selectedDecoration.id, { color: e.currentTarget.value })}
+                    class="h-7 w-10 cursor-pointer rounded border border-cn-border bg-transparent"
+                  />
+                </label>
+                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                  <input
+                    type="checkbox"
+                    checked={selectedDecoration.bold}
+                    onchange={(e) =>
+                      patchDecoration(selectedDecoration.id, { bold: e.currentTarget.checked })}
+                    class="accent-cn-yellow"
+                  />
+                  {m.carte_deco_bold()}
+                </label>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-1.5">
+                {#each [{ v: 'left', icon: AlignLeft, label: m.carte_align_left() }, { v: 'center', icon: AlignCenter, label: m.carte_align_center() }, { v: 'right', icon: AlignRight, label: m.carte_align_right() }] as opt (opt.v)}
+                  <button
+                    type="button"
+                    aria-label={opt.label}
+                    onclick={() =>
+                      patchDecoration(selectedDecoration.id, {
+                        align: opt.v as 'left' | 'center' | 'right',
+                      })}
+                    class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
+                    {selectedDecoration.align === opt.v
+                      ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
+                      : 'border-cn-border text-text-muted hover:text-text-main'}"
+                  >
+                    <opt.icon size={14} />
+                  </button>
+                {/each}
+              </div>
+
+              <div class="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onclick={() => decoBringToFront(selectedDecoration.id)}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                >
+                  <BringToFront size={13} />
+                  {m.carte_panel_front()}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => decoSendToBack(selectedDecoration.id)}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                >
+                  <SendToBack size={13} />
+                  {m.carte_panel_back()}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => deleteDecoration(selectedDecoration.id)}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10"
+                >
+                  <Trash2 size={13} />
+                  {m.carte_deco_delete()}
+                </button>
+              </div>
+            </section>
+          {/if}
 
           <!-- Selected-bubble property panel -->
           <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
