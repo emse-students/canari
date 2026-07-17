@@ -1044,6 +1044,8 @@
   "carte_panel_color": "Couleur",
   "carte_panel_color_reset": "Réinitialiser",
   "carte_panel_president_toggle": "Afficher le/la président(e)",
+  "carte_shape_label": "Forme",
+  "carte_shape_option": "Forme {n}",
   "carte_panel_front": "Premier plan",
   "carte_panel_back": "Arrière-plan",
   "carte_panel_reset": "Réinitialiser la position",

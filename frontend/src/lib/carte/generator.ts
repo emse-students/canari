@@ -41,15 +41,19 @@ export interface PosterMemberRef {
   role: string;
 }
 
-/** One association rendered as a colored bubble on the poster. */
+/** One association rendered as a colored blob unit on the poster. */
 export interface PosterBubble {
   assoId: string;
   name: string;
   /** Resolved brand color (asso.color or a deterministic fallback). */
   color: string;
   logoUrl: string | null;
-  /** The association's president, when one is detected from the roster. */
+  /** The association's president, when one is detected from the roster (shown inside the blob). */
   president: PosterMemberRef | null;
+  /** Bureau = the asso admins other than the president, laid out as radial polaroids. */
+  bureau: PosterMemberRef[];
+  /** Every member of the association, listed in the right-hand directory. */
+  members: PosterMemberRef[];
   contactEmail: string | null;
   memberCount: number;
 }
@@ -76,18 +80,28 @@ function normalize(value: string): string {
     .replace(/[̀-ͯ]/g, '');
 }
 
+/** Resolves a raw roster member into the display-ready reference used across the poster. */
+function toMemberRef(mem: AssociationMember): PosterMemberRef {
+  return {
+    userId: mem.userId,
+    name: mem.displayName?.trim() || mem.userId,
+    role: mem.role?.trim() || '',
+  };
+}
+
+/** Whether a roster member holds the president role (tolerant of accents/case). */
+function isPresident(mem: AssociationMember): boolean {
+  return normalize(mem.role ?? '').includes('presid');
+}
+
 /**
  * Picks the president from a roster by matching the role text (tolerant of accents/case).
  * Returns the first member whose role contains "presid"; null when none is found.
  */
 function findPresident(members: AssociationMember[]): PosterMemberRef | null {
-  const hit = members.find((mem) => normalize(mem.role ?? '').includes('presid'));
+  const hit = members.find(isPresident);
   if (!hit) return null;
-  return {
-    userId: hit.userId,
-    name: hit.displayName?.trim() || hit.userId,
-    role: hit.role?.trim() || 'President',
-  };
+  return { ...toMemberRef(hit), role: hit.role?.trim() || 'President' };
 }
 
 /**
@@ -108,15 +122,28 @@ export function buildPosterModel(
 ): PosterModel {
   const regular = associations.filter((a) => a.type === 'association' && !a.archived);
 
-  const bubbleOf = (a: Association): PosterBubble => ({
-    assoId: a.id,
-    name: a.name,
-    color: a.color?.trim() || generateAvatarColor(a.id),
-    logoUrl: a.logoUrl ?? null,
-    president: findPresident(membersByAsso[a.id] ?? []),
-    contactEmail: a.contactEmail?.trim() || null,
-    memberCount: (membersByAsso[a.id] ?? []).length || (a.memberCount ?? 0),
-  });
+  const bubbleOf = (a: Association): PosterBubble => {
+    const roster = membersByAsso[a.id] ?? [];
+    const president = findPresident(roster);
+    // Bureau = admins other than the president (radial polaroids); ordered by roster position.
+    const bureau = roster
+      .filter((mem) => mem.isAdmin && !isPresident(mem))
+      .sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0))
+      .map(toMemberRef);
+    // Directory lists every member, alphabetically.
+    const members = roster.map(toMemberRef).sort((x, y) => x.name.localeCompare(y.name));
+    return {
+      assoId: a.id,
+      name: a.name,
+      color: a.color?.trim() || generateAvatarColor(a.id),
+      logoUrl: a.logoUrl ?? null,
+      president,
+      bureau,
+      members,
+      contactEmail: a.contactEmail?.trim() || null,
+      memberCount: roster.length || (a.memberCount ?? 0),
+    };
+  };
 
   const orderedCategories = [...categories].sort((x, y) => x.sortOrder - y.sortOrder);
   const zones: PosterZone[] = [];

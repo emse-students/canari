@@ -19,13 +19,14 @@
     mergeBubbleLayout,
     seedBubbleLayout,
     indexBubbleContent,
-    stageHeight,
     createTextDecoration,
     sanitizeDecorations,
+    STAGE_HEIGHT,
     TEXT_BASE_WIDTH,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
+  import { CARTE_SHAPES, shapeRadius } from '$lib/carte/shapes';
   import { exportPosterPdf } from '$lib/carte/export';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import {
@@ -86,7 +87,6 @@
   const projectId = $derived(page.params.id ?? '');
   const background = $derived({ dataUrl: bgDataUrl, scrimOpacity });
   const content = $derived(model ? indexBubbleContent(model) : {});
-  const canvasHeight = $derived(stageHeight(positioned, decorations));
   const selectedBubble = $derived(positioned.find((b) => b.assoId === selectedId) ?? null);
   const selectedContent = $derived(selectedId ? content[selectedId] : undefined);
   const selectedDecoration = $derived(
@@ -97,21 +97,12 @@
     selectedDecoration?.kind === 'text' ? selectedDecoration : null
   );
 
-  // ── Scaled preview (poster renders at its natural 1600px width, scaled to fit) ──
+  // ── Scaled preview (poster renders at its natural A2 frame, scaled to fit the column width) ──
   let previewWidth = $state(0);
   let posterEl = $state<HTMLElement>();
-  let posterHeight = $state(0);
   const scale = $derived(previewWidth > 0 ? Math.min(1, previewWidth / 1600) : 1);
-
-  // Keep the scaled wrapper's height in sync with the poster's real height.
-  $effect(() => {
-    const node = posterEl;
-    if (!node) return;
-    const ro = new ResizeObserver(() => (posterHeight = node.offsetHeight));
-    ro.observe(node);
-    posterHeight = node.offsetHeight;
-    return () => ro.disconnect();
-  });
+  // The frame is a fixed-height A2 landscape, so the scaled wrapper height is deterministic.
+  const previewHeight = $derived(STAGE_HEIGHT * scale);
 
   async function loadData() {
     loading = true;
@@ -342,7 +333,7 @@
         <div
           bind:clientWidth={previewWidth}
           class="overflow-hidden rounded-2xl border border-cn-border"
-          style:height="{posterHeight * scale}px"
+          style:height="{previewHeight}px"
         >
           <div style:transform="scale({scale})" style:transform-origin="top left">
             <PosterCanvas
@@ -353,7 +344,6 @@
               {decorations}
               {theme}
               {background}
-              {canvasHeight}
               {directoryVisible}
               editable
               viewScale={scale}
@@ -565,6 +555,29 @@
                   {m.carte_panel_president_toggle()}
                 </label>
               {/if}
+
+              <div class="space-y-1.5">
+                <span class="block text-xs font-semibold text-text-muted"
+                  >{m.carte_shape_label()}</span
+                >
+                <div class="flex flex-wrap gap-1.5">
+                  {#each CARTE_SHAPES as sh, i (sh.key)}
+                    <button
+                      type="button"
+                      aria-label={m.carte_shape_option({ n: i + 1 })}
+                      onclick={() => patchBubble(selectedBubble.assoId, { shape: sh.key })}
+                      class="h-8 w-8 border p-1 transition-colors {selectedBubble.shape === sh.key
+                        ? 'border-cn-yellow text-cn-yellow'
+                        : 'border-cn-border text-text-muted hover:text-text-main'}"
+                    >
+                      <span
+                        class="block h-full w-full bg-current"
+                        style:border-radius={shapeRadius(sh.key)}
+                      ></span>
+                    </button>
+                  {/each}
+                </div>
+              </div>
 
               <div class="flex flex-wrap gap-2 pt-1">
                 <button

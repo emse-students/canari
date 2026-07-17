@@ -1,11 +1,13 @@
 import { rasterizeElementToCanvas } from '$lib/utils/pdfRaster';
 
 /**
- * Rasterises the live poster canvas element and saves it as a PDF (no print dialog / new tab).
+ * Rasterises the live poster canvas element and saves it as a single-page PDF (no print dialog /
+ * new tab).
  *
- * The passed element IS the on-screen poster (fixed pixel size), so the export never diverges
- * from the preview - the whole point of the snapdom pipeline. Orientation follows the element's
- * aspect ratio; a taller-than-page render is split across pages.
+ * The passed element IS the on-screen poster - a fixed A2-landscape frame (STAGE_WIDTH x
+ * STAGE_HEIGHT, ratio SQRT2), so the export never diverges from the preview (the whole point of the
+ * snapdom pipeline). Because the content is already A2-ratio, it fills a STANDARD A2 landscape page
+ * with a single {@link addImage}: no distortion, no white bar, and it prints borderless on real A2.
  *
  * @param el - The attached, natural-size poster element to capture.
  * @param filename - Base filename (sanitised; ".pdf" appended).
@@ -23,27 +25,11 @@ export async function exportPosterPdf(el: HTMLElement, filename: string): Promis
     ],
   });
 
-  const landscape = canvas.width >= canvas.height;
-  const pdf = new jsPDF({
-    orientation: landscape ? 'landscape' : 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  });
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a2' });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
   const imgData = canvas.toDataURL('image/jpeg', 0.92);
-  const imgH = (canvas.height * pageW) / canvas.width;
-
-  if (imgH <= pageH) {
-    pdf.addImage(imgData, 'JPEG', 0, 0, pageW, imgH);
-  } else {
-    let yMm = 0;
-    while (yMm < imgH) {
-      if (yMm > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, -yMm, pageW, imgH);
-      yMm += pageH;
-    }
-  }
+  pdf.addImage(imgData, 'JPEG', 0, 0, pageW, pageH);
 
   const safe = filename.replace(/[^a-zA-Z0-9À-ž\- ]/g, '_').trim() || 'carte-vie-asso';
   pdf.save(`${safe}.pdf`);

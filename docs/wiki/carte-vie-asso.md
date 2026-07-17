@@ -201,16 +201,31 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
       full height (4-row months get taller cells instead of a bottom white bar). Export is a STANDARD A4
       landscape page filled whole: `format:'a4'`, `addImage(...,0,0,pageW,pageH)`. Container == A4 ratio => no
       distortion, no white bar, bg to every edge; prints clean on A4.
-    - **Carte export:** folded into Step 3 (needs the fixed A2 frame so the content is A2-ratio). Until then
-      `carte/export.ts` stays at its committed version.
-  - **Step 3 - A2 frame + visual redesign (TODO):** make the poster stage a FIXED A2 landscape frame
-    (`STAGE_WIDTH` 1600 -> `STAGE_HEIGHT = round(1600 / Math.SQRT2)` = 1131, `overflow:hidden`, background
-    covering the whole frame). Fit the content INTO the frame: move the directory to a right-hand column
-    listing ALL members grouped by asso (so everyone appears); constrain bubbles to the left region. Each
-    asso becomes a large shape-configurable blob (re-create a border-radius shape catalog; per-asso shape
-    selector) with the president inside and the bureau (asso admins) auto-arranged as polaroids around it
-    (auto-radial). Then the carte export uses a STANDARD A2 landscape page filled whole (content is exactly
-    A2 ratio => no distortion, no white bar); replace the pagination loop with a single `addImage`.
+    - **Carte export - DONE (Step 3):** now a STANDARD A2 landscape page filled whole. The stage is a fixed
+      A2 frame (content is exactly A2 ratio), so `carte/export.ts` dropped the pagination loop for a single
+      `pdf.addImage(...,0,0,pageW,pageH)` on `format:'a2'` landscape - no distortion, no white bar, prints
+      borderless on real A2.
+  - **Step 3 - A2 frame + visual redesign (DONE):** poster stage is now a FIXED A2 landscape frame
+    (`layout.ts`: `STAGE_HEIGHT = round(STAGE_WIDTH / Math.SQRT2)` = 1131, `DIRECTORY_WIDTH = 500`; the
+    outer `PosterCanvas` div is `width x height` with `overflow:hidden`, bg covers the whole frame). The
+    directory moved from a bottom footer to a fixed right-hand column (`<aside>` absolute, top/right/bottom
+    inset, `overflow:hidden`, `columns:2`) listing EVERY member grouped by asso (`PosterBubble.members`, all
+    members alpha-sorted). Bubbles are confined to the left region: the seed grid + the live drag clamp both
+    stop at `bubbleLimitX = STAGE_WIDTH - DIRECTORY_WIDTH` (free text still roams the whole frame), and the
+    move clamp gained a `maxY = STAGE_HEIGHT - h0` so units stay in-frame. Each asso is a large
+    shape-configurable **blob**: new `carte/shapes.ts` (`CARTE_SHAPES` border-radius catalog of 8 silhouettes
+    + `shapeRadius`/`isShapeKey`/`DEFAULT_SHAPE`), `PositionedBubble` gained `shape` (merged defensively),
+    and the bubble property panel has an 8-swatch shape picker. The blob holds the logo + name + president
+    inside (`showPresident`), and the **bureau** (`PosterBubble.bureau` = asso admins other than the
+    president, from `isAdmin`) fans out as auto-radial polaroids around it (`RING_RADIUS`, evenly spaced,
+    capped at `MAX_BUREAU`). Seed units start at `SEED_SCALE = 0.6` so a full roster fits as a starting grid;
+    the frame is fixed-height so the editor preview wrapper height is deterministic (`STAGE_HEIGHT * scale`,
+    `stageHeight()`/`canvasHeight` dropped). New i18n `carte_shape_label` + parametrized `carte_shape_option`
+    ({n}). No migration (layout stays an opaque JSON blob; legacy projects reseed shape/scale on open).
+    **BROWSER-VERIFY (snapdom can't run on host):** open a project -> blobs on the left with radial bureau +
+    president inside, directory column lists all members on the right; pick a shape per asso; drag stops
+    before the directory; export -> single STANDARD A2 landscape PDF, content fills the page, no white bar,
+    no distortion, bg to every edge.
 
 ## Reuse map
 

@@ -4,18 +4,21 @@
   import type { PosterModel, PosterBubble } from '$lib/carte/generator';
   import {
     STAGE_WIDTH,
+    STAGE_HEIGHT,
+    DIRECTORY_WIDTH,
     CARD_WIDTH,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
+  import { shapeRadius } from '$lib/carte/shapes';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
-    /** Zoned model (used for the directory footer + counts). */
+    /** Zoned model (used for the directory column + counts). */
     model: PosterModel;
-    /** Resolved content per association id (name, logo, president, ...). */
+    /** Resolved content per association id (name, logo, president, bureau, members). */
     content: Record<string, PosterBubble>;
     /** Hand-placed bubble positions to render on the stage. */
     bubbles: PositionedBubble[];
@@ -26,9 +29,7 @@
     title: string;
     /** Optional background image + scrim. */
     background: { dataUrl: string | null; scrimOpacity: number };
-    /** Stage height in poster px (parent keeps it in sync with the placed bubbles). */
-    canvasHeight: number;
-    /** Whether the text directory footer is rendered. */
+    /** Whether the right-hand member directory column is rendered. */
     directoryVisible: boolean;
     /** Enables drag / resize / selection. False renders a static (export-ready) poster. */
     editable?: boolean;
@@ -58,7 +59,6 @@
     theme,
     title,
     background,
-    canvasHeight,
     directoryVisible,
     editable = false,
     viewScale = 1,
@@ -71,18 +71,34 @@
     el = $bindable(),
   }: Props = $props();
 
-  const MIN_SCALE = 0.4;
+  const MIN_SCALE = 0.3;
   const MAX_SCALE = 2.6;
   /** How close (poster px) an edge/center must be to a guide before it snaps. */
   const SNAP_THRESHOLD = 8;
-  /** Stage side padding shared by the title + directory, offered as alignment guides. */
-  const CONTENT_MARGIN = 56;
+  /** Stage side padding shared by the title, offered as an alignment guide. */
+  const CONTENT_MARGIN = 48;
+
+  // ── Blob-unit geometry (poster px, at scale 1) ──────────────────────────────────────────
+  /** Center of the square unit box; the blob + radial ring are laid out around it. */
+  const UNIT_CENTER = CARD_WIDTH / 2;
+  /** Diameter of the colored association blob (holds the logo, name + president inside). */
+  const BLOB_SIZE = 210;
+  /** Center-to-polaroid-center radius of the bureau ring around the blob. */
+  const RING_RADIUS = 140;
+  /** Bureau polaroid footprint. */
+  const POLAROID_W = 76;
+  const POLAROID_H = 92;
+  /** Max bureau polaroids placed around a blob before the ring gets too crowded. */
+  const MAX_BUREAU = 12;
 
   /** The stage element, used to convert client pointer coords into poster coords. */
   let stageEl = $state<HTMLElement>();
 
   /** Active alignment guide lines shown during a move (poster px), or null when not aligned. */
   let snapLines = $state<{ x: number | null; y: number | null }>({ x: null, y: null });
+
+  /** Right edge available to bubbles (the directory column is reserved on the right when shown). */
+  const bubbleLimitX = $derived(directoryVisible ? STAGE_WIDTH - DIRECTORY_WIDTH : STAGE_WIDTH);
 
   /** Which layer a gesture is acting on, so a change routes to the right callback. */
   type DragTarget = 'bubble' | 'decoration';
@@ -95,13 +111,15 @@
         id: string;
         scale: number;
         baseWidth: number;
+        /** Right limit for this gesture's X (bubbles stop before the directory column). */
+        limitX: number;
         originX: number;
         originY: number;
         px0: number;
         py0: number;
         rectLeft: number;
         rectTop: number;
-        /** Dragged element footprint in poster px (for center/right/bottom anchors). */
+        /** Dragged element footprint in poster px (for center/right/bottom anchors + clamps). */
         w0: number;
         h0: number;
         /** Vertical / horizontal guide lines (poster px) collected from the other elements. */
@@ -175,8 +193,8 @@
    * variable-height bubbles contribute accurate edges) and converted into poster px.
    */
   function collectGuides(stageRect: DOMRect, draggedId: string): { v: number[]; h: number[] } {
-    const v = [STAGE_WIDTH / 2, CONTENT_MARGIN, STAGE_WIDTH - CONTENT_MARGIN];
-    const h: number[] = [];
+    const v = [STAGE_WIDTH / 2, CONTENT_MARGIN, bubbleLimitX - CONTENT_MARGIN];
+    const h: number[] = [STAGE_HEIGHT / 2];
     if (!stageEl) return { v, h };
     for (const node of stageEl.querySelectorAll<HTMLElement>('[data-el-root]')) {
       if (node.dataset.elId === draggedId) continue;
@@ -238,6 +256,8 @@
       id,
       scale,
       baseWidth,
+      // Bubbles stop before the directory column; free text may roam the whole frame.
+      limitX: target === 'bubble' ? bubbleLimitX : STAGE_WIDTH,
       originX: x,
       originY: y,
       px0: (event.clientX - rect.left) / viewScale,
@@ -297,9 +317,10 @@
     const px = (event.clientX - drag.rectLeft) / viewScale;
     const py = (event.clientY - drag.rectTop) / viewScale;
     if (drag.mode === 'move') {
-      const maxX = Math.max(0, STAGE_WIDTH - drag.baseWidth * drag.scale);
+      const maxX = Math.max(0, drag.limitX - drag.baseWidth * drag.scale);
+      const maxY = Math.max(0, STAGE_HEIGHT - drag.h0);
       let nx = clamp(drag.originX + (px - drag.px0), 0, maxX);
-      let ny = Math.max(0, drag.originY + (py - drag.py0));
+      let ny = clamp(drag.originY + (py - drag.py0), 0, maxY);
       // Alt bypasses snapping for free placement; otherwise pull edges/centers onto guides.
       let vLine: number | null = null;
       let hLine: number | null = null;
@@ -311,7 +332,7 @@
         }
         const sy = nearestSnap([ny, ny + drag.h0 / 2, ny + drag.h0], drag.hGuides);
         if (sy) {
-          ny = Math.max(0, ny + sy.delta);
+          ny = clamp(ny + sy.delta, 0, maxY);
           hLine = sy.line;
         }
       }
@@ -342,10 +363,11 @@
   ];
 </script>
 
-<!-- The poster IS the export target: fixed pixel size, absolute layers, self-contained styles. -->
+<!-- The poster IS the export target: a fixed A2-landscape frame, absolute layers, self-contained. -->
 <div
   bind:this={el}
   style:width="{STAGE_WIDTH}px"
+  style:height="{STAGE_HEIGHT}px"
   style:position="relative"
   style:overflow="hidden"
   style:background={theme.pageBg}
@@ -367,20 +389,26 @@
     ></div>
   {/if}
 
-  <!-- Freeform bubble stage. -->
+  <!-- Freeform bubble stage (fills the whole A2 frame). -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     bind:this={stageEl}
-    style:position="relative"
-    style:height="{canvasHeight}px"
+    style:position="absolute"
+    style:inset="0"
     onpointerdown={stagePointerDown}
   >
-    <div style="position:absolute;top:40px;left:56px;right:56px;pointer-events:none;">
+    <div
+      style:position="absolute"
+      style:top="36px"
+      style:left="{CONTENT_MARGIN}px"
+      style:width="{bubbleLimitX - 2 * CONTENT_MARGIN}px"
+      style:pointer-events="none"
+    >
       <h1
         style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
         style:font-size="52px"
         style:font-weight="700"
-        style:margin="0 0 6px"
+        style:margin="0"
         style:color={theme.titleColor}
       >
         {title}
@@ -388,7 +416,7 @@
     </div>
 
     {#if model.totalAssos === 0}
-      <p style="position:absolute;top:150px;left:56px;font-size:20px;opacity:0.7;">
+      <p style="position:absolute;top:150px;left:48px;font-size:20px;opacity:0.7;">
         {m.carte_empty()}
       </p>
     {/if}
@@ -398,9 +426,10 @@
       {#if data}
         {@const color = bubble.colorOverride ?? data.color}
         {@const selected = editable && selectedId === bubble.assoId}
+        {@const bureau = data.bureau.slice(0, MAX_BUREAU)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
-          class="carte-card"
+          class="carte-unit"
           data-el-root
           data-el-id={bubble.assoId}
           style:position="absolute"
@@ -408,73 +437,37 @@
           style:top="{bubble.y}px"
           style:z-index={bubble.z}
           style:width="{CARD_WIDTH}px"
+          style:height="{CARD_WIDTH}px"
           style:transform="scale({bubble.scale})"
           style:transform-origin="top left"
-          style:display="flex"
-          style:flex-direction="column"
-          style:align-items="center"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
           style:outline={selected ? '3px solid #f5c518' : 'none'}
-          style:outline-offset="6px"
+          style:outline-offset="4px"
           style:border-radius="12px"
           onpointerdown={(e) =>
             beginMove(e, 'bubble', bubble.assoId, bubble.x, bubble.y, bubble.scale, CARD_WIDTH)}
         >
-          <!-- Brand-color disc with the logo (initials behind as fallback). -->
-          <div
-            style:position="relative"
-            style:width="132px"
-            style:height="132px"
-            style:border-radius="50%"
-            style:overflow="hidden"
-            style:background={color}
-            style:display="flex"
-            style:align-items="center"
-            style:justify-content="center"
-            style:color="#ffffff"
-            style:font-weight="800"
-            style:font-size="42px"
-            style:box-shadow="0 6px 18px rgba(0,0,0,0.18)"
-          >
-            <span>{getInitials(data.name)}</span>
-            {#if data.logoUrl}
-              <img
-                src={data.logoUrl}
-                alt=""
-                draggable="false"
-                onerror={hideOnError}
-                style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
-              />
-            {/if}
-          </div>
-
-          <p
-            style:margin="12px 0 0"
-            style:font-size="18px"
-            style:font-weight="800"
-            style:text-align="center"
-            style:line-height="1.2"
-            style:color={theme.bubbleNameColor}
-          >
-            {data.name}
-          </p>
-
-          {#if bubble.showPresident && data.president}
-            <!-- President polaroid: avatar + name + role. -->
+          <!-- Bureau polaroids fanned radially around the blob. -->
+          {#each bureau as member, i (member.userId)}
+            {@const angle = -Math.PI / 2 + (i / bureau.length) * 2 * Math.PI}
+            {@const px = UNIT_CENTER + RING_RADIUS * Math.cos(angle) - POLAROID_W / 2}
+            {@const py = UNIT_CENTER + RING_RADIUS * Math.sin(angle) - POLAROID_H / 2}
             <div
-              style:margin-top="14px"
+              style:position="absolute"
+              style:left="{px}px"
+              style:top="{py}px"
+              style:width="{POLAROID_W}px"
               style:background={theme.polaroidBg}
-              style:border-radius="10px"
-              style:padding="8px 8px 10px"
-              style:width="128px"
-              style:box-shadow="0 5px 14px rgba(0,0,0,0.2)"
+              style:border-radius="9px"
+              style:padding="6px 6px 7px"
+              style:box-shadow="0 4px 11px rgba(0,0,0,0.22)"
             >
               <div
                 style:position="relative"
-                style:width="112px"
-                style:height="96px"
-                style:border-radius="6px"
+                style:width="{POLAROID_W - 12}px"
+                style:height="{POLAROID_W - 12}px"
+                style:border-radius="7px"
                 style:overflow="hidden"
                 style:background={color}
                 style:display="flex"
@@ -482,7 +475,106 @@
                 style:justify-content="center"
                 style:color="#ffffff"
                 style:font-weight="800"
-                style:font-size="30px"
+                style:font-size="22px"
+              >
+                <span>{getInitials(member.name)}</span>
+                <img
+                  src={`/api/users/${encodeURIComponent(member.userId)}/avatar`}
+                  alt=""
+                  draggable="false"
+                  onerror={hideOnError}
+                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
+                />
+              </div>
+              <p
+                style:margin="4px 0 0"
+                style:font-size="9.5px"
+                style:font-weight="700"
+                style:text-align="center"
+                style:line-height="1.1"
+                style:color={theme.polaroidTextColor}
+                style:white-space="nowrap"
+                style:overflow="hidden"
+                style:text-overflow="ellipsis"
+              >
+                {member.name}
+              </p>
+            </div>
+          {/each}
+
+          <!-- The association blob: brand-color silhouette holding the logo, name + president. -->
+          <div
+            style:position="absolute"
+            style:left="{UNIT_CENTER - BLOB_SIZE / 2}px"
+            style:top="{UNIT_CENTER - BLOB_SIZE / 2}px"
+            style:width="{BLOB_SIZE}px"
+            style:height="{BLOB_SIZE}px"
+            style:border-radius={shapeRadius(bubble.shape)}
+            style:overflow="hidden"
+            style:background={color}
+            style:display="flex"
+            style:flex-direction="column"
+            style:align-items="center"
+            style:justify-content="center"
+            style:gap="5px"
+            style:padding="16px"
+            style:box-shadow="0 8px 22px rgba(0,0,0,0.22)"
+          >
+            <!-- Logo badge (initials behind as fallback). -->
+            <div
+              style:position="relative"
+              style:width="40px"
+              style:height="40px"
+              style:border-radius="50%"
+              style:overflow="hidden"
+              style:background="rgba(255,255,255,0.22)"
+              style:display="flex"
+              style:align-items="center"
+              style:justify-content="center"
+              style:color="#ffffff"
+              style:font-weight="800"
+              style:font-size="15px"
+              style:flex="0 0 auto"
+            >
+              <span>{getInitials(data.name)}</span>
+              {#if data.logoUrl}
+                <img
+                  src={data.logoUrl}
+                  alt=""
+                  draggable="false"
+                  onerror={hideOnError}
+                  style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
+                />
+              {/if}
+            </div>
+
+            <p
+              style:margin="0"
+              style:font-size="16px"
+              style:font-weight="800"
+              style:text-align="center"
+              style:line-height="1.15"
+              style:color="#ffffff"
+            >
+              {data.name}
+            </p>
+
+            {#if bubble.showPresident && data.president}
+              <div
+                style:position="relative"
+                style:width="72px"
+                style:height="72px"
+                style:border-radius="50%"
+                style:overflow="hidden"
+                style:background="rgba(255,255,255,0.25)"
+                style:border="3px solid rgba(255,255,255,0.85)"
+                style:display="flex"
+                style:align-items="center"
+                style:justify-content="center"
+                style:color="#ffffff"
+                style:font-weight="800"
+                style:font-size="24px"
+                style:flex="0 0 auto"
               >
                 <span>{getInitials(data.president.name)}</span>
                 <img
@@ -494,26 +586,17 @@
                 />
               </div>
               <p
-                style:margin="7px 0 0"
-                style:font-size="12.5px"
+                style:margin="0"
+                style:font-size="12px"
                 style:font-weight="700"
                 style:text-align="center"
-                style:line-height="1.2"
-                style:color={theme.polaroidTextColor}
+                style:line-height="1.1"
+                style:color="#ffffff"
               >
                 {data.president.name}
               </p>
-              <p
-                style:margin="1px 0 0"
-                style:font-size="11px"
-                style:text-align="center"
-                style:opacity="0.7"
-                style:color={theme.polaroidTextColor}
-              >
-                {data.president.role}
-              </p>
-            </div>
-          {/if}
+            {/if}
+          </div>
 
           {#if selected}
             {#each CORNERS as corner (corner.key)}
@@ -613,62 +696,61 @@
   </div>
 
   {#if directoryVisible && model.totalAssos > 0}
-    <!-- Themed text directory grouped by zone (fixed footer below the freeform stage). -->
-    <section
-      style:position="relative"
-      style:margin="0 56px 56px"
+    <!-- Member directory: a fixed right-hand column listing every member grouped by association. -->
+    <aside
+      style:position="absolute"
+      style:top="48px"
+      style:right="48px"
+      style:bottom="48px"
+      style:width="{DIRECTORY_WIDTH - 96}px"
+      style:overflow="hidden"
       style:background={theme.directoryBg}
       style:border-radius="20px"
-      style:padding="28px 32px"
+      style:padding="24px 26px"
+      style:box-shadow="0 10px 30px rgba(0,0,0,0.14)"
     >
       <h2
         style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
         style:font-size="24px"
         style:font-weight="800"
-        style:margin="0 0 18px"
+        style:margin="0 0 14px"
         style:color={theme.directoryTextColor}
       >
         {m.carte_directory_heading()}
       </h2>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px 40px;">
+      <div style="columns:2;column-gap:24px;">
         {#each model.zones as zone (zone.categoryId ?? 'none')}
-          <div style="break-inside:avoid;">
-            <h3
-              style:font-size="15px"
-              style:font-weight="800"
-              style:text-transform="uppercase"
-              style:letter-spacing="0.04em"
-              style:margin="0 0 8px"
-              style:color={theme.directoryMutedColor}
-            >
-              {zone.label}
-            </h3>
-            {#each zone.bubbles as bubble (bubble.assoId)}
-              <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px;">
+          {#each zone.bubbles as asso (asso.assoId)}
+            <div style="break-inside:avoid;margin-bottom:12px;">
+              <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:3px;">
                 <span
                   style:flex="0 0 auto"
-                  style:width="10px"
-                  style:height="10px"
+                  style:width="9px"
+                  style:height="9px"
                   style:border-radius="50%"
-                  style:background={bubble.color}
+                  style:background={asso.color}
                   style:transform="translateY(1px)"
                 ></span>
-                <span style="font-size:14px;line-height:1.35;color:{theme.directoryTextColor};">
-                  <span style="font-weight:800;">{bubble.name}</span>
-                  {#if bubble.president}
-                    <span style="color:{theme.directoryMutedColor};">
-                      - {bubble.president.name}</span
-                    >
-                  {/if}
-                  {#if bubble.contactEmail}
-                    <span style="color:{theme.directoryMutedColor};"> - {bubble.contactEmail}</span>
-                  {/if}
+                <span
+                  style="font-size:13px;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
+                >
+                  {asso.name}
                 </span>
               </div>
-            {/each}
-          </div>
+              {#if asso.members.length > 0}
+                <p
+                  style:margin="0 0 0 16px"
+                  style:font-size="10.5px"
+                  style:line-height="1.35"
+                  style:color={theme.directoryMutedColor}
+                >
+                  {asso.members.map((mem) => mem.name).join(' - ')}
+                </p>
+              {/if}
+            </div>
+          {/each}
         {/each}
       </div>
-    </section>
+    </aside>
   {/if}
 </div>
