@@ -206,6 +206,7 @@
    * Ensures a real board exists before the very first reveal: tries a ranked seeded
    * challenge, falling back to a casual unseeded board on failure, then performs the
    * dig and starts the local timer. Once mines are placed, this just digs directly.
+   * Preserves the current pan/zoom (player may have framed a corner before the first dig).
    */
   async function digWithSeedIfNeeded(x: number, y: number) {
     if (board.minesPlaced) {
@@ -236,7 +237,8 @@
       }
       dig(x, y);
       startTimer();
-      await afterBoardChange();
+      // Board size is unchanged — keep the player's framed pan/zoom.
+      await tick();
     } finally {
       firstClickBusy = false;
     }
@@ -244,11 +246,13 @@
 
   async function submitRankedResult() {
     if (!challengeId) return;
-    const claimedDurationMs = elapsedMs;
+    // Nest `IsInt` rejects floats; performance.now()-based elapsed must be rounded.
+    const claimedDurationMs = Math.round(elapsedMs);
     console.debug('[minesweeper] submitting ranked result', {
       challengeId,
       moveCount: moves.length,
       claimedDurationMs,
+      challengeRoundTripMs,
     });
     try {
       const result = await submitMinesweeperChallenge(
@@ -304,18 +308,21 @@
   }
 
   function dig(x: number, y: number) {
-    if (board.status === 'playing') {
-      moves.push({ type: 'reveal', x, y });
-    }
+    if (board.status !== 'playing') return;
+    const cell = board.cells[y * board.width + x];
+    // Ghost taps after a long-press flag must not log a no-op reveal (breaks server replay).
+    if (cell.state === 'flagged') return;
+    moves.push({ type: 'reveal', x, y });
     revealCell(board, x, y);
     sync();
     handlePostMove();
   }
 
   function flag(x: number, y: number) {
-    if (board.status === 'playing') {
-      moves.push({ type: 'flag', x, y });
-    }
+    if (board.status !== 'playing') return;
+    const cell = board.cells[y * board.width + x];
+    if (cell.state === 'revealed') return;
+    moves.push({ type: 'flag', x, y });
     toggleFlag(board, x, y);
     sync();
     handlePostMove();
@@ -369,10 +376,13 @@
 
   function handleContextMenu(e: MouseEvent, x: number, y: number) {
     e.preventDefault();
+    // Touch long-press already ran secondaryAction; ignore the synthetic contextmenu.
     if (longPressed) {
       longPressed = false;
       return;
     }
+    const pointerType = 'pointerType' in e ? (e as PointerEvent).pointerType : '';
+    if (pointerType === 'touch') return;
     clearLongPressTimer();
     secondaryAction(x, y);
   }
