@@ -185,6 +185,58 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           (getConversation(contactName)?.messages ?? []).map((m) => m.id)
         );
         const serverMs = parseServerTimestampMs(msg.timestamp);
+        // Merge transport-carried read state / reactions onto messages we ALREADY have (e.g. our
+        // own sent messages): they are skipped by the "add new" loop below, so without this their
+        // bundle readBy/readAt/reactions would be lost and the "read" status never shows.
+        const convoForMerge = getConversation(contactName);
+        if (convoForMerge) {
+          type BundleMeta = {
+            id?: string;
+            readBy?: string[];
+            readAt?: number;
+            reactions?: MessageReaction[];
+          };
+          const bundleById = new Map<string, BundleMeta>();
+          for (const m of bundleData as BundleMeta[]) {
+            if (m?.id) bundleById.set(m.id, m);
+          }
+          let mergedAny = false;
+          const mergedMsgs = convoForMerge.messages.map((existing) => {
+            const b = bundleById.get(existing.id);
+            if (!b) return existing;
+            let next = existing;
+            if (Array.isArray(b.readBy) && b.readBy.length > 0) {
+              const lowered = b.readBy.map((u) => String(u).toLowerCase());
+              const union = new Set([...(next.readBy ?? []), ...lowered]);
+              if (union.size !== (next.readBy?.length ?? 0)) {
+                next = { ...next, readBy: [...union] };
+                mergedAny = true;
+              }
+              // Persist each reader after the page batch (which would otherwise drop readBy).
+              for (const reader of lowered) {
+                readReceiptDbUpdates.push({
+                  msgId: existing.id,
+                  senderNorm: reader,
+                  readAt: b.readAt,
+                });
+              }
+            }
+            if (typeof b.readAt === 'number' && (next.readAt == null || b.readAt < next.readAt)) {
+              next = { ...next, readAt: b.readAt };
+              mergedAny = true;
+            }
+            if (Array.isArray(b.reactions) && b.reactions.length > 0 && !next.reactions?.length) {
+              next = { ...next, reactions: b.reactions };
+              if (!messageReactions.get(existing.id)?.length) {
+                messageReactions.set(existing.id, b.reactions);
+                reactionUpdates.set(existing.id, b.reactions);
+              }
+              mergedAny = true;
+            }
+            return next;
+          });
+          if (mergedAny) setConversation(contactName, { ...convoForMerge, messages: mergedMsgs });
+        }
         for (const m of bundleData) {
           if (m?.id && !existingIds.has(m.id) && m.senderId && m.content) {
             pushPendingMessage({

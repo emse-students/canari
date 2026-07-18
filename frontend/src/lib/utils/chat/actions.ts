@@ -494,16 +494,30 @@ export async function discoverMissingGroups(params: {
     log(`[DISCOVERY] Placeholder "${displayName}" created.`);
   }
 
-  // ── Seed group avatars from the server (source of truth) ─────────────────
-  // imageMediaId is not persisted in the local ConversationMeta; it is re-seeded
-  // from getUserGroups on every discovery so a freshly-loaded or new device shows
-  // the current group photo. Live changes still arrive via the MLS system message.
+  // ── Seed group name + avatar from the server (source of truth) ───────────
+  // Both are re-seeded from getUserGroups on every discovery so a device that missed the
+  // one-shot `groupRenamed`/`groupImageChanged` MLS message (stuck in SYNC, offline, or
+  // joined late) still converges on the authoritative name/photo. Live changes still arrive
+  // via the MLS system message; this is the durable fallback. Groups only - DM names are
+  // peer-derived, never overwritten from the server row.
   for (const g of activeServerGroups) {
     if (!g.isGroup) continue;
     const convo = conversations.get(g.groupId);
+    if (!convo) continue;
     const nextImage = g.imageMediaId ?? null;
-    if (convo && (convo.imageMediaId ?? null) !== nextImage) {
-      conversations.set(g.groupId, { ...convo, imageMediaId: nextImage });
+    const serverName = g.name?.trim() ?? '';
+    // Only adopt a non-empty server name that actually differs, so we never clobber a good
+    // local name with an empty/placeholder server value.
+    const nameChanged = serverName !== '' && serverName !== convo.name;
+    const imageChanged = (convo.imageMediaId ?? null) !== nextImage;
+    if (nameChanged || imageChanged) {
+      conversations.set(g.groupId, {
+        ...convo,
+        ...(nameChanged ? { name: serverName } : {}),
+        ...(imageChanged ? { imageMediaId: nextImage } : {}),
+      });
+      // Persist so the resolved name survives the next reload (image stays server-seeded).
+      if (nameChanged) await saveConversation?.(g.groupId).catch(() => {});
     }
   }
 }

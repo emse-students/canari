@@ -392,14 +392,25 @@ export async function handleSystemEvent(
     // clear the durable awaiting-history marker so future sessions no longer re-solicit it.
     noteHistoryBundleReceived(userId, convoKey);
     try {
-      const msgs: Array<{
+      type BundleMsg = {
         id: string;
         senderId: string;
         content: string;
         timestamp: number;
-      }> = Array.isArray(data.messages) ? data.messages : [];
+        readBy?: string[];
+        readAt?: number;
+        reactions?: import('$lib/types').MessageReaction[];
+        isDeleted?: boolean;
+        isEdited?: boolean;
+        serverTimestamp?: number;
+      };
+      const msgs: BundleMsg[] = Array.isArray(data.messages) ? data.messages : [];
       if (msgs.length > 0) {
         const existingIds = new Set(convo.messages.map((m) => m.id));
+        // 1) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
+        //    carry readBy/reactions/etc, so the metadata is merged in step 2 for new AND existing
+        //    messages alike - which is why bundle read receipts for our OWN already-present
+        //    messages (previously skipped as duplicates) now land.
         const toAdd = msgs
           .filter((m) => !existingIds.has(m.id))
           .map((m) => ({
@@ -415,6 +426,81 @@ export async function handleSystemEvent(
           } else {
             for (const item of toAdd) {
               await addMessageToChat(item.senderId, item.content, convoKey, item);
+            }
+          }
+        }
+
+        // 2) Merge transport-carried state (read receipts, reactions, delete/edit) onto the
+        //    conversation messages - both the ones just added and any that already existed.
+        const bundleById = new Map(msgs.map((m) => [m.id, m]));
+        const c = conversations.get(convoKey);
+        if (c) {
+          const changedIds = new Set<string>();
+          const nextMessages = c.messages.map((existing) => {
+            const b = bundleById.get(existing.id);
+            if (!b) return existing;
+            let next = existing;
+            // readBy: union of local + bundle.
+            if (Array.isArray(b.readBy) && b.readBy.length > 0) {
+              const merged = new Set([
+                ...(next.readBy ?? []),
+                ...b.readBy.map((u) => u.toLowerCase()),
+              ]);
+              if (merged.size !== (next.readBy?.length ?? 0)) {
+                next = { ...next, readBy: [...merged] };
+                changedIds.add(existing.id);
+              }
+            }
+            // readAt: keep the earliest known read time.
+            if (typeof b.readAt === 'number' && (next.readAt == null || b.readAt < next.readAt)) {
+              next = { ...next, readAt: b.readAt };
+              changedIds.add(existing.id);
+            }
+            // reactions: seed from the bundle only when we have none locally yet.
+            if (Array.isArray(b.reactions) && b.reactions.length > 0 && !next.reactions?.length) {
+              next = { ...next, reactions: b.reactions };
+              if (!messageReactions.get(existing.id)?.length) {
+                messageReactions.set(existing.id, b.reactions);
+              }
+              changedIds.add(existing.id);
+            }
+            if (b.isDeleted === true && !next.isDeleted) {
+              next = { ...next, isDeleted: true };
+              changedIds.add(existing.id);
+            }
+            if (b.isEdited === true && !next.isEdited) {
+              next = { ...next, isEdited: true };
+              changedIds.add(existing.id);
+            }
+            return next;
+          });
+          if (changedIds.size > 0) {
+            conversations.set(convoKey, { ...c, messages: nextMessages });
+            log(`[HISTORY_BUNDLE] merged metadata onto ${changedIds.size} message(s)`);
+            if (storage) {
+              for (const msg of nextMessages) {
+                if (!changedIds.has(msg.id)) continue;
+                try {
+                  await storage.saveMessage(
+                    {
+                      id: msg.id,
+                      conversationId: convoKey,
+                      senderId: msg.senderId,
+                      content: msg.content,
+                      timestamp: messageTime(msg),
+                      readBy: msg.readBy,
+                      readAt: msg.readAt,
+                      reactions: messageReactions.get(msg.id) ?? msg.reactions,
+                      serverTimestamp: msg.serverTimestamp,
+                      ...(msg.isDeleted ? { isDeleted: true } : {}),
+                      ...(msg.isEdited ? { isEdited: true } : {}),
+                    },
+                    pin
+                  );
+                } catch {
+                  // Non-blocking
+                }
+              }
             }
           }
         }

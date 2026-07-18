@@ -148,6 +148,50 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(saveConversation).toHaveBeenCalledWith('orphan-id');
   });
 
+  it('re-seeds the authoritative group name + avatar from the server onto an existing group', async () => {
+    // A device that missed the one-shot `groupRenamed` MLS message keeps a stale name ("Groupe").
+    // Discovery must converge it to the server row (source of truth), like it already does for the
+    // avatar. DM names are peer-derived and must NOT be overwritten from the server row.
+    const conversations = new Map<string, Conversation>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'g1',
+          name: 'Groupe',
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+          conversationType: 'group',
+          imageMediaId: null,
+        },
+      ],
+    ]);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const mlsService = makeMls({
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([
+          { groupId: 'g1', name: 'Les ROOTz', isGroup: true, imageMediaId: 'img-9' },
+        ]),
+      getLocalGroups: vi.fn().mockReturnValue(['g1']),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      pin: '1234',
+      conversations,
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      saveConversation,
+      log: vi.fn(),
+    });
+
+    expect(conversations.get('g1')?.name).toBe('Les ROOTz');
+    expect(conversations.get('g1')?.imageMediaId).toBe('img-9');
+    expect(saveConversation).toHaveBeenCalledWith('g1');
+  });
+
   it("purge une conversation que l'utilisateur a dismissée (suppression/quitter manuel, regles 3/5)", async () => {
     const conversations = new Map<string, Conversation>([
       [

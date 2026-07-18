@@ -53,3 +53,31 @@ describe('handleSystemEvent - read_receipt cross-device', () => {
     expect(ctx.onReadReceiptReceived).toHaveBeenCalled();
   });
 });
+
+describe('handleSystemEvent - history_bundle metadata merge', () => {
+  it('merges bundle readBy/readAt onto an ALREADY-present message (own message read while stuck)', async () => {
+    const conversations = new Map<string, any>();
+    conversations.set('g1', {
+      id: 'g1',
+      unreadCount: 0,
+      messages: [{ id: 'm1', senderId: 'me', content: 'hi', readBy: [] }],
+    });
+    const ctx = makeCtx({ conversations, convo: conversations.get('g1'), userId: 'me' });
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        // Same id as the message we already have: the old code skipped it as a duplicate and
+        // dropped its read state. readBy is upper-cased to assert normalisation.
+        messages: [
+          { id: 'm1', senderId: 'me', content: 'hi', timestamp: 1000, readBy: ['PEER'], readAt: 5 },
+        ],
+      },
+      ctx as any
+    );
+
+    const msg = (ctx.conversations.get('g1') as any).messages[0];
+    expect(msg.readBy).toContain('peer');
+    expect(msg.readAt).toBe(5);
+  });
+});
