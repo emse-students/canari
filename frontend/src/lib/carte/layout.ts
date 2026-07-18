@@ -50,25 +50,31 @@ export const CARD_HEIGHT = 430;
 export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
 export const TEXT_BASE_SIZE = 34;
-/** Crown center Y for bureau cards: high enough to sit above the president card. */
+/** Crown center Y for bureau cards: same center as the previous circle. */
 export const BUREAU_CROWN_CY = 118;
-/** Horizontal spread basis for bureau cards. */
-export const BUREAU_CROWN_SPREAD_X = 64;
-/** Extra horizontal spread per crown row. */
-export const BUREAU_CROWN_STEP_X = 18;
-/** Vertical lift per crown row. */
-export const BUREAU_CROWN_STEP_Y = 48;
+/** Ellipse horizontal radius for bureau cards (narrower than the vertical radius). */
+export const BUREAU_CROWN_RX = 132;
+/** Ellipse vertical radius for bureau cards: same size as the previous circle radius. */
+export const BUREAU_CROWN_RY = 180;
+/** Angular gap around the center slot so the president stays unobstructed. */
+export const BUREAU_CROWN_CENTER_GAP = Math.PI / 10;
 
 /**
- * Returns the crown offset for a bureau card.
- * The first slot starts on a side, so the center stays reserved for the president.
+ * Returns the crown offset for a bureau card along the top half of an ellipse.
+ * Slots start near the sides and move upward, while the center remains empty for the president.
  */
-export function bureauCrownOffset(index: number): { x: number; y: number } {
+export function bureauCrownOffset(index: number, total: number): { x: number; y: number } {
   const level = Math.floor(index / 2);
+  const pairCount = Math.max(1, Math.ceil(total / 2));
+  const progress = pairCount === 1 ? 0 : level / (pairCount - 1);
   const side = index % 2 === 0 ? -1 : 1;
+  const angle =
+    side < 0
+      ? Math.PI - progress * (Math.PI / 2 - BUREAU_CROWN_CENTER_GAP)
+      : progress * (Math.PI / 2 - BUREAU_CROWN_CENTER_GAP);
   return {
-    x: side * (BUREAU_CROWN_SPREAD_X + level * BUREAU_CROWN_STEP_X),
-    y: level === 0 ? 0 : -level * BUREAU_CROWN_STEP_Y,
+    x: BUREAU_CROWN_RX * Math.cos(angle),
+    y: -BUREAU_CROWN_RY * Math.sin(angle),
   };
 }
 

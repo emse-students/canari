@@ -430,7 +430,9 @@
         <div class="space-y-4">
           <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-4">
             <div class="flex items-center justify-between gap-2">
-              <h3 class="text-sm font-bold text-text-main">{m.carte_settings_heading()}</h3>
+              <h3 class="text-sm font-bold text-text-main">
+                {m.carte_settings_heading()}
+              </h3>
               <button
                 type="button"
                 onclick={toggleFullPage}
@@ -495,7 +497,9 @@
 
           <!-- Add-element palette -->
           <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
-            <h3 class="text-sm font-bold text-text-main">{m.carte_elements_heading()}</h3>
+            <h3 class="text-sm font-bold text-text-main">
+              {m.carte_elements_heading()}
+            </h3>
             <button
               type="button"
               onclick={addText}
@@ -511,7 +515,9 @@
             <section
               class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3"
             >
-              <h3 class="text-sm font-bold text-text-main">{m.carte_deco_heading()}</h3>
+              <h3 class="text-sm font-bold text-text-main">
+                {m.carte_deco_heading()}
+              </h3>
 
               {#if selectedTextDeco}
                 <label class="block space-y-1">
@@ -521,7 +527,9 @@
                   <textarea
                     value={selectedTextDeco.content}
                     oninput={(e) =>
-                      patchDecoration(selectedTextDeco.id, { content: e.currentTarget.value })}
+                      patchDecoration(selectedTextDeco.id, {
+                        content: e.currentTarget.value,
+                      })}
                     rows="2"
                     class="w-full resize-y rounded-lg border border-cn-border bg-transparent px-2 py-1.5 text-sm text-text-main"
                   ></textarea>
@@ -543,7 +551,9 @@
                       type="checkbox"
                       checked={selectedTextDeco.bold}
                       onchange={(e) =>
-                        patchDecoration(selectedTextDeco.id, { bold: e.currentTarget.checked })}
+                        patchDecoration(selectedTextDeco.id, {
+                          bold: e.currentTarget.checked,
+                        })}
                       class="accent-cn-yellow"
                     />
                     {m.carte_deco_bold()}
@@ -603,9 +613,13 @@
 
           <!-- Selected-bubble property panel -->
           <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
-            <h3 class="text-sm font-bold text-text-main">{m.carte_panel_heading()}</h3>
+            <h3 class="text-sm font-bold text-text-main">
+              {m.carte_panel_heading()}
+            </h3>
             {#if selectedBubble && selectedContent}
-              <p class="text-sm font-extrabold text-text-main">{selectedContent.name}</p>
+              <p class="text-sm font-extrabold text-text-main">
+                {selectedContent.name}
+              </p>
 
               <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
                 {m.carte_panel_color()}
@@ -617,7 +631,10 @@
                 {#if selectedBubble.colorOverride}
                   <button
                     type="button"
-                    onclick={() => patchBubble(selectedBubble.assoId, { colorOverride: null })}
+                    onclick={() =>
+                      patchBubble(selectedBubble.assoId, {
+                        colorOverride: null,
+                      })}
                     class="text-text-muted underline hover:text-text-main"
                   >
                     {m.carte_panel_color_reset()}
@@ -658,7 +675,10 @@
                     <button
                       type="button"
                       aria-label={m.carte_logo_shape_option({ n: i + 1 })}
-                      onclick={() => patchBubble(selectedBubble.assoId, { logoShape: ls.key })}
+                      onclick={() =>
+                        patchBubble(selectedBubble.assoId, {
+                          logoShape: ls.key,
+                        })}
                       class="flex h-8 w-8 items-center justify-center border p-1 transition-colors {selectedBubble.logoShape ===
                       ls.key
                         ? 'border-cn-yellow text-cn-yellow'

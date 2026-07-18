@@ -68,8 +68,11 @@ describe('carte generator', () => {
   });
 
   it('starts the bureau crown on the sides and rises row by row', () => {
-    expect(bureauCrownOffset(0)).toEqual({ x: -64, y: 0 });
-    expect(bureauCrownOffset(1)).toEqual({ x: 64, y: 0 });
-    expect(bureauCrownOffset(2)).toEqual({ x: -82, y: -48 });
+    expect(bureauCrownOffset(0, 3).x).toBeCloseTo(-132);
+    expect(bureauCrownOffset(0, 3).y).toBeCloseTo(0);
+    expect(bureauCrownOffset(1, 3).x).toBeCloseTo(132);
+    expect(bureauCrownOffset(1, 3).y).toBeCloseTo(0);
+    expect(bureauCrownOffset(2, 3).x).toBeCloseTo(-40.79, 2);
+    expect(bureauCrownOffset(2, 3).y).toBeCloseTo(-171.19, 2);
   });
 });

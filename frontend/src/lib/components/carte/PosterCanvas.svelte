@@ -109,21 +109,21 @@
   /** Length-based font size (px) for the association name below the blob, so long names shrink. */
   function nameFontSize(name: string): number {
     const n = name.length;
-    if (n <= 12) return 24;
-    if (n <= 18) return 21;
-    if (n <= 26) return 18;
-    if (n <= 36) return 15;
-    return 13;
+    if (n <= 10) return 18;
+    if (n <= 16) return 15;
+    if (n <= 22) return 13;
+    if (n <= 30) return 11;
+    return 10;
   }
   /** Length- and width-based name font size (px) for a member card (bureau / president), which wraps. */
   function cardNameFontSize(name: string, cardW: number, base: number): number {
     const n = name.length;
-    const widthPenalty = cardW <= 70 ? 0.8 : cardW <= 85 ? 0.4 : 0;
-    if (n <= 12) return base - widthPenalty;
-    if (n <= 18) return base - 0.8 - widthPenalty;
-    if (n <= 26) return base - 1.6 - widthPenalty;
-    if (n <= 36) return base - 2.4 - widthPenalty;
-    return base - 3.2 - widthPenalty;
+    const widthPenalty = cardW <= 70 ? 1.1 : cardW <= 85 ? 0.6 : 0;
+    if (n <= 10) return base - widthPenalty;
+    if (n <= 16) return base - 0.9 - widthPenalty;
+    if (n <= 22) return base - 1.8 - widthPenalty;
+    if (n <= 30) return base - 2.6 - widthPenalty;
+    return base - 3.4 - widthPenalty;
   }
 
   /** The stage element, used to convert client pointer coords into poster coords. */
@@ -634,11 +634,11 @@
 
           <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
-            {@const offset = bureauCrownOffset(i)}
+            {@const offset = bureauCrownOffset(i, bureau.length)}
             {@const px = UNIT_CX + offset.x - CARD_W / 2}
             {@const py = BUREAU_CROWN_CY + offset.y - CARD_W / 2}
             <div style:position="absolute" style:left="{px}px" style:top="{py}px">
-              {@render memberCard(member, CARD_W, color, 9.6)}
+              {@render memberCard(member, CARD_W, color, 8.8)}
             </div>
           {/each}
 
@@ -649,7 +649,7 @@
               style:left="{UNIT_CX - PRES_CARD_W / 2}px"
               style:top="{PRES_TOP}px"
             >
-              {@render memberCard(data.president, PRES_CARD_W, color, 12)}
+              {@render memberCard(data.president, PRES_CARD_W, color, 10.8)}
             </div>
           {/if}
 
