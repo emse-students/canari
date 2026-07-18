@@ -27,6 +27,8 @@ export interface PositionedBubble {
   shape: string;
   /** Logo frame shape key (see {@link LOGO_SHAPES}); falls back to the default when unknown. */
   logoShape: string;
+  /** List of user IDs of bureau members to hide from the crown. */
+  hiddenMembers?: string[];
 }
 
 /**
@@ -57,6 +59,7 @@ export interface CarteDebugTuning {
   bureauCrownRx: number;
   bureauCrownRy: number;
   bureauCrownCenterGap: number;
+  bureauCrownBottomGap: number;
   bureauCardWidth: number;
   presidentCardWidth: number;
   associationNameScale: number;
@@ -70,6 +73,7 @@ export const DEFAULT_CARTE_DEBUG_TUNING: CarteDebugTuning = {
   bureauCrownRx: 132,
   bureauCrownRy: 180,
   bureauCrownCenterGap: Math.PI / 10,
+  bureauCrownBottomGap: 0,
   bureauCardWidth: 64,
   presidentCardWidth: 88,
   associationNameScale: 0.88,
@@ -104,10 +108,10 @@ export function bureauCrownOffsetWithTuning(
   const pairCount = Math.max(1, Math.ceil(total / 2));
   const progress = pairCount === 1 ? 0 : level / (pairCount - 1);
   const side = index % 2 === 0 ? -1 : 1;
+  const bottomGap = tuning.bureauCrownBottomGap || 0;
+  const angleRange = Math.max(0, Math.PI / 2 - tuning.bureauCrownCenterGap - bottomGap);
   const angle =
-    side < 0
-      ? Math.PI - progress * (Math.PI / 2 - tuning.bureauCrownCenterGap)
-      : progress * (Math.PI / 2 - tuning.bureauCrownCenterGap);
+    side < 0 ? Math.PI - (bottomGap + progress * angleRange) : bottomGap + progress * angleRange;
   return {
     x: tuning.bureauCrownRx * Math.cos(angle),
     y: -tuning.bureauCrownRy * Math.sin(angle),
@@ -241,6 +245,7 @@ export function mergeBubbleLayout(
         typeof prev.logoShape === 'string' && isLogoShapeKey(prev.logoShape)
           ? prev.logoShape
           : DEFAULT_LOGO_SHAPE,
+      hiddenMembers: Array.isArray(prev.hiddenMembers) ? prev.hiddenMembers : [],
     };
   });
 }

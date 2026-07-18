@@ -108,8 +108,8 @@
   const PRES_CARD_W = $derived(debugTuning.presidentCardWidth);
   /** President card top: below the logo + name, hanging off the blob's bottom rim. */
   const PRES_TOP = BLOB_CY + 74;
-  /** Max bureau cards fanned over the blob's top arc before it gets too crowded. */
-  const MAX_BUREAU = 8;
+  /** Max bureau cards fanned over the blob's top arc before it gets too crowded. (Limit to 5 + 1 president = 6 max members). */
+  const MAX_BUREAU = 5;
   /** Length-based font size (px) for the association name below the blob, so long names shrink. */
   function nameFontSize(name: string): number {
     const n = name.length;
@@ -575,7 +575,9 @@
       {#if data}
         {@const color = bubble.colorOverride ?? data.color}
         {@const selected = editable && selectedId === bubble.assoId}
-        {@const bureau = data.bureau.slice(0, MAX_BUREAU)}
+        {@const hiddenSet = new Set(bubble.hiddenMembers || [])}
+        {@const visibleBureau = data.bureau.filter((m) => !hiddenSet.has(m.userId))}
+        {@const bureau = visibleBureau.slice(0, MAX_BUREAU)}
         {@const ls = logoShape(bubble.logoShape)}
         {@const lw = LOGO_BASE * ls.w}
         {@const lh = LOGO_BASE * ls.h}

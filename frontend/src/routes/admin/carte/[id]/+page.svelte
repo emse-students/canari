@@ -84,6 +84,13 @@
       max: 0.6,
       step: 0.01,
     },
+    {
+      key: 'bureauCrownBottomGap',
+      label: 'Couronne - angle bas',
+      min: -1.5,
+      max: 1.2,
+      step: 0.01,
+    },
     { key: 'bureauCardWidth', label: 'Carte bureau - largeur', min: 48, max: 90, step: 1 },
     {
       key: 'presidentCardWidth',
@@ -144,6 +151,10 @@
         typeof record.bureauCrownCenterGap === 'number'
           ? record.bureauCrownCenterGap
           : fallback.bureauCrownCenterGap,
+      bureauCrownBottomGap:
+        typeof record.bureauCrownBottomGap === 'number'
+          ? record.bureauCrownBottomGap
+          : fallback.bureauCrownBottomGap,
       bureauCardWidth:
         typeof record.bureauCardWidth === 'number'
           ? record.bureauCardWidth
@@ -859,6 +870,42 @@
                         style:border-radius={logoShape(ls.key).radius}
                       ></span>
                     </button>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="space-y-1.5 pt-2 border-t border-cn-border">
+                <span class="block text-xs font-semibold text-text-muted">Membres affichés</span>
+                <div class="space-y-1">
+                  {#if selectedContent.president}
+                    <label class="flex items-center gap-2 text-xs text-text-main">
+                      <input
+                        type="checkbox"
+                        checked={selectedBubble.showPresident !== false}
+                        onchange={(e) =>
+                          patchBubble(selectedBubble.assoId, {
+                            showPresident: e.currentTarget.checked,
+                          })}
+                        class="accent-cn-yellow"
+                      />
+                      {selectedContent.president.name} (Président)
+                    </label>
+                  {/if}
+                  {#each selectedContent.bureau as member (member.userId)}
+                    <label class="flex items-center gap-2 text-xs text-text-main">
+                      <input
+                        type="checkbox"
+                        checked={!(selectedBubble.hiddenMembers || []).includes(member.userId)}
+                        onchange={(e) => {
+                          const hidden = new Set(selectedBubble.hiddenMembers || []);
+                          if (e.currentTarget.checked) hidden.delete(member.userId);
+                          else hidden.add(member.userId);
+                          patchBubble(selectedBubble.assoId, { hiddenMembers: Array.from(hidden) });
+                        }}
+                        class="accent-cn-yellow"
+                      />
+                      {member.name}
+                    </label>
                   {/each}
                 </div>
               </div>
