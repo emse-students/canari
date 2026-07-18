@@ -5,6 +5,8 @@
     "": {
       "name": "canari",
       "dependencies": {
+        "@expo-google-fonts/fredoka": "^0.4.1",
+        "@expo-google-fonts/nunito": "^0.4.2",
         "@fontsource-variable/fredoka": "^5.2.10",
         "@fontsource-variable/nunito": "^5.2.7",
         "@humanspeak/svelte-markdown": "^1.6.0",
@@ -103,6 +105,10 @@
     "@emnapi/wasi-threads": ["@emnapi/wasi-threads@1.2.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w=="],
 
     "@exodus/bytes": ["@exodus/bytes@1.15.1", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, ""],
+
+    "@expo-google-fonts/fredoka": ["@expo-google-fonts/fredoka@0.4.1", "", {}, "sha512-px3uHDidG1RI7mMAjfKQktK9yZoVn/Uvqgp1G/Zkd6ZN9flXFxhUoPDRZdcCj2knFvkKmlvOx96SD3j4fxq7ig=="],
+
+    "@expo-google-fonts/nunito": ["@expo-google-fonts/nunito@0.4.2", "", {}, "sha512-1KCWphw/I2ugqfs9iRHUCkPTnomNgGPtF4AvqVquoEKxr0EL+mcLNLgeixsslbaSFevRR6/KJAE3sc8g0VaY0Q=="],
 
     "@fontsource-variable/fredoka": ["@fontsource-variable/fredoka@5.2.10", "", {}, ""],
 

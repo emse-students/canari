@@ -33,6 +33,8 @@
     "ios:build": "tauri ios build"
   },
   "dependencies": {
+    "@expo-google-fonts/fredoka": "^0.4.1",
+    "@expo-google-fonts/nunito": "^0.4.2",
     "@fontsource-variable/fredoka": "^5.2.10",
     "@fontsource-variable/nunito": "^5.2.7",
     "@humanspeak/svelte-markdown": "^1.6.0",

@@ -8,10 +8,11 @@
  * zoom and selectable / Ctrl-F-searchable, over a pixel-faithful background - with no double text.
  *
  * The caller owns nothing but the element: this reads the live DOM boxes, so wrapping and any
- * auto-shrink already applied on screen are reproduced for free. Text is drawn in Helvetica (jsPDF's
- * built-in) rather than the design's variable fonts - a deliberate trade for crisp, embed-free text.
+ * auto-shrink already applied on screen are reproduced for free. Overlay text uses the app's real
+ * embedded fonts (see {@link registerAppFonts}), so it matches the on-screen typography exactly.
  */
 import { rasterizeElementToCanvas, type RasterizeOptions } from '$lib/utils/pdfRaster';
+import { registerAppFonts, pickAppFont } from './appFonts';
 
 /** One measured text run to re-draw as vector text over the raster. */
 interface TextSpec {
@@ -22,7 +23,9 @@ interface TextSpec {
   w: number;
   fontPx: number;
   align: 'left' | 'center' | 'right';
-  bold: boolean;
+  /** The run's font-family stack + numeric weight, used to pick the matching embedded app font. */
+  family: string;
+  weight: number;
   color: { r: number; g: number; b: number };
   text: string;
 }
@@ -48,7 +51,12 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
     const cs = getComputedStyle(el);
     const rawAlign = cs.textAlign;
     const align = rawAlign === 'center' ? 'center' : rawAlign === 'right' ? 'right' : 'left';
-    const weight = parseInt(cs.fontWeight, 10);
+    const parsedWeight = parseInt(cs.fontWeight, 10);
+    const weight = Number.isFinite(parsedWeight)
+      ? parsedWeight
+      : cs.fontWeight === 'bold'
+        ? 700
+        : 400;
     specs.push({
       el,
       x: (r.left - rootRect.left) * k,
@@ -56,7 +64,8 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       w: r.width * k,
       fontPx: parseFloat(cs.fontSize) * k,
       align,
-      bold: Number.isFinite(weight) ? weight >= 600 : cs.fontWeight === 'bold',
+      family: cs.fontFamily,
+      weight,
       color: parseRgb(cs.color),
       text,
     });
@@ -128,9 +137,14 @@ export async function exportSearchablePdf(
   const pageH = pdf.internal.pageSize.getHeight();
   pdf.addImage(canvas.toDataURL('image/jpeg', opts.jpegQuality ?? 0.9), 'JPEG', 0, 0, pageW, pageH);
 
+  // Embed the real app fonts so the overlay text matches the on-screen typography exactly.
+  await registerAppFonts(pdf);
+
   const mmPerPx = pageW / opts.naturalWidth;
   for (const s of specs) {
-    pdf.setFont('helvetica', s.bold ? 'bold' : 'normal');
+    const font = pickAppFont(s.family, s.weight);
+    if (font) pdf.setFont(font.name, font.style);
+    else pdf.setFont('helvetica', s.weight >= 600 ? 'bold' : 'normal');
     pdf.setFontSize(s.fontPx * mmPerPx * PT_PER_MM);
     pdf.setTextColor(s.color.r, s.color.g, s.color.b);
     const boxW = s.w * mmPerPx;
