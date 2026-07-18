@@ -62,7 +62,9 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       x: (r.left - rootRect.left) * k,
       y: (r.top - rootRect.top) * k,
       w: r.width * k,
-      fontPx: parseFloat(cs.fontSize) * k,
+      // NB: font-size is a layout value, NOT scaled by an ancestor CSS transform (unlike the rects
+      // above), so it is already in natural px - multiplying by k here would wrongly inflate it.
+      fontPx: parseFloat(cs.fontSize),
       align,
       family: cs.fontFamily,
       weight,

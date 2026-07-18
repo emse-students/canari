@@ -86,22 +86,29 @@
   // BELOW the blob (so a long name wraps + shrinks instead of being clipped).
   /** Horizontal center of the unit box; the blob + logo + bureau arc are centered on it. */
   const UNIT_CX = CARD_WIDTH / 2;
-  /** Vertical center of the blob within the unit (leaves room for the name band below). */
-  const BLOB_CY = 168;
+  /** Vertical center of the blob within the unit. */
+  const BLOB_CY = 172;
   /** Diameter of the colored association blob. */
-  const BLOB_SIZE = 200;
+  const BLOB_SIZE = 210;
   /** Base logo size (px); the logo shape scales this by its w/h ratio and may overflow the blob. */
-  const LOGO_BASE = 112;
-  /** Logo center Y (slightly above the blob center to leave room for the president card below). */
-  const LOGO_CY = BLOB_CY - 16;
-  /** Center-to-card-center radius of the bureau arc; cards overlap the blob, in front. */
-  const RING_RADIUS = 124;
+  const LOGO_BASE = 92;
+  /** Logo center Y: upper part of the blob, so the association name fits inside below it. */
+  const LOGO_CY = BLOB_CY - 38;
+  /** Association-name box top (inside the blob, below the logo). */
+  const NAME_TOP = BLOB_CY + 12;
+  /**
+   * Center-to-card-center radius of the bureau arc. Pushed out so the cards sit on the blob's rim
+   * (over the blob, but clear of the centered logo + name) rather than crowding the center.
+   */
+  const RING_RADIUS = 142;
   /** Bureau member-card width. */
-  const CARD_W = 78;
+  const CARD_W = 74;
   /** President member-card width (a touch larger; sits at the blob bottom). */
-  const PRES_CARD_W = 104;
+  const PRES_CARD_W = 100;
+  /** President card top: below the logo + name, hanging off the blob's bottom rim. */
+  const PRES_TOP = BLOB_CY + 74;
   /** Max bureau cards fanned over the blob's top arc before it gets too crowded. */
-  const MAX_BUREAU = 9;
+  const MAX_BUREAU = 8;
 
   /** Length-based font size (px) for the association name below the blob, so long names shrink. */
   function nameFontSize(name: string): number {
@@ -638,18 +645,18 @@
             <div
               style:position="absolute"
               style:left="{UNIT_CX - PRES_CARD_W / 2}px"
-              style:top="{BLOB_CY + 28}px"
+              style:top="{PRES_TOP}px"
             >
               {@render memberCard(data.president, PRES_CARD_W, color, 12)}
             </div>
           {/if}
 
-          <!-- Association name in a band BELOW the blob: wraps + shrinks to fit, never clipped. -->
+          <!-- Association name INSIDE the blob (below the logo), white; wraps + shrinks to fit. -->
           <div
             style:position="absolute"
-            style:left="8px"
-            style:right="8px"
-            style:top="{BLOB_CY + BLOB_SIZE / 2 + 92}px"
+            style:left="{UNIT_CX - (BLOB_SIZE - 56) / 2}px"
+            style:width="{BLOB_SIZE - 56}px"
+            style:top="{NAME_TOP}px"
             style:text-align="center"
           >
             <p
@@ -657,9 +664,9 @@
               style:margin="0"
               style:font-size="{nameFontSize(data.name)}px"
               style:font-weight="800"
-              style:line-height="1.15"
-              style:color={theme.bubbleNameColor}
-              style="overflow-wrap:break-word;text-shadow:0 1px 2px rgba(255,255,255,0.55);"
+              style:line-height="1.1"
+              style:color="#ffffff"
+              style="overflow-wrap:break-word;text-shadow:0 1px 3px rgba(0,0,0,0.45);"
             >
               {data.name}
             </p>
