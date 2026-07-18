@@ -233,6 +233,13 @@
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
+  /**
+   * True from the moment a conversation is switched until the list has been pinned to the
+   * latest message. While set, the rendered messages are held invisible (layout still
+   * computes, so the scroll math is valid) so the user never sees the pre-scroll "top"
+   * frame - the conversation appears already scrolled to the bottom.
+   */
+  let entering = $state(false);
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -263,18 +270,33 @@
       windowStart = Math.max(0, windowStart - RENDER_GROUPS_STEP);
       await tick();
     }
-    scrollToBottomSettled();
+    scrollToBottomSettled(() => {
+      entering = false;
+    });
   }
 
-  function scrollToBottomSettled() {
-    if (!chatContainer) return;
+  /**
+   * Pins the view to the bottom, then keeps re-pinning across a few frames and two short
+   * delays so late-settling content (images, fonts) can't leave us above the bottom.
+   * `onPinned` fires on the first frame we are actually at the bottom - used to reveal the
+   * list only once it is correctly scrolled, so the entry never flashes the top.
+   */
+  function scrollToBottomSettled(onPinned?: () => void) {
+    if (!chatContainer) {
+      onPinned?.();
+      return;
+    }
     scrollToBottom(false);
-    let frames = 0;
-    const repin = () => {
+    requestAnimationFrame(() => {
       scrollToBottom(false);
-      if (++frames < 5) requestAnimationFrame(repin);
-    };
-    requestAnimationFrame(repin);
+      onPinned?.();
+      let frames = 0;
+      const repin = () => {
+        scrollToBottom(false);
+        if (++frames < 4) requestAnimationFrame(repin);
+      };
+      requestAnimationFrame(repin);
+    });
     setTimeout(() => scrollToBottom(false), 250);
     setTimeout(() => scrollToBottom(false), 600);
   }
@@ -408,6 +430,14 @@
   let _hiddenGroupCount = $derived(windowStart);
   /** Groups hidden below the render window (newer messages, while scrolled far up). */
   let hiddenBelowCount = $derived(messageGroups.length - windowEnd);
+  /**
+   * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
+   * conversation, empty local page). When cached messages already exist they render
+   * immediately and the network refresh updates them in place - no skeleton flash.
+   */
+  let showSkeleton = $derived(isLoadingHistory && visibleMessageGroups.length === 0);
+  /** Hold the message list invisible during entry, but never hide the skeleton placeholder. */
+  let hideDuringEntry = $derived(entering && !showSkeleton);
 
   async function loadOlderGroups() {
     if (windowStart > 0) {
@@ -562,6 +592,9 @@
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = !isChannel;
+        // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
+        // entry never flashes the top of the conversation before teleporting down.
+        entering = true;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
       } else if (hasNewMessage && !catchupActive) {
@@ -840,9 +873,11 @@
       <div
         bind:this={chatContainer}
         onscroll={handleScroll}
-        class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2"
+        class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2 transition-opacity duration-150 {hideDuringEntry
+          ? 'opacity-0'
+          : 'opacity-100'}"
       >
-        {#if isLoadingHistory}
+        {#if showSkeleton}
           <!-- Loading skeleton - hides per-message pop-in while history replays -->
           <div class="flex flex-col gap-3 px-1 py-4 animate-pulse" aria-hidden="true">
             {#each [0.55, 0.8, 0.4, 0.7, 0.5, 0.65, 0.45] as w, i (i)}
