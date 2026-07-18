@@ -100,7 +100,7 @@
    * Center-to-card-center radius of the bureau arc. Pushed out so the cards sit on the blob's rim
    * (over the blob, but clear of the centered logo + name) rather than crowding the center.
    */
-  const RING_RADIUS = 142;
+  const RING_RADIUS = 180;
   /** Bureau member-card width. */
   const CARD_W = 74;
   /** President member-card width (a touch larger; sits at the blob bottom). */
@@ -131,7 +131,10 @@
   let stageEl = $state<HTMLElement>();
 
   /** Active alignment guide lines shown during a move (poster px), or null when not aligned. */
-  let snapLines = $state<{ x: number | null; y: number | null }>({ x: null, y: null });
+  let snapLines = $state<{ x: number | null; y: number | null }>({
+    x: null,
+    y: null,
+  });
 
   /** Right edge available to bubbles (the directory column is reserved on the right when shown). */
   const bubbleLimitX = $derived(directoryVisible ? STAGE_WIDTH - DIRECTORY_WIDTH : STAGE_WIDTH);
