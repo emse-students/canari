@@ -3,6 +3,7 @@
   import type { CarteStyle } from '$lib/carte/theme';
   import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
   import {
+    DEFAULT_CARTE_DEBUG_TUNING,
     STAGE_WIDTH,
     STAGE_HEIGHT,
     DIRECTORY_WIDTH,
@@ -10,8 +11,8 @@
     CARD_HEIGHT,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
-    BUREAU_CROWN_CY,
-    bureauCrownOffset,
+    bureauCrownOffsetWithTuning,
+    type CarteDebugTuning,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
@@ -38,6 +39,8 @@
     editable?: boolean;
     /** On-screen preview scale, so pointer deltas convert back to poster px. */
     viewScale?: number;
+    /** Optional runtime tuning for geometry and text sizing. */
+    debugTuning?: CarteDebugTuning;
     /** Currently selected bubble (shows outline + resize handles). */
     selectedId?: string | null;
     /** Currently selected decoration (shows outline + resize handles). */
@@ -63,6 +66,7 @@
     title,
     background,
     directoryVisible,
+    debugTuning = DEFAULT_CARTE_DEBUG_TUNING,
     editable = false,
     viewScale = 1,
     selectedId = null,
@@ -99,9 +103,9 @@
   /** Association-name box top (inside the blob, below the logo). */
   const NAME_TOP = BLOB_CY + 12;
   /** Bureau member-card width. */
-  const CARD_W = 68;
+  const CARD_W = $derived(debugTuning.bureauCardWidth);
   /** President member-card width (a touch larger; sits at the blob bottom). */
-  const PRES_CARD_W = 92;
+  const PRES_CARD_W = $derived(debugTuning.presidentCardWidth);
   /** President card top: below the logo + name, hanging off the blob's bottom rim. */
   const PRES_TOP = BLOB_CY + 74;
   /** Max bureau cards fanned over the blob's top arc before it gets too crowded. */
@@ -441,6 +445,12 @@
 
 <!-- A member card (bureau / president): square photo + full name (wraps, never truncated) + role. -->
 {#snippet memberCard(person: PosterMemberRef, cardW: number, color: string, nameBase: number)}
+  {@const memberNameSize = cardNameFontSize(
+    person.name,
+    cardW,
+    nameBase * debugTuning.memberNameScale
+  )}
+  {@const memberRoleSize = Math.max((nameBase - 2.5) * debugTuning.memberRoleScale, 6.8)}
   <div
     style:width="{cardW}px"
     style:background={theme.polaroidBg}
@@ -474,7 +484,7 @@
     <p
       data-pdf-text
       style:margin="4px 0 0"
-      style:font-size="{cardNameFontSize(person.name, cardW, nameBase)}px"
+      style:font-size="{memberNameSize}px"
       style:font-weight="700"
       style:text-align="center"
       style:line-height="1.1"
@@ -487,7 +497,7 @@
       <p
         data-pdf-text
         style:margin="1px 0 0"
-        style:font-size="{nameBase - 2.5}px"
+        style:font-size="{memberRoleSize}px"
         style:font-weight="600"
         style:text-align="center"
         style:line-height="1.05"
@@ -634,9 +644,9 @@
 
           <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
-            {@const offset = bureauCrownOffset(i, bureau.length)}
+            {@const offset = bureauCrownOffsetWithTuning(i, bureau.length, debugTuning)}
             {@const px = UNIT_CX + offset.x - CARD_W / 2}
-            {@const py = BUREAU_CROWN_CY + offset.y - CARD_W / 2}
+            {@const py = debugTuning.bureauCrownCy + offset.y - CARD_W / 2}
             <div style:position="absolute" style:left="{px}px" style:top="{py}px">
               {@render memberCard(member, CARD_W, color, 8.8)}
             </div>
@@ -664,7 +674,7 @@
             <p
               data-pdf-text
               style:margin="0"
-              style:font-size="{nameFontSize(data.name)}px"
+              style:font-size="{nameFontSize(data.name) * debugTuning.associationNameScale}px"
               style:font-weight="800"
               style:line-height="1.1"
               style:color="#ffffff"
@@ -833,7 +843,9 @@
                     style:color={theme.directoryMutedColor}
                   >
                     {asso.members
-                      .map((mem) => (mem.role ? `${mem.name} (${mem.role})` : mem.name))
+                      .map((mem: PosterMemberRef) =>
+                        mem.role ? `${mem.name} (${mem.role})` : mem.name
+                      )
                       .join(' - ')}
                   </p>
                 {/if}

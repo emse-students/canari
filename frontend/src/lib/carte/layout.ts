@@ -50,31 +50,67 @@ export const CARD_HEIGHT = 430;
 export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
 export const TEXT_BASE_SIZE = 34;
+
+/** Runtime tuning knobs exposed in the carte debug panel. */
+export interface CarteDebugTuning {
+  bureauCrownCy: number;
+  bureauCrownRx: number;
+  bureauCrownRy: number;
+  bureauCrownCenterGap: number;
+  bureauCardWidth: number;
+  presidentCardWidth: number;
+  associationNameScale: number;
+  memberNameScale: number;
+  memberRoleScale: number;
+}
+
+/** Default values used when no debug tuning is active. */
+export const DEFAULT_CARTE_DEBUG_TUNING: CarteDebugTuning = {
+  bureauCrownCy: 118,
+  bureauCrownRx: 132,
+  bureauCrownRy: 180,
+  bureauCrownCenterGap: Math.PI / 10,
+  bureauCardWidth: 64,
+  presidentCardWidth: 88,
+  associationNameScale: 0.88,
+  memberNameScale: 0.92,
+  memberRoleScale: 0.9,
+};
+
 /** Crown center Y for bureau cards: same center as the previous circle. */
-export const BUREAU_CROWN_CY = 118;
+export const BUREAU_CROWN_CY = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownCy;
 /** Ellipse horizontal radius for bureau cards (narrower than the vertical radius). */
-export const BUREAU_CROWN_RX = 132;
+export const BUREAU_CROWN_RX = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownRx;
 /** Ellipse vertical radius for bureau cards: same size as the previous circle radius. */
-export const BUREAU_CROWN_RY = 180;
+export const BUREAU_CROWN_RY = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownRy;
 /** Angular gap around the center slot so the president stays unobstructed. */
-export const BUREAU_CROWN_CENTER_GAP = Math.PI / 10;
+export const BUREAU_CROWN_CENTER_GAP = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownCenterGap;
 
 /**
  * Returns the crown offset for a bureau card along the top half of an ellipse.
  * Slots start near the sides and move upward, while the center remains empty for the president.
  */
 export function bureauCrownOffset(index: number, total: number): { x: number; y: number } {
+  return bureauCrownOffsetWithTuning(index, total, DEFAULT_CARTE_DEBUG_TUNING);
+}
+
+/** Crown offset helper that accepts runtime tuning. */
+export function bureauCrownOffsetWithTuning(
+  index: number,
+  total: number,
+  tuning: CarteDebugTuning
+): { x: number; y: number } {
   const level = Math.floor(index / 2);
   const pairCount = Math.max(1, Math.ceil(total / 2));
   const progress = pairCount === 1 ? 0 : level / (pairCount - 1);
   const side = index % 2 === 0 ? -1 : 1;
   const angle =
     side < 0
-      ? Math.PI - progress * (Math.PI / 2 - BUREAU_CROWN_CENTER_GAP)
-      : progress * (Math.PI / 2 - BUREAU_CROWN_CENTER_GAP);
+      ? Math.PI - progress * (Math.PI / 2 - tuning.bureauCrownCenterGap)
+      : progress * (Math.PI / 2 - tuning.bureauCrownCenterGap);
   return {
-    x: BUREAU_CROWN_RX * Math.cos(angle),
-    y: -BUREAU_CROWN_RY * Math.sin(angle),
+    x: tuning.bureauCrownRx * Math.cos(angle),
+    y: -tuning.bureauCrownRy * Math.sin(angle),
   };
 }
 

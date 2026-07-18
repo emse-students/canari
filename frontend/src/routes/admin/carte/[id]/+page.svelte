@@ -16,6 +16,8 @@
   import { CARTE_STYLE, DEFAULT_SCRIM_OPACITY } from '$lib/carte/theme';
   import { buildPosterModel, type PosterModel, type PosterLayout } from '$lib/carte/generator';
   import {
+    DEFAULT_CARTE_DEBUG_TUNING,
+    type CarteDebugTuning,
     mergeBubbleLayout,
     seedBubbleLayout,
     indexBubbleContent,
@@ -64,9 +66,134 @@
   let directoryVisible = $state(true);
   /** Poster title color (persisted override of the theme default). */
   let titleColor = $state(CARTE_STYLE.titleColor);
+  /** Runtime debug tuning for the poster geometry/text sizes. */
+  let debugTuning = $state<CarteDebugTuning>({ ...DEFAULT_CARTE_DEBUG_TUNING });
   // Single fixed poster style (the theme picker was dropped); the bg image, if any, replaces it.
   // Only the title color is author-overridable, so the theme is derived from it.
   const theme = $derived({ ...CARTE_STYLE, titleColor });
+
+  const DEBUG_STORAGE_PREFIX = 'canari_carte_debug_tuning:';
+  const DEBUG_CONTROLS = [
+    { key: 'bureauCrownCy', label: 'Couronne - centre Y', min: 60, max: 180, step: 1 },
+    { key: 'bureauCrownRx', label: 'Couronne - rayon X', min: 60, max: 200, step: 1 },
+    { key: 'bureauCrownRy', label: 'Couronne - rayon Y', min: 120, max: 240, step: 1 },
+    {
+      key: 'bureauCrownCenterGap',
+      label: 'Couronne - trou central',
+      min: 0.05,
+      max: 0.6,
+      step: 0.01,
+    },
+    { key: 'bureauCardWidth', label: 'Carte bureau - largeur', min: 48, max: 90, step: 1 },
+    {
+      key: 'presidentCardWidth',
+      label: 'Carte président - largeur',
+      min: 60,
+      max: 120,
+      step: 1,
+    },
+    {
+      key: 'associationNameScale',
+      label: 'Nom association - échelle',
+      min: 0.5,
+      max: 1.15,
+      step: 0.01,
+    },
+    {
+      key: 'memberNameScale',
+      label: 'Nom membre - échelle',
+      min: 0.5,
+      max: 1.15,
+      step: 0.01,
+    },
+    {
+      key: 'memberRoleScale',
+      label: 'Rôle membre - échelle',
+      min: 0.5,
+      max: 1.15,
+      step: 0.01,
+    },
+  ] as const satisfies ReadonlyArray<{
+    key: keyof CarteDebugTuning;
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+  }>;
+
+  function cloneDefaultDebugTuning(): CarteDebugTuning {
+    return { ...DEFAULT_CARTE_DEBUG_TUNING };
+  }
+
+  function debugStorageKey(projectId: string): string {
+    return `${DEBUG_STORAGE_PREFIX}${projectId}`;
+  }
+
+  function sanitizeDebugTuning(raw: unknown): CarteDebugTuning {
+    const fallback = cloneDefaultDebugTuning();
+    if (!raw || typeof raw !== 'object') return fallback;
+    const record = raw as Record<string, unknown>;
+    return {
+      bureauCrownCy:
+        typeof record.bureauCrownCy === 'number' ? record.bureauCrownCy : fallback.bureauCrownCy,
+      bureauCrownRx:
+        typeof record.bureauCrownRx === 'number' ? record.bureauCrownRx : fallback.bureauCrownRx,
+      bureauCrownRy:
+        typeof record.bureauCrownRy === 'number' ? record.bureauCrownRy : fallback.bureauCrownRy,
+      bureauCrownCenterGap:
+        typeof record.bureauCrownCenterGap === 'number'
+          ? record.bureauCrownCenterGap
+          : fallback.bureauCrownCenterGap,
+      bureauCardWidth:
+        typeof record.bureauCardWidth === 'number'
+          ? record.bureauCardWidth
+          : fallback.bureauCardWidth,
+      presidentCardWidth:
+        typeof record.presidentCardWidth === 'number'
+          ? record.presidentCardWidth
+          : fallback.presidentCardWidth,
+      associationNameScale:
+        typeof record.associationNameScale === 'number'
+          ? record.associationNameScale
+          : fallback.associationNameScale,
+      memberNameScale:
+        typeof record.memberNameScale === 'number'
+          ? record.memberNameScale
+          : fallback.memberNameScale,
+      memberRoleScale:
+        typeof record.memberRoleScale === 'number'
+          ? record.memberRoleScale
+          : fallback.memberRoleScale,
+    };
+  }
+
+  function loadDebugTuning(projectId: string): CarteDebugTuning {
+    if (typeof localStorage === 'undefined') return cloneDefaultDebugTuning();
+    try {
+      const stored = localStorage.getItem(debugStorageKey(projectId));
+      if (!stored) return cloneDefaultDebugTuning();
+      return sanitizeDebugTuning(JSON.parse(stored));
+    } catch {
+      return cloneDefaultDebugTuning();
+    }
+  }
+
+  function saveDebugTuning(projectId: string, tuning: CarteDebugTuning) {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(debugStorageKey(projectId), JSON.stringify(tuning));
+    } catch {
+      // Ignore storage failures in the debug panel.
+    }
+  }
+
+  function setDebugTuningValue(key: keyof CarteDebugTuning, value: number) {
+    debugTuning = { ...debugTuning, [key]: value };
+  }
+
+  function formatDebugValue(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
 
   // ── Freeform bubble placement (persisted as layout.bubbles) ───────────────────
   let positioned = $state<PositionedBubble[]>([]);
@@ -145,6 +272,7 @@
       directoryVisible = layout.directoryVisible !== false;
       titleColor =
         typeof layout.titleColor === 'string' ? layout.titleColor : CARTE_STYLE.titleColor;
+      debugTuning = loadDebugTuning(proj.id);
       decorations = sanitizeDecorations(layout.decorations);
 
       // Resolve rosters (for president detection); tolerate per-asso failures.
@@ -274,6 +402,12 @@
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => void handleSave(), 4000);
     return () => clearTimeout(autosaveTimer);
+  });
+
+  $effect(() => {
+    void debugTuning;
+    if (!project) return;
+    saveDebugTuning(project.id, debugTuning);
   });
 
   async function handleExport() {
@@ -411,6 +545,7 @@
                   {theme}
                   {background}
                   {directoryVisible}
+                  {debugTuning}
                   editable
                   {viewScale}
                   {selectedId}
@@ -490,6 +625,39 @@
               <span>{m.carte_title_color_label()}</span>
               <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
             </div>
+
+            <details class="rounded-xl border border-cn-border px-3 py-2" open>
+              <summary class="cursor-pointer text-xs font-semibold text-text-muted">
+                Debug géométrie
+              </summary>
+              <div class="mt-3 space-y-3">
+                {#each DEBUG_CONTROLS as control (control.key)}
+                  <label class="block space-y-1.5">
+                    <div
+                      class="flex items-center justify-between gap-3 text-[11px] font-semibold text-text-muted"
+                    >
+                      <span>{control.label}</span>
+                      <span class="tabular-nums text-text-main">
+                        {formatDebugValue(debugTuning[control.key])}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={control.min}
+                      max={control.max}
+                      step={control.step}
+                      value={debugTuning[control.key]}
+                      oninput={(e) =>
+                        setDebugTuningValue(
+                          control.key,
+                          Number((e.currentTarget as HTMLInputElement).value)
+                        )}
+                      class="w-full accent-cn-yellow"
+                    />
+                  </label>
+                {/each}
+              </div>
+            </details>
 
             <p class="text-xs text-text-muted">{m.carte_editor_hint()}</p>
             <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
