@@ -1,6 +1,6 @@
 {
   "name": "media-service",
-  "version": "0.9.18",
+  "version": "0.9.19",
   "scripts": {
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
