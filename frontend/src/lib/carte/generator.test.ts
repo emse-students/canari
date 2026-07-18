@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bureauCrownAngle } from './layout';
+import { bureauCrownOffset } from './layout';
 import { buildPosterModel } from './generator';
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
 
@@ -28,8 +28,8 @@ describe('carte generator', () => {
         associationId: association.id,
         userId: 'user-a',
         displayName: 'Alice',
-        role: 'Secrétaire',
-        isAdmin: false,
+        role: 'Présidente',
+        isAdmin: true,
         sortOrder: 1,
         createdAt: '2026-01-01T00:00:00.000Z',
       },
@@ -67,9 +67,9 @@ describe('carte generator', () => {
     expect(bubble.bureau.map((member) => member.userId)).toEqual(['user-b', 'user-c']);
   });
 
-  it('centers the bureau crown on the bottom card and rises outward to the sides', () => {
-    expect(bureauCrownAngle(0, 3)).toBeCloseTo(Math.PI / 2);
-    expect(bureauCrownAngle(1, 3)).toBeCloseTo((3 * Math.PI) / 4);
-    expect(bureauCrownAngle(2, 3)).toBeCloseTo(Math.PI / 4);
+  it('starts the bureau crown on the sides and rises row by row', () => {
+    expect(bureauCrownOffset(0)).toEqual({ x: -64, y: 0 });
+    expect(bureauCrownOffset(1)).toEqual({ x: 64, y: 0 });
+    expect(bureauCrownOffset(2)).toEqual({ x: -82, y: -48 });
   });
 });

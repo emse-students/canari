@@ -11,8 +11,7 @@
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
     BUREAU_CROWN_CY,
-    BUREAU_CROWN_RADIUS,
-    bureauCrownAngle,
+    bureauCrownOffset,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
@@ -100,9 +99,9 @@
   /** Association-name box top (inside the blob, below the logo). */
   const NAME_TOP = BLOB_CY + 12;
   /** Bureau member-card width. */
-  const CARD_W = 74;
+  const CARD_W = 68;
   /** President member-card width (a touch larger; sits at the blob bottom). */
-  const PRES_CARD_W = 100;
+  const PRES_CARD_W = 92;
   /** President card top: below the logo + name, hanging off the blob's bottom rim. */
   const PRES_TOP = BLOB_CY + 74;
   /** Max bureau cards fanned over the blob's top arc before it gets too crowded. */
@@ -116,12 +115,15 @@
     if (n <= 36) return 15;
     return 13;
   }
-  /** Length-based name font size (px) for a member card (bureau / president), which wraps. */
-  function cardNameFontSize(name: string, base: number): number {
+  /** Length- and width-based name font size (px) for a member card (bureau / president), which wraps. */
+  function cardNameFontSize(name: string, cardW: number, base: number): number {
     const n = name.length;
-    if (n <= 14) return base;
-    if (n <= 24) return base - 1;
-    return base - 2;
+    const widthPenalty = cardW <= 70 ? 0.8 : cardW <= 85 ? 0.4 : 0;
+    if (n <= 12) return base - widthPenalty;
+    if (n <= 18) return base - 0.8 - widthPenalty;
+    if (n <= 26) return base - 1.6 - widthPenalty;
+    if (n <= 36) return base - 2.4 - widthPenalty;
+    return base - 3.2 - widthPenalty;
   }
 
   /** The stage element, used to convert client pointer coords into poster coords. */
@@ -472,12 +474,12 @@
     <p
       data-pdf-text
       style:margin="4px 0 0"
-      style:font-size="{cardNameFontSize(person.name, nameBase)}px"
+      style:font-size="{cardNameFontSize(person.name, cardW, nameBase)}px"
       style:font-weight="700"
       style:text-align="center"
       style:line-height="1.1"
       style:color={theme.polaroidTextColor}
-      style="overflow-wrap:break-word;"
+      style="overflow-wrap:anywhere;word-break:break-word;"
     >
       {person.name}
     </p>
@@ -490,7 +492,7 @@
         style:text-align="center"
         style:line-height="1.05"
         style:color={theme.polaroidTextColor}
-        style="opacity:0.72;overflow-wrap:break-word;"
+        style="opacity:0.72;overflow-wrap:anywhere;word-break:break-word;"
       >
         {person.role}
       </p>
@@ -632,11 +634,11 @@
 
           <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
-            {@const angle = bureauCrownAngle(i, bureau.length)}
-            {@const px = UNIT_CX + BUREAU_CROWN_RADIUS * Math.cos(angle) - CARD_W / 2}
-            {@const py = BUREAU_CROWN_CY + BUREAU_CROWN_RADIUS * Math.sin(angle) - CARD_W / 2}
+            {@const offset = bureauCrownOffset(i)}
+            {@const px = UNIT_CX + offset.x - CARD_W / 2}
+            {@const py = BUREAU_CROWN_CY + offset.y - CARD_W / 2}
             <div style:position="absolute" style:left="{px}px" style:top="{py}px">
-              {@render memberCard(member, CARD_W, color, 10.5)}
+              {@render memberCard(member, CARD_W, color, 9.6)}
             </div>
           {/each}
 

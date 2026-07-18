@@ -51,19 +51,25 @@ export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
 export const TEXT_BASE_SIZE = 34;
 /** Crown center Y for bureau cards: high enough to sit above the president card. */
-export const BUREAU_CROWN_CY = 120;
-/** Crown radius for bureau cards. */
-export const BUREAU_CROWN_RADIUS = 180;
+export const BUREAU_CROWN_CY = 118;
+/** Horizontal spread basis for bureau cards. */
+export const BUREAU_CROWN_SPREAD_X = 64;
+/** Extra horizontal spread per crown row. */
+export const BUREAU_CROWN_STEP_X = 18;
+/** Vertical lift per crown row. */
+export const BUREAU_CROWN_STEP_Y = 48;
 
 /**
- * Returns the angle used for a bureau card in the crown layout.
- * The first card sits at the bottom center, then cards alternate left/right as they rise.
+ * Returns the crown offset for a bureau card.
+ * The first slot starts on a side, so the center stays reserved for the president.
  */
-export function bureauCrownAngle(index: number, total: number): number {
-  if (index === 0) return Math.PI / 2;
-  const step = Math.PI / Math.max(total + 1, 4);
-  const offset = Math.ceil(index / 2) * (index % 2 === 1 ? 1 : -1);
-  return Math.PI / 2 + offset * step;
+export function bureauCrownOffset(index: number): { x: number; y: number } {
+  const level = Math.floor(index / 2);
+  const side = index % 2 === 0 ? -1 : 1;
+  return {
+    x: side * (BUREAU_CROWN_SPREAD_X + level * BUREAU_CROWN_STEP_X),
+    y: level === 0 ? 0 : -level * BUREAU_CROWN_STEP_Y,
+  };
 }
 
 // Seed-grid geometry (poster px). Kept here so the editor can recompute resets.

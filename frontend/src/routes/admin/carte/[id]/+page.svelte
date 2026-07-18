@@ -625,21 +625,6 @@
                 {/if}
               </div>
 
-              {#if selectedContent.president}
-                <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
-                  <input
-                    type="checkbox"
-                    checked={selectedBubble.showPresident}
-                    onchange={(e) =>
-                      patchBubble(selectedBubble.assoId, {
-                        showPresident: e.currentTarget.checked,
-                      })}
-                    class="accent-cn-yellow"
-                  />
-                  {m.carte_panel_president_toggle()}
-                </label>
-              {/if}
-
               <div class="space-y-1.5">
                 <span class="block text-xs font-semibold text-text-muted"
                   >{m.carte_shape_label()}</span
