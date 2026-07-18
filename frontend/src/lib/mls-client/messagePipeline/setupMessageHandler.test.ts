@@ -227,7 +227,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('Welcome (NoMatchingKeyPackage) → republishes key material + sendWelcomeRequest', async () => {
+  it('Welcome (NoMatchingKeyPackage) → republishes key material + externalJoin-first requestReAdd', async () => {
+    const recovery = await import('$lib/utils/chat/recovery');
+    vi.mocked(recovery.requestReAdd).mockClear();
     // Unique groupId: the NoMatchingKeyPackage failure counter is module-level.
     const gid = 'a1111111-1111-4111-8111-111111111111';
     const deps = baseDeps({
@@ -250,12 +252,14 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     ) => Promise<boolean>;
     const ok = await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
     expect(ok).toBe(true);
-    // First detection: republish fresh key material then request a new Welcome.
+    // First detection: republish fresh key material, then drive the externalJoin-first seam.
     expect(mls.republishKeyMaterial).toHaveBeenCalledWith('pin');
-    expect(mls.sendWelcomeRequest).toHaveBeenCalledWith(gid);
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    // The self-heal seam owns welcome_request (fallback); the handler no longer calls it directly.
+    expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
 
-  it('Welcome (NoMatchingKeyPackage) repeated → requestReAdd escalation past threshold', async () => {
+  it('Welcome (NoMatchingKeyPackage) → externalJoin-first recovery fires on the FIRST failure', async () => {
     const recovery = await import('$lib/utils/chat/recovery');
     vi.mocked(recovery.requestReAdd).mockClear();
     const gid = 'a2222222-2222-4222-8222-222222222222';
@@ -275,9 +279,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       d?: boolean,
       e?: Uint8Array
     ) => Promise<boolean>;
-    // 3 attempts = welcome_request; the 4th (past the threshold) escalates to requestReAdd.
-    for (let i = 0; i < 3; i++) await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
-    expect(recovery.requestReAdd).not.toHaveBeenCalled();
+    // No 3-strike wait: the peer-independent externalJoin (via requestReAdd) is attempted at once,
+    // so a device whose peers have suspended re-adds can still self-heal.
     await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
     expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
   });

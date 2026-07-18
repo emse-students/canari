@@ -29,6 +29,15 @@ export type { MessageHandlerDeps } from './deps';
 type PendingMsg = { sender: string; content: Uint8Array };
 
 /**
+ * Recovery action a failing Welcome defers to AFTER releasing the MLS lock (the recovery seams
+ * re-acquire the same non-reentrant mutex). `readd` = clean rejoin (externalJoin first);
+ * `nomatch` carries the per-group failure count so the first detection republishes key material.
+ */
+type DeferredRecovery =
+  | { kind: 'readd'; target: string }
+  | { kind: 'nomatch'; target: string; failures: number };
+
+/**
  * Consecutive `NoMatchingKeyPackage` failures allowed per group before escalating
  * from a simple welcome_request (inviter re-adds us) to a full recovery
  * (requestReAdd). Prevents the Welcome ↔ welcome_request livelock when the re-add
@@ -244,7 +253,12 @@ async function handleWelcome({
   // (pure network); only this contiguous WASM block (processWelcome → replay) must be exclusive.
   // The drain does not auto-lock Welcomes (see MlsPerGroupScheduler.drain), which
   // avoids holding the mutex during the network preamble and blocking catch-up.
-  await mlsService.runUnderMlsLock(async () => {
+  //
+  // On failure, recovery (externalJoin / welcome_request / republish) MUST run OUTSIDE this lock:
+  // those seams re-acquire the same NON-reentrant MLS mutex and would deadlock if invoked from
+  // within it (cf. MlsPerGroupScheduler.acquireMlsLock). The locked catch only CLASSIFIES the
+  // failure into `deferredRecovery`; it is executed once the lock is released. [[recovery-outside-lock]]
+  const deferredRecovery = await mlsService.runUnderMlsLock<DeferredRecovery | null>(async () => {
     try {
       // processWelcome returns the effective MLS groupId (may differ from the delivery envelope).
       // Fall back to the envelope groupId if WASM returns undefined (should not happen).
@@ -319,62 +333,69 @@ async function handleWelcome({
       // the queue under the MLS lock (createDecryptSession re-acquires the same mutex).
       onGroupReady?.(joinedGroupId);
       log(`[WELCOME] Group ${joinedGroupId.slice(0, 8)}… ready`);
+      return null;
     } catch (e) {
+      // Classify only - recovery is deferred to AFTER the lock (see note above the lock).
       const err = String(e);
+      const target = terminalId || (groupId ?? '');
       if (err.includes('GroupAlreadyExists')) {
         // process_welcome threw BEFORE the insert: the OpenMLS group state exists in the
         // storage provider but NOT in memory (otherwise the "already held" guard would
         // have caught it). Marking it "ready" would be wrong - the group is not truly
-        // joined and would stay stuck. Purge storage (forgetGroup now clears both
-        // memory and storage) then request a clean Welcome, honoured without a storage collision.
-        const target = terminalId || (groupId ?? '');
+        // joined and would stay stuck. Purge storage now (forgetGroup clears both memory and
+        // storage - a WASM op, safe under the lock); the clean rejoin is deferred below.
         noMatchKpFailures.delete(target);
-        if (target) {
-          log(
-            `[WELCOME] GroupAlreadyExists pour ${target.slice(0, 8)}… - forget storage + re-Welcome`
-          );
-          mlsService.forgetGroup(target);
-          statePersister.persistNow();
-          await requestReAdd(target, deps, recoveryTimers);
-        }
-      } else if (err.includes('NoMatchingKeyPackage')) {
-        // Our published KeyPackages no longer match our local private keys:
-        // the inviter is re-adding us with a KeyPackage we cannot honour.
-        const target = terminalId || (groupId ?? '');
+        if (!target) return null;
+        log(`[WELCOME] GroupAlreadyExists pour ${target.slice(0, 8)}… - forget storage + re-join`);
+        mlsService.forgetGroup(target);
+        statePersister.persistNow();
+        return { kind: 'readd', target };
+      }
+      if (err.includes('NoMatchingKeyPackage')) {
+        // Our published KeyPackage is orphaned from its local private key: the inviter re-added us
+        // with a KeyPackage we cannot honour. Recovery (deferred below) prefers externalJoin - a
+        // peer-independent self-rejoin against the server-stored GroupInfo - over looping on peer
+        // re-adds that keep hitting this same failure and eventually get suspended peer-side.
         const failures = (noMatchKpFailures.get(target) ?? 0) + 1;
         noMatchKpFailures.set(target, failures);
-
-        if (failures > MAX_NOMATCH_KP_RETRIES) {
-          // Re-add persistently failing → full recovery instead of looping.
-          log(
-            `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - escalade requestReAdd`
-          );
-          noMatchKpFailures.delete(target);
-          if (target) await requestReAdd(target, deps, recoveryTimers);
-        } else {
-          // First detection: republish fresh key material so the inviter's next
-          // re-add uses a KeyPackage we can honour.
-          // republishKeyMaterial debounces rapid successive calls internally.
-          if (failures === 1) {
-            log(
-              `[WELCOME] NoMatchingKeyPackage pour ${target.slice(0, 8)}… - republication KeyPackages + welcome_request`
-            );
-            await mlsService.republishKeyMaterial(deps.pin).catch(() => {});
-          } else {
-            log(
-              `[WELCOME] NoMatchingKeyPackage #${failures} pour ${target.slice(0, 8)}… - welcome_request`
-            );
-          }
-          if (target) await mlsService.sendWelcomeRequest(target).catch(() => {});
-        }
-      } else if (err.includes('CannotDecryptOwnMessage')) {
+        return target ? { kind: 'nomatch', target, failures } : null;
+      }
+      if (err.includes('CannotDecryptOwnMessage')) {
         // Welcome addressed to another device - ignore.
         log(`[WELCOME] CannotDecryptOwnMessage pour ${groupId?.slice(0, 8)}… - ACK silencieux`);
-      } else {
-        log(`[WELCOME] Erreur traitement ${groupId?.slice(0, 8)}…: ${err.slice(0, 150)}`);
+        return null;
       }
+      log(`[WELCOME] Erreur traitement ${groupId?.slice(0, 8)}…: ${err.slice(0, 150)}`);
+      return null;
     }
   });
+
+  // ── Recovery, OUTSIDE the MLS lock ──────────────────────────────────────────────────────────
+  // requestReAdd prefers externalJoin (self-service rejoin via the server-stored GroupInfo: no
+  // peer, no fresh KeyPackage exchange) and only falls back to welcome_request when no GroupInfo
+  // exists. Driving it here - immediately, on the first failure - lets a device self-heal without
+  // waiting for the SYNC_WATCHDOG cadence or for a peer whose anti-livelock guard may have already
+  // suspended re-adds (cf. handleWelcomeRequest MAX_READD_ATTEMPTS). [[recovery-outside-lock]]
+  if (deferredRecovery) {
+    const rec = deferredRecovery;
+    if (rec.kind === 'nomatch') {
+      // First detection: republish fresh key material so a fallback welcome_request re-add can
+      // succeed (republishKeyMaterial debounces internally); subsequent failures skip it.
+      if (rec.failures === 1) {
+        log(
+          `[WELCOME] NoMatchingKeyPackage pour ${rec.target.slice(0, 8)}… - republish + self-heal (externalJoin/welcome_request)`
+        );
+        await mlsService.republishKeyMaterial(deps.pin).catch(() => {});
+      } else {
+        log(
+          `[WELCOME] NoMatchingKeyPackage #${rec.failures} pour ${rec.target.slice(0, 8)}… - self-heal (externalJoin/welcome_request)`
+        );
+      }
+      // Reset the counter past the budget so a later desync can republish afresh.
+      if (rec.failures > MAX_NOMATCH_KP_RETRIES) noMatchKpFailures.delete(rec.target);
+    }
+    await requestReAdd(rec.target, deps, recoveryTimers);
+  }
 
   return true; // Always ACKed
 }
