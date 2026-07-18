@@ -74,14 +74,6 @@ export interface PosterModel {
   totalAssos: number;
 }
 
-/** Strips accents and lowercases so role matching tolerates "Président"/"president". */
-function normalize(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '');
-}
-
 /** Resolves a raw roster member into the display-ready reference used across the poster. */
 function toMemberRef(mem: AssociationMember): PosterMemberRef {
   return {
@@ -91,17 +83,12 @@ function toMemberRef(mem: AssociationMember): PosterMemberRef {
   };
 }
 
-/** Whether a roster member holds the president role (tolerant of accents/case). */
-function isPresident(mem: AssociationMember): boolean {
-  return normalize(mem.role ?? '').includes('presid');
-}
-
 /**
- * Picks the president from a roster by matching the role text (tolerant of accents/case).
- * Returns the first member whose role contains "presid"; null when none is found.
+ * Picks the president from a roster by taking the first member in display order.
+ * The association members endpoint already returns the roster ordered by the source sort order.
  */
 function findPresident(members: AssociationMember[]): PosterMemberRef | null {
-  const hit = members.find(isPresident);
+  const hit = members[0];
   if (!hit) return null;
   return { ...toMemberRef(hit), role: hit.role?.trim() || 'President' };
 }
@@ -127,10 +114,10 @@ export function buildPosterModel(
   const bubbleOf = (a: Association): PosterBubble => {
     const roster = membersByAsso[a.id] ?? [];
     const president = findPresident(roster);
-    // Bureau = admins other than the president (radial polaroids); ordered by roster position.
+    // Bureau = admins other than the president (keeps roster order, after the first row).
     const bureau = roster
-      .filter((mem) => mem.isAdmin && !isPresident(mem))
-      .sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0))
+      .slice(1)
+      .filter((mem) => mem.isAdmin)
       .map(toMemberRef);
     // Directory lists every member, alphabetically.
     const members = roster.map(toMemberRef).sort((x, y) => x.name.localeCompare(y.name));

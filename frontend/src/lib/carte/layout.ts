@@ -50,6 +50,21 @@ export const CARD_HEIGHT = 430;
 export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
 export const TEXT_BASE_SIZE = 34;
+/** Crown center Y for bureau cards: high enough to sit above the president card. */
+export const BUREAU_CROWN_CY = 120;
+/** Crown radius for bureau cards. */
+export const BUREAU_CROWN_RADIUS = 82;
+
+/**
+ * Returns the angle used for a bureau card in the crown layout.
+ * The first card sits at the bottom center, then cards alternate left/right as they rise.
+ */
+export function bureauCrownAngle(index: number, total: number): number {
+  if (index === 0) return Math.PI / 2;
+  const step = Math.PI / Math.max(total + 1, 4);
+  const offset = Math.ceil(index / 2) * (index % 2 === 1 ? 1 : -1);
+  return Math.PI / 2 + offset * step;
+}
 
 // Seed-grid geometry (poster px). Kept here so the editor can recompute resets.
 const MARGIN = 48;

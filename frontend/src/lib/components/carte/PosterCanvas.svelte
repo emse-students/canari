@@ -10,6 +10,9 @@
     CARD_HEIGHT,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
+    BUREAU_CROWN_CY,
+    BUREAU_CROWN_RADIUS,
+    bureauCrownAngle,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
@@ -96,11 +99,6 @@
   const LOGO_CY = BLOB_CY - 38;
   /** Association-name box top (inside the blob, below the logo). */
   const NAME_TOP = BLOB_CY + 12;
-  /**
-   * Center-to-card-center radius of the bureau arc. Pushed out so the cards sit on the blob's rim
-   * (over the blob, but clear of the centered logo + name) rather than crowding the center.
-   */
-  const RING_RADIUS = 180;
   /** Bureau member-card width. */
   const CARD_W = 74;
   /** President member-card width (a touch larger; sits at the blob bottom). */
@@ -109,7 +107,6 @@
   const PRES_TOP = BLOB_CY + 74;
   /** Max bureau cards fanned over the blob's top arc before it gets too crowded. */
   const MAX_BUREAU = 8;
-
   /** Length-based font size (px) for the association name below the blob, so long names shrink. */
   function nameFontSize(name: string): number {
     const n = name.length;
@@ -635,9 +632,9 @@
 
           <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
-            {@const angle = -Math.PI + ((i + 0.5) / bureau.length) * Math.PI}
-            {@const px = UNIT_CX + RING_RADIUS * Math.cos(angle) - CARD_W / 2}
-            {@const py = BLOB_CY + RING_RADIUS * Math.sin(angle) - CARD_W / 2}
+            {@const angle = bureauCrownAngle(i, bureau.length)}
+            {@const px = UNIT_CX + BUREAU_CROWN_RADIUS * Math.cos(angle) - CARD_W / 2}
+            {@const py = BUREAU_CROWN_CY + BUREAU_CROWN_RADIUS * Math.sin(angle) - CARD_W / 2}
             <div style:position="absolute" style:left="{px}px" style:top="{py}px">
               {@render memberCard(member, CARD_W, color, 10.5)}
             </div>
