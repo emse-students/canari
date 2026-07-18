@@ -53,7 +53,7 @@ export const TEXT_BASE_SIZE = 34;
 /** Crown center Y for bureau cards: high enough to sit above the president card. */
 export const BUREAU_CROWN_CY = 120;
 /** Crown radius for bureau cards. */
-export const BUREAU_CROWN_RADIUS = 82;
+export const BUREAU_CROWN_RADIUS = 180;
 
 /**
  * Returns the angle used for a bureau card in the crown layout.
