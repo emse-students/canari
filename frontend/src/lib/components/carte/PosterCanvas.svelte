@@ -463,6 +463,7 @@
       />
     </div>
     <p
+      data-pdf-text
       style:margin="4px 0 0"
       style:font-size="{cardNameFontSize(person.name, nameBase)}px"
       style:font-weight="700"
@@ -475,6 +476,7 @@
     </p>
     {#if person.role}
       <p
+        data-pdf-text
         style:margin="1px 0 0"
         style:font-size="{nameBase - 2.5}px"
         style:font-weight="600"
@@ -532,6 +534,7 @@
       style:pointer-events="none"
     >
       <h1
+        data-pdf-text
         style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
         style:font-size="52px"
         style:font-weight="700"
@@ -650,6 +653,7 @@
             style:text-align="center"
           >
             <p
+              data-pdf-text
               style:margin="0"
               style:font-size="{nameFontSize(data.name)}px"
               style:font-weight="800"
@@ -708,6 +712,7 @@
             beginMove(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, TEXT_BASE_WIDTH)}
         >
           <div
+            data-pdf-text={deco.content ? 'true' : null}
             style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
             style:font-size="{TEXT_BASE_SIZE}px"
             style:font-weight={deco.bold ? '800' : '500'}
@@ -775,6 +780,7 @@
       style:box-shadow="0 10px 30px rgba(0,0,0,0.14)"
     >
       <h2
+        data-pdf-text
         style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
         style:font-size="24px"
         style:font-weight="800"
@@ -803,6 +809,7 @@
                     style:transform="translateY(0.08em)"
                   ></span>
                   <span
+                    data-pdf-text
                     style="font-size:1em;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
                   >
                     {asso.name}
@@ -810,6 +817,7 @@
                 </div>
                 {#if asso.members.length > 0}
                   <p
+                    data-pdf-text
                     style:margin="0 0 0 1.2em"
                     style:font-size="0.82em"
                     style:line-height="1.35"
