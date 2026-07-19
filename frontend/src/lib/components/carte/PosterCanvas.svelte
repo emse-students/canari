@@ -584,6 +584,7 @@
         {@const ls = logoShape(bubble.logoShape)}
         {@const lw = LOGO_BASE * ls.w}
         {@const lh = LOGO_BASE * ls.h}
+        {@const visualScale = Math.max(0.01, viewScale * bubble.scale)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="carte-unit"
@@ -592,15 +593,15 @@
           style:position="absolute"
           style:left="{bubble.x}px"
           style:top="{bubble.y}px"
-          style:z-index={bubble.z}
+          style:z-index={selected ? 9999 : bubble.z}
           style:width="{CARD_WIDTH}px"
           style:height="{CARD_HEIGHT}px"
           style:transform="scale({bubble.scale})"
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
-          style:outline={selected ? '3px solid #f5c518' : 'none'}
-          style:outline-offset="4px"
+          style:outline={selected ? `${3 / visualScale}px solid #f5c518` : 'none'}
+          style:outline-offset="{4 / visualScale}px"
           style:border-radius="16px"
           onpointerdown={(e) =>
             beginMove(e, 'bubble', bubble.assoId, bubble.x, bubble.y, bubble.scale, CARD_WIDTH)}
@@ -690,13 +691,14 @@
             {#if data.contactEmail}
               <p
                 data-pdf-text
-                style:margin="4px 0 0"
+                style:margin="2px 0 0"
                 style:font-size="{Math.max(
-                  6,
-                  nameFontSize(data.name) * 0.45 * debugTuning.associationNameScale
+                  5,
+                  nameFontSize(data.name) * 0.35 * debugTuning.associationNameScale
                 )}px"
                 style:font-weight="600"
                 style:color="rgba(255, 255, 255, 0.85)"
+                style="word-break:break-all;"
               >
                 {data.contactEmail}
               </p>
@@ -708,7 +710,8 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
+                  visualScale});"
                 onpointerdown={(e) =>
                   beginResize(
                     e,
@@ -730,6 +733,7 @@
     {#each decorations as deco (deco.id)}
       {#if deco.kind === 'text'}
         {@const dsel = editable && selectedDecorationId === deco.id}
+        {@const visualScale = Math.max(0.01, viewScale * deco.scale)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           data-el-root
@@ -737,14 +741,14 @@
           style:position="absolute"
           style:left="{deco.x}px"
           style:top="{deco.y}px"
-          style:z-index={deco.z}
+          style:z-index={dsel ? 9999 : deco.z}
           style:width="{TEXT_BASE_WIDTH}px"
           style:transform="scale({deco.scale})"
           style:transform-origin="top left"
           style:touch-action="none"
           style:cursor={editable ? 'grab' : 'default'}
-          style:outline={dsel ? '3px solid #f5c518' : 'none'}
-          style:outline-offset="4px"
+          style:outline={dsel ? `${3 / visualScale}px solid #f5c518` : 'none'}
+          style:outline-offset="{4 / visualScale}px"
           style:border-radius="6px"
           onpointerdown={(e) =>
             beginMove(e, 'decoration', deco.id, deco.x, deco.y, deco.scale, TEXT_BASE_WIDTH)}
@@ -770,7 +774,8 @@
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 role="presentation"
-                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};"
+                style="position:absolute;{corner.pos}width:14px;height:14px;border-radius:50%;background:#f5c518;border:2px solid #ffffff;box-shadow:0 1px 3px rgba(0,0,0,0.3);cursor:{corner.cursor};transform:scale({1 /
+                  visualScale});"
                 onpointerdown={(e) =>
                   beginResize(
                     e,

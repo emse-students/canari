@@ -38,6 +38,30 @@ function parseRgb(css: string): { r: number; g: number; b: number } {
   return { r: r || 0, g: g || 0, b: b || 0 };
 }
 
+/**
+ * Walks up the DOM from `el` to `root` (exclusive) and accumulates the visual scale
+ * applied by CSS `transform`. This maps a layout size (like font-size) into the
+ * natural coordinate space of the root element.
+ */
+function getAccumulatedScale(el: HTMLElement, root: HTMLElement): number {
+  let scale = 1;
+  let current: HTMLElement | null = el;
+  while (current && current !== root) {
+    const transform = getComputedStyle(current).transform;
+    if (transform && transform !== 'none') {
+      const match = transform.match(/^matrix(?:3d)?\((.+)\)$/);
+      if (match) {
+        const values = match[1].split(',').map(parseFloat);
+        // scaleX is the length of the first column vector (m11, m12)
+        const scaleX = Math.sqrt(values[0] * values[0] + values[1] * values[1]);
+        if (scaleX > 0) scale *= scaleX;
+      }
+    }
+    current = current.parentElement;
+  }
+  return scale;
+}
+
 /** Reads every `[data-pdf-text]` run under `root`, converted into the root's natural coordinate space. */
 function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
   const rootRect = root.getBoundingClientRect();
@@ -57,14 +81,15 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       : cs.fontWeight === 'bold'
         ? 700
         : 400;
+    const localScale = getAccumulatedScale(el, root);
     specs.push({
       el,
       x: (r.left - rootRect.left) * k,
       y: (r.top - rootRect.top) * k,
       w: r.width * k,
-      // NB: font-size is a layout value, NOT scaled by an ancestor CSS transform (unlike the rects
-      // above), so it is already in natural px - multiplying by k here would wrongly inflate it.
-      fontPx: parseFloat(cs.fontSize),
+      // NB: font-size is a layout value, NOT scaled by an ancestor CSS transform. We must manually
+      // multiply it by the accumulated local scale to inflate it to the root's natural space.
+      fontPx: parseFloat(cs.fontSize) * localScale,
       align,
       family: cs.fontFamily,
       weight,
