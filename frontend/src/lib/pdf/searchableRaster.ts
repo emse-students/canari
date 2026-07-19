@@ -292,14 +292,16 @@ function drawTextSpecs(
     const anchorX = s.align === 'center' ? s.x + s.w / 2 : s.align === 'right' ? s.x + s.w : s.x;
 
     // In HTML, text is vertically centered in its line-height box.
-    // jsPDF baseline='top' relies on internal font ascender metrics which are often buggy
-    // for custom fonts like Fredoka, causing text to be drawn too high and cropped.
-    // baseline='middle' is much more robust as it centers on the em-box.
-    const anchorY = s.y + yOffset + s.lineHeightPx / 2;
+    // jsPDF's 'top' and 'middle' baselines rely on internal font ascender/descender metrics
+    // which are often buggy for custom fonts like Fredoka, causing text to be drawn too high
+    // and cropped by the PDF viewer. We bypass this by manually computing the alphabetic
+    // baseline. For most web fonts, the alphabetic baseline is located at roughly 35%
+    // of the font-size below the vertical center of the line-height box.
+    const anchorY = s.y + yOffset + s.lineHeightPx / 2 + s.fontPx * 0.35;
 
     pdf.text(lines, anchorX * mmPerPx, anchorY * mmPerPx, {
       align: s.align,
-      baseline: 'middle',
+      // baseline: 'alphabetic' is the default in jsPDF
       lineHeightFactor: s.lineHeightPx / s.fontPx,
       charSpace: s.letterSpacingPx * mmPerPx,
     });

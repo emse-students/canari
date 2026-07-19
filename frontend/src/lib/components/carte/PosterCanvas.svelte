@@ -845,7 +845,7 @@
                 data-pdf-text
                 style="break-inside:avoid;break-after:avoid;margin-top:{zone !== model.zones[0]
                   ? '1.5em'
-                  : '0'};margin-bottom:0.8em;font-weight:700;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:1.15em;color:{theme.directoryTextColor};letter-spacing:0.05em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
+                  : '0'};margin-bottom:0.8em;font-weight:700;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:1.0em;color:{theme.directoryTextColor};letter-spacing:0.01em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
               >
                 {zone.label}
               </div>
@@ -871,7 +871,7 @@
                     <p
                       data-pdf-text
                       style:margin="0 0 0 1.2em"
-                      style:font-size="0.72em"
+                      style:font-size="0.65em"
                       style:line-height="1.35"
                       style:color={theme.directoryMutedColor}
                     >
