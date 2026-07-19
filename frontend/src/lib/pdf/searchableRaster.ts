@@ -21,12 +21,14 @@ interface TextSpec {
   x: number;
   y: number;
   w: number;
+  h: number;
   fontPx: number;
   align: 'left' | 'center' | 'right';
   /** The run's font-family stack + numeric weight, used to pick the matching embedded app font. */
   family: string;
   weight: number;
   color: { r: number; g: number; b: number };
+  lineHeightPx: number;
   text: string;
 }
 
@@ -82,18 +84,25 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
         ? 700
         : 400;
     const localScale = getAccumulatedScale(el, root);
+    const fontPx = parseFloat(cs.fontSize) * localScale;
+    let lineHeightPx = fontPx * 1.15;
+    if (cs.lineHeight !== 'normal') {
+      const lh = parseFloat(cs.lineHeight);
+      if (!isNaN(lh)) lineHeightPx = lh * localScale;
+    }
+
     specs.push({
       el,
       x: (r.left - rootRect.left) * k,
       y: (r.top - rootRect.top) * k,
       w: r.width * k,
-      // NB: font-size is a layout value, NOT scaled by an ancestor CSS transform. We must manually
-      // multiply it by the accumulated local scale to inflate it to the root's natural space.
-      fontPx: parseFloat(cs.fontSize) * localScale,
+      h: r.height * k,
+      fontPx,
       align,
       family: cs.fontFamily,
       weight,
       color: parseRgb(cs.color),
+      lineHeightPx,
       text,
     });
   }
@@ -134,17 +143,19 @@ export async function exportSearchablePdf(
   // 1. Measure the text runs while they are still visible (so colors/sizes are the real ones).
   const specs = collectTextSpecs(el, opts.naturalWidth);
 
-  // 2. Hide the text for the background raster (keep layout, so boxes are unchanged), snapshotting
-  //    the inline color/shadow so they can be restored verbatim afterwards.
-  const restore = specs.map((s) => ({
-    el: s.el,
-    color: s.el.style.color,
-    shadow: s.el.style.textShadow,
-  }));
-  for (const s of specs) {
-    s.el.style.setProperty('color', 'transparent', 'important');
-    s.el.style.setProperty('text-shadow', 'none', 'important');
-  }
+  // 2. Hide the text for the background raster by injecting a global stylesheet.
+  // We use a stylesheet rather than inline styles because Svelte's reactivity might
+  // re-apply declarative inline `style:color` bindings during the async rasterization yield.
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
+    .pdf-exporting-raster [data-pdf-text] {
+      color: rgba(0,0,0,0) !important;
+      text-shadow: none !important;
+      -webkit-text-fill-color: rgba(0,0,0,0) !important;
+    }
+  `;
+  document.head.appendChild(styleEl);
+  el.classList.add('pdf-exporting-raster');
 
   let canvas: HTMLCanvasElement;
   try {
@@ -152,10 +163,8 @@ export async function exportSearchablePdf(
     canvas = await rasterizeElementToCanvas(el, rasterOpts);
   } finally {
     // 3. Always restore the visible text, even if the raster failed.
-    for (const r of restore) {
-      r.el.style.color = r.color;
-      r.el.style.textShadow = r.shadow;
-    }
+    el.classList.remove('pdf-exporting-raster');
+    styleEl.remove();
   }
 
   // 4. Compose the PDF: full-bleed background image, then the vector text on top.
@@ -175,12 +184,24 @@ export async function exportSearchablePdf(
     pdf.setFontSize(s.fontPx * mmPerPx * PT_PER_MM);
     pdf.setTextColor(s.color.r, s.color.g, s.color.b);
     const boxW = s.w * mmPerPx;
-    const lines = pdf.splitTextToSize(s.text, boxW);
+    // If the text is single-line (height <= 1.2x line-height), pass a massive width to prevent jsPDF
+    // from prematurely wrapping it due to sub-pixel font metric differences.
+    // For multi-line text, add a small 1.5% tolerance for the same reason.
+    const isMultiLine = s.h > s.lineHeightPx * 1.2;
+    const safeBoxW = isMultiLine ? boxW * 1.015 : boxW * 100;
+
+    const lines = pdf.splitTextToSize(s.text, safeBoxW);
     const anchorX = s.align === 'center' ? s.x + s.w / 2 : s.align === 'right' ? s.x + s.w : s.x;
-    pdf.text(lines, anchorX * mmPerPx, s.y * mmPerPx, {
+
+    // In HTML, text is vertically centered in its line-height box.
+    // jsPDF baseline='top' aligns to the font's em-box top. We add half the leading.
+    const halfLeading = (s.lineHeightPx - s.fontPx) / 2;
+    const anchorY = s.y + halfLeading;
+
+    pdf.text(lines, anchorX * mmPerPx, anchorY * mmPerPx, {
       align: s.align,
       baseline: 'top',
-      lineHeightFactor: 1.15,
+      lineHeightFactor: s.lineHeightPx / s.fontPx,
     });
   }
 
