@@ -862,7 +862,7 @@
                     style:line-height="1.35"
                     style:color={theme.directoryMutedColor}
                   >
-                    {asso.members
+                    {[...asso.members]
                       .sort((a, b) => a.name.localeCompare(b.name))
                       .map((mem: PosterMemberRef) =>
                         mem.role ? `${mem.name} (${mem.role})` : mem.name
