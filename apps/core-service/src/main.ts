@@ -49,6 +49,10 @@ async function bootstrap() {
   const webhookPath = '/api/payments/webhook';
   app.use(webhookPath, bodyParser.raw({ type: 'application/json' }) as any);
 
+  // Increase payload limit to accommodate base64 background images for posters
+  app.use(bodyParser.json({ limit: '15mb' }));
+  app.use(bodyParser.urlencoded({ limit: '15mb', extended: true }));
+
   await app.listen(process.env.PORT ?? 3012);
 }
 void bootstrap();
