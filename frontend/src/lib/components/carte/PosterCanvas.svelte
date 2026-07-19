@@ -688,6 +688,20 @@
             >
               {data.name}
             </p>
+            {#if data.contactEmail}
+              <p
+                data-pdf-text
+                style:margin="4px 0 0"
+                style:font-size="{Math.max(
+                  6,
+                  nameFontSize(data.name) * 0.45 * debugTuning.associationNameScale
+                )}px"
+                style:font-weight="600"
+                style:color="rgba(255, 255, 255, 0.85)"
+              >
+                {data.contactEmail}
+              </p>
+            {/if}
           </div>
 
           {#if selected}
@@ -849,6 +863,7 @@
                     style:color={theme.directoryMutedColor}
                   >
                     {asso.members
+                      .sort((a, b) => a.name.localeCompare(b.name))
                       .map((mem: PosterMemberRef) =>
                         mem.role ? `${mem.name} (${mem.role})` : mem.name
                       )

@@ -119,8 +119,8 @@ export function buildPosterModel(
       .slice(1)
       .filter((mem) => mem.isAdmin)
       .map(toMemberRef);
-    // Directory lists every member, alphabetically.
-    const members = roster.map(toMemberRef).sort((x, y) => x.name.localeCompare(y.name));
+    // Directory lists every member; kept in roster order here, sorted alphabetically at render time.
+    const members = roster.map(toMemberRef);
     return {
       assoId: a.id,
       name: a.name,

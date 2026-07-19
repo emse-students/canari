@@ -1,5 +1,11 @@
 import type { PosterModel, PosterBubble } from './generator';
-import { DEFAULT_SHAPE, isShapeKey, DEFAULT_LOGO_SHAPE, isLogoShapeKey } from './shapes';
+import {
+  DEFAULT_SHAPE,
+  isShapeKey,
+  getRandomShape,
+  DEFAULT_LOGO_SHAPE,
+  isLogoShapeKey,
+} from './shapes';
 
 /**
  * A single association placed on the freeform poster canvas. Positions are stored in the
@@ -70,16 +76,16 @@ export interface CarteDebugTuning {
 
 /** Default values used when no debug tuning is active. */
 export const DEFAULT_CARTE_DEBUG_TUNING: CarteDebugTuning = {
-  bureauCrownCy: 118,
-  bureauCrownRx: 132,
-  bureauCrownRy: 180,
-  bureauCrownAngle1: -0.1,
-  bureauCrownAngle2: 0.6,
-  bureauCrownAngle3: 1.2,
+  bureauCrownCy: 147,
+  bureauCrownRx: 119,
+  bureauCrownRy: 147,
+  bureauCrownAngle1: -0.85,
+  bureauCrownAngle2: -0.11,
+  bureauCrownAngle3: 0.57,
   bureauCardWidth: 64,
-  presidentCardWidth: 88,
-  associationNameScale: 0.88,
-  memberNameScale: 0.92,
+  presidentCardWidth: 73,
+  associationNameScale: 1.15,
+  memberNameScale: 0.94,
   memberRoleScale: 0.9,
 };
 
@@ -197,7 +203,7 @@ export function seedBubbleLayout(
         z: out.length + 1,
         colorOverride: null,
         showPresident: true,
-        shape: DEFAULT_SHAPE,
+        shape: getRandomShape(),
         logoShape: DEFAULT_LOGO_SHAPE,
       });
       col++;

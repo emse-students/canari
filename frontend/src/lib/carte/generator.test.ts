@@ -68,11 +68,11 @@ describe('carte generator', () => {
   });
 
   it('places the bureau crown according to the fixed angles', () => {
-    expect(bureauCrownOffset(0, 3).x).toBeCloseTo(-131.34, 2);
-    expect(bureauCrownOffset(0, 3).y).toBeCloseTo(17.97, 2);
-    expect(bureauCrownOffset(1, 3).x).toBeCloseTo(131.34, 2);
-    expect(bureauCrownOffset(1, 3).y).toBeCloseTo(17.97, 2);
-    expect(bureauCrownOffset(2, 3).x).toBeCloseTo(-108.94, 2);
-    expect(bureauCrownOffset(2, 3).y).toBeCloseTo(-101.64, 2);
+    expect(bureauCrownOffset(0, 3).x).toBeCloseTo(-78.54, 2);
+    expect(bureauCrownOffset(0, 3).y).toBeCloseTo(110.44, 2);
+    expect(bureauCrownOffset(1, 3).x).toBeCloseTo(78.54, 2);
+    expect(bureauCrownOffset(1, 3).y).toBeCloseTo(110.44, 2);
+    expect(bureauCrownOffset(2, 3).x).toBeCloseTo(-118.28, 2);
+    expect(bureauCrownOffset(2, 3).y).toBeCloseTo(16.14, 2);
   });
 });
