@@ -648,39 +648,6 @@
               <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
             </div>
 
-            <details class="rounded-xl border border-cn-border px-3 py-2" open>
-              <summary class="cursor-pointer text-xs font-semibold text-text-muted">
-                Debug géométrie
-              </summary>
-              <div class="mt-3 space-y-3">
-                {#each DEBUG_CONTROLS as control (control.key)}
-                  <label class="block space-y-1.5">
-                    <div
-                      class="flex items-center justify-between gap-3 text-[11px] font-semibold text-text-muted"
-                    >
-                      <span>{control.label}</span>
-                      <span class="tabular-nums text-text-main">
-                        {formatDebugValue(debugTuning[control.key])}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={control.min}
-                      max={control.max}
-                      step={control.step}
-                      value={debugTuning[control.key]}
-                      oninput={(e) =>
-                        setDebugTuningValue(
-                          control.key,
-                          Number((e.currentTarget as HTMLInputElement).value)
-                        )}
-                      class="w-full accent-cn-yellow"
-                    />
-                  </label>
-                {/each}
-              </div>
-            </details>
-
             <p class="text-xs text-text-muted">{m.carte_editor_hint()}</p>
             <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
           </section>
@@ -887,59 +854,117 @@
 
               <div class="space-y-1.5 pt-2 border-t border-cn-border">
                 <span class="block text-xs font-semibold text-text-muted"
-                  >Membres affichés (Max 6 en couronne)</span
+                  >Membres affichés (Max 7)</span
                 >
                 <div class="space-y-1">
-                  {#if selectedContent.president}
-                    <label class="flex items-center gap-2 text-xs text-text-main">
-                      <input
-                        type="checkbox"
-                        checked={selectedBubble.showPresident !== false}
-                        onchange={(e) =>
-                          patchBubble(selectedBubble.assoId, {
-                            showPresident: e.currentTarget.checked,
-                          })}
-                        class="accent-cn-yellow"
-                      />
-                      {selectedContent.president.name} (Président)
-                    </label>
+                  {#if selectedContent}
+                    {@const bureauIds = selectedContent.bureau.map((b) => b.userId)}
+                    {@const nonAdmins = selectedContent.members.filter(
+                      (m) =>
+                        m.userId !== selectedContent.president?.userId &&
+                        !bureauIds.includes(m.userId)
+                    )}
+
+                    {#if selectedContent.president}
+                      <label class="flex items-center gap-2 text-xs text-text-main">
+                        <input
+                          type="checkbox"
+                          checked={selectedBubble.showPresident !== false}
+                          onchange={(e) =>
+                            patchBubble(selectedBubble.assoId, {
+                              showPresident: e.currentTarget.checked,
+                            })}
+                          class="accent-cn-yellow"
+                        />
+                        {selectedContent.president.name} - {selectedContent.president.role ||
+                          'Président'}
+                      </label>
+                    {/if}
+
+                    {#if selectedContent.bureau.length > 0}
+                      <div class="my-1.5 border-t border-cn-border opacity-50"></div>
+                    {/if}
+                    {#each selectedContent.bureau as member (member.userId)}
+                      {@const isSelected = selectedBubble.selectedBureau
+                        ? selectedBubble.selectedBureau.includes(member.userId)
+                        : selectedContent.bureau
+                            .slice(0, 6)
+                            .some((m) => m.userId === member.userId)}
+                      {@const maxReached =
+                        (selectedBubble.selectedBureau || selectedContent.bureau.slice(0, 6))
+                          .length >= 6}
+                      <label
+                        class="flex items-center gap-2 text-xs text-text-main {maxReached &&
+                        !isSelected
+                          ? 'opacity-50'
+                          : ''}"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={maxReached && !isSelected}
+                          onchange={(e) => {
+                            let next = selectedBubble.selectedBureau
+                              ? [...selectedBubble.selectedBureau]
+                              : selectedContent!.bureau.slice(0, 6).map((m) => m.userId);
+                            if (e.currentTarget.checked) {
+                              if (!next.includes(member.userId)) next.push(member.userId);
+                            } else {
+                              next = next.filter((id) => id !== member.userId);
+                            }
+                            patchBubble(selectedBubble.assoId, {
+                              selectedBureau: next,
+                            });
+                          }}
+                          class="accent-cn-yellow"
+                        />
+                        {member.name}
+                        {member.role ? `- ${member.role}` : ''}
+                      </label>
+                    {/each}
+
+                    {#if nonAdmins.length > 0}
+                      <div class="my-1.5 border-t border-cn-border opacity-50"></div>
+                    {/if}
+                    {#each nonAdmins as member (member.userId)}
+                      {@const isSelected = selectedBubble.selectedBureau
+                        ? selectedBubble.selectedBureau.includes(member.userId)
+                        : selectedContent.bureau
+                            .slice(0, 6)
+                            .some((m) => m.userId === member.userId)}
+                      {@const maxReached =
+                        (selectedBubble.selectedBureau || selectedContent.bureau.slice(0, 6))
+                          .length >= 6}
+                      <label
+                        class="flex items-center gap-2 text-xs text-text-main {maxReached &&
+                        !isSelected
+                          ? 'opacity-50'
+                          : ''}"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={maxReached && !isSelected}
+                          onchange={(e) => {
+                            let next = selectedBubble.selectedBureau
+                              ? [...selectedBubble.selectedBureau]
+                              : selectedContent!.bureau.slice(0, 6).map((m) => m.userId);
+                            if (e.currentTarget.checked) {
+                              if (!next.includes(member.userId)) next.push(member.userId);
+                            } else {
+                              next = next.filter((id) => id !== member.userId);
+                            }
+                            patchBubble(selectedBubble.assoId, {
+                              selectedBureau: next,
+                            });
+                          }}
+                          class="accent-cn-yellow"
+                        />
+                        {member.name}
+                        {member.role ? `- ${member.role}` : ''}
+                      </label>
+                    {/each}
                   {/if}
-                  {#each selectedContent.members.filter((m) => m.userId !== selectedContent?.president?.userId) as member (member.userId)}
-                    {@const isSelected = selectedBubble.selectedBureau
-                      ? selectedBubble.selectedBureau.includes(member.userId)
-                      : selectedContent.bureau.slice(0, 6).some((m) => m.userId === member.userId)}
-                    {@const maxReached =
-                      (selectedBubble.selectedBureau || selectedContent.bureau.slice(0, 6))
-                        .length >= 6}
-                    <label
-                      class="flex items-center gap-2 text-xs text-text-main {maxReached &&
-                      !isSelected
-                        ? 'opacity-50'
-                        : ''}"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        disabled={maxReached && !isSelected}
-                        onchange={(e) => {
-                          const current = selectedBubble.selectedBureau
-                            ? selectedBubble.selectedBureau
-                            : selectedContent!.bureau.slice(0, 6).map((m) => m.userId);
-                          const hidden = new Set(current);
-                          if (e.currentTarget.checked) hidden.add(member.userId);
-                          else hidden.delete(member.userId);
-                          patchBubble(selectedBubble.assoId, {
-                            selectedBureau: Array.from(hidden),
-                          });
-                        }}
-                        class="accent-cn-yellow"
-                      />
-                      {member.name}
-                      {selectedContent.bureau.some((m) => m.userId === member.userId)
-                        ? '(Admin)'
-                        : ''}
-                    </label>
-                  {/each}
                 </div>
               </div>
 

@@ -22,8 +22,6 @@ export const CARTE_SHAPES: CarteShape[] = [
   { key: 'drop', radius: '70% 30% 30% 70% / 70% 70% 30% 30%' },
   { key: 'wave', radius: '38% 62% 63% 37% / 41% 44% 56% 59%' },
   { key: 'egg', radius: '60% 40% 30% 70% / 60% 30% 70% 40%' },
-  { key: 'leaf', radius: '12% 88% 12% 88% / 88% 12% 88% 12%' },
-  { key: 'rounded', radius: '28%' },
 ];
 
 /** Default shape key applied to freshly-seeded bubbles. */
@@ -37,6 +35,11 @@ export function shapeRadius(key: string): string {
 /** Whether a persisted shape key is a known shape. */
 export function isShapeKey(key: string): boolean {
   return CARTE_SHAPES.some((s) => s.key === key);
+}
+
+/** Returns a random shape key from the available curated shapes. */
+export function getRandomShape(): string {
+  return CARTE_SHAPES[Math.floor(Math.random() * CARTE_SHAPES.length)].key;
 }
 
 /**
@@ -56,12 +59,10 @@ export interface LogoShape {
   radius: string;
 }
 
-/** The dedicated logo frame shapes (round, rounded square, rounded rectangle landscape/portrait). */
+/** The dedicated logo frame shapes (round, rounded square). */
 export const LOGO_SHAPES: LogoShape[] = [
   { key: 'circle', w: 1, h: 1, radius: '50%' },
   { key: 'squircle', w: 1, h: 1, radius: '26%' },
-  { key: 'wide', w: 1.5, h: 0.92, radius: '18%' },
-  { key: 'tall', w: 0.92, h: 1.42, radius: '18%' },
 ];
 
 /** Default logo shape key applied to freshly-seeded bubbles. */
