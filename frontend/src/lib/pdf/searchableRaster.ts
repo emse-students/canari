@@ -29,6 +29,7 @@ interface TextSpec {
   weight: number;
   color: { r: number; g: number; b: number };
   lineHeightPx: number;
+  letterSpacingPx: number;
   text: string;
 }
 
@@ -71,10 +72,15 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
   const k = rootRect.width > 0 ? naturalWidth / rootRect.width : 1;
   const specs: TextSpec[] = [];
   for (const el of root.querySelectorAll<HTMLElement>('[data-pdf-text]')) {
-    const text = (el.textContent ?? '').trim();
+    let text = (el.textContent ?? '').trim();
     if (!text) continue;
-    const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
+    if (cs.textTransform === 'uppercase') {
+      text = text.toUpperCase();
+    } else if (cs.textTransform === 'lowercase') {
+      text = text.toLowerCase();
+    }
+    const r = el.getBoundingClientRect();
     const rawAlign = cs.textAlign;
     const align = rawAlign === 'center' ? 'center' : rawAlign === 'right' ? 'right' : 'left';
     const parsedWeight = parseInt(cs.fontWeight, 10);
@@ -90,6 +96,11 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       const lh = parseFloat(cs.lineHeight);
       if (!isNaN(lh)) lineHeightPx = lh * localScale;
     }
+    let letterSpacingPx = 0;
+    if (cs.letterSpacing !== 'normal') {
+      const ls = parseFloat(cs.letterSpacing);
+      if (!isNaN(ls)) letterSpacingPx = ls * localScale;
+    }
 
     specs.push({
       el,
@@ -103,6 +114,7 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       weight,
       color: parseRgb(cs.color),
       lineHeightPx,
+      letterSpacingPx,
       text,
     });
   }
@@ -125,6 +137,14 @@ export interface SearchablePdfOptions {
   jpegQuality?: number;
   /** Fonts to force-load before the raster (see {@link RasterizeOptions.fonts}). */
   fonts?: string[];
+  /**
+   * When true, content taller than one page is automatically split across multiple pages.
+   * Each page gets its own slice of the background raster and the text specs that fall
+   * within that page's vertical range. Default: false (single page, content scaled to fit).
+   */
+  multiPage?: boolean;
+  /** Background color for the raster capture (passed to snapdom). */
+  backgroundColor?: string;
 }
 
 /** 1 typographic point in millimetres (72pt = 1in = 25.4mm). */
@@ -133,6 +153,8 @@ const PT_PER_MM = 1 / (25.4 / 72);
 /**
  * Exports `el` as a "searchable raster" PDF: a pixel-faithful background with real, selectable vector
  * text drawn on top (see the module docstring). Returns once the file has been saved.
+ *
+ * When `multiPage` is true, content taller than one page is split across multiple pages automatically.
  */
 export async function exportSearchablePdf(
   el: HTMLElement,
@@ -159,7 +181,11 @@ export async function exportSearchablePdf(
 
   let canvas: HTMLCanvasElement;
   try {
-    const rasterOpts: RasterizeOptions = { scale: opts.rasterScale ?? 3, fonts: opts.fonts };
+    const rasterOpts: RasterizeOptions = {
+      scale: opts.rasterScale ?? 3,
+      fonts: opts.fonts,
+      backgroundColor: opts.backgroundColor,
+    };
     canvas = await rasterizeElementToCanvas(el, rasterOpts);
   } finally {
     // 3. Always restore the visible text, even if the raster failed.
@@ -167,16 +193,78 @@ export async function exportSearchablePdf(
     styleEl.remove();
   }
 
-  // 4. Compose the PDF: full-bleed background image, then the vector text on top.
+  // 4. Compose the PDF.
   const pdf = new jsPDF({ orientation: opts.orientation, unit: 'mm', format: opts.format });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
-  pdf.addImage(canvas.toDataURL('image/jpeg', opts.jpegQuality ?? 0.9), 'JPEG', 0, 0, pageW, pageH);
 
   // Embed the real app fonts so the overlay text matches the on-screen typography exactly.
   await registerAppFonts(pdf);
 
   const mmPerPx = pageW / opts.naturalWidth;
+  const jpegQuality = opts.jpegQuality ?? 0.9;
+
+  if (opts.multiPage && opts.naturalHeight > 0) {
+    // Multi-page: the element can be taller than one page. We slice the raster canvas into
+    // page-sized vertical strips and distribute text specs across the pages they belong to.
+    const pagePxH = pageH / mmPerPx; // one page height in natural px
+    const totalPages = Math.max(1, Math.ceil(opts.naturalHeight / pagePxH));
+    const rasterScale = canvas.width / opts.naturalWidth;
+
+    for (let p = 0; p < totalPages; p++) {
+      if (p > 0) pdf.addPage();
+
+      // Slice the canvas for this page.
+      const srcY = Math.round(p * pagePxH * rasterScale);
+      const srcH = Math.min(Math.round(pagePxH * rasterScale), canvas.height - srcY);
+      if (srcH <= 0) continue;
+
+      const sliceCanvas = document.createElement('canvas');
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = srcH;
+      const ctx = sliceCanvas.getContext('2d')!;
+      ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+
+      const sliceImgH = (srcH / rasterScale) * mmPerPx;
+      pdf.addImage(
+        sliceCanvas.toDataURL('image/jpeg', jpegQuality),
+        'JPEG',
+        0,
+        0,
+        pageW,
+        sliceImgH
+      );
+
+      // Draw text specs that belong to this page (their y falls within [pageTop, pageBottom)).
+      const pageTopPx = p * pagePxH;
+      const pageBottomPx = (p + 1) * pagePxH;
+      const pageSpecs = specs.filter((s) => {
+        const textMid = s.y + s.h / 2;
+        return textMid >= pageTopPx && textMid < pageBottomPx;
+      });
+      drawTextSpecs(pdf, pageSpecs, mmPerPx, -pageTopPx);
+    }
+  } else {
+    // Single page (original behaviour).
+    pdf.addImage(canvas.toDataURL('image/jpeg', jpegQuality), 'JPEG', 0, 0, pageW, pageH);
+    drawTextSpecs(pdf, specs, mmPerPx, 0);
+  }
+
+  const safe = opts.filename.replace(/[^a-zA-Z0-9À-ž\- ]/g, '_').trim() || 'export';
+  pdf.save(`${safe}.pdf`);
+}
+
+/**
+ * Draws a set of text specs onto the current page of a jsPDF document.
+ * @param yOffset - Added to each spec's y coordinate (used to shift specs for multi-page slicing).
+ */
+function drawTextSpecs(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pdf: any,
+  specs: TextSpec[],
+  mmPerPx: number,
+  yOffset: number
+): void {
   for (const s of specs) {
     const font = pickAppFont(s.family, s.weight);
     if (font) pdf.setFont(font.name, font.style);
@@ -196,15 +284,13 @@ export async function exportSearchablePdf(
     // In HTML, text is vertically centered in its line-height box.
     // jsPDF baseline='top' aligns to the font's em-box top. We add half the leading.
     const halfLeading = (s.lineHeightPx - s.fontPx) / 2;
-    const anchorY = s.y + halfLeading;
+    const anchorY = s.y + yOffset + halfLeading;
 
     pdf.text(lines, anchorX * mmPerPx, anchorY * mmPerPx, {
       align: s.align,
       baseline: 'top',
       lineHeightFactor: s.lineHeightPx / s.fontPx,
+      charSpace: s.letterSpacingPx * mmPerPx,
     });
   }
-
-  const safe = opts.filename.replace(/[^a-zA-Z0-9À-ž\- ]/g, '_').trim() || 'export';
-  pdf.save(`${safe}.pdf`);
 }

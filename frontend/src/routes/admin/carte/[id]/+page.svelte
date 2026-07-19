@@ -51,6 +51,7 @@
     Minimize,
     ZoomIn,
     ZoomOut,
+    Pencil,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -228,6 +229,35 @@
   let saving = $state(false);
   let saved = $state(false);
   let exporting = $state(false);
+
+  // ── Inline rename ─────────────────────────────────────────────────────────────
+  let editingName = $state(false);
+  let editedName = $state('');
+  let nameInputEl = $state<HTMLInputElement>();
+
+  function startRenamingName() {
+    if (!project) return;
+    editedName = project.name;
+    editingName = true;
+    // Focus the input after Svelte renders it.
+    tick().then(() => nameInputEl?.focus());
+  }
+
+  async function commitRename() {
+    if (!project || !editingName) return;
+    const trimmed = editedName.trim();
+    editingName = false;
+    if (!trimmed || trimmed === project.name) return;
+    try {
+      project = await updatePosterProject(project.id, { name: trimmed });
+    } catch (e) {
+      error = e instanceof Error ? e.message : m.common_save_error();
+    }
+  }
+
+  function cancelRename() {
+    editingName = false;
+  }
   /** True once a project has finished loading, so autosave never fires on the initial hydration. */
   let hydrated = $state(false);
   /** Pending debounced-autosave timer (cleared on every change). */
@@ -480,7 +510,30 @@
       <p class="text-sm text-red-500" role="alert">{error}</p>
     {:else if project && model}
       <header class="flex flex-wrap items-center justify-between gap-3">
-        <h2 class="text-lg font-extrabold text-text-main">{project.name}</h2>
+        {#if editingName}
+          <input
+            bind:this={nameInputEl}
+            bind:value={editedName}
+            onblur={commitRename}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') commitRename();
+              if (e.key === 'Escape') cancelRename();
+            }}
+            maxlength={120}
+            class="text-lg font-extrabold text-text-main bg-transparent border-b-2 border-cn-yellow outline-none px-0 py-0"
+            style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
+          />
+        {:else}
+          <button
+            type="button"
+            class="group flex items-center gap-2 text-lg font-extrabold text-text-main hover:text-cn-yellow transition-colors"
+            onclick={startRenamingName}
+            title="Renommer le projet"
+          >
+            {project.name}
+            <Pencil size={14} class="opacity-0 group-hover:opacity-60 transition-opacity" />
+          </button>
+        {/if}
         <div class="flex items-center gap-2">
           <button
             type="button"

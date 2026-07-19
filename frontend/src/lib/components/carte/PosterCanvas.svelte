@@ -845,7 +845,7 @@
                 data-pdf-text
                 style="break-inside:avoid;break-after:avoid;margin-top:{zone !== model.zones[0]
                   ? '1.5em'
-                  : '0'};margin-bottom:0.8em;font-weight:900;font-size:1.1em;color:{theme.directoryTextColor};text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
+                  : '0'};margin-bottom:0.8em;font-weight:900;font-size:1.1em;color:{theme.directoryTextColor};letter-spacing:0.05em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
               >
                 {zone.label}
               </div>

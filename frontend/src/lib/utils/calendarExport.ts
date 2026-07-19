@@ -1,6 +1,6 @@
 import { contrastColor, toHex } from './color';
 import { generateAvatarColor } from './avatar';
-import { rasterizeElementToCanvas } from './pdfRaster';
+import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -268,7 +268,7 @@ function buildCalendarHtml(
   const headerRow = weekdayNames
     .map(
       (w, i) =>
-        `<div style="padding:11px 6px;text-align:center;font-size:${weekdayFontSize}px;font-weight:800;text-transform:uppercase;letter-spacing:${weekdayLetterSpacing};color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
+        `<div data-pdf-text style="padding:11px 6px;text-align:center;font-size:${weekdayFontSize}px;font-weight:800;text-transform:uppercase;letter-spacing:${weekdayLetterSpacing};color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
     )
     .join('');
 
@@ -305,9 +305,9 @@ function buildCalendarHtml(
       if (dayEvents.length === 0) {
         const bg = isWeekend ? cellBgWeekend : cellBgNormal;
         const breakLabel = breakColor
-          ? `<div style="position:absolute;left:4px;right:4px;bottom:6px;text-align:center;font-size:9px;font-weight:800;color:${breakColor};line-height:1.15;overflow:hidden;">${safe(dayBreaks[0].title)}</div>`
+          ? `<div data-pdf-text style="position:absolute;left:4px;right:4px;bottom:6px;text-align:center;font-size:9px;font-weight:800;color:${breakColor};line-height:1.15;overflow:hidden;">${safe(dayBreaks[0].title)}</div>`
           : '';
-        return `<div style="position:relative;height:${CELL_H}px;background:${bg};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;padding:6px 7px;">${breakTint}<span style="position:relative;font-size:12px;font-weight:700;color:${opts.emptyDayColor};">${day}</span>${breakLabel}${breakBand}</div>`;
+        return `<div style="position:relative;height:${CELL_H}px;background:${bg};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;padding:6px 7px;">${breakTint}<span data-pdf-text style="position:relative;font-size:12px;font-weight:700;color:${opts.emptyDayColor};">${day}</span>${breakLabel}${breakBand}</div>`;
       }
 
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
@@ -354,7 +354,7 @@ function buildCalendarHtml(
             const { fontSize, clampCss, ph } = fitEventText(availH);
             return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;flex-direction:column;box-sizing:border-box;">
               ${watermark}
-              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:5px 0 0 6px;position:relative;"><span style="font-size:11px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
+              <div style="height:${DAY_NUM_H}px;flex-shrink:0;padding:5px 0 0 6px;position:relative;"><span data-pdf-text style="font-size:11px;font-weight:800;color:${fg};line-height:1;">${day}</span></div>
               <div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 ${ph}px 2px;box-sizing:border-box;position:relative;"><span style="font-size:${fontSize}px;font-weight:700;color:${fg};line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;${blockShadow}${clampCss}">${safe(ev.title)}</span></div>
             </div>`;
           } else {
@@ -369,7 +369,7 @@ function buildCalendarHtml(
         ...(overflowCount > 0
           ? (() => {
               return [
-                `<div style="height:${slotH}px;background:${opts.pageBg};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span style="font-size:9px;font-weight:800;color:#607188;${blockShadow}">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+                `<div style="height:${slotH}px;background:${opts.pageBg};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:9px;font-weight:800;color:#607188;${blockShadow}">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
               ];
             })()
           : []),
@@ -401,7 +401,7 @@ function buildCalendarHtml(
     <div style="position:relative;">
       <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
         ${faviconHtml}
-        <h1 style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${blockShadow}">${safe(monthLabel)}</h1>
+        <h1 data-pdf-text style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${blockShadow}">${safe(monthLabel)}</h1>
       </div>
       <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
@@ -448,8 +448,6 @@ export async function exportCalendarMonth(
   options: CalendarExportOptions = {}
 ): Promise<void> {
   const opts: ResolvedOpts = { ...DEFAULT_EXPORT_OPTIONS, bgDataUrl: null, ...options };
-
-  const { default: jsPDF } = await import('jspdf');
 
   const year = focusDate.getFullYear();
   const month = focusDate.getMonth();
@@ -498,26 +496,20 @@ export async function exportCalendarMonth(
   }
 
   try {
-    const canvas = await rasterizeElementToCanvas(container, {
-      scale: 2,
-      // Match the preview wrapper background exactly so preview and export render identically.
+    await exportSearchablePdf(container, {
+      filename: `canari-agenda-${year}-${String(month + 1).padStart(2, '0')}`,
+      format: 'a4',
+      orientation: 'landscape',
+      naturalWidth: 1080,
+      naturalHeight: CALENDAR_CONTAINER_HEIGHT,
+      rasterScale: 2,
       backgroundColor: opts.pageBg,
-      // The *Variable* families the app registers, so the real Canari fonts are embedded (not a fallback).
       fonts: [
         "700 30px 'Fredoka Variable'",
         "700 13px 'Nunito Variable'",
         "800 13px 'Nunito Variable'",
       ],
     });
-
-    const imgData = canvas.toDataURL('image/png');
-    // Standard A4 landscape page; the canvas is already A4-ratio so it fills the whole page with no
-    // distortion and no white bar - and prints borderless on real A4 paper.
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    pdf.addImage(imgData, 'PNG', 0, 0, pageW, pageH);
-    pdf.save(`canari-agenda-${year}-${String(month + 1).padStart(2, '0')}.pdf`);
   } finally {
     document.body.removeChild(container);
   }

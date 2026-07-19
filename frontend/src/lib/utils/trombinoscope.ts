@@ -1,24 +1,25 @@
 import { generateAvatarColor, getInitials } from './avatar';
-import { rasterizeElementToCanvas } from './pdfRaster';
+import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import type { Association, AssociationMember } from '$lib/associations/api';
 
 /**
  * Renders the association trombinoscope to an A4 PDF and triggers a direct download.
- * Uses snapdom + jsPDF; no new tab or print dialog.
+ * Uses the searchable-raster pipeline: text marked with `data-pdf-text` is rendered as real
+ * selectable vector text in the PDF over a pixel-faithful raster background.
  */
 export async function exportTrombinoscope(
   asso: Association,
   members: AssociationMember[],
   resolvedMemberNames: Record<string, string>
 ): Promise<void> {
-  const { default: jsPDF } = await import('jspdf');
+  const PAGE_W = 794; // A4 portrait logical width in px
 
   const container = document.createElement('div');
   Object.assign(container.style, {
     position: 'absolute',
     top: '0',
     left: '-9999px',
-    width: '794px',
+    width: `${PAGE_W}px`,
     background: '#ffffff',
     padding: '40px',
     color: '#111111',
@@ -49,21 +50,21 @@ export async function exportTrombinoscope(
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
             <div style="display:none;position:absolute;inset:0;background:${bg};align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;border-radius:50%;">${initials}</div>
           </div>
-          <p style="font-size:12px;font-weight:700;line-height:1.3;word-break:break-word;margin:0;">${safe(name)}</p>
-          <p style="font-size:11px;color:#607188;margin:0;">${safe(role)}</p>
+          <p data-pdf-text style="font-size:12px;font-weight:700;line-height:1.3;word-break:break-word;margin:0;">${safe(name)}</p>
+          <p data-pdf-text style="font-size:11px;color:#607188;margin:0;">${safe(role)}</p>
         </div>`;
     })
     .join('');
 
   const contactHtml = asso.contactEmail?.trim()
-    ? `<p style="font-size:13px;color:#607188;margin:4px 0 0 0;">${safe(asso.contactEmail.trim())}</p>`
+    ? `<p data-pdf-text style="font-size:13px;color:#607188;margin:4px 0 0 0;">${safe(asso.contactEmail.trim())}</p>`
     : '';
 
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;padding-bottom:18px;border-bottom:2.5px solid #d9e0ea;">
       ${logoHtml}
       <div>
-        <h1 style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
+        <h1 data-pdf-text style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
         ${contactHtml}
       </div>
     </div>
@@ -74,33 +75,21 @@ export async function exportTrombinoscope(
   document.body.appendChild(container);
 
   try {
-    const canvas = await rasterizeElementToCanvas(container, {
-      scale: 2,
+    // Measure the actual rendered height for multi-page support.
+    const naturalHeight = container.scrollHeight;
+
+    await exportSearchablePdf(container, {
+      filename: asso.name,
+      format: 'a4',
+      orientation: 'portrait',
+      naturalWidth: PAGE_W,
+      naturalHeight,
+      rasterScale: 2,
+      jpegQuality: 0.92,
       backgroundColor: '#ffffff',
-      // The app's *Variable* families, so the real Canari fonts are embedded (not a fallback).
+      multiPage: true,
       fonts: ["700 28px 'Fredoka Variable'", "700 12px 'Nunito Variable'"],
     });
-
-    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const imgH = (canvas.height * pageW) / canvas.width;
-
-    if (imgH <= pageH) {
-      pdf.addImage(imgData, 'JPEG', 0, 0, pageW, imgH);
-    } else {
-      // Split into A4 pages
-      let yMm = 0;
-      while (yMm < imgH) {
-        if (yMm > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -yMm, pageW, imgH);
-        yMm += pageH;
-      }
-    }
-
-    const filename = asso.name.replace(/[^a-zA-Z0-9À-ž\- ]/g, '_').trim();
-    pdf.save(`${filename}.pdf`);
   } finally {
     document.body.removeChild(container);
   }
