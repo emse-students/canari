@@ -858,41 +858,19 @@
                 >
                 <div class="space-y-1">
                   {#if selectedContent}
-                    {@const bureauIds = selectedContent.bureau.map((b) => b.userId)}
-                    {@const nonAdmins = selectedContent.members.filter(
-                      (m) =>
-                        m.userId !== selectedContent.president?.userId &&
-                        !bureauIds.includes(m.userId)
-                    )}
+                    {@const defaultSelected = selectedContent.members
+                      .filter((m) => m.isAdmin)
+                      .slice(0, 7)
+                      .map((m) => m.userId)}
+                    {@const admins = selectedContent.members.filter((m) => m.isAdmin)}
+                    {@const nonAdmins = selectedContent.members.filter((m) => !m.isAdmin)}
 
-                    {#if selectedContent.president}
-                      <label class="flex items-center gap-2 text-xs text-text-main">
-                        <input
-                          type="checkbox"
-                          checked={selectedBubble.showPresident !== false}
-                          onchange={(e) =>
-                            patchBubble(selectedBubble.assoId, {
-                              showPresident: e.currentTarget.checked,
-                            })}
-                          class="accent-cn-yellow"
-                        />
-                        {selectedContent.president.name} - {selectedContent.president.role ||
-                          'Président'}
-                      </label>
-                    {/if}
-
-                    {#if selectedContent.bureau.length > 0}
-                      <div class="my-1.5 border-t border-cn-border opacity-50"></div>
-                    {/if}
-                    {#each selectedContent.bureau as member (member.userId)}
+                    {#each admins as member (member.userId)}
                       {@const isSelected = selectedBubble.selectedBureau
                         ? selectedBubble.selectedBureau.includes(member.userId)
-                        : selectedContent.bureau
-                            .slice(0, 6)
-                            .some((m) => m.userId === member.userId)}
+                        : defaultSelected.includes(member.userId)}
                       {@const maxReached =
-                        (selectedBubble.selectedBureau || selectedContent.bureau.slice(0, 6))
-                          .length >= 6}
+                        (selectedBubble.selectedBureau || defaultSelected).length >= 7}
                       <label
                         class="flex items-center gap-2 text-xs text-text-main {maxReached &&
                         !isSelected
@@ -906,7 +884,7 @@
                           onchange={(e) => {
                             let next = selectedBubble.selectedBureau
                               ? [...selectedBubble.selectedBureau]
-                              : selectedContent!.bureau.slice(0, 6).map((m) => m.userId);
+                              : [...defaultSelected];
                             if (e.currentTarget.checked) {
                               if (!next.includes(member.userId)) next.push(member.userId);
                             } else {
@@ -923,18 +901,16 @@
                       </label>
                     {/each}
 
-                    {#if nonAdmins.length > 0}
+                    {#if nonAdmins.length > 0 && admins.length > 0}
                       <div class="my-1.5 border-t border-cn-border opacity-50"></div>
                     {/if}
+
                     {#each nonAdmins as member (member.userId)}
                       {@const isSelected = selectedBubble.selectedBureau
                         ? selectedBubble.selectedBureau.includes(member.userId)
-                        : selectedContent.bureau
-                            .slice(0, 6)
-                            .some((m) => m.userId === member.userId)}
+                        : defaultSelected.includes(member.userId)}
                       {@const maxReached =
-                        (selectedBubble.selectedBureau || selectedContent.bureau.slice(0, 6))
-                          .length >= 6}
+                        (selectedBubble.selectedBureau || defaultSelected).length >= 7}
                       <label
                         class="flex items-center gap-2 text-xs text-text-main {maxReached &&
                         !isSelected
@@ -948,7 +924,7 @@
                           onchange={(e) => {
                             let next = selectedBubble.selectedBureau
                               ? [...selectedBubble.selectedBureau]
-                              : selectedContent!.bureau.slice(0, 6).map((m) => m.userId);
+                              : [...defaultSelected];
                             if (e.currentTarget.checked) {
                               if (!next.includes(member.userId)) next.push(member.userId);
                             } else {

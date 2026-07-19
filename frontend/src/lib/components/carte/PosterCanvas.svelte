@@ -576,12 +576,11 @@
         {@const color = bubble.colorOverride ?? data.color}
         {@const selected = editable && selectedId === bubble.assoId}
         {@const selectedSet = bubble.selectedBureau ? new Set(bubble.selectedBureau) : null}
-        {@const visibleBureau = selectedSet
-          ? data.members.filter(
-              (m) => selectedSet.has(m.userId) && m.userId !== data.president?.userId
-            )
-          : data.bureau}
-        {@const bureau = visibleBureau.slice(0, MAX_BUREAU)}
+        {@const visibleMembers = selectedSet
+          ? data.members.filter((m) => selectedSet.has(m.userId))
+          : data.members.filter((m) => m.isAdmin)}
+        {@const displayPresident = visibleMembers[0]}
+        {@const bureau = visibleMembers.slice(1, 1 + MAX_BUREAU)}
         {@const ls = logoShape(bubble.logoShape)}
         {@const lw = LOGO_BASE * ls.w}
         {@const lh = LOGO_BASE * ls.h}
@@ -659,13 +658,13 @@
           {/each}
 
           <!-- President always a card (photo + full name + role), at the blob bottom, in front. -->
-          {#if bubble.showPresident && data.president}
+          {#if displayPresident}
             <div
               style:position="absolute"
               style:left="{UNIT_CX - PRES_CARD_W / 2}px"
               style:top="{PRES_TOP}px"
             >
-              {@render memberCard(data.president, PRES_CARD_W, color, 10.8)}
+              {@render memberCard(displayPresident, PRES_CARD_W, color, 10.8)}
             </div>
           {/if}
 
@@ -836,42 +835,52 @@
           style="columns:2;column-gap:24px;font-size:{DIR_BASE_FONT}px;"
         >
           {#each model.zones as zone (zone.categoryId ?? 'none')}
-            {#each zone.bubbles as asso (asso.assoId)}
-              <div style="break-inside:avoid;margin-bottom:0.9em;">
-                <div style="display:flex;align-items:baseline;gap:0.5em;margin-bottom:0.2em;">
-                  <span
-                    style:flex="0 0 auto"
-                    style:width="0.7em"
-                    style:height="0.7em"
-                    style:border-radius="50%"
-                    style:background={asso.color}
-                    style:transform="translateY(0.08em)"
-                  ></span>
-                  <span
-                    data-pdf-text
-                    style="font-size:1em;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
-                  >
-                    {asso.name}
-                  </span>
-                </div>
-                {#if asso.members.length > 0}
-                  <p
-                    data-pdf-text
-                    style:margin="0 0 0 1.2em"
-                    style:font-size="0.82em"
-                    style:line-height="1.35"
-                    style:color={theme.directoryMutedColor}
-                  >
-                    {[...asso.members]
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((mem: PosterMemberRef) =>
-                        mem.role ? `${mem.name} (${mem.role})` : mem.name
-                      )
-                      .join(' - ')}
-                  </p>
-                {/if}
+            {#if zone.bubbles.length > 0}
+              <div
+                data-pdf-text
+                style="break-inside:avoid;break-after:avoid;margin-top:{zone !== model.zones[0]
+                  ? '1.5em'
+                  : '0'};margin-bottom:0.8em;font-weight:900;font-size:1.1em;color:{theme.directoryTextColor};text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
+              >
+                {zone.label}
               </div>
-            {/each}
+              {#each zone.bubbles as asso (asso.assoId)}
+                <div style="break-inside:avoid;margin-bottom:0.9em;">
+                  <div style="display:flex;align-items:baseline;gap:0.5em;margin-bottom:0.2em;">
+                    <span
+                      style:flex="0 0 auto"
+                      style:width="0.7em"
+                      style:height="0.7em"
+                      style:border-radius="50%"
+                      style:background={asso.color}
+                      style:transform="translateY(0.08em)"
+                    ></span>
+                    <span
+                      data-pdf-text
+                      style="font-size:1em;font-weight:800;line-height:1.2;color:{theme.directoryTextColor};"
+                    >
+                      {asso.name}
+                    </span>
+                  </div>
+                  {#if asso.members.length > 0}
+                    <p
+                      data-pdf-text
+                      style:margin="0 0 0 1.2em"
+                      style:font-size="0.82em"
+                      style:line-height="1.35"
+                      style:color={theme.directoryMutedColor}
+                    >
+                      {[...asso.members]
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((mem: PosterMemberRef) =>
+                          mem.role ? `${mem.name} (${mem.role})` : mem.name
+                        )
+                        .join(' - ')}
+                    </p>
+                  {/if}
+                </div>
+              {/each}
+            {/if}
           {/each}
         </div>
       </div>

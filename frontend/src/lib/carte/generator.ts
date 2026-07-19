@@ -41,6 +41,7 @@ export interface PosterMemberRef {
   userId: string;
   name: string;
   role: string;
+  isAdmin: boolean;
 }
 
 /** One association rendered as a colored blob unit on the poster. */
@@ -80,6 +81,7 @@ function toMemberRef(mem: AssociationMember): PosterMemberRef {
     userId: mem.userId,
     name: mem.displayName?.trim() || mem.userId,
     role: mem.role?.trim() || '',
+    isAdmin: mem.isAdmin || false,
   };
 }
 
