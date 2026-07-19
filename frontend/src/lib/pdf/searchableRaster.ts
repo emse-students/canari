@@ -276,19 +276,30 @@ function drawTextSpecs(
     // from prematurely wrapping it due to sub-pixel font metric differences.
     // For multi-line text, add a small 1.5% tolerance for the same reason.
     const isMultiLine = s.h > s.lineHeightPx * 1.2;
-    const safeBoxW = isMultiLine ? boxW * 1.015 : boxW * 100;
+    let safeBoxW = isMultiLine ? boxW * 1.015 : boxW * 100;
+
+    // jsPDF's splitTextToSize ignores `charSpace` when measuring string width. If the text has
+    // letter spacing, jsPDF thinks it takes up less space than it actually does and fails to wrap
+    // it when the browser did. We compensate by shrinking the allowed width proportionally.
+    if (isMultiLine && s.letterSpacingPx !== 0) {
+      const numLines = Math.max(1, Math.round(s.h / s.lineHeightPx));
+      const charsPerLine = s.text.length / numLines;
+      const extraWidthPerLine = charsPerLine * s.letterSpacingPx * mmPerPx;
+      safeBoxW = Math.max(10, safeBoxW - extraWidthPerLine);
+    }
 
     const lines = pdf.splitTextToSize(s.text, safeBoxW);
     const anchorX = s.align === 'center' ? s.x + s.w / 2 : s.align === 'right' ? s.x + s.w : s.x;
 
     // In HTML, text is vertically centered in its line-height box.
-    // jsPDF baseline='top' aligns to the font's em-box top. We add half the leading.
-    const halfLeading = (s.lineHeightPx - s.fontPx) / 2;
-    const anchorY = s.y + yOffset + halfLeading;
+    // jsPDF baseline='top' relies on internal font ascender metrics which are often buggy
+    // for custom fonts like Fredoka, causing text to be drawn too high and cropped.
+    // baseline='middle' is much more robust as it centers on the em-box.
+    const anchorY = s.y + yOffset + s.lineHeightPx / 2;
 
     pdf.text(lines, anchorX * mmPerPx, anchorY * mmPerPx, {
       align: s.align,
-      baseline: 'top',
+      baseline: 'middle',
       lineHeightFactor: s.lineHeightPx / s.fontPx,
       charSpace: s.letterSpacingPx * mmPerPx,
     });
