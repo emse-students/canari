@@ -67,12 +67,12 @@ describe('carte generator', () => {
     expect(bubble.bureau.map((member) => member.userId)).toEqual(['user-b', 'user-c']);
   });
 
-  it('starts the bureau crown on the sides and rises row by row', () => {
-    expect(bureauCrownOffset(0, 3).x).toBeCloseTo(-132);
-    expect(bureauCrownOffset(0, 3).y).toBeCloseTo(0);
-    expect(bureauCrownOffset(1, 3).x).toBeCloseTo(132);
-    expect(bureauCrownOffset(1, 3).y).toBeCloseTo(0);
-    expect(bureauCrownOffset(2, 3).x).toBeCloseTo(-40.79, 2);
-    expect(bureauCrownOffset(2, 3).y).toBeCloseTo(-171.19, 2);
+  it('places the bureau crown according to the fixed angles', () => {
+    expect(bureauCrownOffset(0, 3).x).toBeCloseTo(-131.34, 2);
+    expect(bureauCrownOffset(0, 3).y).toBeCloseTo(17.97, 2);
+    expect(bureauCrownOffset(1, 3).x).toBeCloseTo(131.34, 2);
+    expect(bureauCrownOffset(1, 3).y).toBeCloseTo(17.97, 2);
+    expect(bureauCrownOffset(2, 3).x).toBeCloseTo(-108.94, 2);
+    expect(bureauCrownOffset(2, 3).y).toBeCloseTo(-101.64, 2);
   });
 });
