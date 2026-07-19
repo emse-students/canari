@@ -78,17 +78,24 @@
     { key: 'bureauCrownRx', label: 'Couronne - rayon X', min: 60, max: 200, step: 1 },
     { key: 'bureauCrownRy', label: 'Couronne - rayon Y', min: 120, max: 240, step: 1 },
     {
-      key: 'bureauCrownCenterGap',
-      label: 'Couronne - trou central',
-      min: 0.05,
-      max: 0.6,
+      key: 'bureauCrownAngle1',
+      label: 'Couronne - angle 1 (bas)',
+      min: -1.5,
+      max: 1.5,
       step: 0.01,
     },
     {
-      key: 'bureauCrownBottomGap',
-      label: 'Couronne - angle bas',
+      key: 'bureauCrownAngle2',
+      label: 'Couronne - angle 2 (milieu)',
       min: -1.5,
-      max: 1.2,
+      max: 1.5,
+      step: 0.01,
+    },
+    {
+      key: 'bureauCrownAngle3',
+      label: 'Couronne - angle 3 (haut)',
+      min: -1.5,
+      max: 1.5,
       step: 0.01,
     },
     { key: 'bureauCardWidth', label: 'Carte bureau - largeur', min: 48, max: 90, step: 1 },
@@ -147,14 +154,18 @@
         typeof record.bureauCrownRx === 'number' ? record.bureauCrownRx : fallback.bureauCrownRx,
       bureauCrownRy:
         typeof record.bureauCrownRy === 'number' ? record.bureauCrownRy : fallback.bureauCrownRy,
-      bureauCrownCenterGap:
-        typeof record.bureauCrownCenterGap === 'number'
-          ? record.bureauCrownCenterGap
-          : fallback.bureauCrownCenterGap,
-      bureauCrownBottomGap:
-        typeof record.bureauCrownBottomGap === 'number'
-          ? record.bureauCrownBottomGap
-          : fallback.bureauCrownBottomGap,
+      bureauCrownAngle1:
+        typeof record.bureauCrownAngle1 === 'number'
+          ? record.bureauCrownAngle1
+          : fallback.bureauCrownAngle1,
+      bureauCrownAngle2:
+        typeof record.bureauCrownAngle2 === 'number'
+          ? record.bureauCrownAngle2
+          : fallback.bureauCrownAngle2,
+      bureauCrownAngle3:
+        typeof record.bureauCrownAngle3 === 'number'
+          ? record.bureauCrownAngle3
+          : fallback.bureauCrownAngle3,
       bureauCardWidth:
         typeof record.bureauCardWidth === 'number'
           ? record.bureauCardWidth
@@ -875,7 +886,9 @@
               </div>
 
               <div class="space-y-1.5 pt-2 border-t border-cn-border">
-                <span class="block text-xs font-semibold text-text-muted">Membres affichés</span>
+                <span class="block text-xs font-semibold text-text-muted"
+                  >Membres affichés (Max 6 en couronne)</span
+                >
                 <div class="space-y-1">
                   {#if selectedContent.president}
                     <label class="flex items-center gap-2 text-xs text-text-main">
@@ -891,20 +904,40 @@
                       {selectedContent.president.name} (Président)
                     </label>
                   {/if}
-                  {#each selectedContent.bureau as member (member.userId)}
-                    <label class="flex items-center gap-2 text-xs text-text-main">
+                  {#each selectedContent.members.filter((m) => m.userId !== selectedContent?.president?.userId) as member (member.userId)}
+                    {@const isSelected = selectedBubble.selectedBureau
+                      ? selectedBubble.selectedBureau.includes(member.userId)
+                      : selectedContent.bureau.slice(0, 6).some((m) => m.userId === member.userId)}
+                    {@const maxReached =
+                      (selectedBubble.selectedBureau || selectedContent.bureau.slice(0, 6))
+                        .length >= 6}
+                    <label
+                      class="flex items-center gap-2 text-xs text-text-main {maxReached &&
+                      !isSelected
+                        ? 'opacity-50'
+                        : ''}"
+                    >
                       <input
                         type="checkbox"
-                        checked={!(selectedBubble.hiddenMembers || []).includes(member.userId)}
+                        checked={isSelected}
+                        disabled={maxReached && !isSelected}
                         onchange={(e) => {
-                          const hidden = new Set(selectedBubble.hiddenMembers || []);
-                          if (e.currentTarget.checked) hidden.delete(member.userId);
-                          else hidden.add(member.userId);
-                          patchBubble(selectedBubble.assoId, { hiddenMembers: Array.from(hidden) });
+                          const current = selectedBubble.selectedBureau
+                            ? selectedBubble.selectedBureau
+                            : selectedContent!.bureau.slice(0, 6).map((m) => m.userId);
+                          const hidden = new Set(current);
+                          if (e.currentTarget.checked) hidden.add(member.userId);
+                          else hidden.delete(member.userId);
+                          patchBubble(selectedBubble.assoId, {
+                            selectedBureau: Array.from(hidden),
+                          });
                         }}
                         class="accent-cn-yellow"
                       />
                       {member.name}
+                      {selectedContent.bureau.some((m) => m.userId === member.userId)
+                        ? '(Admin)'
+                        : ''}
                     </label>
                   {/each}
                 </div>

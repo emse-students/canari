@@ -27,8 +27,8 @@ export interface PositionedBubble {
   shape: string;
   /** Logo frame shape key (see {@link LOGO_SHAPES}); falls back to the default when unknown. */
   logoShape: string;
-  /** List of user IDs of bureau members to hide from the crown. */
-  hiddenMembers?: string[];
+  /** List of user IDs manually selected to be displayed in the bureau crown. */
+  selectedBureau?: string[];
 }
 
 /**
@@ -58,8 +58,9 @@ export interface CarteDebugTuning {
   bureauCrownCy: number;
   bureauCrownRx: number;
   bureauCrownRy: number;
-  bureauCrownCenterGap: number;
-  bureauCrownBottomGap: number;
+  bureauCrownAngle1: number;
+  bureauCrownAngle2: number;
+  bureauCrownAngle3: number;
   bureauCardWidth: number;
   presidentCardWidth: number;
   associationNameScale: number;
@@ -72,8 +73,9 @@ export const DEFAULT_CARTE_DEBUG_TUNING: CarteDebugTuning = {
   bureauCrownCy: 118,
   bureauCrownRx: 132,
   bureauCrownRy: 180,
-  bureauCrownCenterGap: Math.PI / 10,
-  bureauCrownBottomGap: 0,
+  bureauCrownAngle1: -0.1,
+  bureauCrownAngle2: 0.6,
+  bureauCrownAngle3: 1.2,
   bureauCardWidth: 64,
   presidentCardWidth: 88,
   associationNameScale: 0.88,
@@ -87,8 +89,6 @@ export const BUREAU_CROWN_CY = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownCy;
 export const BUREAU_CROWN_RX = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownRx;
 /** Ellipse vertical radius for bureau cards: same size as the previous circle radius. */
 export const BUREAU_CROWN_RY = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownRy;
-/** Angular gap around the center slot so the president stays unobstructed. */
-export const BUREAU_CROWN_CENTER_GAP = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownCenterGap;
 
 /**
  * Returns the crown offset for a bureau card along the top half of an ellipse.
@@ -101,17 +101,18 @@ export function bureauCrownOffset(index: number, total: number): { x: number; y:
 /** Crown offset helper that accepts runtime tuning. */
 export function bureauCrownOffsetWithTuning(
   index: number,
-  total: number,
+  total: number, // not used anymore but kept for signature compatibility
   tuning: CarteDebugTuning
 ): { x: number; y: number } {
-  const level = Math.floor(index / 2);
-  const pairCount = Math.max(1, Math.ceil(total / 2));
-  const progress = pairCount === 1 ? 0 : level / (pairCount - 1);
+  const level = Math.floor(index / 2); // 0, 1, 2
   const side = index % 2 === 0 ? -1 : 1;
-  const bottomGap = tuning.bureauCrownBottomGap || 0;
-  const angleRange = Math.max(0, Math.PI / 2 - tuning.bureauCrownCenterGap - bottomGap);
-  const angle =
-    side < 0 ? Math.PI - (bottomGap + progress * angleRange) : bottomGap + progress * angleRange;
+
+  let baseAngle = tuning.bureauCrownAngle1 || -0.1;
+  if (level === 1) baseAngle = tuning.bureauCrownAngle2 || 0.6;
+  if (level >= 2) baseAngle = tuning.bureauCrownAngle3 || 1.2;
+
+  const angle = side < 0 ? Math.PI - baseAngle : baseAngle;
+
   return {
     x: tuning.bureauCrownRx * Math.cos(angle),
     y: -tuning.bureauCrownRy * Math.sin(angle),
@@ -245,7 +246,7 @@ export function mergeBubbleLayout(
         typeof prev.logoShape === 'string' && isLogoShapeKey(prev.logoShape)
           ? prev.logoShape
           : DEFAULT_LOGO_SHAPE,
-      hiddenMembers: Array.isArray(prev.hiddenMembers) ? prev.hiddenMembers : [],
+      selectedBureau: Array.isArray(prev.selectedBureau) ? prev.selectedBureau : undefined,
     };
   });
 }
