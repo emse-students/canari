@@ -4,7 +4,7 @@ import type { OutboxEntry } from '$lib/db';
 import { enqueueOutboxMessage } from './outbox';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, parseEnvelope, getPreviewText } from '$lib/envelope';
 import {
   sendEncryptedChannelMessage,
   isChannelConversationId,
@@ -237,7 +237,9 @@ export async function addReaction(
   // Notify the message author (fire-and-forget, non-fatal).
   const targetMsg = conversation.messages.find((m) => m.id === messageId);
   if (targetMsg?.senderId && targetMsg.senderId !== userId) {
-    const preview = String(targetMsg.content ?? '').slice(0, 60);
+    // `content` is a serialized envelope (JSON) - decode it to a human, type-aware preview
+    // so the push body reads "reacted to <text>" instead of leaking raw `{"kind":"text",...}`.
+    const preview = getPreviewText(parseEnvelope(String(targetMsg.content ?? ''))).slice(0, 60);
     void notifyReaction({
       groupId: conversation.id,
       targetSenderId: targetMsg.senderId,
