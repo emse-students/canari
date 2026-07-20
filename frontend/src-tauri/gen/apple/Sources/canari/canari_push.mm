@@ -4,6 +4,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -1598,6 +1599,26 @@ static CanariFcmPushDelegate *g_fcmPushDelegate = nil;
   } else {
     completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
   }
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+    didReceiveNotificationResponse:(UNNotificationResponse *)response
+             withCompletionHandler:(void (^)(void))completionHandler {
+  (void)center;
+  NSDictionary *userInfo = response.notification.request.content.userInfo;
+  NSString *deepLink = nil;
+  if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
+    deepLink = userInfo[@"deepLink"];
+  }
+  if (deepLink.length > 0) {
+    NSURL *url = [NSURL URLWithString:deepLink];
+    if (url != nil) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+      });
+    }
+  }
+  completionHandler();
 }
 @end
 

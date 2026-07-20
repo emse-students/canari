@@ -237,9 +237,7 @@ export async function addReaction(
   // Notify the message author (fire-and-forget, non-fatal).
   const targetMsg = conversation.messages.find((m) => m.id === messageId);
   if (targetMsg?.senderId && targetMsg.senderId !== userId) {
-    // `content` is a serialized envelope (JSON) - decode it to a human, type-aware preview
-    // so the push body reads "reacted to <text>" instead of leaking raw `{"kind":"text",...}`.
-    const preview = getPreviewText(parseEnvelope(String(targetMsg.content ?? ''))).slice(0, 60);
+    const preview = getPreviewText(parseEnvelope(String(targetMsg.content ?? ''))).slice(0, 80);
     void notifyReaction({
       groupId: conversation.id,
       targetSenderId: targetMsg.senderId,

@@ -236,9 +236,11 @@ export class MessagingController {
     const preview = String(body.messagePreview ?? '').slice(0, 80);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
 
-    const notifBody = `${actor} reacted with ${emoji} to "${preview}"`;
+    const notifBody = preview
+      ? `${actor} a réagi ${emoji} à « ${preview} »`
+      : `${actor} a réagi ${emoji}`;
 
-    return this.messagingService.sendPushToUser(body.targetSenderId, 'New reaction', notifBody, {
+    return this.messagingService.sendPushToUser(body.targetSenderId, actor, notifBody, {
       type: 'social',
       deepLink: `fr.emse.canari://chat/${body.groupId ?? ''}`,
       groupId: body.groupId ?? '',

@@ -108,6 +108,71 @@ pub fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
     None
 }
 
+/// Builds a short French notification body for a decoded `SystemMsg`.
+/// Returns None for silent/control events that should not produce a visible preview.
+fn format_system_event_text(event: &str, data: &str) -> Option<String> {
+    let data_json: serde_json::Value =
+        serde_json::from_str(data).unwrap_or(serde_json::Value::Null);
+
+    match event {
+        "groupRenamed" => {
+            let name = data_json
+                .get("newName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if name.is_empty() {
+                Some("a renommé le groupe".to_string())
+            } else {
+                Some(format!("a renommé le groupe en « {name} »"))
+            }
+        }
+        "groupImageChanged" => Some("a changé la photo du groupe".to_string()),
+        "memberAdded" => {
+            let count = data_json
+                .get("newUsers")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .filter(|&n| n > 0)
+                .or_else(|| data_json.get("newUser").and_then(|v| v.as_str()).map(|_| 1));
+            match count {
+                Some(1) => Some("a ajouté un membre au groupe".to_string()),
+                Some(n) => Some(format!("a ajouté {n} membres au groupe")),
+                None => Some("a ajouté un membre au groupe".to_string()),
+            }
+        }
+        "memberRemoved" => Some("a retiré un membre du groupe".to_string()),
+        "memberLeft" => Some("a quitté le groupe".to_string()),
+        "groupDeleted" => Some("a supprimé la conversation".to_string()),
+        // Control / sync frames: no user-visible notification preview.
+        "read_receipt"
+        | "delete_message"
+        | "edit_message"
+        | "remove_reaction"
+        | "pin"
+        | "unpin"
+        | "history_bundle"
+        | "channel_key_distribution" => None,
+        _ => Some(format!("événement de groupe ({event})")),
+    }
+}
+
+fn ok_message_json(
+    text: String,
+    message_id: String,
+    sent_at: i64,
+    msg_type: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "text": text,
+        "messageId": message_id,
+        "sentAt": sent_at,
+        "type": msg_type,
+        "replyTo": null,
+        "mediaKind": null
+    })
+}
+
 /// Extrait les métadonnées complètes d'un `AppMessage` protobuf déchiffré pour l'affichage push.
 pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     let message_id = find_length_delimited_field(bytes, 6)
@@ -119,10 +184,7 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         if let Some(content_bytes) = find_length_delimited_field(&text_msg, 1) {
             if let Ok(text) = String::from_utf8(content_bytes) {
                 if !text.is_empty() {
-                    return serde_json::json!({
-                        "ok": true, "text": text, "messageId": message_id,
-                        "sentAt": sent_at, "type": "text", "replyTo": null, "mediaKind": null
-                    });
+                    return ok_message_json(text, message_id, sent_at, "text");
                 }
             }
         }
@@ -152,6 +214,15 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         }
     }
 
+    if let Some(reaction_msg) = find_length_delimited_field(bytes, 3) {
+        let emoji = find_length_delimited_field(&reaction_msg, 2)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        if !emoji.is_empty() {
+            return ok_message_json(format!("a réagi {emoji}"), message_id, sent_at, "reaction");
+        }
+    }
+
     if let Some(media_msg) = find_length_delimited_field(bytes, 4) {
         let kind_str = match find_varint_field(&media_msg, 1) {
             Some(1) => "image",
@@ -174,5 +245,59 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         });
     }
 
+    if let Some(system_msg) = find_length_delimited_field(bytes, 5) {
+        let event = find_length_delimited_field(&system_msg, 1)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let data = find_length_delimited_field(&system_msg, 2)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        if !event.is_empty() {
+            if let Some(text) = format_system_event_text(&event, &data) {
+                return ok_message_json(text, message_id, sent_at, "system");
+            }
+            return serde_json::json!({ "ok": false });
+        }
+    }
+
+    if let Some(poll_msg) = find_length_delimited_field(bytes, 9) {
+        let question = find_length_delimited_field(&poll_msg, 1)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        if !question.is_empty() {
+            return ok_message_json(
+                format!("\u{1f4ca} Sondage : {question}"),
+                message_id,
+                sent_at,
+                "poll",
+            );
+        }
+    }
+
     serde_json::json!({ "ok": false })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_group_renamed_preview() {
+        let text = format_system_event_text("groupRenamed", r#"{"newName":"Les Canaris"}"#)
+            .expect("preview");
+        assert!(text.contains("Les Canaris"));
+    }
+
+    #[test]
+    fn system_member_added_preview() {
+        let text = format_system_event_text("memberAdded", r#"{"newUsers":["u1","u2"]}"#)
+            .expect("preview");
+        assert!(text.contains("2 membres"));
+    }
+
+    #[test]
+    fn silent_system_events_return_none() {
+        assert!(format_system_event_text("read_receipt", "{}").is_none());
+        assert!(format_system_event_text("delete_message", r#"{"messageId":"x"}"#).is_none());
+    }
 }
