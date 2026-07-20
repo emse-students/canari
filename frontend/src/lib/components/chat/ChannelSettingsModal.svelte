@@ -480,7 +480,7 @@
               <div class="flex gap-2">
                 <input
                   id="channel-name"
-                  class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl pl-9 pr-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all"
+                  class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all"
                   bind:value={channelNameInput}
                   onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
                   placeholder={m.chat_channel_name_placeholder()}
