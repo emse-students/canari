@@ -78,7 +78,6 @@ Normalization-sweep gotcha: accent-grep MISSES French comments written without a
 * \[ \] **User search cannot find yourself:** self is excluded from user-search results (e.g. adding yourself to an association). Allow self to appear/be selectable in the relevant search zones.
 
 **P2 - UI correctness / polish:**
-* \[ \] **Share link uses `tauri.localhost`** instead of `canari-emse.fr` when sharing a group link from the app. Use the canonical public origin for share URLs, not the Tauri webview origin.
 * \[ \] **Community profile picture:** (1) re-enable changing a Community's avatar via the UI (seems to have existed before, now missing); (2) remove per-salon/channel avatars entirely (no placeholder either - show just the channel name). Also fix a large left padding/margin before the text in the "Nom du Canal" input in "Parametres du canal" (and likely other similar inputs) - reduce to normal.
 * \[ \] **Klipy GIFs pollute the "Liens" tab** (Medias, liens & fichiers) - don't surface Klipy GIFs in any dedicated category. Plus z-index bug: the GIF picker's blur veil doesn't cover the whole interface like "Parametres du canal" does. Plus the "show members" toggle appears to do nothing (members are shown permanently on desktop at least) - fix or reconcile the toggle.
 * \[ \] **Message input placeholder overflows on narrow/mobile screens:** "Ecrivez un message" gets clipped. (1) add ellipsis (`...`) so it truncates cleanly, and (2) shorten the copy to "Ecrire" (keep EN short too). i18n both locales.
