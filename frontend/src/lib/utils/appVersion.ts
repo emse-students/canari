@@ -194,6 +194,25 @@ export function isAndroidTauriRuntime(): boolean {
   );
 }
 
+/** True on Tauri iOS builds (App Store update flow, no direct binary download). */
+export function isIosTauriRuntime(): boolean {
+  return (
+    isTauriRuntime() &&
+    typeof navigator !== 'undefined' &&
+    /iphone|ipad|ipod/i.test(navigator.userAgent)
+  );
+}
+
+/**
+ * True on any native mobile Tauri build (Android or iOS). Use this for logic that
+ * must run wherever a native background engine advances `mls.bin` and posts its own
+ * OS notifications - both platforms do (Android via CanariFirebaseMessagingService,
+ * iOS via canari_push.mm) - as opposed to Android-only APK/update concerns.
+ */
+export function isMobileTauriRuntime(): boolean {
+  return isAndroidTauriRuntime() || isIosTauriRuntime();
+}
+
 /**
  * URL opened when the user accepts an app update prompt.
  * Android Tauri: direct APK download; other native: release tag page; web: n/a (reload).

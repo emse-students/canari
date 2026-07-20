@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { tick } from 'svelte';
-import { isTauriRuntime } from '$lib/utils/openExternal';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { getToken } from '$lib/stores/auth';
@@ -320,12 +320,15 @@ export function useMessaging() {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
-    const isAndroidTauri = isTauriRuntime() && /android/i.test(navigator.userAgent);
+    // Native mobile (Android + iOS) posts its own OS notification from the background
+    // push handler, so the JS layer must NOT also fire one - otherwise the user gets a
+    // duplicate notification. Both platforms are covered by isMobileTauriRuntime().
+    const isNativeMobileTauri = isMobileTauriRuntime();
 
     const shouldSendSystemNotification =
       !isOwn &&
       !options.isSystem &&
-      !isAndroidTauri &&
+      !isNativeMobileTauri &&
       typeof document !== 'undefined' &&
       (document.visibilityState !== 'visible' || !document.hasFocus());
 

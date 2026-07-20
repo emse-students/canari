@@ -48,5 +48,22 @@
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
+	<!-- Privacy usage strings: iOS hard-crashes on first access to a protected resource
+	     when its *UsageDescription key is absent. Face ID in particular crashes the biometric
+	     unlock flow without NSFaceIDUsageDescription. French copy (app is French-first);
+	     proper per-locale InfoPlist.strings is a follow-up (see CLAUDE.md iOS WP). -->
+	<key>NSCameraUsageDescription</key>
+	<string>Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Canari utilise le microphone pour enregistrer des messages vocaux et passer des appels.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Canari utilise Face ID pour déverrouiller l'application de façon sécurisée.</string>
+	<!-- The APNs<->FCM token bridge relies on Firebase's App Delegate Proxy swizzling
+	     (main.mm deliberately defines no UIApplicationDelegate). Setting this explicitly to
+	     YES makes the dependency intentional instead of relying on the framework default. -->
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<true/>
 </dict>
 </plist>

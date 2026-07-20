@@ -13,7 +13,7 @@ import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { BaseMlsService } from './BaseMlsService';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
@@ -490,17 +490,18 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
-   * C2: reloads `mls.bin` from disk into the warm in-memory engine. Called on resume (Android)
-   * BEFORE the WS resumes processing: while backgrounded, a native JNI engine (Welcome/send) may
+   * C2: reloads `mls.bin` from disk into the warm in-memory engine. Called on resume (mobile)
+   * BEFORE the WS resumes processing: while backgrounded, a native engine (Welcome/send) may
    * have advanced `mls.bin`; without this the warm state is stale and its next save would clobber
    * that advance (lost-update -> SecretReuse). Also marks the foreground active server-side so the
    * background engines stop writing. Refreshes the known-groups cache (a background Welcome may
    * have joined a new group) and clears the epoch cache (epochs may have advanced under us).
    */
   override async reloadStateFromDisk(): Promise<void> {
-    // Only Android runs a background JNI engine that advances mls.bin; on desktop Tauri the
-    // in-memory engine is the sole writer, so a reload would re-derive Argon2 for nothing.
-    if (!isAndroidTauriRuntime() || !this._pin) return;
+    // Both native mobile platforms run a background engine that advances mls.bin (Android JNI
+    // FirebaseMessagingService, iOS canari_push.mm via the C FFI); on desktop Tauri the in-memory
+    // engine is the sole writer, so a reload would re-derive Argon2 for nothing.
+    if (!isMobileTauriRuntime() || !this._pin) return;
     await this.awaitRustMutations();
     try {
       const reloaded = await invoke<boolean>('recharger_mls_au_resume', {
