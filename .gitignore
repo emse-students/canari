@@ -102,3 +102,9 @@ lcov-report/
 # Apple artefacts
 ._*
 *.xcuserdatad
+
+# Secrets / signing keys - never commit (Firebase client configs are injected by
+# CI, the APNs .p8 auth key lives only in the Firebase console).
+*.p8
+GoogleService-Info.plist
+google-services.json

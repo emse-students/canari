@@ -1,10 +1,9 @@
-import { PushPlatform } from '../entities/push-token.entity';
-
 /**
  * Common, transport-agnostic description of a queued-message push.
  *
- * Both the FCM (Android) and APNs (iOS) builders consume this so the two
- * gateways stay in sync: the server never sees the MLS plaintext, so only
+ * FCM is the single transport: the Android data payload and the iOS APNs payload
+ * (relayed by FCM) both consume this so the two stay in sync. The server never
+ * sees the MLS plaintext, so only
  * metadata it legitimately knows (sender/group display names, the inline
  * ciphertext, timing) ends up in the payload. The client decrypts and rewrites
  * the user-visible text locally (Android background service / iOS NSE).
@@ -62,8 +61,12 @@ export function buildPushDataFields(input: PushMessageInput): Record<string, str
 
 /** A ready-to-send APNs request: JSON body plus the headers that drive delivery. */
 export interface ApnsRequest {
-  /** The JSON payload (`aps` block plus custom keys for the NSE). */
-  payload: Record<string, unknown>;
+  /**
+   * The JSON payload: the required `aps` block plus custom top-level keys for the
+   * NSE. Typing `aps` as required lets this drop straight into FCM's
+   * `apns.payload` (firebase-admin `ApnsPayload`, which mandates `aps`).
+   */
+  payload: { aps: Record<string, unknown>; [key: string]: unknown };
   /** `alert` for user-visible messages, `background` for silent state-sync frames. */
   pushType: 'alert' | 'background';
   /** APNs priority: 10 for alerts, 5 for background pushes. */
@@ -113,20 +116,4 @@ export function buildApnsRequest(
     pushType: 'alert',
     priority: 10,
   };
-}
-
-/**
- * Splits push tokens into per-gateway buckets so each can be dispatched through
- * its own transport (FCM for Android, APNs for iOS).
- */
-export function partitionTokensByPlatform<T extends { platform: PushPlatform }>(
-  tokens: T[]
-): { android: T[]; ios: T[] } {
-  const android: T[] = [];
-  const ios: T[] = [];
-  for (const t of tokens) {
-    if (t.platform === 'ios') ios.push(t);
-    else android.push(t);
-  }
-  return { android, ios };
 }

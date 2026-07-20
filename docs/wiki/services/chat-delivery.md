@@ -144,6 +144,31 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
 
+#### Transport — single gateway (FCM)
+
+Both platforms are delivered through **Firebase Cloud Messaging**; there is no direct
+APNs provider in the backend. For each `PushToken`, `MessagingService` issues one
+`getMessaging().send()` carrying:
+
+- a `data` map — read by Android's `onMessageReceived` (fires foreground **and** background);
+- an `android` block (`priority: high`, 24 h TTL);
+- an `apns` block, shaped by `buildApnsRequest` in `push-payload.ts`.
+
+FCM applies the `android` block to Android tokens and **relays the `apns` block to Apple's
+APNs** for iOS tokens, using the APNs `.p8` auth key uploaded in the Firebase console
+(Project Settings → Cloud Messaging → APNs Authentication Key). Visible iOS pushes carry
+`mutable-content: 1` so a Notification Service Extension can decrypt and rewrite the alert
+(until that extension ships, the generic fallback title/body is shown); silent frames carry
+`content-available: 1`, mirroring the Android data-only push. iOS clients register their
+**FCM** token (not a raw APNs device token) via `/api/mls/push/register` with `platform: "ios"`.
+
+**Client config & build:** the Firebase client config files are gitignored and injected by CI
+from secrets — `GOOGLE_SERVICES_JSON` (Android → `google-services.json`) and
+`GOOGLE_SERVICE_INFO_PLIST` (iOS → `canari_iOS/GoogleService-Info.plist`). The iOS Firebase
+SDK is pulled via **Swift Package Manager** (not CocoaPods). The APNs↔FCM token bridge relies
+on Firebase's App Delegate Proxy (`FirebaseAppDelegateProxyEnabled`, which must stay enabled).
+The iOS `aps-environment` entitlement is `production` for TestFlight/App Store builds.
+
 ### Security / PIN
 
 | Method | Path | Description |

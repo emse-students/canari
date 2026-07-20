@@ -2,9 +2,11 @@
 
 target 'canari_iOS' do
 platform :ios, '14.0'
-  # Push FCM (optionnel : necessite GoogleService-Info.plist dans canari_iOS/)
-  pod 'FirebaseCore'
-  pod 'Firebase/Messaging'
+  # Firebase (FirebaseCore + FirebaseMessaging) is provided via Swift Package
+  # Manager - see the XCRemoteSwiftPackageReference "firebase-ios-sdk" and the
+  # target's packageProductDependencies in canari.xcodeproj. Do NOT also declare
+  # it as a CocoaPod here: two dependency managers linking the same Firebase
+  # frameworks causes duplicate-symbol link errors.
 end
 
 target 'canari_macOS' do

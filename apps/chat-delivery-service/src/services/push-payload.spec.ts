@@ -1,11 +1,6 @@
 /// <reference types="jest" />
 
-import {
-  buildPushDataFields,
-  buildApnsRequest,
-  partitionTokensByPlatform,
-  PushMessageInput,
-} from './push-payload';
+import { buildPushDataFields, buildApnsRequest, PushMessageInput } from './push-payload';
 
 const baseInput: PushMessageInput = {
   groupId: 'group-1',
@@ -99,22 +94,5 @@ describe('buildApnsRequest', () => {
     const aps = req.payload.aps as Record<string, unknown>;
     expect(aps['content-available']).toBe(1);
     expect(aps.alert).toBeUndefined();
-  });
-});
-
-describe('partitionTokensByPlatform', () => {
-  it('splits tokens into android and ios buckets', () => {
-    const tokens = [
-      { platform: 'android' as const, token: 'a1' },
-      { platform: 'ios' as const, token: 'i1' },
-      { platform: 'android' as const, token: 'a2' },
-    ];
-    const { android, ios } = partitionTokensByPlatform(tokens);
-    expect(android.map((t) => t.token)).toEqual(['a1', 'a2']);
-    expect(ios.map((t) => t.token)).toEqual(['i1']);
-  });
-
-  it('returns empty buckets for no tokens', () => {
-    expect(partitionTokensByPlatform([])).toEqual({ android: [], ios: [] });
   });
 });

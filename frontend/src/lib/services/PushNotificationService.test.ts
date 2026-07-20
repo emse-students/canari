@@ -35,6 +35,8 @@ describe('startPushService - rotation de token FCM', () => {
     // 1er appel : enregistrement complet.
     await startPushService('https://api', 'jwt', 'dev-1');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The Android token is tagged platform: 'android' for the FCM gateway.
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as any).body).platform).toBe('android');
 
     // Ré-appel (retour premier plan) sans changement de token → pas de re-POST.
     await startPushService('https://api', 'jwt', 'dev-1');
@@ -46,5 +48,24 @@ describe('startPushService - rotation de token FCM', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const lastBody = JSON.parse((fetchMock.mock.calls[1][1] as any).body);
     expect(lastBody.token).toBe('tok-456');
+  });
+
+  it('iOS enregistre le token FCM avec platform: ios (FCM relaie vers APNs)', async () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
+      configurable: true,
+    });
+    await startPushService('https://api', 'jwt', 'dev-ios');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as any).body).platform).toBe('ios');
+  });
+
+  it('desktop (ni Android ni iOS) est un noop : aucune registration', async () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      configurable: true,
+    });
+    await startPushService('https://api', 'jwt', 'dev-desktop');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

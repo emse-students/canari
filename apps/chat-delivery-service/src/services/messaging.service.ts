@@ -21,13 +21,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
-import { ApnsService } from './apns.service';
-import {
-  buildPushDataFields,
-  buildApnsRequest,
-  partitionTokensByPlatform,
-  PushMessageInput,
-} from './push-payload';
+import { buildPushDataFields, buildApnsRequest, PushMessageInput } from './push-payload';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
@@ -172,8 +166,7 @@ export class MessagingService {
     private commitLogRepo: Repository<MlsCommitLog>,
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly apns: ApnsService
+    @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
 
   /**
@@ -354,26 +347,35 @@ export class MessagingService {
     };
     const dataFields = buildPushDataFields(messageInput);
 
-    // Route each token through its own gateway: Android via FCM, iOS via APNs.
-    const { android, ios } = partitionTokensByPlatform(pushTokens);
+    // Single transport for every device: FCM. Android receives the data-only
+    // message (onMessageReceived fires foreground + background); iOS pushes are
+    // relayed by FCM to APNs via the apns block below (the .p8 APNs auth key is
+    // configured in the Firebase console, so no direct APNs provider is needed).
+    // FCM applies the android block to Android tokens and the apns block to iOS
+    // tokens, ignoring the other. The apns payload is self-contained
+    // (buildApnsRequest spreads dataFields into it) so it does not depend on FCM
+    // merging the top-level data map into the APNs payload.
+    const apnsRequest = buildApnsRequest(messageInput, dataFields);
 
-    for (const pt of android) {
+    for (const pt of pushTokens) {
       try {
         await getMessaging().send({
           token: pt.token,
-          // Data-only → onMessageReceived() fires for foreground AND background.
           data: dataFields,
           android: {
             priority: 'high',
             ttl: 86_400_000,
           },
           apns: {
-            payload: { aps: { contentAvailable: true } },
-            headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+            payload: apnsRequest.payload,
+            headers: {
+              'apns-push-type': apnsRequest.pushType,
+              'apns-priority': String(apnsRequest.priority),
+            },
           },
         });
         this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} inlineProto=${!!inlineProto}`
+          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto}`
         );
       } catch (e) {
         if (this.isTerminalPushTokenError(e)) {
@@ -385,32 +387,6 @@ export class MessagingService {
         this.logger.warn(
           `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`
         );
-      }
-    }
-
-    // iOS path: inert until APNS_* env is configured (apns.sendDataNotification
-    // returns { skipped: true }). No iOS tokens exist yet, so this is a no-op in
-    // production today; it is wired so the iOS client can be enabled without
-    // further backend changes.
-    if (ios.length > 0) {
-      const apnsRequest = buildApnsRequest(messageInput, dataFields);
-      for (const pt of ios) {
-        try {
-          const res = await this.apns.sendDataNotification(pt.token, apnsRequest);
-          if (res.terminal) {
-            await this.pushTokenRepo.delete({ id: pt.id });
-            this.logger.warn(
-              `[PUSH_SEND][${traceId}] Deleted invalid APNs token user=${queued.recipientId} device=${pt.deviceId} reason=${res.reason}`
-            );
-          }
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] APNs user=${queued.recipientId} device=${pt.deviceId} skipped=${res.skipped} status=${res.status ?? '-'}`
-          );
-        } catch (e) {
-          this.logger.warn(
-            `[PUSH_SEND][${traceId}] APNs failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`
-          );
-        }
       }
     }
   }

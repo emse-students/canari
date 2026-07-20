@@ -45,7 +45,7 @@
 		A3B4C5D6E7F801234567890 /* canari_ios.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_ios.h; sourceTree = "<group>"; };
 		AC2F92519DA5B01BA25311C4 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
 		B2C3D4E5F6012345678ABCD /* canari_ios.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_ios.mm; sourceTree = "<group>"; };
-		BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GoogleService-Info; sourceTree = "<group>"; };
+		BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "canari_iOS/GoogleService-Info.plist"; sourceTree = "<group>"; };
 		BDF257BC19D5AF44226720EA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_rust_bridge.h; sourceTree = "<group>"; };
 		D20A7859E615805B7DF8C401 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };

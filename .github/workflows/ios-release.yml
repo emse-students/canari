@@ -126,11 +126,14 @@ jobs:
         env:
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
         run: |
-          # Le fichier va dans le dossier sourcé par Xcode dans gen/apple/
-          PLIST_DIR="frontend/src-tauri/gen/apple/Canari_iOS"
+          # Must match the pbxproj file reference path (canari_iOS/GoogleService-Info.plist,
+          # lowercase to match the on-disk group folder) so Xcode bundles it and
+          # [FIRApp configure] finds it at launch. printf (not echo) preserves the
+          # exact XML without interpreting backslashes or appending a stray newline.
+          PLIST_DIR="frontend/src-tauri/gen/apple/canari_iOS"
           mkdir -p "$PLIST_DIR"
-          echo "$GOOGLE_SERVICE_INFO_PLIST" > "$PLIST_DIR/GoogleService-Info.plist"
-          echo "✅ GoogleService-Info.plist written"
+          printf '%s' "$GOOGLE_SERVICE_INFO_PLIST" > "$PLIST_DIR/GoogleService-Info.plist"
+          echo "✅ GoogleService-Info.plist written to $PLIST_DIR"
 
       - name: Create frontend .env
         working-directory: frontend

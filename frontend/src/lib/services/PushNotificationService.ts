@@ -1,7 +1,9 @@
 /**
  * PushNotificationService.ts
  *
- * Android push notification management via FCM and Tauri.
+ * Android + iOS push notification management via FCM and Tauri. FCM is the single
+ * transport for both platforms: Android receives FCM data messages natively, and
+ * FCM relays iOS pushes to APNs (the .p8 APNs key lives in the Firebase console).
  *
  * Flow:
  *  1. `startPushService` is called at startup (after login).
@@ -19,6 +21,9 @@ import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notif
 import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
+
+/** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
+type PushPlatform = 'android' | 'ios';
 
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
@@ -102,10 +107,17 @@ export async function startPushService(
     return; // web : pas de push
   }
 
-  // FCM is Android-only; the Rust command exists on all targets but returns null on desktop.
-  // Without this guard, getFcmToken polls for 30 s on every desktop start.
-  if (!/android/i.test(navigator.userAgent)) {
-    console.info('[Push] startPushService noop (not Android)');
+  // FCM covers Android (native FCM) and iOS (FCM relays to APNs). The Rust
+  // get_fcm_token command exists on all targets but returns null on desktop, so we
+  // early-return there to avoid getFcmToken polling for 30 s on every desktop start.
+  const ua = navigator.userAgent;
+  const platform: PushPlatform | null = /android/i.test(ua)
+    ? 'android'
+    : /iphone|ipad|ipod/i.test(ua)
+      ? 'ios'
+      : null;
+  if (!platform) {
+    console.info('[Push] startPushService noop (desktop - no FCM)');
     return;
   }
 
@@ -125,7 +137,7 @@ export async function startPushService(
           'x-user-logged-in': 'true',
           'x-user-id': userId,
         },
-        body: JSON.stringify({ token: pushToken, deviceId, platform: 'android' }),
+        body: JSON.stringify({ token: pushToken, deviceId, platform }),
       });
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
