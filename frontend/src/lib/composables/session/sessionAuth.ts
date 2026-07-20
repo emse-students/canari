@@ -912,7 +912,7 @@ export async function biometricLoginImpl(
         cb.onLoginFailed?.(msg);
       },
     });
-    if (failMsg && /PIN incorrect/i.test(failMsg)) {
+    if (failMsg && /incorrect PIN/i.test(failMsg)) {
       await BiometricService.disable().catch(() => {});
       cb.log('[BIOMETRIC] Stale PIN detected - biometric disabled, re-enrolment required.');
     }

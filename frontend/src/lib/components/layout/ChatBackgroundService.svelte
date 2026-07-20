@@ -194,7 +194,7 @@
    * signal (tried the new PIN but the local state is still sealed under the old one).
    */
   async function evaluateRecoverable(uid: string, msg: string) {
-    const recoverable = /PIN incorrect/i.test(msg) || /changé sur un autre appareil/i.test(msg);
+    const recoverable = /incorrect PIN/i.test(msg) || /changed on another device/i.test(msg);
     if (!uid || !recoverable) {
       canRecoverPin = false;
       return;
