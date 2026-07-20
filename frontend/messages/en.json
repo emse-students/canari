@@ -204,7 +204,7 @@
   "chat_reply_to_message": "Reply to {replySenderDisplayName}",
   "chat_cancel_reply_label": "Cancel reply",
   "chat_mls_syncing_placeholder": "MLS syncing…",
-  "chat_message_placeholder": "Write a message…",
+  "chat_message_placeholder": "Write…",
   "chat_send_message_label": "Send message",
   "chat_send_error": "Send failed: {reason}",
   "chat_channel_members_title": "Channel members",

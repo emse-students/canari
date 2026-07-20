@@ -260,7 +260,7 @@
 
   {#if !editorHasContent && placeholder}
     <div
-      class="mention-composer-placeholder pointer-events-none absolute inset-0 block whitespace-pre-wrap text-text-muted/60 select-none {editorClass}"
+      class="mention-composer-placeholder pointer-events-none absolute inset-0 block truncate text-text-muted/60 select-none {editorClass}"
       aria-hidden="true"
     >
       {placeholder}

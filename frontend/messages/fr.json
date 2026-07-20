@@ -219,7 +219,7 @@
   "chat_reply_to_message": "Répondre à {replySenderDisplayName}",
   "chat_cancel_reply_label": "Annuler la réponse",
   "chat_mls_syncing_placeholder": "Synchronisation MLS…",
-  "chat_message_placeholder": "Écrivez un message…",
+  "chat_message_placeholder": "Écrire…",
   "chat_send_message_label": "Envoyer le message",
   "chat_send_error": "Échec de l'envoi : {reason}",
   "chat_channel_members_title": "Membres du canal",
