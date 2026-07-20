@@ -1,5 +1,6 @@
 import { parseEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';
+import { isGifUrl } from '$lib/utils/chat/messageDisplay';
 
 /**
  * Aggregates the media, files and links shared in a conversation from its full
@@ -44,10 +45,11 @@ export interface AggregatableMessage {
 /** Matches http(s) URLs; trailing punctuation is trimmed so "(see https://x.)" yields a clean URL. */
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/gi;
 
+/** Extracts link-tab URLs from text, excluding GIF URLs (surfaced inline as media, not as links). */
 function extractUrls(text: string): string[] {
   const matches = text.match(URL_RE);
   if (!matches) return [];
-  return matches.map((u) => u.replace(/[.,;:!?)\]}'"]+$/, ''));
+  return matches.map((u) => u.replace(/[.,;:!?)\]}'"]+$/, '')).filter((u) => !isGifUrl(u));
 }
 
 /** Builds the shared-content lists from a conversation's messages, newest first. */

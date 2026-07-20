@@ -8,6 +8,7 @@
     Download,
   } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
+  import { portal } from '$lib/actions/portal';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { openExternal } from '$lib/utils/openExternal';
@@ -156,7 +157,7 @@
 </script>
 
 {#if open}
-  <div class="fixed inset-0 z-[120] flex justify-end">
+  <div use:portal class="fixed inset-0 z-[260] flex justify-end">
     <button
       type="button"
       class="absolute inset-0 bg-black/40 backdrop-blur-sm"
