@@ -27,7 +27,7 @@ jobs:
       ts-matrix: ${{ steps.matrix.outputs.ts }}
       run-frontend: ${{ steps.matrix.outputs.frontend }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
           fetch-depth: 0
@@ -162,7 +162,7 @@ jobs:
         component: ${{ fromJSON(needs.changes.outputs.rust-matrix) }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
@@ -226,7 +226,7 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.changes.outputs.ts-matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
@@ -290,7 +290,7 @@ jobs:
     if: ${{ needs.changes.outputs.run-frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
