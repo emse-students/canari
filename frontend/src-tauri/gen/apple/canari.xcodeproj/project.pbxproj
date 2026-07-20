@@ -13,6 +13,9 @@
 		6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3416F9F4A8BD192DF6A921B4 /* QuartzCore.framework */; };
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
 		A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6012345678ABCD /* canari_ios.mm */; };
+		BD75AE00300EA0AC003EBA05 /* GoogleService-Info in Resources */ = {isa = PBXBuildFile; fileRef = BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */; };
+		BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE02300EA4C0003EBA05 /* FirebaseCore */; };
+		BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE04300EA4C0003EBA05 /* FirebaseMessaging */; };
 		BDCC40B62FED454100576E30 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 43EC3C6D309DFBDAB0387C31 /* WebKit.framework */; };
 		BDCC40B92FED454500576E30 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
 		C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
@@ -42,6 +45,7 @@
 		A3B4C5D6E7F801234567890 /* canari_ios.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_ios.h; sourceTree = "<group>"; };
 		AC2F92519DA5B01BA25311C4 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
 		B2C3D4E5F6012345678ABCD /* canari_ios.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_ios.mm; sourceTree = "<group>"; };
+		BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GoogleService-Info; sourceTree = "<group>"; };
 		BDF257BC19D5AF44226720EA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_rust_bridge.h; sourceTree = "<group>"; };
 		D20A7859E615805B7DF8C401 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
@@ -62,8 +66,10 @@
 				DA41E4ADF45E623DF4770CEF /* Metal.framework in Frameworks */,
 				D58951ACC99D4C771311695B /* MetalKit.framework in Frameworks */,
 				6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */,
+				BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */,
 				BDCC40B92FED454500576E30 /* Security.framework in Frameworks */,
 				C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */,
+				BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -147,6 +153,7 @@
 				36130D2D54A4248E871F5163 /* src */,
 				106085A54D24FE9BE2117546 /* Frameworks */,
 				80EB529A999B6336917EDB30 /* Products */,
+				BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */,
 			);
 			sourceTree = "<group>";
 		};
@@ -184,6 +191,8 @@
 			);
 			name = canari_iOS;
 			packageProductDependencies = (
+				BD75AE02300EA4C0003EBA05 /* FirebaseCore */,
+				BD75AE04300EA4C0003EBA05 /* FirebaseMessaging */,
 			);
 			productName = canari_iOS;
 			productReference = 890F35B30BCCC580EE21CE39 /* Canari.app */;
@@ -196,7 +205,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 1620;
 			};
 			buildConfigurationList = E2E351A152590A6A0DAEDCA6 /* Build configuration list for PBXProject "canari" */;
 			developmentRegion = en;
@@ -207,6 +216,9 @@
 			);
 			mainGroup = AA23298C67DF22384563D03F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BD75AE01300EA4C0003EBA05 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 80EB529A999B6336917EDB30 /* Products */;
 			projectDirPath = "";
@@ -225,6 +237,7 @@
 				6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */,
 				26BD361B270C7E72379225D2 /* LaunchScreen.storyboard in Resources */,
 				EB4C666589AF7B0EDEBED1B6 /* assets in Resources */,
+				BD75AE00300EA0AC003EBA05 /* GoogleService-Info in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -250,7 +263,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "bun tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}\n";
+			shellScript = "#bun tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -305,6 +318,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -327,10 +341,6 @@
 		B35A4E29CA578426B7AFA4D1 /* debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = (
-					arm64,
-					x86_64,
-				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = canari_iOS/canari_iOS.entitlements;
@@ -414,6 +424,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -443,10 +454,6 @@
 		E7E5483D4B30657C1873EFDF /* release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = (
-					arm64,
-					x86_64,
-				);
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = canari_iOS/canari_iOS.entitlements;
@@ -515,6 +522,30 @@
 			defaultConfigurationName = debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BD75AE01300EA4C0003EBA05 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 12.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BD75AE02300EA4C0003EBA05 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BD75AE01300EA4C0003EBA05 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		BD75AE04300EA4C0003EBA05 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BD75AE01300EA4C0003EBA05 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 91261965DA5D41FC84B6EA3B /* Project object */;
 }
