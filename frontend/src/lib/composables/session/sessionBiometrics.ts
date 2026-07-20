@@ -3,7 +3,7 @@
  * isBiometricPromptDismissed, dismissBiometricPromptImpl, enrollBiometricImpl.
  */
 import { BiometricService } from '$lib/services/biometric';
-import { clearPinAndKey } from '$lib/utils/pinVault';
+import { clearPinAndKey, savePin } from '$lib/utils/pinVault';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import type { SessionContext } from './sessionTypes';
@@ -70,4 +70,19 @@ export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
     appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
     console.error('Biometric enrollment failed:', e);
   }
+}
+
+/**
+ * Turns biometric unlock off (Settings toggle). Removes the hardware keystore secret,
+ * then re-saves the in-memory PIN into the session PIN vault so the current session and
+ * the next launch fall back to the normal PIN auto-login path instead of being stranded
+ * without any unlock secret. Re-arms the enrolment banner so it can be offered again.
+ */
+export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
+  appendLog('[BIOMETRIC] Disabling biometric unlock…');
+  await BiometricService.disable();
+  const pin = ctx.getPin();
+  if (pin) await savePin(pin).catch(() => {});
+  localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
+  appendLog('[BIOMETRIC] Biometric unlock disabled - PIN restored to session vault.');
 }

@@ -14,7 +14,7 @@
   import { afterNavigate, goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
-  import { loadPin } from '$lib/utils/pinVault';
+  import { loadPin, isPinPersistenceEnabled, setPinPersistence } from '$lib/utils/pinVault';
   import { getToken, clearAuth } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
   import { currentUserId } from '$lib/stores/user';
@@ -174,6 +174,10 @@
   let pinLoading = $state(false);
   let pinStep = $state('');
   let biometricConfigured = $state(false);
+  // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
+  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
+  const showStaySignedIn = !isTauriRuntime();
+  let pinStaySignedIn = $state(isPinPersistenceEnabled());
 
   // "PIN changed on another device" recovery (offered on a mismatch when local state exists).
   let canRecoverPin = $state(false);
@@ -812,6 +816,9 @@
     pinStep = m.auth_pin_step_verifying();
     canRecoverPin = false;
     globalSession.pin = submittedPin;
+    // Record the "stay signed in" choice before login: loginImpl's savePin then writes the
+    // PIN vault into the matching store (localStorage when persistent, sessionStorage otherwise).
+    if (showStaySignedIn) void setPinPersistence(pinStaySignedIn, null);
     _loginInProgress = true;
     // An explicit PIN submit takes priority over any background login that may have set
     // this flag (onMount/afterNavigate race); loginImpl bails silently if it is still set.
@@ -977,6 +984,8 @@
   }}
   onBiometricRequest={handleBiometricFromModal}
   showBiometricButton={biometricConfigured}
+  {showStaySignedIn}
+  bind:staySignedIn={pinStaySignedIn}
   externalError={pinError}
   isLoading={pinLoading}
   loadingStep={pinStep}

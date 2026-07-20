@@ -30,7 +30,11 @@ import {
   resetDeviceAsFreshImpl,
   recoverPinImpl,
 } from './session/sessionAuth';
-import { dismissBiometricPromptImpl, enrollBiometricImpl } from './session/sessionBiometrics';
+import {
+  dismissBiometricPromptImpl,
+  enrollBiometricImpl,
+  disableBiometricImpl,
+} from './session/sessionBiometrics';
 import {
   attemptReconnectImpl,
   pauseConnectionImpl,
@@ -431,6 +435,8 @@ export function useChatSession() {
       biometricLoginImpl(ctx, cb),
     /** Saves the PIN to the hardware keystore and clears it from memory. */
     enrollBiometric: () => enrollBiometricImpl(ctx),
+    /** Removes the biometric keystore secret and restores the PIN to the session vault. */
+    disableBiometric: () => disableBiometricImpl(ctx),
     /** Persists the "dismissed" flag and hides the biometric enrolment banner. */
     dismissBiometricPrompt: () => dismissBiometricPromptImpl(ctx),
     /** Clears session state and redirects to /login. */

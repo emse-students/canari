@@ -15,6 +15,13 @@
     onBiometricRequest?: () => void;
     /** Whether to render the biometric authentication button. */
     showBiometricButton?: boolean;
+    /** Whether to render the "stay signed in on this device" opt-in checkbox. */
+    showStaySignedIn?: boolean;
+    /**
+     * Two-way bound state of the "stay signed in" checkbox. When true, the caller
+     * persists the PIN vault across browser restarts (see pinVault.setPinPersistence).
+     */
+    staySignedIn?: boolean;
     /** Error message set by the parent (e.g. wrong PIN); displayed below the input. */
     externalError?: string;
     /** Whether a login attempt is in progress; disables inputs and shows a spinner. */
@@ -46,6 +53,8 @@
     onClose,
     onBiometricRequest,
     showBiometricButton = false,
+    showStaySignedIn = false,
+    staySignedIn = $bindable(false),
     externalError = '',
     isLoading = false,
     isFirstSetup = false,
@@ -216,6 +225,25 @@
           <p class="text-sm text-red-500 font-medium text-center">{displayError}</p>
         {/if}
       </div>
+    {/if}
+
+    {#if showStaySignedIn}
+      <label
+        class="flex items-start gap-2.5 cursor-pointer select-none text-left px-0.5 {isLoading
+          ? 'opacity-50 pointer-events-none'
+          : ''}"
+      >
+        <input
+          type="checkbox"
+          bind:checked={staySignedIn}
+          disabled={isLoading}
+          class="mt-0.5 h-4 w-4 shrink-0 rounded border-cn-border/60 accent-cn-yellow"
+        />
+        <span class="text-xs text-text-muted leading-relaxed">
+          <span class="font-semibold text-text-main">{m.auth_pin_stay_signed_in()}</span><br />
+          {m.auth_pin_stay_signed_in_desc()}
+        </span>
+      </label>
     {/if}
 
     <button
