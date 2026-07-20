@@ -5,7 +5,9 @@ import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const WEEKDAYS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-const HEADER_H = 68;
+// Header height. Kept generous so the month title (Fredoka, tall round ascenders) sits low enough in
+// its line box to clear the top page edge - a tighter header clipped the glyph tops on export.
+const HEADER_H = 88;
 const WEEKDAY_ROW_H = 40;
 const GRID_PAD_BOTTOM = 20;
 /**
@@ -107,6 +109,12 @@ function hexToRgba(hex: string, opacityPct: number): string {
   return `rgba(${r},${g},${b},${(opacityPct / 100).toFixed(2)})`;
 }
 
+/**
+ * Event card fill opacity in percent. Below full so the color reads softer (less vivid) and the
+ * association logo watermark behind it stays visible - the color tints the cell rather than masking it.
+ */
+const EVENT_BG_OPACITY = 82;
+
 /** Returns all hex colors for an event: primary first, then co-owners. */
 function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
   const primary = toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
@@ -116,9 +124,13 @@ function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
   ];
 }
 
-/** CSS background value for an event slot - solid hex or inline gradient for co-owned events. */
-function eventBgCss(ev: AssociationCalendarFeedEvent): string {
-  const colors = eventHexColors(ev);
+/**
+ * CSS background value for an event slot - a translucent solid fill, or a translucent inline gradient
+ * for co-owned events (one equal band per owner). Reduced alpha keeps the color soft and lets the
+ * logo watermark show through.
+ */
+export function eventBgCss(ev: AssociationCalendarFeedEvent): string {
+  const colors = eventHexColors(ev).map((c) => hexToRgba(c, EVENT_BG_OPACITY));
   if (colors.length === 1) return colors[0];
   const pct = 100 / colors.length;
   const stops = colors.flatMap((c, i) => [
@@ -230,6 +242,25 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
 }
 
 /**
+ * Watermark for a co-owned event: the owners' logos are merged into ONE circle split into equal
+ * vertical bands, each band cut from a different logo (2 owners -> left half of logo 1 on the left,
+ * right half of logo 2 on the right). Each band is a window onto a full-size logo shifted so only its
+ * own vertical slice shows, so the bands line up into a single seamless circle rather than a row of
+ * small separate logos.
+ */
+export function splitLogoWatermark(logoSrcs: string[], size: number): string {
+  const n = logoSrcs.length;
+  const bandW = size / n;
+  const bands = logoSrcs
+    .map(
+      (src, i) =>
+        `<div style="position:absolute;top:0;left:${(i * bandW).toFixed(2)}px;width:${bandW.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${(-i * bandW).toFixed(2)}px;width:${size}px;height:${size}px;object-fit:cover;" /></div>`
+    )
+    .join('');
+  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:0.20;">${bands}</div></div>`;
+}
+
+/**
  * Builds the inner calendar HTML (no `<!DOCTYPE>` wrapper).
  * - `logoMap`: pass a `Map` of data-URL overrides for the PDF export, or `'direct'` to use
  *   `ev.associationLogoUrl` directly (suitable for the iframe preview, same origin).
@@ -329,20 +360,13 @@ function buildCalendarHtml(
             .filter((s): s is string => !!s);
 
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
-          const smallSize = Math.max(Math.round(slotH * 0.34), 12);
           // Watermark stays absolute - decorative only, doesn't affect flow.
-          // Co-owned events show a row of every association's logo (colors already split the bg).
           const watermark =
             logoSrcs.length === 0
               ? ''
               : logoSrcs.length === 1
                 ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
-                : `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:3px;opacity:0.22;pointer-events:none;">${logoSrcs
-                    .map(
-                      (s) =>
-                        `<img src="${s}" style="height:${smallSize}px;width:${smallSize}px;border-radius:50%;object-fit:cover;" />`
-                    )
-                    .join('')}</div>`;
+                : splitLogoWatermark(logoSrcs, logoSize);
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
 
