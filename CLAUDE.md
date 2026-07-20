@@ -66,6 +66,8 @@ All shipped work below is verified (on-device checks done per user). Only durabl
 
 * **Reaction push preview (2ed79d59):** `addReaction` now decodes the target message's envelope via `getPreviewText(parseEnvelope(...))` before sending it as the notification body, instead of leaking raw envelope JSON.
 
+* **Stale-PIN recovery regex (eecbfa9c):** Recovery-detection regexes in `sessionAuth.ts`/`ChatBackgroundService.svelte` must match the ACTUAL thrown error text ("Incorrect PIN: ...", "...changed on another device"), not a guessed/reversed phrasing - a silently-never-matching regex is easy to ship unnoticed since the surrounding code still runs without erroring.
+
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
 #### OPEN BACKLOG (reported 2026-07-20, triaged by severity x speed)
@@ -74,7 +76,6 @@ Normalization-sweep gotcha: accent-grep MISSES French comments written without a
 * \[ \] **Mobile: cannot enter a community channel after being added, until the app is relaunched.** Freshly-added membership isn't usable in-session on mobile (channel open fails); works after restart. Likely the community/channel analogue of the MLS group-discovery/recovery seam (see MLS group recovery gotcha above) - channel not hydrated until the next `discoverMissingGroups`/relaunch. Investigate channel join hydration path on mobile.
 * \[ \] **System-message notifications show `Message de XXX`** when someone changes the group photo or a member is added - the system/control message isn't decoded into human text. Map system message kinds (photo changed, member added/removed, etc.) to localized notif strings.
 * \[ \] **User search cannot find yourself:** self is excluded from user-search results (e.g. adding yourself to an association). Allow self to appear/be selectable in the relevant search zones.
-* \[ \] **Biometric stale-PIN detection never fires:** `biometricLoginImpl` tests the login error against `/PIN incorrect/i`, but `loginImpl` actually throws `"Incorrect PIN"` (reversed word order) - the regex never matches, so a stale PIN behind biometric unlock is never detected/cleared and the user gets a silent/confusing failure instead of a re-enrollment prompt. Fix the regex (or match on an error code instead of a string) so stale-PIN recovery actually triggers.
 
 **P2 - UI correctness / polish:**
 * \[ \] **Share link uses `tauri.localhost`** instead of `canari-emse.fr` when sharing a group link from the app. Use the canonical public origin for share URLs, not the Tauri webview origin.
