@@ -1720,6 +1720,7 @@
   "calendar_error_choose_asso": "Choisissez une association.",
   "calendar_error_title_required": "Titre et date de début requis.",
   "calendar_export_back": "Retour à l'agenda",
+  "calendar_export_more_events": "+{count} autre(s)",
   "calendar_export_month_label": "Mois",
   "calendar_export_theme_label": "Thème",
   "calendar_theme_rentree": "Rentrée",

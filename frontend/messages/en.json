@@ -1705,6 +1705,7 @@
   "calendar_error_choose_asso": "Choose an association.",
   "calendar_error_title_required": "Title and start date are required.",
   "calendar_export_back": "Back to calendar",
+  "calendar_export_more_events": "+{count} more",
   "calendar_export_month_label": "Month",
   "calendar_export_theme_label": "Theme",
   "calendar_theme_rentree": "Back to school",

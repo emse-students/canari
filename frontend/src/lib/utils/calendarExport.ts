@@ -1,10 +1,24 @@
 import { contrastColor, toHex } from './color';
 import { generateAvatarColor } from './avatar';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
+import { getLocale } from '$lib/paraglide/runtime';
+import { m } from '$lib/paraglide/messages';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
-const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-const WEEKDAYS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+/**
+ * Localized Monday-first weekday names for the active UI locale via Intl (no hardcoded strings).
+ * `style` picks abbreviated ('short', e.g. "Lun"/"Mon") or full ('long', e.g. "Lundi"/"Monday");
+ * the first letter is upper-cased and any trailing abbreviation dot is dropped for a clean header.
+ */
+function localizedWeekdays(locale: string, style: 'short' | 'long'): string[] {
+  const fmt = new Intl.DateTimeFormat(locale, { weekday: style });
+  // 2024-01-01 is a Monday; walk the 7 following days for a Monday-first week.
+  return Array.from({ length: 7 }, (_, i) => {
+    const name = fmt.format(new Date(2024, 0, 1 + i)).replace(/\.$/, '');
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  });
+}
+
 // Header height. Kept generous so the month title (Fredoka, tall round ascenders) sits low enough in
 // its line box to clear the top page edge - a tighter header clipped the glyph tops on export.
 const HEADER_H = 88;
@@ -274,7 +288,8 @@ function buildCalendarHtml(
   logoMap: Map<string, string | null> | 'direct',
   faviconUrl: string | null
 ): string {
-  const monthLabel = new Intl.DateTimeFormat('fr-FR', { month: 'long' })
+  const locale = getLocale();
+  const monthLabel = new Intl.DateTimeFormat(locale, { month: 'long' })
     .format(new Date(year, month, 1))
     .replace(/^\w/, (c) => c.toUpperCase());
 
@@ -292,7 +307,7 @@ function buildCalendarHtml(
     ? `text-shadow:${opts.textShadowOffset}px ${opts.textShadowOffset}px 0 ${opts.textShadowColor};`
     : '';
   const labelShadow = blockShadow;
-  const weekdayNames = opts.weekdayFullNames ? WEEKDAYS_FULL : WEEKDAYS;
+  const weekdayNames = localizedWeekdays(locale, opts.weekdayFullNames ? 'long' : 'short');
   // Full names are wider, so tighten letter-spacing and drop the font a touch to keep them on one line.
   const weekdayFontSize = opts.weekdayFullNames ? 11 : 12;
   const weekdayLetterSpacing = opts.weekdayFullNames ? '.02em' : '.09em';
@@ -393,7 +408,7 @@ function buildCalendarHtml(
         ...(overflowCount > 0
           ? (() => {
               return [
-                `<div style="height:${slotH}px;background:${opts.pageBg};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:9px;font-weight:800;color:#607188;${blockShadow}">+${overflowCount} autre${overflowCount > 1 ? 's' : ''}</span></div>`,
+                `<div style="height:${slotH}px;background:${opts.pageBg};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:9px;font-weight:800;color:#607188;${blockShadow}">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
               ];
             })()
           : []),
