@@ -231,7 +231,7 @@ jobs:
           ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
