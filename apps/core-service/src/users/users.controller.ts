@@ -36,7 +36,6 @@ export class UsersController {
   @UseGuards(NginxAuthGuard)
   @Get('search')
   search(@Query('q') query: string, @Headers('x-user-id') currentUserId: string) {
-    // Exclude the authenticated caller (nginx-injected identity) from results.
     return this.usersService.search(query, currentUserId);
   }
 

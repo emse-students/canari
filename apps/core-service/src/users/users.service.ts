@@ -197,9 +197,13 @@ export class UsersService implements OnModuleInit {
   /**
    * Search users by displayName - case-insensitive, accent-insensitive, word-order-insensitive,
    * and typo-tolerant (trigram fuzzy matching). Results are ordered by closeness to the query.
-   * Returns up to 10 results, excluding the current user if specified.
+   * Returns up to 10 results. The caller (requesterId) is included in results - callers that
+   * must not target themselves (e.g. starting a DM) enforce that as a separate business rule.
    */
-  async search(query: string, excludeUserId?: string): Promise<Pick<User, 'id' | 'displayName'>[]> {
+  async search(
+    query: string,
+    requesterId?: string
+  ): Promise<Pick<User, 'id' | 'displayName'>[]> {
     // `query` is typed `string`, but Express query parsing can yield an array or
     // object at runtime (e.g. `?q=a&q=b` -> string[], `?q[x]=1` -> object). Re-check
     // the runtime type before any string operation to prevent parameter-tampering
@@ -216,22 +220,19 @@ export class UsersService implements OnModuleInit {
     const applied = applyFuzzyNameSearch(qb, query);
     if (!applied) return [];
 
-    if (excludeUserId) {
-      qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
-    }
-
-    await this.applyServiceAccountVisibility(qb, excludeUserId);
+    await this.applyServiceAccountVisibility(qb, requesterId);
 
     return qb.take(10).getMany();
   }
 
   /**
    * Paginated directory search with optional promo, formation and association filters.
-   * Requires at least one filter or a name query of ≥ 2 characters.
+   * Requires at least one filter or a name query of ≥ 2 characters. Includes the caller
+   * (requesterId) in results - the directory is a browsing view, not a target picker.
    */
   async directory(
     query: DirectoryQueryDto,
-    excludeUserId?: string
+    requesterId?: string
   ): Promise<{ users: DirectoryUserRow[]; total: number }> {
     const limit = Math.min(query.limit ?? 20, 50);
     const offset = query.offset ?? 0;
@@ -279,11 +280,7 @@ export class UsersService implements OnModuleInit {
       qb.andWhere('user.id IN (:...memberUserIds)', { memberUserIds });
     }
 
-    if (excludeUserId) {
-      qb.andWhere('user.id != :excludeId', { excludeId: excludeUserId });
-    }
-
-    await this.applyServiceAccountVisibility(qb, excludeUserId);
+    await this.applyServiceAccountVisibility(qb, requesterId);
 
     // With a name query, applyFuzzyNameSearch already ordered by relevance; otherwise sort by name.
     if (!hasNameQuery) {
