@@ -58,45 +58,40 @@ Deep-dive design docs referenced inline. Legend: \[x\] done+pushed, \[ \] todo, 
 
 ---
 
-### CROSS-PROJECT: Quality & Security cleanup (started 2026-07-14)
-
-Dependabot auto-merge live on all 4 repos ([[reference_dependabot_automerge]]): green PRs self-merge, no involvement. Each repo = its own commits on main; full local CI gate before push. Node -> 24 and CodeQL cleanup DONE everywhere.
-
-**Open items:**
-* **Canari TS 6->7 majors (#168/#163/#162): DEFERRED until TS 7.1.** Breaking compiler jump fails `Test TS Backend`; ecosystem not ready. Hold the PRs (do not merge); TS stays `~6.0.3`. Revisit when 7.1 ships.
-* **Watch (majors that may fail CI):** prettier-plugin-svelte 3->4 (Canari #143, MiGallery #260), lint-staged 16->17 (MiGallery #261), jsdom 28->29 (Sky #55), grouped bundles (MiGallery #265/#266, Sky #61).
-
----
-
 ### CANARI
 
 All shipped work below is verified (on-device checks done per user). Only durable, forward-relevant gotchas kept; full implementation lives in git.
 
-* **Security invariants (audit 2026-07, tracker `docs/wiki/security-audit-2026-07.md`):** nginx `auth_request` never blocks -> every client-exposed route needs its OWN guard/ownership check; `dm_group_members` is trusted by every MLS gate (never client-writable); public nginx locations must strip the FULL trust-header set `X-User-Id`/`X-User-Logged-In`/`X-Global-Admin`/`X-Internal-Token` PER-location (server-level resets are NOT inherited once a location sets any `proxy_set_header`). Reusable authz helpers: `assertCallerOwnsUserId`/`assertCallerMayMutateMembership`/`assertCallerIsGroupMember` (chat-delivery), `assertInternalSecret` (social + media). Accepted non-fixes: S9 (`canari_ws_token` JS-readable, needed for WS), S10 (`documentVaultKey` server-side plaintext, HKDF-sound).
+* **PIN unlock persistence (12e608d):** `pinVault.ts` picks its storage area at call time via `vaultStore()` keyed on the `canari_pin_persist` localStorage flag - default `sessionStorage` (wiped on browser close), opt-in `localStorage` ("stay signed in"). `setPinPersistence(enabled, pin)` wipes BOTH stores then re-saves, so no stale PIN copy survives a mode switch; `clearPin`/`clearPinAndKey` clear both stores. The PIN-modal checkbox sets the flag (pin=null) BEFORE login so loginImpl's fire-and-forget `savePin` lands in the right store; the Settings toggle migrates the live session (pin=session.pin). Biometric toggle in `SettingsSecuritySection` reuses `session.enrollBiometric()` / new `session.disableBiometric()` (removes keystore secret + re-saves PIN to vault). Enrolment is optimistic (alpha plugin resolves before the OS prompt) - re-check `isConfigured()` after enable.
 
-* **MLS group recovery (a2d62a85, 7dd116c3):** `runUnderMlsLock` is NON-reentrant - any recovery seam (externalJoin/republishKeyMaterial re-acquires the lock) MUST run OUTSIDE it (hoist via a returned `DeferredRecovery`). Welcome-failure recovery is externalJoin-first (self-rejoin via GroupInfo), welcome_request fallback, driven immediately on failure #1. Group name+photo re-seed from `getUserGroups` on every discovery (`actions.ts::discoverMissingGroups`) - durable fallback for missed one-shot `groupRenamed`/`groupImageChanged` broadcasts. History-bundle readBy/readAt/reactions merged onto existing msgs via a dedicated merge pass (not the add-path). Prod DB: `ssh canari` -> `docker exec infrastructure-postgres-1 psql -U canari -d auth_db` (single db; tables `dm_groups`/`dm_group_members`/`dm_device_group_memberships`/`mls_group_info`); `ssh` works from the PowerShell tool ONLY.
-
-* \[ \] **iOS native channel push (OPEN - needs Mac/CI, Léon owns).** FFI bridge mirrors the Android JNI surface incl. channel background decrypt (`canari_native_decrypt_channel_message`, `canari_push.mm` routes `type=channel`/`channel_read`). CANNOT compile on the Windows host (`cfg(target_os=ios/android)`); needs a Mac/CI build + on-device channel push test. iOS release workflow stays disabled until finalized.
-
-* **Carte de la Vie Asso (design doc `docs/wiki/carte-vie-asso.md`):** editable poster generator; access `GlobalAdminOrBdeSuperAdminGuard`; project = opaque persisted JSON `layout` blob (content re-resolved from live data at render). GOTCHAS: prod applies `.sql` migrations manually; `{@const}` must be an immediate child of a block; PDF export is the shared searchable-raster path (`lib/pdf/searchableRaster.ts` + `appFonts.ts`: static TTF Nunito/Fredoka - jsPDF can't use woff2 *variable* families).
-
-* **Document reviewer sharing (1f80e469):** reviewer/grant controller routes MUST be declared BEFORE `:id` routes (else `reviewer/documents` is shadowed by `:id/documents`). PUBLIC docs only: server derives per-doc CEK via `hkdfSync(vaultKey, salt=cekSalt, info="doc-vault")` - raw vault key never exposed; password-protected docs can't be public. Migrations `019`/`020`.
-
-* **Verification service account:** hidden from non-admins via `SERVICE_ACCOUNT_USER_ID` env (wired into core-service + social-service in all 3 compose files + `cd.yml`/`cd-dev.yml` upserts; default in `infrastructure/.env.example`). Admin gate = `user.admin` (global). Empty env = no-op.
-
-* **Cotisation tag:** all render sites go through shared `formatCotisationTag()` (`lib/associations/cotisationTag.ts`) + `CotisationTagRow.svelte` - keep new ones consistent.
-
-* **Minesweeper leaderboard:** keep `apps/social-service/src/minesweeper/engine/game.ts` synced 1:1 with `frontend/src/lib/minesweeper/game.ts` (dual engine). Access = easter egg: `/settings`, tap the device-id footer 5x.
-
-* **Agenda PDF export (`calendarExport.ts`):** searchable-raster PDF (shared with carte); themes in `calendarThemes.ts`. Weekday + month names are Intl-driven from the runtime locale (i18n, no hardcoded FR); event fill is translucent (`EVENT_BG_OPACITY`); co-owned events use `splitLogoWatermark` (one circle split into per-owner vertical bands); `HEADER_H` sized so the Fredoka month title clears the top edge. Breaks = `kind:'break'` full-day band. Pure helpers unit-tested in `calendarExport.test.ts`.
+* **Reaction push preview (2ed79d59):** `addReaction` now decodes the target message's envelope via `getPreviewText(parseEnvelope(...))` before sending it as the notification body, instead of leaking raw envelope JSON.
 
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres", "chiffre a une epoch perimee") - use both accent-grep AND French-token grep.
 
+#### OPEN BACKLOG (reported 2026-07-20, triaged by severity x speed)
+
+**P1 - broken functionality:**
+* \[ \] **Mobile: cannot enter a community channel after being added, until the app is relaunched.** Freshly-added membership isn't usable in-session on mobile (channel open fails); works after restart. Likely the community/channel analogue of the MLS group-discovery/recovery seam (see MLS group recovery gotcha above) - channel not hydrated until the next `discoverMissingGroups`/relaunch. Investigate channel join hydration path on mobile.
+* \[ \] **System-message notifications show `Message de XXX`** when someone changes the group photo or a member is added - the system/control message isn't decoded into human text. Map system message kinds (photo changed, member added/removed, etc.) to localized notif strings.
+* \[ \] **User search cannot find yourself:** self is excluded from user-search results (e.g. adding yourself to an association). Allow self to appear/be selectable in the relevant search zones.
+* \[ \] **Biometric stale-PIN detection never fires:** `biometricLoginImpl` tests the login error against `/PIN incorrect/i`, but `loginImpl` actually throws `"Incorrect PIN"` (reversed word order) - the regex never matches, so a stale PIN behind biometric unlock is never detected/cleared and the user gets a silent/confusing failure instead of a re-enrollment prompt. Fix the regex (or match on an error code instead of a string) so stale-PIN recovery actually triggers.
+
+**P2 - UI correctness / polish:**
+* \[ \] **Share link uses `tauri.localhost`** instead of `canari-emse.fr` when sharing a group link from the app. Use the canonical public origin for share URLs, not the Tauri webview origin.
+* \[ \] **Community profile picture:** (1) re-enable changing a Community's avatar via the UI (seems to have existed before, now missing); (2) remove per-salon/channel avatars entirely (no placeholder either - show just the channel name). Also fix a large left padding/margin before the text in the "Nom du Canal" input in "Parametres du canal" (and likely other similar inputs) - reduce to normal.
+* \[ \] **Klipy GIFs pollute the "Liens" tab** (Medias, liens & fichiers) - don't surface Klipy GIFs in any dedicated category. Plus z-index bug: the GIF picker's blur veil doesn't cover the whole interface like "Parametres du canal" does. Plus the "show members" toggle appears to do nothing (members are shown permanently on desktop at least) - fix or reconcile the toggle.
+* \[ \] **Message input placeholder overflows on narrow/mobile screens:** "Ecrivez un message" gets clipped. (1) add ellipsis (`...`) so it truncates cleanly, and (2) shorten the copy to "Ecrire" (keep EN short too). i18n both locales.
+* \[ \] **Push notification bodies are hardcoded English server-side** (`messaging.controller.ts`: `'New reaction'` / `reacted with ... to ...`), with no per-user locale on the push path - discuss whether to thread the recipient's locale into `sendPushToUser` and localize via Paraglide server-side, or accept English-only pushes as a product decision.
+
+**P3 - feature:**
+* \[ \] **Reorder communities** via drag-and-drop (user-defined display order, persisted).
+
 ---
 
-### SKY (../Sky) - COMPLETE (HEAD 174a8bd)
+### SKY (../Sky) - COMPLETE (HEAD 77f69d0)
 
 Nothing open. Conventions in memory: [[project_sky_conventions]], accents [[feedback_sky_french_accents]] (vitest include = `src/**` only -> co-locate tests in src/). Future nice-to-have: promo color legend.
+Gotcha (77f69d0): create+link is ATOMIC via `createPlaceholderAndLink` (transaction: any RelationError rolls back the placeholder -> no orphan). Never insert a placeholder then validate the link separately. Merge identity conflicts (nom/prenom/promo differ) resolved via `MergeResolveModal` + pure `mergeIdentity.ts` helper (shared UI+endpoint); `mergePeople(remove, keep, survivorIdentity?)` applies the chosen values; bulk merge-all stays survivor-wins.
 
 ---
 
