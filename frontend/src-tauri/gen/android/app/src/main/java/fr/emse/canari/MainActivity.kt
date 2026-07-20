@@ -1,5 +1,6 @@
 package fr.emse.canari
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -58,6 +59,12 @@ class MainActivity : TauriActivity() {
         // Transparent background lets the Activity windowBackground show through while
         // SvelteKit hydrates, eliminating the ~1s black flash on startup.
         webView.setBackgroundColor(Color.TRANSPARENT)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Keep getIntent()/deep-link getCurrent() aligned with the notification tap intent.
+        setIntent(intent)
     }
 
     override fun onResume() {

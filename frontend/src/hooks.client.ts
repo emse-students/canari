@@ -244,8 +244,12 @@ if (isTauriRuntime()) {
           })
           .catch(() => {});
 
-      // Handles deep link that cold-started the app (fired before listener could register)
+      // Handles deep link that cold-started the app (fired before listener could register).
+      // Retry a few times: on Android the intent can land after the WebView boots.
       void checkCurrentUrl();
+      for (const delayMs of [250, 750, 2000]) {
+        setTimeout(() => void checkCurrentUrl(), delayMs);
+      }
 
       // Re-check on foreground resume: covers cases where onOpenUrl does not fire
       // when the app was backgrounded and the user taps a notification.
