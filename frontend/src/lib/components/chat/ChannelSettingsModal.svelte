@@ -137,8 +137,9 @@
     shareCopied = false;
     try {
       const { channelService } = await import('$lib/services/ChannelService');
+      const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
       const { token } = await channelService.createWorkspaceInvite(wsId);
-      shareLink = `${window.location.origin}/c/join/${token}`;
+      shareLink = publicAppUrl(`/c/join/${token}`);
       try {
         await navigator.clipboard.writeText(shareLink);
         shareCopied = true;

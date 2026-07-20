@@ -143,8 +143,9 @@
     shareCopied = false;
     try {
       const { createGroupInvite } = await import('$lib/mls/groupInvites');
+      const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
       const { token } = await createGroupInvite(groupId);
-      shareLink = `${window.location.origin}/g/join/${token}`;
+      shareLink = publicAppUrl(`/g/join/${token}`);
       try {
         await navigator.clipboard.writeText(shareLink);
         shareCopied = true;
