@@ -17,7 +17,7 @@
     "@nestjs/microservices": "^11.1.19",
     "@nestjs/platform-express": "^11.1.19",
     "@nestjs/throttler": "^6.5.0",
-    "@nestjs/typeorm": "^11.0.1",
+    "@nestjs/typeorm": "^11.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "firebase-admin": "^14.2.0",
