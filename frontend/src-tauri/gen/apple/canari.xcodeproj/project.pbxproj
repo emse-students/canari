@@ -17,6 +17,7 @@
 		BD49C865300FADEB000960D5 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD49C862300FADEB000960D5 /* NotificationService.swift */; };
 		BD49C866300FAFB7000960D5 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
 		BD49C867300FAFC5000960D5 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
+		BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */; };
 		BD49C869300FAFFF000960D5 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BD49C868300FAFFF000960D5 /* libapp.a */; };
 		BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */; };
 		BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE02300EA4C0003EBA05 /* FirebaseCore */; };
@@ -86,6 +87,7 @@
 		C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_rust_bridge.h; sourceTree = "<group>"; };
 		D20A7859E615805B7DF8C401 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		D4E5F6012345678ABCDEF01 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
+		D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundTasks.framework; path = System/Library/Frameworks/BackgroundTasks.framework; sourceTree = SDKROOT; };
 		E5F6012345678ABCDEF011 /* canari_push.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_push.h; sourceTree = "<group>"; };
 		F6012345678ABCDEF0123 /* canari_push.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_push.mm; sourceTree = "<group>"; };
 		FC45C8DC231D096C520FA226 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -105,6 +107,7 @@
 				BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */,
 				BDCC40B92FED454500576E30 /* Security.framework in Frameworks */,
 				C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */,
+				BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */,
 				BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
 			);
@@ -136,6 +139,7 @@
 				4EC59A47AE2868D888412A67 /* UIKit.framework */,
 				43EC3C6D309DFBDAB0387C31 /* WebKit.framework */,
 				D4E5F6012345678ABCDEF01 /* UserNotifications.framework */,
+				D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
