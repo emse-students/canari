@@ -116,8 +116,8 @@ CONTEXT: some assos have >1 cotisant type (Le Cercle: forfait alcool XOR sans-al
 #### OPEN BACKLOG (reported 2026-07-20, triaged by severity x speed)
 
 **P1 - broken functionality:**
-* \[ \] **Mobile: cannot enter a community channel after being added, until the app is relaunched.** Freshly-added membership isn't usable in-session on mobile (channel open fails); works after restart. Likely the community/channel analogue of the MLS group-discovery/recovery seam (see MLS group recovery gotcha above) - channel not hydrated until the next `discoverMissingGroups`/relaunch. Investigate channel join hydration path on mobile.
-* \[ \] **System-message notifications show `Message de XXX`** when someone changes the group photo or a member is added - the system/control message isn't decoded into human text. Map system message kinds (photo changed, member added/removed, etc.) to localized notif strings.
+* \[x\] **Channel unusable until relaunch after in-session join (code fix, awaits device verify):** ROOT CAUSE = the real-time `channel.member.joined` handler (`ChatBackgroundService.svelte`) registered the channel in `conversations` but never hydrated its epoch key (the join event carries no key material - it's broadcast), so every open/decrypt failed until relaunch ran the full `loadChannelWorkspacesFromBackend` hydration. FIX = new `hydrateJoinedChannelKey(channelId)` on `useChannelWorkspaces` (fetches the bootstrap via `hydrateChannelBootstrap` -> ChannelKeyVault), fired from the join handler. [device] confirm a freshly-added channel opens + decrypts without restart.
+* \[x\] **System-message notifs (`Message de XXX`) - ALREADY FIXED (0a985983 "fix notifications"), verified this session.** The native background path is complete: Rust `format_system_event_text` (proto_fields.rs) maps every VISIBLE event the frontend emits (groupRenamed/groupImageChanged/memberAdded/memberRemoved/memberLeft/groupDeleted) to French text; every CONTROL event (read_receipt/delete_message/edit_message/remove_reaction/pin/unpin/history_bundle/channel_key_distribution) returns None. Contract holds because control events are sent `silent=true` (outbox flusher, `outbox.test.ts:228`) so they never notify, and visible events are sent non-silent -> decode -> Kotlin renders the text (fallback "Nouveau message de X" only on true decrypt failure). No event hits the ugly `_ =>` catch-all.
 **P2 - UI correctness / polish:**
 * \[ \] **Remove per-salon/channel avatars entirely** (no placeholder either - show just the channel name). Community-level avatar editing was checked and already works fine (`SidebarCommunityAdminModal`, permission-gated) - that half of the old bullet is done. Channel avatars are still fully implemented (image/placeholder via `GroupAvatar`, editable in `ChannelSettingsModal.svelte:442-465`) and need to be stripped out.
 * \[ \] **"Show members" toggle does nothing on desktop** in the channel header. Root cause found: `MainChatPage.svelte` gates the mobile drawer (`xl:hidden`) on `isChannelMembersDrawerOpen`, but the persistent desktop sidebar (`ChannelMembersSidebar.svelte:66-68`, `xl:flex`) renders unconditionally from a CSS breakpoint alone - so on `xl`+ viewports the toggle button is shown but wired to a state nothing visible consumes. Needs a product decision: hide the toggle button on desktop widths, or make the desktop sidebar collapsible via the same state.
@@ -128,22 +128,21 @@ CONTEXT: some assos have >1 cotisant type (Le Cercle: forfait alcool XOR sans-al
 
 ---
 
-### SKY (../Sky) - COMPLETE (HEAD 77f69d0)
+### SKY (../Sky) - COMPLETE
 
-Nothing open. Conventions in memory: [[project_sky_conventions]], accents [[feedback_sky_french_accents]] (vitest include = `src/**` only -> co-locate tests in src/). Future nice-to-have: promo color legend.
-Gotcha (77f69d0): create+link is ATOMIC via `createPlaceholderAndLink` (transaction: any RelationError rolls back the placeholder -> no orphan). Never insert a placeholder then validate the link separately. Merge identity conflicts (nom/prenom/promo differ) resolved via `MergeResolveModal` + pure `mergeIdentity.ts` helper (shared UI+endpoint); `mergePeople(remove, keep, survivorIdentity?)` applies the chosen values; bulk merge-all stays survivor-wins.
-
----
-
-### MIGALLERY (../MiGallery) - COMPLETE (HEAD 882d6d1)
-
-Normalization (wiki + i18n + tolerant search) and cleanup done ([[project_migallery_normalization]]). Residual (minor, opportunistic): stray French code comments in src - fold into touched files, no dedicated pass.
+Nothing open.
 
 ---
 
-### PORTAIL-ETU (../refonte-portail-etu) - Vitrine SPA - COMPLETE
+### MIGALLERY (../MiGallery) - COMPLETE
 
-Vitrine SPA (SvelteKit 5 + Tailwind 3.4 + svelte-adapter-bun, `ssr = false`: deploy host can't reach canari-emse.fr / hairpin NAT). Reads Canari public API `/api/public/*` from the browser. Redesign v2, avatar proxy, i18n, MD bios, CI integrity, N7 CD-via-Secrets (verified live 2026-07-15) all DONE ([[project_portail_vitrine_migration]]). Nothing open.
+Nothing open.
+
+---
+
+### PORTAIL-ETU (../refonte-portail-etu) - COMPLETE
+
+Nothing open.
 
 ---
 

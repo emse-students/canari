@@ -241,6 +241,31 @@ export function useChannelWorkspaces() {
     return created;
   }
 
+  /**
+   * Hydrates the encryption key for a channel the user was just added to in-session.
+   *
+   * The real-time `channel.member.joined` event carries no key material (it is broadcast, so the
+   * joiner's key bootstrap must never travel on it). Without this, a freshly-joined channel is
+   * registered in `conversations` but has no vault key: opening it fails to decrypt every message
+   * until a relaunch runs the full `loadChannelWorkspacesFromBackend` hydration. This fetches the
+   * channel's current epoch bootstrap and imports it into the ChannelKeyVault so the channel is
+   * usable immediately, without waiting for an app restart. Fire-and-forget; safe to call again.
+   */
+  async function hydrateJoinedChannelKey(channelId: string): Promise<void> {
+    if (!channelId) return;
+    try {
+      const hydrated = await hydrateChannelBootstrap(channelId);
+      console.log(
+        `[CHANNEL-KEY] Hydrated key v${hydrated.keyVersion} for freshly-joined channel ${channelId}`
+      );
+    } catch (e) {
+      console.error(
+        `[CHANNEL-KEY] Failed to hydrate key for freshly-joined channel ${channelId}:`,
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  }
+
   // ---------- API operations ----------
 
   /** Fetches all workspaces and their channels from the backend, hydrates channel encryption keys, and prunes stale local channel entries. */
@@ -727,6 +752,8 @@ export function useChannelWorkspaces() {
     removeChannelFromWorkspaces,
     /** Returns or creates a sidebar workspace entry for an incoming real-time channel event. */
     ensureWorkspaceForChannelEvent,
+    /** Loads the encryption key for a channel the user was just added to in-session (no relaunch needed). */
+    hydrateJoinedChannelKey,
     /** Fetches all workspaces and channels from the backend and prunes stale local entries. */
     loadChannelWorkspacesFromBackend,
     /** Creates a new community (workspace) and logs the outcome. */

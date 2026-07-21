@@ -444,6 +444,10 @@
             mlsStateHex: null,
           });
         }
+        // The join event carries no key material, so hydrate the channel's epoch key now.
+        // Without this the channel is registered but undecryptable until an app relaunch runs
+        // the full workspace hydration (fixes: freshly-added channel unusable in-session on mobile).
+        void globalChannels.hydrateJoinedChannelKey(event.channelId);
         appendLog(`Joined channel #${event.channelName || event.channelId}`);
       },
       onChannelMemberKicked: (event: any) => {
