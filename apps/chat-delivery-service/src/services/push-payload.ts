@@ -117,3 +117,60 @@ export function buildApnsRequest(
     priority: 10,
   };
 }
+
+/**
+ * Builds the APNs request for a non-MLS internal push (community channel messages,
+ * social posts, form reminders and their silent read-receipt frames), sent through
+ * {@link https | sendPushToUser}.
+ *
+ * Without an `apns` block FCM delivers these as a data-only message, which iOS does
+ * NOT surface in the background and which never triggers the Notification Service
+ * Extension. Visible pushes therefore get `mutable-content: 1` (so the NSE runs and
+ * can decrypt an encrypted channel message) plus a fallback alert; silent control
+ * frames (`type: 'channel_read'`, or an explicit `silent: 'true'`) get
+ * `content-available: 1` so they wake the client without showing a banner.
+ *
+ * The custom `data` fields are spread into the payload because FCM does not merge the
+ * top-level data map into the APNs payload - the NSE reads channelId / ciphertext /
+ * nonce / keyVersion from here (same self-contained approach as {@link buildApnsRequest}).
+ *
+ * @param title  Fallback alert title (channel or asso name).
+ * @param body   Fallback alert body; a generic string is used when empty.
+ * @param data   Flat string data map sent to the client (already includes type, ids, ...).
+ */
+export function buildInternalApnsRequest(
+  title: string,
+  body: string,
+  data: Record<string, string>
+): ApnsRequest {
+  const isSilent = data.type === 'channel_read' || data.silent === 'true';
+  if (isSilent) {
+    return {
+      payload: { aps: { 'content-available': 1 }, ...data },
+      pushType: 'background',
+      priority: 5,
+    };
+  }
+
+  // Per-conversation grouping: channel messages stack under their channel thread; other
+  // pushes fall back to a coarse per-kind thread.
+  const threadId = data.channelId
+    ? `channel_${data.channelId}`
+    : data.type === 'form_reminder'
+      ? 'canari_forms'
+      : 'canari_social';
+
+  return {
+    payload: {
+      aps: {
+        'mutable-content': 1,
+        alert: { title: title || 'Canari', body: body || APNS_FALLBACK_BODY },
+        sound: 'default',
+        'thread-id': threadId,
+      },
+      ...data,
+    },
+    pushType: 'alert',
+    priority: 10,
+  };
+}

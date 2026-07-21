@@ -74,12 +74,18 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
   CanariPushCancelMessageNotifications();
+  // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
+  // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
+  CanariMirrorPushStateToAppGroup();
   NSLog(@"[CanariIOS] didBecomeActive");
 }
 
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   canari_ios_on_pause();
+  // Snapshot the latest decrypt state into the App Group container before suspending, so a push
+  // arriving while backgrounded is decrypted by the NSE against fresh state.
+  CanariMirrorPushStateToAppGroup();
   // Queue a background-processing window now that the app is leaving the foreground, so the OS
   // can drain mls_pending.db while suspended (best-effort; never runs for a force-quit app).
   CanariScheduleBackgroundCleanupTask();

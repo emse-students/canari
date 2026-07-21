@@ -21,7 +21,12 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
-import { buildPushDataFields, buildApnsRequest, PushMessageInput } from './push-payload';
+import {
+  buildPushDataFields,
+  buildApnsRequest,
+  buildInternalApnsRequest,
+  PushMessageInput,
+} from './push-payload';
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
@@ -1883,6 +1888,11 @@ export class MessagingService {
       return { sent: 0, failed: 0 };
     }
 
+    // iOS needs an explicit apns block: a data-only push never surfaces in the background
+    // and never triggers the Notification Service Extension. FCM applies this block only to
+    // iOS tokens (Android keeps consuming the data map below).
+    const apnsRequest = buildInternalApnsRequest(title, body, data);
+
     let sent = 0;
     let failed = 0;
     for (const pt of pushTokens) {
@@ -1893,6 +1903,13 @@ export class MessagingService {
           token: pt.token,
           data: { ...data, title, body },
           android: { priority: 'high' },
+          apns: {
+            payload: apnsRequest.payload,
+            headers: {
+              'apns-push-type': apnsRequest.pushType,
+              'apns-priority': String(apnsRequest.priority),
+            },
+          },
         });
         sent++;
         this.logger.log(`[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId}`);

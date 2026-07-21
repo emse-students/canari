@@ -1,6 +1,11 @@
 /// <reference types="jest" />
 
-import { buildPushDataFields, buildApnsRequest, PushMessageInput } from './push-payload';
+import {
+  buildPushDataFields,
+  buildApnsRequest,
+  buildInternalApnsRequest,
+  PushMessageInput,
+} from './push-payload';
 
 const baseInput: PushMessageInput = {
   groupId: 'group-1',
@@ -94,5 +99,62 @@ describe('buildApnsRequest', () => {
     const aps = req.payload.aps as Record<string, unknown>;
     expect(aps['content-available']).toBe(1);
     expect(aps.alert).toBeUndefined();
+  });
+});
+
+describe('buildInternalApnsRequest', () => {
+  it('builds a mutable-content alert for an encrypted channel message', () => {
+    const data = {
+      type: 'channel',
+      channelId: 'chan-42',
+      channelName: 'general',
+      keyVersion: '3',
+      ciphertext: 'Q0lQSA==',
+      nonce: 'Tk9OQ0U=',
+      senderId: 'user-sender',
+    };
+    const req = buildInternalApnsRequest('general', '', data);
+
+    expect(req.pushType).toBe('alert');
+    expect(req.priority).toBe(10);
+    const aps = req.payload.aps as Record<string, unknown>;
+    expect(aps['mutable-content']).toBe(1);
+    // Per-conversation grouping keyed on the channel.
+    expect(aps['thread-id']).toBe('channel_chan-42');
+    expect((aps.alert as { title: string; body: string }).body).toBe('Nouveau message');
+    // The NSE reads the ciphertext from the payload (FCM does not merge the data map in).
+    expect(req.payload.ciphertext).toBe('Q0lQSA==');
+    expect(req.payload.nonce).toBe('Tk9OQ0U=');
+  });
+
+  it('builds a silent background push for a channel_read receipt', () => {
+    const req = buildInternalApnsRequest('general', '', {
+      type: 'channel_read',
+      channelId: 'chan-42',
+    });
+
+    expect(req.pushType).toBe('background');
+    expect(req.priority).toBe(5);
+    const aps = req.payload.aps as Record<string, unknown>;
+    expect(aps['content-available']).toBe(1);
+    expect(aps.alert).toBeUndefined();
+    expect(aps['mutable-content']).toBeUndefined();
+  });
+
+  it('honours an explicit silent flag', () => {
+    const req = buildInternalApnsRequest('Canari', 'x', { type: 'social', silent: 'true' });
+    expect(req.pushType).toBe('background');
+    expect((req.payload.aps as Record<string, unknown>)['content-available']).toBe(1);
+  });
+
+  it('uses a per-kind thread and preserves the given body for social / form pushes', () => {
+    const social = buildInternalApnsRequest('BDE', 'Nouveau post', { type: 'social' });
+    expect((social.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_social');
+    expect(
+      ((social.payload.aps as Record<string, unknown>).alert as { body: string }).body
+    ).toBe('Nouveau post');
+
+    const form = buildInternalApnsRequest('Sondage', '', { type: 'form_reminder' });
+    expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
   });
 });

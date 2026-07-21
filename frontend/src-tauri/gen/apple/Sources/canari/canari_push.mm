@@ -181,6 +181,49 @@ static NSData *_Nullable CanariLoadMlsState(void) {
   return [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:kMlsBinFileName]];
 }
 
+static NSString *const kAppGroupId = @"group.fr.emse.canari";
+static NSString *const kChannelKeysFileName = @"channel_keys.json";
+static NSString *const kAppGroupPushSecretFileName = @"push_secret.txt";
+
+void CanariMirrorPushStateToAppGroup(void) {
+  NSURL *container = [[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
+  if (container == nil) {
+    NSLog(@"[CanariPush] mirror: App Group indisponible (entitlement manquant ?)");
+    return;
+  }
+  NSString *src = CanariTauriDataDir();
+  if (src == nil) {
+    return;
+  }
+  // The Notification Service Extension reads these three inputs to decrypt a push in its
+  // own process. Write atomically (temp + rename) so the cross-process reader never sees a
+  // torn file, and keep the same at-rest protection class as the source.
+  NSDataWritingOptions opts =
+      NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
+  for (NSString *name in @[ kMlsBinFileName, kPushContextFileName, kChannelKeysFileName ]) {
+    NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
+    if (data == nil) {
+      continue;
+    }
+    NSError *err = nil;
+    if (![data writeToURL:[container URLByAppendingPathComponent:name] options:opts error:&err]) {
+      NSLog(@"[CanariPush] mirror %@ echoue: %@", name, err.localizedDescription);
+    }
+  }
+  // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
+  // can authenticate the backend fetch paths (omitted proto, commit catch-up, avatar); the
+  // common inline-ciphertext decrypt needs no secret.
+  NSString *secret = CanariRetrievePushSecret();
+  if (secret.length > 0) {
+    [[secret dataUsingEncoding:NSUTF8StringEncoding]
+        writeToURL:[container URLByAppendingPathComponent:kAppGroupPushSecretFileName]
+           options:opts
+             error:nil];
+  }
+  NSLog(@"[CanariPush] mirror App Group termine");
+}
+
 static NSString *CanariBuildFallbackText(NSString *senderName) {
   if (senderName.length > 0) {
     return [NSString stringWithFormat:@"Nouveau message de %@", senderName];
