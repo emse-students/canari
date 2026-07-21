@@ -13,6 +13,7 @@
     - Sources/canari/canari_rust_bridge.h
     - Sources/canari/main.mm         (appelle canari_ios_bootstrap)
     - canari_iOS/canari_iOS.entitlements (Associated Domains, push, App Group)
+    - canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10: localized privacy usage prompts). Ajouter les dossiers .lproj au target canari_iOS comme ressources localisees (Xcode detecte automatiquement les .lproj). Sans ce wiring dans le pbxproj, iOS retombe sur les valeurs FR de base de Info.plist.
     - canari_NSE/                    (Notification Service Extension: source + Info.plist + entitlements + bridging header + FFI header). Target ajoute A LA MAIN dans canari.xcodeproj (Xcode), pas via project.yml. Voir docs/wiki/infrastructure/ios-nse-setup.md
     - Podfile                        (Firebase/Messaging)
     - canari.xcodeproj/project.pbxproj (SOURCE DE VERITE du build : sources + frameworks + targets ajoutes a la main dans Xcode. project.yml n'est PAS lu par le build / la CI)

@@ -74,10 +74,20 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Supported localizations for the Info.plist usage strings. iOS resolves the device
+	     language against this list and loads the matching <lang>.lproj/InfoPlist.strings
+	     (fr/en); an unsupported language falls back to the base values below (French, the
+	     app's development region). Keep in sync with the canari_iOS/*.lproj folders. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>fr</string>
+		<string>en</string>
+	</array>
 	<!-- Privacy usage strings: iOS hard-crashes on first access to a protected resource
 	     when its *UsageDescription key is absent. Face ID in particular crashes the biometric
-	     unlock flow without NSFaceIDUsageDescription. French copy (app is French-first);
-	     proper per-locale InfoPlist.strings is a follow-up (see CLAUDE.md iOS WP). -->
+	     unlock flow without NSFaceIDUsageDescription. These base values are French (app is
+	     French-first) and act as the fallback; per-locale overrides live in
+	     canari_iOS/{fr,en}.lproj/InfoPlist.strings (WP-iOS-10). -->
 	<key>NSCameraUsageDescription</key>
 	<string>Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations.</string>
 	<key>NSMicrophoneUsageDescription</key>

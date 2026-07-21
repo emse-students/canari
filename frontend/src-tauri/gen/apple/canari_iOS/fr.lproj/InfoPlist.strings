@@ -1,0 +1,10 @@
+/* Localized iOS privacy usage descriptions - French (app is French-first).
+   These override the base Info.plist *UsageDescription values when the device
+   language is French. Keep in sync with en.lproj/InfoPlist.strings and the base
+   Info.plist. See docs/wiki/infrastructure/ios-nse-setup.md for the one-time
+   Xcode wiring (the .lproj folders must be added to the canari_iOS target as
+   localized resources in the hand-maintained pbxproj). */
+"NSCameraUsageDescription" = "Canari utilise l'appareil photo pour prendre des photos et vidéos à partager dans vos conversations.";
+"NSMicrophoneUsageDescription" = "Canari utilise le microphone pour enregistrer des messages vocaux et passer des appels.";
+"NSPhotoLibraryUsageDescription" = "Canari accède à vos photos pour les partager dans vos conversations.";
+"NSFaceIDUsageDescription" = "Canari utilise Face ID pour déverrouiller l'application de façon sécurisée.";
