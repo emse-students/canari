@@ -102,8 +102,8 @@
   let winDurationMs = $state<number | null>(null);
 
   // --- Pan / zoom state for the game viewport -----------------------------
-  let viewportEl: HTMLDivElement | null = null;
-  let layerEl: HTMLDivElement | null = null;
+  let viewportEl = $state<HTMLDivElement | null>(null);
+  let layerEl = $state<HTMLDivElement | null>(null);
   let scale = $state(1);
   let panX = $state(0);
   let panY = $state(0);

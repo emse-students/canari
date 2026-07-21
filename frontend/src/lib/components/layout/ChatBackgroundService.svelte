@@ -43,7 +43,7 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
-  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -694,15 +694,20 @@
     globalSession.initServices(appendLog);
     void startLoginFlow();
 
-    /** Fire-and-forget native MLS foreground-guard command (Android only; no-op elsewhere). */
+    /** Fire-and-forget native MLS foreground-guard command (mobile only; no-op on desktop/web). */
     const invokeNative = (cmd: string): void => {
       void import('@tauri-apps/api/core').then(({ invoke }) => invoke(cmd)).catch(() => {});
     };
 
-    // Foreground heartbeat (Android): keeps the native guard fresh while the app is visible so the
-    // background JNI engines abstain from writing mls.bin. createPausableInterval auto-pauses on
-    // hidden, so the guard expires shortly after backgrounding even without a clean `hidden` event.
-    const stopForegroundHeartbeat = isAndroidTauriRuntime()
+    // Foreground heartbeat (Android + iOS): keeps the native guard fresh while the app is visible so
+    // the background engines abstain from writing mls.bin. The FOREGROUND_GRACE_MS guard gates the
+    // background writers on BOTH platforms, but iOS only refreshes it once (canari_ios_on_resume);
+    // without this 10s heartbeat the guard would expire ~30s into a genuinely-foregrounded iOS
+    // session and an in-process FCM data push could clobber the warm engine's in-memory state. The
+    // native mls_foreground_heartbeat command is platform-agnostic (mark_foreground_active).
+    // createPausableInterval auto-pauses on hidden, so the guard expires shortly after backgrounding
+    // even without a clean `hidden` event.
+    const stopForegroundHeartbeat = isMobileTauriRuntime()
       ? createPausableInterval(() => invokeNative('mls_foreground_heartbeat'), 10_000)
       : null;
 
