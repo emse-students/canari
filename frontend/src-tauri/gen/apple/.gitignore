@@ -1,2 +1,6 @@
 # Fichiers sensibles iOS - injectés depuis les secrets CI
 GoogleService-Info.plist
+
+# Librairies statiques
+*.a
+Externals/

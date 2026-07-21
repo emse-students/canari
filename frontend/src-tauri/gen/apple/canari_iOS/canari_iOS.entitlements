@@ -4,19 +4,14 @@
 <dict>
 	<key>aps-environment</key>
 	<string>production</string>
-	<!-- Shared container with the Notification Service Extension (canari_NSE). The app
-	     mirrors the push-decrypt inputs (mls.bin, push_context.json, channel_keys.json,
-	     push_secret.txt) here on every foreground/background transition so the extension
-	     can decrypt notifications in its own process. Must match the App Group registered
-	     on the App ID (see docs/wiki/infrastructure/ios-nse-setup.md). -->
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.fr.emse.canari</string>
-	</array>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:canari-emse.fr</string>
 		<string>applinks:www.canari-emse.fr</string>
+	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.fr.emse.canari</string>
 	</array>
 </dict>
 </plist>

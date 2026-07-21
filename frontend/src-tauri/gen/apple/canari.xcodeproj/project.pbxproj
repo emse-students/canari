@@ -13,7 +13,13 @@
 		6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3416F9F4A8BD192DF6A921B4 /* QuartzCore.framework */; };
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
 		A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6012345678ABCD /* canari_ios.mm */; };
-		BD75AE00300EA0AC003EBA05 /* GoogleService-Info in Resources */ = {isa = PBXBuildFile; fileRef = BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */; };
+		BD49C851300FABF7000960D5 /* CanariNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BD49C84A300FABF7000960D5 /* CanariNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		BD49C864300FADEB000960D5 /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BD49C861300FADEB000960D5 /* Info.plist */; };
+		BD49C865300FADEB000960D5 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD49C862300FADEB000960D5 /* NotificationService.swift */; };
+		BD49C866300FAFB7000960D5 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
+		BD49C867300FAFC5000960D5 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
+		BD49C869300FAFFF000960D5 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BD49C868300FAFFF000960D5 /* libapp.a */; };
+		BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */; };
 		BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE02300EA4C0003EBA05 /* FirebaseCore */; };
 		BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE04300EA4C0003EBA05 /* FirebaseMessaging */; };
 		BDCC40B62FED454100576E30 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 43EC3C6D309DFBDAB0387C31 /* WebKit.framework */; };
@@ -26,6 +32,30 @@
 		E5F6012345678ABCDEF02 /* canari_push.mm in Sources */ = {isa = PBXBuildFile; fileRef = F6012345678ABCDEF0123 /* canari_push.mm */; };
 		EB4C666589AF7B0EDEBED1B6 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 686315A99C66DB3616192FD2 /* assets */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		BD49C84F300FABF7000960D5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 91261965DA5D41FC84B6EA3B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BD49C849300FABF7000960D5;
+			remoteInfo = CanariNotifications;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		BD49C856300FABF7000960D5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BD49C851300FABF7000960D5 /* CanariNotifications.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1E2DB18B9EA29D32EF469D92 /* canari_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = canari_iOS.entitlements; sourceTree = "<group>"; };
@@ -45,7 +75,14 @@
 		A3B4C5D6E7F801234567890 /* canari_ios.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_ios.h; sourceTree = "<group>"; };
 		AC2F92519DA5B01BA25311C4 /* main.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.rs; sourceTree = "<group>"; };
 		B2C3D4E5F6012345678ABCD /* canari_ios.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_ios.mm; sourceTree = "<group>"; };
-		BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "canari_iOS/GoogleService-Info.plist"; sourceTree = "<group>"; };
+		BD49C84A300FABF7000960D5 /* CanariNotifications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CanariNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD49C85E300FADEB000960D5 /* canari_mls_ffi.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_mls_ffi.h; sourceTree = "<group>"; };
+		BD49C85F300FADEB000960D5 /* canari_NSE.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = canari_NSE.entitlements; sourceTree = "<group>"; };
+		BD49C860300FADEB000960D5 /* canari_NSE-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "canari_NSE-Bridging-Header.h"; sourceTree = "<group>"; };
+		BD49C861300FADEB000960D5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BD49C862300FADEB000960D5 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		BD49C868300FAFFF000960D5 /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libapp.a; path = Externals/x86_64/debug/libapp.a; sourceTree = "<group>"; };
+		BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "canari_iOS/GoogleService-Info.plist"; sourceTree = "<group>"; };
 		BDF257BC19D5AF44226720EA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_rust_bridge.h; sourceTree = "<group>"; };
 		D20A7859E615805B7DF8C401 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
@@ -74,12 +111,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD49C847300FABF7000960D5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD49C869300FAFFF000960D5 /* libapp.a in Frameworks */,
+				BD49C867300FAFC5000960D5 /* UserNotifications.framework in Frameworks */,
+				BD49C866300FAFB7000960D5 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		106085A54D24FE9BE2117546 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				BD49C868300FAFFF000960D5 /* libapp.a */,
 				885364C76C1FDA259C6F0313 /* CoreGraphics.framework */,
 				5EFC8F2ADC67F153A8506391 /* libapp.a */,
 				BDF257BC19D5AF44226720EA /* Metal.framework */,
@@ -137,6 +185,7 @@
 			isa = PBXGroup;
 			children = (
 				890F35B30BCCC580EE21CE39 /* Canari.app */,
+				BD49C84A300FABF7000960D5 /* CanariNotifications.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -144,6 +193,7 @@
 		AA23298C67DF22384563D03F = {
 			isa = PBXGroup;
 			children = (
+				BD49C863300FADEB000960D5 /* canari_NSE */,
 				686315A99C66DB3616192FD2 /* assets */,
 				FC45C8DC231D096C520FA226 /* Assets.xcassets */,
 				44BFD48935174534B0CCE9BF /* LaunchScreen.storyboard */,
@@ -153,7 +203,7 @@
 				36130D2D54A4248E871F5163 /* src */,
 				106085A54D24FE9BE2117546 /* Frameworks */,
 				80EB529A999B6336917EDB30 /* Products */,
-				BD75ADFF300EA0AC003EBA05 /* GoogleService-Info */,
+				BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */,
 			);
 			sourceTree = "<group>";
 		};
@@ -162,6 +212,18 @@
 			children = (
 			);
 			path = Externals;
+			sourceTree = "<group>";
+		};
+		BD49C863300FADEB000960D5 /* canari_NSE */ = {
+			isa = PBXGroup;
+			children = (
+				BD49C85E300FADEB000960D5 /* canari_mls_ffi.h */,
+				BD49C85F300FADEB000960D5 /* canari_NSE.entitlements */,
+				BD49C860300FADEB000960D5 /* canari_NSE-Bridging-Header.h */,
+				BD49C861300FADEB000960D5 /* Info.plist */,
+				BD49C862300FADEB000960D5 /* NotificationService.swift */,
+			);
+			path = canari_NSE;
 			sourceTree = "<group>";
 		};
 		E188CF9BB1D4023319234954 /* canari_iOS */ = {
@@ -184,10 +246,12 @@
 				2D6F726EA8A51BA1570992BE /* Sources */,
 				BC32686DC31C14F7003DB687 /* Resources */,
 				98A78BDEC23E57885C5C5477 /* Frameworks */,
+				BD49C856300FABF7000960D5 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BD49C850300FABF7000960D5 /* PBXTargetDependency */,
 			);
 			name = canari_iOS;
 			packageProductDependencies = (
@@ -198,6 +262,25 @@
 			productReference = 890F35B30BCCC580EE21CE39 /* Canari.app */;
 			productType = "com.apple.product-type.application";
 		};
+		BD49C849300FABF7000960D5 /* CanariNotifications */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD49C853300FABF7000960D5 /* Build configuration list for PBXNativeTarget "CanariNotifications" */;
+			buildPhases = (
+				BD49C846300FABF7000960D5 /* Sources */,
+				BD49C847300FABF7000960D5 /* Frameworks */,
+				BD49C848300FABF7000960D5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CanariNotifications;
+			packageProductDependencies = (
+			);
+			productName = CanariNotifications;
+			productReference = BD49C84A300FABF7000960D5 /* CanariNotifications.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -205,7 +288,13 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 1620;
+				TargetAttributes = {
+					BD49C849300FABF7000960D5 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+				};
 			};
 			buildConfigurationList = E2E351A152590A6A0DAEDCA6 /* Build configuration list for PBXProject "canari" */;
 			developmentRegion = en;
@@ -225,6 +314,7 @@
 			projectRoot = "";
 			targets = (
 				52E9488D364186C2915636FA /* canari_iOS */,
+				BD49C849300FABF7000960D5 /* CanariNotifications */,
 			);
 		};
 /* End PBXProject section */
@@ -237,7 +327,15 @@
 				6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */,
 				26BD361B270C7E72379225D2 /* LaunchScreen.storyboard in Resources */,
 				EB4C666589AF7B0EDEBED1B6 /* assets in Resources */,
-				BD75AE00300EA0AC003EBA05 /* GoogleService-Info in Resources */,
+				BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD49C848300FABF7000960D5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD49C864300FADEB000960D5 /* Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -278,7 +376,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD49C846300FABF7000960D5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD49C865300FADEB000960D5 /* NotificationService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		BD49C850300FABF7000960D5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BD49C849300FABF7000960D5 /* CanariNotifications */;
+			targetProxy = BD49C84F300FABF7000960D5 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		7A0187E63D7563BAA19528DB /* release */ = {
@@ -380,12 +494,191 @@
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari;
 				PRODUCT_NAME = Canari;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "Canari-Prod";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = Canari;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = "arm64  x86_64";
 			};
 			name = debug;
+		};
+		BD49C854300FABF7000960D5 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = canari_NSE/canari_NSE.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = canari_NSE/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CanariNotifications;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/Externals/$(CURRENT_ARCH)/$(CONFIGURATION)",
+					"$(PROJECT_DIR)/Externals/x86_64/debug",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = CanariNotifications;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "canari_NSE/canari_NSE-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = debug;
+		};
+		BD49C855300FABF7000960D5 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_ENTITLEMENTS = canari_NSE/canari_NSE.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = canari_NSE/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CanariNotifications;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/Externals/$(CURRENT_ARCH)/$(CONFIGURATION)",
+					"$(PROJECT_DIR)/Externals/x86_64/debug",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = CanariNotifications;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "canari_NSE/canari_NSE-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = release;
 		};
 		CC7B07204AC8D10BCD1DD37E /* debug */ = {
 			isa = XCBuildConfiguration;
@@ -493,7 +786,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari;
 				PRODUCT_NAME = Canari;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "Canari-Prod";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = Canari;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = "arm64  x86_64";
@@ -508,6 +801,15 @@
 			buildConfigurations = (
 				B35A4E29CA578426B7AFA4D1 /* debug */,
 				E7E5483D4B30657C1873EFDF /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		BD49C853300FABF7000960D5 /* Build configuration list for PBXNativeTarget "CanariNotifications" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BD49C854300FABF7000960D5 /* debug */,
+				BD49C855300FABF7000960D5 /* release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = debug;
