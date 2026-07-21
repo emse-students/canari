@@ -15,10 +15,15 @@ jobs:
   build-ios:
     name: Build iOS IPA
     if: ${{ github.event.inputs.force == 'true' }}
-    runs-on: macos-14 # macOS Sonoma avec Xcode 15+
+    runs-on: macos-15 # Xcode 16.2+ (required for current iOS SDK / Tauri toolchain)
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Select Xcode (>= 16.2)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '>=16.2.0'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
