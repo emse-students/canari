@@ -15,7 +15,7 @@
     "@nestjs/common": "^11.1.19",
     "@nestjs/core": "^11.1.19",
     "@nestjs/microservices": "^11.1.28",
-    "@nestjs/platform-express": "^11.1.19",
+    "@nestjs/platform-express": "^11.1.28",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.3",
     "class-transformer": "^0.5.1",
