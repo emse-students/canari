@@ -7,8 +7,9 @@ import {
 import { BiometryType, checkStatus, type Status } from '@tauri-apps/plugin-biometric';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 
-// Service/user are parsed but ignored by the plugin internally (uses a hardcoded
-// Android Keystore alias); values are kept here for forward compatibility.
+// Service/user are parsed but ignored by both native plugins internally (Android
+// pins a hardcoded Keystore alias; iOS pins a hardcoded keychain service/account
+// mirroring these exact values). They are kept here for forward compatibility.
 const KEYSTORE_SERVICE = 'fr.emse.canari';
 const KEYSTORE_USER = 'canari_biometric_user';
 const CONFIG_FLAG_KEY = 'canari_biometric_configured';
@@ -17,10 +18,11 @@ const NATIVE_FLAG_KEY = 'biometricConfigured';
 export class BiometricService {
   /**
    * Enrolls biometric protection for the given secret.
-   * keystoreStore() generates a hardware-backed AES-GCM key in the Android
-   * Keystore (userAuthenticationRequired = true, CryptoObject every-use) and
-   * shows the OS BiometricPrompt to encrypt the secret - nothing is stored in
-   * plain text on disk.
+   * keystoreStore() enrolls the secret behind hardware-backed, user-presence
+   * biometric protection: on Android a Keystore AES-GCM key (userAuthentication
+   * Required = true, CryptoObject every-use) via the OS BiometricPrompt; on iOS a
+   * keychain item with a `.userPresence` access control (Face ID / Touch ID). The
+   * secret is never stored in plain text on disk on either platform.
    *
    * Note: tauri-plugin-keystore is alpha; its store() JS promise resolves
    * immediately while biometric auth completes asynchronously on-device.
@@ -39,8 +41,9 @@ export class BiometricService {
         console.warn(
           "Matériel biométrique présent, mais aucune empreinte configurée par l'utilisateur."
         );
-        // TODO: Gérer le fallback ici (ex: forcer l'utilisation du PIN,
-        // ou afficher un message demandant à l'utilisateur d'aller dans ses réglages Android)
+        // TODO: Gérer le fallback ici (ex: forcer l'utilisation du PIN, ou afficher
+        // un message demandant à l'utilisateur d'aller enroler une empreinte / Face ID
+        // dans les réglages de l'OS - Android comme iOS).
       } else {
         console.error('Failed to enable biometrics:', e);
       }
@@ -49,18 +52,19 @@ export class BiometricService {
   }
 
   /**
-   * Shows the OS BiometricPrompt backed by a CryptoObject - the Android Keystore
-   * AES key is only usable after hardware-verified biometric auth - then decrypts
-   * and returns the protected secret.
+   * Triggers the OS biometric prompt (Android BiometricPrompt / iOS Face ID or
+   * Touch ID) - the protected key is only usable after hardware-verified auth -
+   * then decrypts and returns the secret.
    */
   static async authenticateAndGetSecret(): Promise<string | null> {
     try {
       return await keystoreRetrieve(KEYSTORE_SERVICE, KEYSTORE_USER);
     } catch (e) {
       console.error('Biometric authentication failed:', e);
-      // If the Keystore key was lost (TEE corruption, reinstall, etc.) the cipher
-      // init fails with a null-key error. Clear the "configured" flag so the user
-      // gets the re-enrollment prompt after their next PIN login.
+      // If the protected key was lost (Android TEE corruption / reinstall, or an
+      // iOS keychain item invalidated by a passcode reset) the retrieve fails at
+      // cipher init. Clear the "configured" flag so the user gets the re-enrollment
+      // prompt after their next PIN login.
       const msg = String(e);
       if (msg.includes('Error initializing cipher') || msg.includes('null cannot be cast')) {
         await BiometricService.disable().catch(() => {});
