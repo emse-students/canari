@@ -3,6 +3,7 @@
 #import "canari_rust_bridge.h"
 
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
@@ -1663,6 +1664,86 @@ void CanariPushCancelMessageNotifications(void) {
   }];
 }
 
+/** Strips APNs `aps` and Firebase metadata keys; keeps flat string data fields. */
+static NSDictionary *_Nullable CanariFcmDataFromUserInfo(NSDictionary *userInfo) {
+  if (userInfo.count == 0) {
+    return nil;
+  }
+  NSMutableDictionary *data = [NSMutableDictionary dictionary];
+  [userInfo enumerateKeysAndObjectsUsingBlock:^(id key, id obj, __unused BOOL *stop) {
+    if (![key isKindOfClass:[NSString class]]) {
+      return;
+    }
+    NSString *k = (NSString *)key;
+    if ([k isEqualToString:@"aps"]) {
+      return;
+    }
+    if ([k hasPrefix:@"gcm."] || [k hasPrefix:@"google."]) {
+      return;
+    }
+    if ([obj isKindOfClass:[NSString class]]) {
+      data[k] = obj;
+    } else if ([obj isKindOfClass:[NSNumber class]]) {
+      data[k] = [(NSNumber *)obj stringValue];
+    }
+  }];
+  return data.count > 0 ? data : nil;
+}
+
+/**
+ * Firebase 12+ no longer delivers data via `messaging:didReceiveMessage:`.
+ * All FCM/APNs payloads arrive as `userInfo` on the app or notification delegate.
+ */
+static void CanariPushProcessRemoteNotificationUserInfo(NSDictionary *userInfo) {
+  NSDictionary *data = CanariFcmDataFromUserInfo(userInfo);
+  if (data == nil) {
+    return;
+  }
+#if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+  [[FIRMessaging messaging] appDidReceiveMessage:userInfo];
+#endif
+  CanariHandleFcmData(data);
+}
+
+typedef void (^CanariRemoteNotifCompletion)(UIBackgroundFetchResult);
+static CanariRemoteNotifCompletion (*CanariOrigDidReceiveRemoteNotification)(
+    id, SEL, UIApplication *, NSDictionary *, CanariRemoteNotifCompletion);
+
+static void CanariSwizzledDidReceiveRemoteNotification(
+    id self, SEL _cmd, UIApplication *application, NSDictionary *userInfo,
+    CanariRemoteNotifCompletion completionHandler) {
+  CanariPushProcessRemoteNotificationUserInfo(userInfo);
+  if (CanariOrigDidReceiveRemoteNotification != nil) {
+    CanariOrigDidReceiveRemoteNotification(self, _cmd, application, userInfo, completionHandler);
+  } else if (completionHandler != nil) {
+    completionHandler(UIBackgroundFetchResultNoData);
+  }
+}
+
+/** Hooks wry's UIApplicationDelegate for silent `content-available` background frames. */
+static void CanariInstallRemoteNotificationHook(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    id<UIApplicationDelegate> delegate = [UIApplication sharedApplication].delegate;
+    if (delegate == nil) {
+      NSLog(@"[CanariPush] remote notification hook: app delegate absent");
+      return;
+    }
+    Class delegateClass = [delegate class];
+    SEL sel = @selector(application:didReceiveRemoteNotification:fetchCompletionHandler:);
+    Method method = class_getInstanceMethod(delegateClass, sel);
+    if (method == nil) {
+      NSLog(@"[CanariPush] remote notification hook: selector absent on %@", delegateClass);
+      return;
+    }
+    CanariOrigDidReceiveRemoteNotification =
+        (CanariRemoteNotifCompletion (*)(id, SEL, UIApplication *, NSDictionary *,
+                                         CanariRemoteNotifCompletion))method_getImplementation(method);
+    method_setImplementation(method, (IMP)CanariSwizzledDidReceiveRemoteNotification);
+    NSLog(@"[CanariPush] remote notification hook installed on %@", delegateClass);
+  });
+}
+
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
 /// Persist a freshly-obtained FCM token to fcm_token.txt and re-register it on the
 /// backend when a push context + secret already exist. Shared by the delegate
@@ -1693,15 +1774,6 @@ static void CanariPersistFcmToken(NSString *fcmToken) {
   CanariPersistFcmToken(fcmToken);
 }
 
-- (void)messaging:(FIRMessaging *)messaging
-    didReceiveMessage:(FIRMessagingRemoteMessage *)remoteMessage {
-  (void)messaging;
-  NSDictionary *data = remoteMessage.appData;
-  if (data == nil) {
-    return;
-  }
-  CanariHandleFcmData(data);
-}
 @end
 
 static CanariFcmPushDelegate *g_fcmPushDelegate = nil;
@@ -1716,7 +1788,7 @@ static CanariFcmPushDelegate *g_fcmPushDelegate = nil;
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler {
   (void)center;
-  (void)notification;
+  CanariPushProcessRemoteNotificationUserInfo(notification.request.content.userInfo);
   if (canari_ios_is_in_foreground()) {
     completionHandler(UNNotificationPresentationOptionNone);
   } else {
@@ -1729,6 +1801,7 @@ static CanariFcmPushDelegate *g_fcmPushDelegate = nil;
              withCompletionHandler:(void (^)(void))completionHandler {
   (void)center;
   NSDictionary *userInfo = response.notification.request.content.userInfo;
+  CanariPushProcessRemoteNotificationUserInfo(userInfo);
   NSString *deepLink = nil;
   if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
     deepLink = userInfo[@"deepLink"];
@@ -1752,6 +1825,14 @@ void CanariPushSetup(void) {
   g_cacheLock = [[NSLock alloc] init];
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
+
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:UIApplicationDidFinishLaunchingNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariInstallRemoteNotificationHook();
+              }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
   g_fcmPushDelegate = [[CanariFcmPushDelegate alloc] init];
