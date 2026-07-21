@@ -4,6 +4,7 @@ import {
   compareSemver,
   fetchServerAppVersionReliable,
   getClientAppVersion,
+  getIosAppStoreUrl,
   getReleaseApkDownloadUrl,
   getReleasePageUrl,
   isMaintenanceBlockingUser,
@@ -149,5 +150,21 @@ describe('getReleasePageUrl', () => {
 
   it('falls back to latest when version is missing', () => {
     expect(getReleasePageUrl(null)).toBe('https://github.com/emse-students/canari/releases/latest');
+  });
+});
+
+describe('getIosAppStoreUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns an empty string when VITE_IOS_APP_STORE_URL is unset', () => {
+    vi.stubEnv('VITE_IOS_APP_STORE_URL', '');
+    expect(getIosAppStoreUrl()).toBe('');
+  });
+
+  it('returns the trimmed injected App Store URL', () => {
+    vi.stubEnv('VITE_IOS_APP_STORE_URL', '  itms-apps://apps.apple.com/app/id123456789  ');
+    expect(getIosAppStoreUrl()).toBe('itms-apps://apps.apple.com/app/id123456789');
   });
 });

@@ -7,6 +7,21 @@ export const CANARI_RELEASES_REPO = 'emse-students/canari';
 /** Universal APK asset name on GitHub Releases (Android). */
 export const CANARI_RELEASE_APK_FILENAME = 'app-universal-release.apk';
 
+/**
+ * App Store listing URL for the iOS build.
+ *
+ * Injected at build time via `VITE_IOS_APP_STORE_URL` (CI / Mac side, same as the
+ * other iOS release secrets) because the numeric App Store id does not exist until
+ * the app is published on the store (see WP-iOS-11). Empty until configured. iOS
+ * updates always go through the App Store - there is no sideloadable binary like
+ * the Android APK or the desktop AppImage - so this is the only meaningful update
+ * target on iOS. Prefer the `itms-apps://` deep link so it opens the App Store app
+ * directly; an `https://apps.apple.com/...` URL works too.
+ */
+export function getIosAppStoreUrl(): string {
+  return import.meta.env.VITE_IOS_APP_STORE_URL?.trim() || '';
+}
+
 export type PlatformMaintenanceInfo = {
   enabled: boolean;
   message: string | null;
@@ -215,24 +230,37 @@ export function isMobileTauriRuntime(): boolean {
 
 /**
  * URL opened when the user accepts an app update prompt.
- * Android Tauri: direct APK download; other native: release tag page; web: n/a (reload).
+ * Android Tauri: direct APK download; iOS Tauri: App Store listing (empty until
+ * `VITE_IOS_APP_STORE_URL` is configured); other native: release tag page; web:
+ * n/a (reload).
  */
 export function getAppUpdateUrl(serverVersion: string | null): string {
   if (isAndroidTauriRuntime()) {
     return getReleaseApkDownloadUrl(serverVersion);
   }
+  if (isIosTauriRuntime()) {
+    // iOS updates through the App Store only; there is no sideloadable binary.
+    return getIosAppStoreUrl();
+  }
   return getReleasePageUrl(serverVersion);
 }
 
 /**
- * Opens the update target (APK download on Android, release page on desktop Tauri)
- * or reloads the web app so the browser fetches the deployed bundle.
+ * Opens the update target (APK download on Android, App Store listing on iOS,
+ * release page on desktop Tauri) or reloads the web app so the browser fetches the
+ * deployed bundle. No-ops when the platform has no update URL (iOS before the App
+ * Store listing is configured) rather than opening a blank page.
  */
 export async function openLatestAppUpdate(serverVersion: string | null): Promise<void> {
   try {
     const { isTauri } = await import('@tauri-apps/api/core');
     if (isTauri()) {
-      await openExternal(getAppUpdateUrl(serverVersion));
+      const url = getAppUpdateUrl(serverVersion);
+      if (!url) {
+        console.warn('[appVersion] no update URL for this platform - skipping openExternal');
+        return;
+      }
+      await openExternal(url);
       return;
     }
   } catch {

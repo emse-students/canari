@@ -72,7 +72,6 @@ targets:
     dependencies:
       - framework: libapp.a
         embed: false
-      - target: canari_NSE
       - sdk: CoreGraphics.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework
@@ -87,38 +86,9 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
-  # Notification Service Extension: decrypts push notifications in its own process
-  # (WP-iOS-6/7). Links the same libapp.a to reach the Rust MLS decrypt FFI and reads
-  # the decrypt inputs from the group.fr.emse.canari App Group container the app mirrors
-  # into. See docs/wiki/infrastructure/ios-nse-setup.md for the Apple-portal steps
-  # (App Group registration + provisioning profile) that must be done on a Mac.
-  canari_NSE:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: canari_NSE
-    info:
-      path: canari_NSE/Info.plist
-    entitlements:
-      path: canari_NSE/canari_NSE.entitlements
-    settings:
-      base:
-        PRODUCT_NAME: CanariNotifications
-        PRODUCT_BUNDLE_IDENTIFIER: fr.emse.canari.notifications
-        INFOPLIST_KEY_CFBundleDisplayName: Canari Notifications
-        SWIFT_OBJC_BRIDGING_HEADER: canari_NSE/canari_NSE-Bridging-Header.h
-        SWIFT_VERSION: "5.0"
-        ENABLE_BITCODE: false
-        ARCHS: [arm64, x86_64]
-        VALID_ARCHS: arm64  x86_64
-        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
-        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: false
-        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION)
-        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION)
-    dependencies:
-      # Reuse the app's Rust static lib for the canari_native_* decrypt FFI. The linker
-      # dead-strips everything the extension does not call.
-      - framework: libapp.a
-        embed: false
-      - sdk: Security.framework
-      - sdk: UserNotifications.framework
+# NOTE: this project.yml is NOT the build source of truth. The authoritative Xcode
+# project is the hand-maintained canari.xcodeproj/project.pbxproj (edited in Xcode,
+# Pods/SPM, as documented in README.md); the CI builds it directly and never runs
+# xcodegen. The Notification Service Extension (WP-iOS-6/7) is therefore added as a
+# target in that pbxproj on a Mac, NOT declared here. Its source files live in
+# canari_NSE/ and the Xcode wiring checklist is docs/wiki/infrastructure/ios-nse-setup.md.

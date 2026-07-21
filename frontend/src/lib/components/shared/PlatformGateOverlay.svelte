@@ -8,7 +8,11 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { clearAuth } from '$lib/stores/auth';
-  import { isAndroidTauriRuntime, openLatestAppUpdate } from '$lib/utils/appVersion';
+  import {
+    isAndroidTauriRuntime,
+    isIosTauriRuntime,
+    openLatestAppUpdate,
+  } from '$lib/utils/appVersion';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
@@ -21,6 +25,7 @@
   );
   const isNative = $derived(isTauriRuntime());
   const isAndroid = $derived(isAndroidTauriRuntime());
+  const isIos = $derived(isIosTauriRuntime());
 
   let updating = $state(false);
   let loggingOut = $state(false);
@@ -63,6 +68,8 @@
       </p>
       {#if isAndroid}
         <p>{m.update_android_instruction()}</p>
+      {:else if isIos}
+        <p>{m.update_ios_instruction()}</p>
       {:else if isNative}
         <p>{m.update_native_instruction()}</p>
       {:else}
@@ -80,9 +87,11 @@
         <Download size={16} />
         {updating
           ? m.update_opening_label()
-          : isNative
-            ? m.update_download_button()
-            : m.update_reload_button()}
+          : isIos
+            ? m.update_open_app_store_button()
+            : isNative
+              ? m.update_download_button()
+              : m.update_reload_button()}
       </button>
     {/snippet}
   </Modal>

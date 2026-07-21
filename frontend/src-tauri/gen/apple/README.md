@@ -12,9 +12,10 @@
     - Sources/canari/canari_push.h
     - Sources/canari/canari_rust_bridge.h
     - Sources/canari/main.mm         (appelle canari_ios_bootstrap)
-    - canari_iOS/canari_iOS.entitlements (Associated Domains, push)
+    - canari_iOS/canari_iOS.entitlements (Associated Domains, push, App Group)
+    - canari_NSE/                    (Notification Service Extension: source + Info.plist + entitlements + bridging header + FFI header). Target ajoute A LA MAIN dans canari.xcodeproj (Xcode), pas via project.yml. Voir docs/wiki/infrastructure/ios-nse-setup.md
     - Podfile                        (Firebase/Messaging)
-    - canari.xcodeproj/project.pbxproj (sources + frameworks ajoutes)
+    - canari.xcodeproj/project.pbxproj (SOURCE DE VERITE du build : sources + frameworks + targets ajoutes a la main dans Xcode. project.yml n'est PAS lu par le build / la CI)
 
   Apres `tauri ios init` ou upgrade Tauri majeure : verifier que ces fichiers existent encore.
 -->
