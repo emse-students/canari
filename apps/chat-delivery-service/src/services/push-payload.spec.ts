@@ -150,9 +150,9 @@ describe('buildInternalApnsRequest', () => {
   it('uses a per-kind thread and preserves the given body for social / form pushes', () => {
     const social = buildInternalApnsRequest('BDE', 'Nouveau post', { type: 'social' });
     expect((social.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_social');
-    expect(
-      ((social.payload.aps as Record<string, unknown>).alert as { body: string }).body
-    ).toBe('Nouveau post');
+    expect(((social.payload.aps as Record<string, unknown>).alert as { body: string }).body).toBe(
+      'Nouveau post'
+    );
 
     const form = buildInternalApnsRequest('Sondage', '', { type: 'form_reminder' });
     expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
