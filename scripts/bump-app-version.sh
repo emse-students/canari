@@ -60,6 +60,29 @@ bump_cargo_package_version() {
   echo "  Cargo.toml    $file → $version"
 }
 
+bump_ios_nse_pbxproj() {
+  # The iOS Notification Service Extension (CanariNotifications) is its own Xcode
+  # target that Tauri does not know about, so `tauri ios build` never syncs its
+  # version from tauri.conf.json. Its MARKETING_VERSION / CURRENT_PROJECT_VERSION
+  # build settings (which GENERATE_INFOPLIST_FILE=YES turns into the appex
+  # CFBundleShortVersionString / CFBundleVersion) must match the parent app or App
+  # Store validation rejects the .ipa. Keep them in lockstep with the app version.
+  local file="$1"
+  local version="$2"
+  if [ ! -f "$file" ]; then
+    echo "  skip (no pbxproj): $file" >&2
+    return
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  sed -E \
+    -e "s/(MARKETING_VERSION = )[^;]*;/\1${version};/" \
+    -e "s/(CURRENT_PROJECT_VERSION = )[^;]*;/\1${version};/" \
+    "$file" > "$tmp"
+  mv "$tmp" "$file"
+  echo "  pbxproj (NSE) $file → $version"
+}
+
 discover_package_json_files() {
   local -a files=("$ROOT/frontend/package.json")
   local pkg
@@ -108,6 +131,8 @@ done < <(discover_package_json_files)
 TAURI_CONF="$ROOT/frontend/src-tauri/tauri.conf.json"
 [ -f "$TAURI_CONF" ] || { echo "Missing: $TAURI_CONF" >&2; exit 1; }
 bump_tauri_conf "$TAURI_CONF" "$VERSION"
+
+bump_ios_nse_pbxproj "$ROOT/frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj" "$VERSION"
 
 while IFS= read -r f; do
   [ -f "$f" ] || { echo "Missing: $f" >&2; exit 1; }

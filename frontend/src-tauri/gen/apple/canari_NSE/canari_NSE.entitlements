@@ -5,7 +5,7 @@
 	<!-- Shared container with the app: the app mirrors mls.bin / push_context.json /
 	     channel_keys.json / push_secret.txt here so this out-of-process extension can
 	     read the decrypt inputs. Must match the App Group registered on the App ID in
-	     the Apple Developer portal (see docs/wiki/infrastructure/ios-nse-setup.md). -->
+	     the Apple Developer portal. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.fr.emse.canari</string>

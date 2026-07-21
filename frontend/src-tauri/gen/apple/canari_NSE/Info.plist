@@ -16,10 +16,13 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
+	<!-- Version keys mirror the app target so the App Store appex/parent version check
+	     passes. MARKETING_VERSION / CURRENT_PROJECT_VERSION are the single source of
+	     truth (kept in sync with tauri.conf.json by scripts/bump-app-version.sh). -->
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.9</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>0.9.9</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<!-- Declares this bundle as a UserNotifications service extension. iOS instantiates
 	     NotificationService for every push whose payload sets `mutable-content: 1`
 	     (see chat-delivery push-payload.ts buildApnsRequest / buildInternalApnsPayload). -->

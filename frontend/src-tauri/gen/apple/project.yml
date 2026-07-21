@@ -90,5 +90,5 @@ targets:
 # project is the hand-maintained canari.xcodeproj/project.pbxproj (edited in Xcode,
 # Pods/SPM, as documented in README.md); the CI builds it directly and never runs
 # xcodegen. The Notification Service Extension (WP-iOS-6/7) is therefore added as a
-# target in that pbxproj on a Mac, NOT declared here. Its source files live in
-# canari_NSE/ and the Xcode wiring checklist is docs/wiki/infrastructure/ios-nse-setup.md.
+# CanariNotifications target directly in that pbxproj (edited by hand), NOT declared
+# here. Its source files live in canari_NSE/; the CI macOS runner builds/signs it.
