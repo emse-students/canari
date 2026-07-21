@@ -211,6 +211,26 @@ jobs:
         working-directory: frontend/src-tauri/gen/apple
         run: xcodebuild -resolvePackageDependencies -project canari.xcodeproj -scheme canari_iOS
 
+      - name: Prebuild Rust static lib (libapp.a)
+        working-directory: frontend/src-tauri
+        run: |
+          # The Xcode "Build Rust Code" phase is disabled in the hand-maintained pbxproj
+          # (it shells out to bun, which isn't on Xcode's PATH), and Externals/ is
+          # gitignored - so a clean checkout has no libapp.a and both the app AND the NSE
+          # fail to link with `ld: library 'app' not found`. Reproduce what Tauri's
+          # xcode-script does: cross-compile the app staticlib and drop it where the
+          # linker search path (Externals/<arch>/<config>) expects it, as `libapp.a`.
+          cargo build --lib --release --target aarch64-apple-ios
+          LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | head -1)
+          if [ -z "$LIB" ]; then
+            echo "::error::libmines_app_lib.a not produced by cargo"
+            exit 1
+          fi
+          DEST=gen/apple/Externals/arm64/release
+          mkdir -p "$DEST"
+          cp "$LIB" "$DEST/libapp.a"
+          echo "✅ libapp.a staged at $DEST ($(du -h "$DEST/libapp.a" | cut -f1))"
+
       - name: Build iOS IPA
         working-directory: frontend
         env:
