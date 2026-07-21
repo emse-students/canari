@@ -228,11 +228,17 @@ jobs:
           fi
 
       # Publishes the signed AAB to Google Play on the PRODUCTION track (real public
-      # release, full rollout) - this uploads the bundle. NOTE: Google requires the very
-      # first production release to be created MANUALLY in the Play Console (store
-      # listing, content rating, etc.) before the API will accept uploads for
-      # fr.emse.canari; subsequent releases are automatic. Switch `status` to
-      # `inProgress` + set `userFraction` here for a staged rollout instead of 100%.
+      # release, full rollout). NOTE: Google requires the very first production release
+      # to be created MANUALLY in the Play Console (store listing, content rating, etc.)
+      # before the API will accept uploads for fr.emse.canari; subsequent releases are
+      # automatic. Switch `status` to `inProgress` + set `userFraction` here for a
+      # staged rollout instead of 100%.
+      #
+      # There is deliberately no separate `internal` track upload alongside this: Google
+      # rejects re-uploading the same versionCode to a second track in one job (confirmed
+      # on v0.9.21 - "Version code 9021 has already been used"), so a second step here
+      # would only ever fail. Internal-track testing needs its own build cadence
+      # (different versionCode) if it's ever wanted again.
       - name: Publish to Google Play (production)
         if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
         uses: r0adkll/upload-google-play@v1
@@ -241,21 +247,4 @@ jobs:
           packageName: fr.emse.canari
           releaseFiles: ${{ steps.outputs.outputs.aab }}
           track: production
-          status: completed
-
-      # Also expose the SAME build on the internal-testing track. Google forbids
-      # re-uploading a versionCode already used above, so this is best-effort
-      # (continue-on-error): it succeeds when the API lets the existing bundle be
-      # assigned to `internal`, and soft-skips otherwise - production already reaches
-      # everyone, so a failure here never blocks the release. For genuinely early access
-      # you want RC builds on their own cadence, not the same versionCode as production.
-      - name: Publish to Google Play (internal)
-        if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
-        continue-on-error: true
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          packageName: fr.emse.canari
-          releaseFiles: ${{ steps.outputs.outputs.aab }}
-          track: internal
           status: completed

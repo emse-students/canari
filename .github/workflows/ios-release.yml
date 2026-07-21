@@ -358,7 +358,21 @@ jobs:
           mkdir -p "$KEY_DIR"
           echo "$ASC_API_KEY_P8" | base64 --decode > "$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
           echo "Uploading ${IPA_PATH} to App Store Connect…"
+
+          ALTOOL_LOG="$(mktemp)"
+          set +e
           xcrun altool --upload-app -f "$IPA_PATH" -t ios \
-            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" > "$ALTOOL_LOG" 2>&1
+          ALTOOL_EXIT=$?
+          set -e
+          cat "$ALTOOL_LOG"
           rm -f "$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+
+          # altool can exit 0 even when its own payload reports a failed upload (e.g. an
+          # asset-validation rejection), so the process exit code alone cannot be trusted -
+          # also grep the transcript for altool's own failure markers.
+          if [ "$ALTOOL_EXIT" -ne 0 ] || grep -qiE "UPLOAD FAILED|Error Domain=|VALIDATION_ERROR|NSLocalizedDescription" "$ALTOOL_LOG"; then
+            echo "::error::altool reported a failed upload - see log above"
+            exit 1
+          fi
           echo "✅ Uploaded to TestFlight"
