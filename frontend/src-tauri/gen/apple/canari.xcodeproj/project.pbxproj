@@ -14,7 +14,6 @@
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
 		A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6012345678ABCD /* canari_ios.mm */; };
 		BD49C851300FABF7000960D5 /* CanariNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BD49C84A300FABF7000960D5 /* CanariNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		BD49C864300FADEB000960D5 /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BD49C861300FADEB000960D5 /* Info.plist */; };
 		BD49C865300FADEB000960D5 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD49C862300FADEB000960D5 /* NotificationService.swift */; };
 		BD49C866300FAFB7000960D5 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
 		BD49C867300FAFC5000960D5 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
@@ -335,7 +334,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BD49C864300FADEB000960D5 /* Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
