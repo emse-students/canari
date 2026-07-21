@@ -1,24 +1,33 @@
 name: iOS Release
 
+# Mirrors android-release.yml: runs after "Bump version on release" syncs
+# frontend/package.json on main, and attaches the signed .ipa to the GitHub Release.
+# Public repo => GitHub-hosted macOS runners are free.
 on:
+  workflow_run:
+    workflows: ['Bump version on release']
+    types: [completed]
   workflow_dispatch:
-    inputs:
-      force:
-        description: 'Set to "true" to force enable (disabled by default)'
-        required: false
-        default: 'false'
-
-# Ce workflow est temporairement désactivé (iOS non finalisé).
-# Pour le réactiver, mettre jobs.build-ios.if: true
 
 jobs:
   build-ios:
     name: Build iOS IPA
-    if: ${{ github.event.inputs.force == 'true' }}
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: macos-15 # Xcode 16.2+ (required for current iOS SDK / Tauri toolchain)
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          VERSION="$(bash scripts/read-app-version.sh)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building Canari v${VERSION}"
 
       - name: Select Xcode (>= 16.2)
         uses: maxim-lobanov/setup-xcode@v1
@@ -62,20 +71,29 @@ jobs:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
         run: |
+          # Two provisioning profiles are required because the project signs two bundles
+          # manually: the app (fr.emse.canari, profile "Canari") and the Notification
+          # Service Extension (fr.emse.canari.notifications, profile "CanariNotifications").
           required=(
             APPLE_SIGNING_IDENTITY
             APPLE_CERTIFICATE_BASE64
             APPLE_CERTIFICATE_PASSWORD
             APPLE_PROVISIONING_PROFILE
+            APPLE_PROVISIONING_PROFILE_NSE
             APPLE_TEAM_ID
             GOOGLE_SERVICE_INFO_PLIST
             JWT_SECRET
             BASE_URL
+            AUTHENTIK_URL
+            AUTHENTIK_CLIENT_ID
           )
 
           for key in "${required[@]}"; do
@@ -111,21 +129,32 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           echo "✅ Signing certificate installed"
 
-      - name: Install provisioning profile
+      - name: Install provisioning profiles
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          APPLE_PROVISIONING_PROFILE_NSE: ${{ secrets.APPLE_PROVISIONING_PROFILE_NSE }}
         run: |
-          PP_PATH="$RUNNER_TEMP/canari.mobileprovision"
-          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > "$PP_PATH"
-
+          # Install BOTH profiles into the runner's profile store. xcodebuild resolves the
+          # PROVISIONING_PROFILE_SPECIFIER names ("Canari", "CanariNotifications") set in
+          # the project by scanning these installed profiles, so both must be present.
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
 
-          # Extraire l'UUID du profil pour le nommage
-          UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID raw -)
-          cp "$PP_PATH" "$PROFILES_DIR/$UUID.mobileprovision"
-          echo "PP_UUID=$UUID" >> $GITHUB_ENV
-          echo "✅ Provisioning profile installed (UUID: $UUID)"
+          install_profile() {
+            local b64="$1"
+            local label="$2"
+            local tmp="$RUNNER_TEMP/${label}.mobileprovision"
+            echo "$b64" | base64 --decode > "$tmp"
+            local uuid
+            uuid=$(security cms -D -i "$tmp" | plutil -extract UUID raw -)
+            local name
+            name=$(security cms -D -i "$tmp" | plutil -extract Name raw -)
+            cp "$tmp" "$PROFILES_DIR/$uuid.mobileprovision"
+            echo "✅ Installed profile '$name' (UUID: $uuid) for $label"
+          }
+
+          install_profile "$APPLE_PROVISIONING_PROFILE" "app"
+          install_profile "$APPLE_PROVISIONING_PROFILE_NSE" "nse"
 
       - name: Write GoogleService-Info.plist
         env:
@@ -143,20 +172,40 @@ jobs:
       - name: Create frontend .env
         working-directory: frontend
         env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           BASE_URL: ${{ secrets.BASE_URL }}
+          AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
+          AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
-          echo "VITE_JWT_SECRET=${JWT_SECRET}" > .env
+          # Same variable set as android-release.yml: the SvelteKit frontend is shared,
+          # so it needs the identical build-time config (Authentik SSO included).
+          echo "VITE_FRONTEND_URL=${BASE_URL}" > .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
           echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
           echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
           echo "VITE_CALL_URL=${BASE_URL}" >> .env
           echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
           echo "VITE_CORE_URL=${BASE_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
           if [ -n "$KLIPY_API_KEY" ]; then
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
+
+      - name: Verify frontend env for iOS build
+        working-directory: frontend
+        run: |
+          grep -q '^VITE_FRONTEND_URL=.' .env
+          grep -q '^VITE_GATEWAY_URL=.' .env
+          grep -q '^VITE_DELIVERY_URL=.' .env
+          grep -q '^VITE_MEDIA_URL=.' .env
+          grep -q '^VITE_CALL_URL=.' .env
+          grep -q '^VITE_SOCIAL_URL=.' .env
+          grep -q '^VITE_CORE_URL=.' .env
+          grep -q '^VITE_AUTHENTIK_URL=.' .env
+          grep -q '^VITE_AUTHENTIK_CLIENT_ID=.' .env
+          echo "✅ iOS frontend env prepared"
 
       - name: Resolve Swift Packages
         working-directory: frontend/src-tauri/gen/apple
@@ -169,16 +218,29 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: bun tauri ios build --export-method app-store-connect -v
 
-      - name: Upload IPA Artifacts
+      - name: Locate build output
+        id: outputs
+        run: |
+          IPA=$(find frontend/src-tauri/gen/apple/build -name "*.ipa" | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::No .ipa produced by the iOS build"
+            exit 1
+          fi
+          echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
+          echo "IPA: $IPA"
+
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ios-release-ipa
-          path: frontend/src-tauri/gen/apple/build/arm64/*.ipa
+          name: ios-release
+          path: ${{ steps.outputs.outputs.ipa }}
 
-      - name: Upload IPA to Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        if: github.event_name == 'release'
+        if: github.event_name == 'workflow_run'
         with:
-          files: frontend/src-tauri/gen/apple/build/arm64/*.ipa
+          tag_name: v${{ steps.release_tag.outputs.version }}
+          fail_on_unmatched_files: true
+          files: ${{ steps.outputs.outputs.ipa }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

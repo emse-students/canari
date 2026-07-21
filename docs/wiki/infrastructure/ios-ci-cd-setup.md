@@ -126,11 +126,22 @@ Tableau récapitulatif, puis le détail de chacun.
 | `APPLE_SIGNING_IDENTITY` | Nom exact du certificat | signature du binaire | **à fournir** |
 | `APPLE_CERTIFICATE_BASE64` | Certificat distribution `.p12` (base64) | installé dans le trousseau | **à fournir** |
 | `APPLE_CERTIFICATE_PASSWORD` | Mot de passe du `.p12` | import du certificat | **à fournir** |
-| `APPLE_PROVISIONING_PROFILE` | `.mobileprovision` (base64) | autorise l'app + capacités | **à fournir** |
+| `APPLE_PROVISIONING_PROFILE` | `.mobileprovision` de l'**app** `fr.emse.canari` (base64), profil nommé **`Canari`** | autorise l'app + capacités | **à fournir** |
+| `APPLE_PROVISIONING_PROFILE_NSE` | `.mobileprovision` de l'**extension** `fr.emse.canari.notifications` (base64), profil nommé **`CanariNotifications`** | signe l'`.appex` (NSE) | **à fournir** |
 | `GOOGLE_SERVICE_INFO_PLIST` | Config Firebase iOS | écrit avant le build | ✅ déjà en place |
-| `JWT_SECRET` | Secret JWT backend | `.env` frontend | ✅ (partagé avec les autres CI) |
+| `JWT_SECRET` | Secret JWT backend | validation secrets | ✅ (partagé avec les autres CI) |
 | `BASE_URL` | URL de l'API prod | `.env` frontend | ✅ (partagé) |
+| `AUTHENTIK_URL` | URL du SSO Authentik | `.env` frontend (login) | ✅ (partagé avec Android) |
+| `AUTHENTIK_CLIENT_ID` | Client OIDC Authentik | `.env` frontend (login) | ✅ (partagé avec Android) |
 | `KLIPY_API_KEY` | Clé GIF Klipy (optionnel) | `.env` frontend | optionnel |
+
+> ⚠️ **Signature manuelle + deux bundles.** Le projet Xcode (maintenu à la main par Léon)
+> signe en `CODE_SIGN_STYLE = Manual` **deux** cibles : l'app (`fr.emse.canari`) et
+> l'extension de notification (`fr.emse.canari.notifications`, cible `CanariNotifications`).
+> Chacune référence son profil **par son nom** (`PROVISIONING_PROFILE_SPECIFIER`) :
+> `Canari` pour l'app, `CanariNotifications` pour le NSE. Il faut donc **deux**
+> provisioning profiles, et leur **nom Apple doit être exactement** `Canari` et
+> `CanariNotifications` (sinon xcodebuild ne les retrouve pas et la signature échoue).
 
 ### 4.1 `APPLE_TEAM_ID`
 
@@ -178,23 +189,39 @@ C'est la pièce maîtresse : le certificat qui signe l'app pour l'App Store / Te
   Copie **exactement** la chaîne entre guillemets (ex. `Apple Distribution: EMSE Students (AB12CD34EF)`).
 - **Comment le mettre :** `gh secret set APPLE_SIGNING_IDENTITY`.
 
-### 4.4 `APPLE_PROVISIONING_PROFILE`
+### 4.4 `APPLE_PROVISIONING_PROFILE` (app) + `APPLE_PROVISIONING_PROFILE_NSE` (extension)
 
-- **C'est quoi :** le fichier `.mobileprovision` qui lie *le certificat* + *l'App ID
-  `fr.emse.canari`* + *les capacités (Push, Associated Domains)* + *le mode de
-  distribution (App Store)*.
+Il faut **deux** profils (voir l'encadré du tableau §4) : un pour l'app, un pour le NSE.
+
+**Profil de l'app (`APPLE_PROVISIONING_PROFILE`) :**
+- **C'est quoi :** le `.mobileprovision` qui lie *le certificat* + *l'App ID
+  `fr.emse.canari`* + *les capacités (Push, Associated Domains, **App Groups**)* + *la
+  distribution App Store*.
 - **Le générer :** <https://developer.apple.com/account/resources/profiles/list> → **+** →
-  type **App Store Connect** (distribution) → choisis l'App ID `fr.emse.canari` → choisis
-  ton certificat *Apple Distribution* → nomme-le (ex. `Canari App Store`) → télécharge le
-  `.mobileprovision`.
+  type **App Store Connect** (distribution) → App ID `fr.emse.canari` → ton certificat
+  *Apple Distribution* → **nomme-le exactement `Canari`** → télécharge.
 - **Le mettre en secret** (base64) :
   ```bash
-  base64 -i Canari_App_Store.mobileprovision -o profile.b64
+  base64 -i Canari.mobileprovision -o profile.b64
   gh secret set APPLE_PROVISIONING_PROFILE --repo emse-students/canari < profile.b64
   ```
 
-> ⚠️ Refais ce profil **à chaque fois** que tu ajoutes une capacité à l'App ID (ex. quand
-> on ajoutera l'extension de notification, §6), sinon la nouvelle capacité manquera.
+**Profil du NSE (`APPLE_PROVISIONING_PROFILE_NSE`) :**
+- **Prérequis Apple :** un App ID `fr.emse.canari.notifications` avec la capacité **App
+  Groups** cochée + le groupe `group.fr.emse.canari` (voir
+  [`ios-nse-setup.md`](ios-nse-setup.md#apple-developer-portal-steps)).
+- **Le générer :** même écran → type **App Store Connect** → App ID
+  `fr.emse.canari.notifications` → même certificat → **nomme-le exactement
+  `CanariNotifications`** → télécharge.
+- **Le mettre en secret :**
+  ```bash
+  base64 -i CanariNotifications.mobileprovision -o nse.b64
+  gh secret set APPLE_PROVISIONING_PROFILE_NSE --repo emse-students/canari < nse.b64
+  ```
+
+> ⚠️ Le **nom** de chaque profil doit être **exactement** `Canari` / `CanariNotifications`
+> (le `project.pbxproj` les référence par nom). Refais un profil **à chaque fois** que tu
+> ajoutes une capacité à l'App ID correspondant, sinon la capacité manquera.
 
 ### 4.5 `JWT_SECRET`, `BASE_URL`, `KLIPY_API_KEY`
 
@@ -242,15 +269,22 @@ capacité.
 
 ---
 
-## 7. Activer et lancer le workflow (une fois les secrets remplis)
+## 7. Lancer le workflow (une fois les secrets remplis)
 
-1. Assure-toi que **tous** les secrets du tableau §4 sont posés (le workflow te dira
-   précisément lequel manque : étape *Validate iOS release secrets*).
-2. Réactivation : dans [`.github/workflows/ios-release.yml`](../../../.github/workflows/ios-release.yml),
-   le job ne tourne que si on le déclenche manuellement avec `force = true`. Pour le lancer :
-   GitHub → onglet **Actions** → *iOS Release* → **Run workflow** → mets `force` = `true` → **Run**.
-3. Si tout est bon, l'onglet *Actions* affichera un artefact `ios-release-ipa` téléchargeable.
-   Sinon, lis le message d'erreur : il pointe l'étape et le secret fautif.
+Le workflow est désormais **calqué sur `android-release.yml`** (plus de garde-fou
+`force`) : il se lance tout seul après *Bump version on release* (à chaque GitHub Release)
+et attache l'`.ipa` signé à la Release `vX.Y.Z`. On peut aussi le lancer à la main.
+
+1. Assure-toi que **tous** les secrets du tableau §4 sont posés — dont les **deux**
+   provisioning profiles (`APPLE_PROVISIONING_PROFILE` + `APPLE_PROVISIONING_PROFILE_NSE`).
+   L'étape *Validate iOS release secrets* te dira précisément lequel manque.
+2. **Test manuel :** GitHub → onglet **Actions** → *iOS Release* → **Run workflow**
+   (branche `main`). Ça build et publie l'artefact `ios-release` (l'`.ipa`) téléchargeable,
+   sans toucher à une Release.
+3. **En release réelle :** publie une GitHub Release → *Bump version on release* tourne →
+   *iOS Release* s'enchaîne et joint l'`.ipa` à la Release (comme l'`.aab`/`.apk` Android).
+4. Si ça casse, lis le message : il pointe l'étape et le secret/profil fautif. La signature
+   manuelle du NSE (§4.4) est le point le plus sensible — vérifie les noms de profils.
 
 ---
 
