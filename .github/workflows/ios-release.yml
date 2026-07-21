@@ -328,3 +328,30 @@ jobs:
           files: ${{ steps.outputs.outputs.ipa }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to TestFlight / App Store Connect
+        if: github.event_name == 'workflow_run'
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          IPA_PATH: ${{ steps.outputs.outputs.ipa }}
+        run: |
+          # Pushes the App-Store-signed .ipa to App Store Connect (lands in TestFlight).
+          # A raw .ipa cannot be sideloaded from a GitHub Release on iOS, so this is the
+          # only real distribution path. The step SKIPS (does not fail) until the three
+          # App Store Connect API-key secrets exist, so the build/release stays green in
+          # the meantime; see docs/publication-stores.md for how to create them.
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_API_KEY_P8" ]; then
+            echo "::warning::App Store Connect API key secrets not set; skipping TestFlight upload"
+            exit 0
+          fi
+          # altool auto-discovers the key at ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8
+          KEY_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$KEY_DIR"
+          echo "$ASC_API_KEY_P8" | base64 --decode > "$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          echo "Uploading ${IPA_PATH} to App Store Connect…"
+          xcrun altool --upload-app -f "$IPA_PATH" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          rm -f "$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          echo "✅ Uploaded to TestFlight"

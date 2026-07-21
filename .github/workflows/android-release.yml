@@ -205,12 +205,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Publish to Google Play (internal track)
-      #   if: endsWith(github.ref_name, '.0')
-      #   uses: r0adkll/upload-google-play@v1
-      #   with:
-      #     serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-      #     packageName: fr.emse.canari
-      #     releaseFiles: ${{ steps.outputs.outputs.aab }}
-      #     track: internal
-      #     status: completed
+      # The `secrets` context is unavailable in a step-level `if:`, so expose the
+      # presence of the Google Play key as an output and gate the publish step on it.
+      # This keeps the build/release green until the secret exists.
+      - name: Check Google Play secret
+        id: gplay
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GOOGLE_PLAY_SERVICE_ACCOUNT_JSON not set; skipping Google Play publish"
+          fi
+
+      # Publishes the signed AAB to Google Play (internal track).
+      # See docs/publication-stores.md for how to create the service account.
+      # NOTE: Google requires the very first AAB to be uploaded MANUALLY in the Play Console
+      # before the API will accept uploads for fr.emse.canari.
+      - name: Publish to Google Play (internal track)
+        if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: fr.emse.canari
+          releaseFiles: ${{ steps.outputs.outputs.aab }}
+          track: internal
+          status: completed
