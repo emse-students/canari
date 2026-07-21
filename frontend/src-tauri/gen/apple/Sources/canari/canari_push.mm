@@ -1621,22 +1621,33 @@ void CanariPushCancelMessageNotifications(void) {
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+/// Persist a freshly-obtained FCM token to fcm_token.txt and re-register it on the
+/// backend when a push context + secret already exist. Shared by the delegate
+/// callback (which fires only when the token CHANGES) and the launch-time fetch in
+/// CanariPushSetup (which covers a token that rotated while the app was killed,
+/// where the change callback never fires - the iOS peer of Android
+/// MainActivity.onCreate's FirebaseMessaging.getInstance().token force-read).
+static void CanariPersistFcmToken(NSString *fcmToken) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil || fcmToken.length == 0) {
+    return;
+  }
+  NSString *path = [dir stringByAppendingPathComponent:@"fcm_token.txt"];
+  [fcmToken writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSString *secret = CanariRetrievePushSecret();
+  if (ctx != nil && secret != nil) {
+    CanariRefreshTokenOnBackend(ctx, secret, fcmToken);
+  }
+}
+
 @interface CanariFcmPushDelegate : NSObject <FIRMessagingDelegate>
 @end
 
 @implementation CanariFcmPushDelegate
 - (void)messaging:(FIRMessaging *)messaging didReceiveRegistrationToken:(NSString *)fcmToken {
   (void)messaging;
-  NSString *dir = CanariTauriDataDir();
-  if (dir != nil && fcmToken.length > 0) {
-  NSString *path = [dir stringByAppendingPathComponent:@"fcm_token.txt"];
-    [fcmToken writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    CanariPushContext *ctx = CanariLoadPushContext();
-    NSString *secret = CanariRetrievePushSecret();
-    if (ctx != nil && secret != nil) {
-      CanariRefreshTokenOnBackend(ctx, secret, fcmToken);
-    }
-  }
+  CanariPersistFcmToken(fcmToken);
 }
 
 - (void)messaging:(FIRMessaging *)messaging
@@ -1703,6 +1714,20 @@ void CanariPushSetup(void) {
   g_fcmPushDelegate = [[CanariFcmPushDelegate alloc] init];
   [FIRMessaging messaging].delegate = g_fcmPushDelegate;
   NSLog(@"[CanariPush] FCM delegate installe");
+  // Launch-time force-fetch of the current FCM token. didReceiveRegistrationToken
+  // only fires when the token CHANGES, so a token that rotated while the app was
+  // killed would otherwise never re-register until the next natural rotation. This
+  // mirrors Android MainActivity.onCreate's FirebaseMessaging.getInstance().token
+  // read: best-effort, runs once per cold start, persists + re-registers on success.
+  [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
+                                                  NSError *_Nullable error) {
+    if (error != nil) {
+      NSLog(@"[CanariPush] fetch FCM token au lancement echoue: %@", error.localizedDescription);
+      return;
+    }
+    CanariPersistFcmToken(token);
+    NSLog(@"[CanariPush] FCM token synchronise au lancement");
+  }];
 #else
   NSLog(@"[CanariPush] Firebase Messaging absent");
 #endif
