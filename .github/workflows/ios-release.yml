@@ -160,7 +160,7 @@ jobs:
 
       - name: Resolve Swift Packages
         working-directory: frontend/src-tauri/gen/apple
-        run: xcodebuild -resolvePackageDependencies -workspace canari.xcworkspace -scheme canari_iOS
+        run: xcodebuild -resolvePackageDependencies -project canari.xcodeproj -scheme canari_iOS
 
       - name: Build iOS IPA
         working-directory: frontend
