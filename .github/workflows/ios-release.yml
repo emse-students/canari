@@ -220,6 +220,10 @@ jobs:
           # fail to link with `ld: library 'app' not found`. Reproduce what Tauri's
           # xcode-script does: cross-compile the app staticlib and drop it where the
           # linker search path (Externals/<arch>/<config>) expects it, as `libapp.a`.
+          # rust-toolchain.toml pins 1.93.0 (no `targets`), which overrides the action's
+          # `stable` here - so the iOS std isn't installed for the toolchain cargo actually
+          # uses. Add it to the pinned toolchain (override is active in this dir).
+          rustup target add aarch64-apple-ios
           cargo build --lib --release --target aarch64-apple-ios
           LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | head -1)
           if [ -z "$LIB" ]; then
