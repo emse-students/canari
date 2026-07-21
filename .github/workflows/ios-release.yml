@@ -158,9 +158,9 @@ jobs:
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
 
-      - name: Install iOS CocoaPods dependencies
+      - name: Resolve Swift Packages
         working-directory: frontend/src-tauri/gen/apple
-        run: pod install --repo-update
+        run: xcodebuild -resolvePackageDependencies -workspace canari.xcworkspace -scheme canari_iOS
 
       - name: Build iOS IPA
         working-directory: frontend
