@@ -48,6 +48,22 @@
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
+	<!-- Custom URL scheme registration for tauri-plugin-deep-link custom-scheme links
+	     (OIDC callback fr.emse.canari://callback, Stripe return, chat/post/form routing).
+	     On Android the plugin generates the intent-filter into AndroidManifest.xml at build
+	     time; on iOS the CFBundleURLTypes entry must be declared here manually or the OS
+	     never hands the URL back to the app - which would break Authentik OIDC login. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>fr.emse.canari</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fr.emse.canari</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Privacy usage strings: iOS hard-crashes on first access to a protected resource
 	     when its *UsageDescription key is absent. Face ID in particular crashes the biometric
 	     unlock flow without NSFaceIDUsageDescription. French copy (app is French-first);

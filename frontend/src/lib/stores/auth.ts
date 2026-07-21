@@ -15,6 +15,7 @@ import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
@@ -111,9 +112,10 @@ function authentikClientId(): string {
 function oidcRedirectUri(): string {
   const configured = (import.meta.env.VITE_AUTHENTIK_REDIRECT_URI as string | undefined)?.trim();
   if (configured) return configured;
-  // On Tauri mobile use a custom-scheme deep link so Authentik redirects back
-  // to the app via Android intent rather than navigating the main WebView.
-  if (typeof window !== 'undefined' && isTauri() && /android/i.test(navigator.userAgent)) {
+  // On Tauri mobile (Android + iOS) use a custom-scheme deep link so Authentik
+  // redirects back to the app via the OS URL handler (Android intent-filter /
+  // iOS CFBundleURLTypes) rather than navigating the main WebView away.
+  if (isMobileTauriRuntime()) {
     return 'fr.emse.canari://callback';
   }
   return `${window.location.origin}/auth/callback`;
@@ -166,10 +168,11 @@ export async function startOidcLogin(
     : `${baseUrl}${authorizePath}`;
   alog(`login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'}`);
 
-  // On Android Tauri, open in the system browser (Chrome Custom Tabs) so the
-  // main WebView is never navigated away and the Tauri IPC bridge stays intact.
-  // The callback returns via the fr.emse.canari://callback deep link.
-  if (typeof window !== 'undefined' && isTauri() && /android/i.test(navigator.userAgent)) {
+  // On Tauri mobile (Android + iOS), open in the system browser (Android: Chrome
+  // Custom Tabs; iOS: Safari via SFSafariViewController) so the main WebView is
+  // never navigated away and the Tauri IPC bridge stays intact. The callback
+  // returns via the fr.emse.canari://callback deep link handled by plugin-deep-link.
+  if (isMobileTauriRuntime()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(authUrl);
   } else {
