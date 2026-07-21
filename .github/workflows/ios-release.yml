@@ -158,6 +158,10 @@ jobs:
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
 
+      - name: Install iOS CocoaPods dependencies
+        working-directory: frontend/src-tauri/gen/apple
+        run: pod install --repo-update
+
       - name: Build iOS IPA
         working-directory: frontend
         env:
