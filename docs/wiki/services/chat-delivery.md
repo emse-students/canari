@@ -169,6 +169,22 @@ SDK is pulled via **Swift Package Manager** (not CocoaPods). The APNs↔FCM toke
 on Firebase's App Delegate Proxy (`FirebaseAppDelegateProxyEnabled`, which must stay enabled).
 The iOS `aps-environment` entitlement is `production` for TestFlight/App Store builds.
 
+#### iOS background execution
+
+Android drains the pending MLS state from an expedited `MlsBackgroundWorker` (WorkManager). The
+iOS peer is a **`BGProcessingTask`** (`fr.emse.canari.cleanup`, listed in
+`BGTaskSchedulerPermittedIdentifiers`): its launch handler is registered in `canari_ios_bootstrap`
+(before `UIApplicationMain`, as `BGTaskScheduler` demands) and runs
+`canari_native_cleanup_pending_db` to clear `mls_pending.db`. A request is re-submitted on every
+background entry (`willResignActive`) and after each run, but iOS decides when — there is no
+guaranteed cadence.
+
+**Force-quit is terminal on iOS:** once the user swipes the app away, iOS delivers **no** silent
+`content-available` data pushes and runs **no** `BGTask` until the app is manually relaunched. This
+is a platform constraint with no workaround; visible (`mutable-content`) alert pushes still arrive
+and wake the (future) Notification Service Extension, so the user is never fully silenced, but
+background state-sync only resumes on next open. Android has no equivalent restriction.
+
 ### Security / PIN
 
 | Method | Path | Description |

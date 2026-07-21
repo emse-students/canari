@@ -15,4 +15,11 @@ void CanariPushSetup(void);
 /// Retire les notifications de messages au premier plan.
 void CanariPushCancelMessageNotifications(void);
 
+/// Enregistre le handler BGProcessingTask (nettoyage MLS en arriere-plan).
+/// A appeler AVANT la fin du lancement (depuis canari_ios_bootstrap, avant start_app).
+void CanariRegisterBackgroundTasks(void);
+
+/// Planifie une fenetre de nettoyage en arriere-plan. A appeler a l'entree en arriere-plan.
+void CanariScheduleBackgroundCleanupTask(void);
+
 #endif

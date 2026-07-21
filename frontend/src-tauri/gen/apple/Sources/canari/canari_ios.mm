@@ -80,6 +80,9 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   canari_ios_on_pause();
+  // Queue a background-processing window now that the app is leaving the foreground, so the OS
+  // can drain mls_pending.db while suspended (best-effort; never runs for a force-quit app).
+  CanariScheduleBackgroundCleanupTask();
   NSLog(@"[CanariIOS] willResignActive");
 }
 
@@ -101,6 +104,10 @@ void canari_ios_bootstrap(void) {
   CanariRequestNotificationPermission();
   CanariSetupFirebaseIfAvailable();
   CanariPushSetup();
+  // Register the BGProcessingTask handler here (before ffi::start_app()/UIApplicationMain):
+  // BGTaskScheduler requires every launch handler to be registered before the app finishes
+  // launching, and registering later (e.g. from the DidFinishLaunching observer) would throw.
+  CanariRegisterBackgroundTasks();
   [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]

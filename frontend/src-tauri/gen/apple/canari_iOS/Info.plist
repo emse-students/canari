@@ -26,6 +26,16 @@
 		<string>processing</string>
 		<string>fetch</string>
 	</array>
+	<!-- BGTaskScheduler identifiers the app may submit. Must list every identifier passed to
+	     registerForTaskWithIdentifier: / submitTaskRequest: or BGTaskScheduler throws. This
+	     BGProcessingTask is the iOS analogue of Android's expedited MlsBackgroundWorker: it
+	     drains mls_pending.db (canari_native_cleanup_pending_db) when the OS grants a
+	     background-processing window. Note: iOS never wakes a force-quit app, so a user who
+	     swipes the app away receives no silent data pushes and no BGTask runs until relaunch. -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>fr.emse.canari.cleanup</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

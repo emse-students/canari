@@ -11,6 +11,10 @@
 #import <FirebaseMessaging/FirebaseMessaging.h>
 #endif
 
+#if __has_include(<BackgroundTasks/BackgroundTasks.h>)
+#import <BackgroundTasks/BackgroundTasks.h>
+#endif
+
 static NSString *const kPushSecretKeychainService = @"canari_push_secret";
 static NSString *const kPushSecretKeychainAccount = @"push_secret";
 static NSString *const kCanariBundleId = @"fr.emse.canari";
@@ -23,6 +27,10 @@ static const int kWelcomeRaceRetries = 3;
 static const useconds_t kWelcomeRaceRetryDelayUs = 1800000;
 static NSString *const kOutboxPendingFileName = @"outbox_pending.ndjson";
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
+// BGProcessingTask identifier; MUST match BGTaskSchedulerPermittedIdentifiers in Info.plist.
+// iOS analogue of Android's expedited MlsBackgroundWorker (WorkManager): given a background
+// window by the OS, it drains mls_pending.db via canari_native_cleanup_pending_db.
+static NSString *const kCanariBgCleanupTaskId = @"fr.emse.canari.cleanup";
 static const int kPendingSyncNotifId = 9998;
 static const NSTimeInterval kAvatarCacheMaxAgeSec = 24 * 60 * 60;
 
@@ -824,6 +832,67 @@ static void CanariRunBackgroundCleanup(void) {
   }
   int ok = canari_native_cleanup_pending_db(dir.UTF8String);
   NSLog(@"[CanariPush] background cleanup pending db: %d", ok);
+}
+
+#if __has_include(<BackgroundTasks/BackgroundTasks.h>)
+
+/// Submits the next background-processing request. iOS coalesces and defers these on its own
+/// schedule (no guaranteed cadence), and never wakes a force-quit app. Re-submitted on every
+/// background entry and after each task run so a window always stays queued.
+API_AVAILABLE(ios(13.0))
+static void CanariSubmitBackgroundCleanupRequest(void) {
+  BGProcessingTaskRequest *request =
+      [[BGProcessingTaskRequest alloc] initWithIdentifier:kCanariBgCleanupTaskId];
+  request.requiresNetworkConnectivity = NO;
+  request.requiresExternalPower = NO;
+  NSError *error = nil;
+  if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
+    NSLog(@"[CanariPush] BGTask submit echoue: %@", error.localizedDescription);
+  } else {
+    NSLog(@"[CanariPush] BGTask cleanup planifie");
+  }
+}
+
+/// Registers the BGProcessingTask launch handler. MUST run before the app finishes launching -
+/// it is called from canari_ios_bootstrap (i.e. before ffi::start_app()/UIApplicationMain), so
+/// it is well within the deadline; the UIApplicationDidFinishLaunchingNotification observer, by
+/// contrast, fires AFTER didFinishLaunching returns and would be too late (BGTaskScheduler throws).
+API_AVAILABLE(ios(13.0))
+static void CanariRegisterBackgroundCleanupHandler(void) {
+  [[BGTaskScheduler sharedScheduler]
+      registerForTaskWithIdentifier:kCanariBgCleanupTaskId
+                         usingQueue:nil
+                      launchHandler:^(__kindof BGTask *task) {
+                        // The OS only keeps one pending request per identifier - queue the next
+                        // window immediately so cleanup keeps recurring.
+                        CanariSubmitBackgroundCleanupRequest();
+                        task.expirationHandler = ^{
+                          NSLog(@"[CanariPush] BGTask expire avant la fin du cleanup");
+                        };
+                        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                          CanariRunBackgroundCleanup();
+                          [task setTaskCompletedWithSuccess:YES];
+                        });
+                      }];
+  NSLog(@"[CanariPush] BGTask handler enregistre (%@)", kCanariBgCleanupTaskId);
+}
+
+#endif
+
+void CanariRegisterBackgroundTasks(void) {
+#if __has_include(<BackgroundTasks/BackgroundTasks.h>)
+  if (@available(iOS 13.0, *)) {
+    CanariRegisterBackgroundCleanupHandler();
+  }
+#endif
+}
+
+void CanariScheduleBackgroundCleanupTask(void) {
+#if __has_include(<BackgroundTasks/BackgroundTasks.h>)
+  if (@available(iOS 13.0, *)) {
+    CanariSubmitBackgroundCleanupRequest();
+  }
+#endif
 }
 
 static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
