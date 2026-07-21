@@ -22,6 +22,20 @@ export function getIosAppStoreUrl(): string {
   return import.meta.env.VITE_IOS_APP_STORE_URL?.trim() || '';
 }
 
+/**
+ * Google Play listing URL for the Android build.
+ *
+ * Injected at build time via `VITE_ANDROID_PLAY_STORE_URL`. Empty until the app is
+ * live on the Play Store; while empty, Android falls back to the direct APK download
+ * from GitHub Releases (see {@link getAppUpdateUrl}) so existing sideload users keep a
+ * working update path and never hit a dead store link. Prefer the
+ * `market://details?id=fr.emse.canari` deep link so it opens the Play Store app
+ * directly; an `https://play.google.com/store/apps/details?id=...` URL works too.
+ */
+export function getAndroidPlayStoreUrl(): string {
+  return import.meta.env.VITE_ANDROID_PLAY_STORE_URL?.trim() || '';
+}
+
 export type PlatformMaintenanceInfo = {
   enabled: boolean;
   message: string | null;
@@ -230,19 +244,36 @@ export function isMobileTauriRuntime(): boolean {
 
 /**
  * URL opened when the user accepts an app update prompt.
- * Android Tauri: direct APK download; iOS Tauri: App Store listing (empty until
- * `VITE_IOS_APP_STORE_URL` is configured); other native: release tag page; web:
- * n/a (reload).
+ * Android Tauri: Play Store listing once `VITE_ANDROID_PLAY_STORE_URL` is configured,
+ * else the direct APK download (no regression for sideload users); iOS Tauri: App
+ * Store listing (empty until `VITE_IOS_APP_STORE_URL` is configured); other native:
+ * release tag page; web: n/a (reload).
  */
 export function getAppUpdateUrl(serverVersion: string | null): string {
   if (isAndroidTauriRuntime()) {
-    return getReleaseApkDownloadUrl(serverVersion);
+    // Prefer the Play Store once the listing is live; otherwise fall back to the direct
+    // APK download so existing sideload users keep a working update path.
+    return getAndroidPlayStoreUrl() || getReleaseApkDownloadUrl(serverVersion);
   }
   if (isIosTauriRuntime()) {
     // iOS updates through the App Store only; there is no sideloadable binary.
     return getIosAppStoreUrl();
   }
   return getReleasePageUrl(serverVersion);
+}
+
+/**
+ * Whether the current platform has a usable update destination right now. Gates the
+ * update prompt so it never presents a dead action: iOS has no sideload fallback, so
+ * its prompt must stay hidden until the App Store listing (`VITE_IOS_APP_STORE_URL`)
+ * is configured. Every other platform always has a target (Play Store or APK on
+ * Android, the release page on desktop, a reload on web).
+ */
+export function hasConfiguredUpdateTarget(): boolean {
+  if (isIosTauriRuntime()) {
+    return getIosAppStoreUrl() !== '';
+  }
+  return true;
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   buildAppVersionCheckResult,
   compareSemver,
   fetchServerAppVersionReliable,
+  getAndroidPlayStoreUrl,
   getClientAppVersion,
   getIosAppStoreUrl,
   getReleaseApkDownloadUrl,
@@ -166,5 +167,21 @@ describe('getIosAppStoreUrl', () => {
   it('returns the trimmed injected App Store URL', () => {
     vi.stubEnv('VITE_IOS_APP_STORE_URL', '  itms-apps://apps.apple.com/app/id123456789  ');
     expect(getIosAppStoreUrl()).toBe('itms-apps://apps.apple.com/app/id123456789');
+  });
+});
+
+describe('getAndroidPlayStoreUrl', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('returns an empty string when VITE_ANDROID_PLAY_STORE_URL is unset', () => {
+    vi.stubEnv('VITE_ANDROID_PLAY_STORE_URL', '');
+    expect(getAndroidPlayStoreUrl()).toBe('');
+  });
+
+  it('returns the trimmed injected Play Store URL', () => {
+    vi.stubEnv('VITE_ANDROID_PLAY_STORE_URL', '  market://details?id=fr.emse.canari  ');
+    expect(getAndroidPlayStoreUrl()).toBe('market://details?id=fr.emse.canari');
   });
 });

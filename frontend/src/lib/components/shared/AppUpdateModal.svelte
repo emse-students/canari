@@ -7,6 +7,8 @@
     isAppUpdateAvailable,
   } from '$lib/stores/appVersionCheck.svelte';
   import {
+    getAndroidPlayStoreUrl,
+    hasConfiguredUpdateTarget,
     isAndroidTauriRuntime,
     isIosTauriRuntime,
     openLatestAppUpdate,
@@ -19,6 +21,11 @@
   const isNative = $derived(isTauriRuntime());
   const isAndroid = $derived(isAndroidTauriRuntime());
   const isIos = $derived(isIosTauriRuntime());
+  // Android points at the Play Store once its listing is live; before that it still
+  // falls back to the APK download, so the copy/button must reflect the real target.
+  const isAndroidPlayStore = $derived(isAndroid && getAndroidPlayStoreUrl() !== '');
+  // Never present a dead update action (e.g. iOS before its App Store listing exists).
+  const canUpdate = $derived(hasConfiguredUpdateTarget());
 
   let updating = $state(false);
 
@@ -33,7 +40,7 @@
 </script>
 
 <Modal
-  open={show && info !== null}
+  open={show && info !== null && canUpdate}
   title={m.update_optional_title()}
   dismissible={false}
   maxWidth="max-w-lg"
@@ -49,7 +56,11 @@
       {/if}
     </p>
     {#if isAndroid}
-      <p>{m.update_android_instruction()}</p>
+      {#if isAndroidPlayStore}
+        <p>{m.update_play_store_instruction()}</p>
+      {:else}
+        <p>{m.update_android_instruction()}</p>
+      {/if}
     {:else if isIos}
       <p>{m.update_ios_instruction()}</p>
     {:else if isNative}
@@ -79,9 +90,11 @@
         ? m.update_opening_label()
         : isIos
           ? m.update_open_app_store_button()
-          : isNative
-            ? m.update_download_button()
-            : m.update_reload_button()}
+          : isAndroidPlayStore
+            ? m.update_open_play_store_button()
+            : isNative
+              ? m.update_download_button()
+              : m.update_reload_button()}
     </button>
   {/snippet}
 </Modal>

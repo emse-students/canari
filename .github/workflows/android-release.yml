@@ -140,6 +140,7 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
+          ANDROID_PLAY_STORE_URL: ${{ vars.VITE_ANDROID_PLAY_STORE_URL }}
         run: |
           echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
@@ -153,6 +154,12 @@ jobs:
           echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
           if [ -n "$KLIPY_API_KEY" ]; then
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
+          fi
+          # Play Store deep link for the in-app "update" prompt. Empty until the listing
+          # is live (repo variable VITE_ANDROID_PLAY_STORE_URL); while empty Android
+          # falls back to the direct APK download so the prompt still works.
+          if [ -n "$ANDROID_PLAY_STORE_URL" ]; then
+            echo "VITE_ANDROID_PLAY_STORE_URL=${ANDROID_PLAY_STORE_URL}" >> .env
           fi
 
       - name: Verify frontend env for Android build
@@ -220,12 +227,31 @@ jobs:
             echo "::warning::GOOGLE_PLAY_SERVICE_ACCOUNT_JSON not set; skipping Google Play publish"
           fi
 
-      # Publishes the signed AAB to Google Play (internal track).
-      # See docs/publication-stores.md for how to create the service account.
-      # NOTE: Google requires the very first AAB to be uploaded MANUALLY in the Play Console
-      # before the API will accept uploads for fr.emse.canari.
-      - name: Publish to Google Play (internal track)
+      # Publishes the signed AAB to Google Play on the PRODUCTION track (real public
+      # release, full rollout) - this uploads the bundle. NOTE: Google requires the very
+      # first production release to be created MANUALLY in the Play Console (store
+      # listing, content rating, etc.) before the API will accept uploads for
+      # fr.emse.canari; subsequent releases are automatic. Switch `status` to
+      # `inProgress` + set `userFraction` here for a staged rollout instead of 100%.
+      - name: Publish to Google Play (production)
         if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: fr.emse.canari
+          releaseFiles: ${{ steps.outputs.outputs.aab }}
+          track: production
+          status: completed
+
+      # Also expose the SAME build on the internal-testing track. Google forbids
+      # re-uploading a versionCode already used above, so this is best-effort
+      # (continue-on-error): it succeeds when the API lets the existing bundle be
+      # assigned to `internal`, and soft-skips otherwise - production already reaches
+      # everyone, so a failure here never blocks the release. For genuinely early access
+      # you want RC builds on their own cadence, not the same versionCode as production.
+      - name: Publish to Google Play (internal)
+        if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
+        continue-on-error: true
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
