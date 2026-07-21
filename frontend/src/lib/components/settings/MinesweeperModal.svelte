@@ -123,6 +123,7 @@
   let pinchStartMid = { x: 0, y: 0 };
 
   /** Pointers currently down on the viewport, keyed by pointerId (for pinch tracking). */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- imperative gesture state, read only in pointer handlers, never in the template
   const activePointers = new Map<number, { x: number; y: number }>();
 
   /** Single touch pointer that may turn into a pan if it moves past the threshold. */

@@ -64,7 +64,7 @@
   <meta name="twitter:image:alt" content={SITE.defaultOgImageAlt} />
 
   {#if showSiteJsonLd}
-    <!-- JSON-LD script tag; payload is built in-app via JSON.stringify, never user-supplied -->
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -- JSON-LD payload built in-app via JSON.stringify, never user-supplied -->
     {@html jsonLdScript}
   {/if}
 </svelte:head>
