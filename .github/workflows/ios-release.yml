@@ -235,22 +235,82 @@ jobs:
           cp "$LIB" "$DEST/libapp.a"
           echo "✅ libapp.a staged at $DEST ($(du -h "$DEST/libapp.a" | cut -f1))"
 
-      - name: Build iOS IPA
+      - name: Build iOS archive
         working-directory: frontend
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bun tauri ios build --export-method app-store-connect -v
-
-      - name: Locate build output
-        id: outputs
         run: |
-          IPA=$(find frontend/src-tauri/gen/apple/build -name "*.ipa" | head -1)
-          if [ -z "$IPA" ]; then
-            echo "::error::No .ipa produced by the iOS build"
+          # Tauri archives the app + embedded NSE with the manual profiles from the
+          # pbxproj (PROVISIONING_PROFILE_SPECIFIER = Canari / CanariNotifications), which
+          # succeeds. Its OWN -exportArchive then fails ("requires a provisioning profile
+          # with the App Groups... features") because the ExportOptions.plist Tauri
+          # generates can't express a two-target (app + appex) manual-signing profile map,
+          # so xcodebuild falls back to automatic signing on export. We tolerate that
+          # failure here and export the archive ourselves in the next step. The archive is
+          # already produced and correctly signed before export runs, so this loses
+          # nothing; a genuine archive failure is caught by the "no .xcarchive" guard.
+          bun tauri ios build --export-method app-store-connect -v || \
+            echo "::warning::tauri export failed (expected with two manual profiles); exporting archive manually"
+
+      - name: Export signed IPA
+        id: outputs
+        working-directory: frontend/src-tauri/gen/apple
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Re-export the archive Tauri produced with an ExportOptions.plist that pins
+          # manual signing and maps EACH bundle id to its named distribution profile, the
+          # part Tauri's generated options omit. Both profiles are already installed in the
+          # runner store (by name) and carry the required entitlements (App Groups,
+          # Associated Domains, aps-environment).
+          ARCHIVE=$(find build -name '*.xcarchive' -type d | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "::error::No .xcarchive produced by the iOS archive step"
+            find build -maxdepth 3 -type d || true
             exit 1
           fi
-          echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
+          echo "Archive: $ARCHIVE"
+
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>fr.emse.canari</key>
+              <string>Canari</string>
+              <key>fr.emse.canari.notifications</key>
+              <string>CanariNotifications</string>
+            </dict>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/ipa
+
+          IPA=$(find build/ipa -name '*.ipa' | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::exportArchive produced no .ipa"
+            exit 1
+          fi
+          echo "ipa=frontend/src-tauri/gen/apple/$IPA" >> "$GITHUB_OUTPUT"
           echo "IPA: $IPA"
 
       - name: Upload IPA Artifact
