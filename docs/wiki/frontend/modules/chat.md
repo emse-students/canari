@@ -38,7 +38,7 @@ Conversation state lives in a `SvelteMap<string, Conversation>` local to the com
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
 | `MessageEmojiPicker.svelte` | Emoji reaction picker (locale-aware FR/EN i18n) |
-| `Sidebar.svelte` | Conversation list, community/workspace switcher |
+| `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
 
 ## Message pipeline
 

@@ -57,7 +57,8 @@
     "highlight.js": "^11.11.1",
     "jspdf": "^4.2.1",
     "jsqr": "^1.4.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "svelte-dnd-action": "^0.9.74"
   },
   "devDependencies": {
     "@inlang/paraglide-js": "^2.20.0",

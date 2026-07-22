@@ -4,6 +4,11 @@ export interface CreateWorkspaceDto {
   createdBy: string;
 }
 
+/** Reorders the calling user's communities: `orderedIds` in the desired top-to-bottom order. */
+export interface ReorderWorkspacesDto {
+  orderedIds: string[];
+}
+
 export interface CreateRoleDto {
   workspaceId: string;
   name: string;

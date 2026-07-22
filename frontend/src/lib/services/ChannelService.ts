@@ -227,6 +227,15 @@ export class ChannelService {
     return res.json() as Promise<WorkspaceDto[]>;
   }
 
+  /** Persists the caller's personal top-to-bottom order for their communities. */
+  async reorderWorkspaces(orderedIds: string[]): Promise<void> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/workspaces/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ orderedIds }),
+    });
+    await this.handleError(res);
+  }
+
   /** Creates a shareable invite-link token for a community. */
   async createWorkspaceInvite(
     workspaceId: string,

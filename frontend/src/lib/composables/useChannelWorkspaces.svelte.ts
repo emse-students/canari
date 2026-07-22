@@ -697,6 +697,27 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /**
+   * Applies a drag-and-drop reorder of the sidebar communities optimistically, then persists it
+   * server-side. Rolls back to the previous order if the request fails.
+   */
+  async function reorderWorkspaces(
+    newOrder: ChannelSidebarWorkspace[],
+    ctx: ChannelWorkspaceContext
+  ) {
+    const previous = channelWorkspaces;
+    channelWorkspaces = newOrder;
+    try {
+      const orderedIds = newOrder
+        .map((ws) => ws.workspaceDbId)
+        .filter((id): id is string => Boolean(id));
+      await service.reorderWorkspaces(orderedIds);
+    } catch (error) {
+      channelWorkspaces = previous;
+      ctx.log(toUiActionError(m.channel_action_community_reorder(), error));
+    }
+  }
+
   /** Applies an incoming real-time workspace-updated event (currently: cover image change). */
   function handleWorkspaceUpdated(event: { workspaceId: string; imageMediaId?: string }) {
     channelWorkspaces = channelWorkspaces.map((ws) =>
@@ -751,6 +772,8 @@ export function useChannelWorkspaces() {
     deleteCurrentChannel,
     /** Saves a new cover image for a workspace and updates the sidebar entry optimistically. */
     updateCurrentWorkspaceImage,
+    /** Applies a drag-and-drop reorder of the sidebar communities and persists it server-side. */
+    reorderWorkspaces,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceUpdated,
   };

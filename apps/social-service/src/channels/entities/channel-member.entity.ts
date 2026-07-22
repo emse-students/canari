@@ -34,6 +34,10 @@ export class ChannelMember {
   @Column('jsonb', { default: {} })
   notifLevels: Record<string, 'all' | 'mentions' | 'none'>;
 
+  /** Display order of this member's workspaces in their own sidebar (ascending). Personal, not shared across members. */
+  @Column({ type: 'int', default: 0 })
+  sortOrder: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

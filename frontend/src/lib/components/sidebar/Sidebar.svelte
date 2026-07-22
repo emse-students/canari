@@ -1,6 +1,8 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
+  import { dndzone, type DndEvent } from 'svelte-dnd-action';
   import { Hash, Lock, MessageSquarePlus, Plus } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -74,6 +76,8 @@
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
     /** Callback fired when the user leaves a workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
+    /** Callback fired when the user drags a community to a new position in the rail. */
+    onReorderCommunities?: (newOrder: ChannelWorkspace[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */
     onSelectConversation: (name: string) => void;
     /** Callback fired when the user selects a channel conversation. */
@@ -112,6 +116,7 @@
     onInviteChannelMember,
     onUpdateWorkspaceImage,
     onLeaveWorkspace,
+    onReorderCommunities,
     onSelectConversation,
     onSelectChannelConversation,
     onSelectCommunity,
@@ -174,6 +179,31 @@
       selectedCommunityWorkspaceId = '';
     }
   });
+
+  // Local drag-and-drop order for the community rail. Mirrors `channelWorkspaces` but is only
+  // replaced wholesale when membership actually changes (join/leave) - a mid-drag reorder must
+  // not be clobbered by the prop re-rendering with the pre-drag server order, and unrelated
+  // updates (unread counts, renamed channels) must still refresh the item data in place.
+  let orderedWorkspaces = $state<ChannelWorkspace[]>([]);
+  $effect(() => {
+    const incomingIds = new Set(channelWorkspaces.map((w) => w.id));
+    const currentIds = new Set(orderedWorkspaces.map((w) => w.id));
+    const sameMembership =
+      incomingIds.size === currentIds.size && [...incomingIds].every((id) => currentIds.has(id));
+
+    orderedWorkspaces = sameMembership
+      ? orderedWorkspaces.map((w) => channelWorkspaces.find((iw) => iw.id === w.id) ?? w)
+      : channelWorkspaces;
+  });
+
+  function handleCommunityDndConsider(e: CustomEvent<DndEvent<ChannelWorkspace>>) {
+    orderedWorkspaces = e.detail.items;
+  }
+
+  function handleCommunityDndFinalize(e: CustomEvent<DndEvent<ChannelWorkspace>>) {
+    orderedWorkspaces = e.detail.items;
+    onReorderCommunities?.(orderedWorkspaces);
+  }
 
   interface ChannelItem {
     id: string;
@@ -301,30 +331,39 @@
     <div
       class="w-[72px] h-full flex-shrink-0 flex flex-col items-center py-3 gap-3 border-r border-white/50 dark:border-white/10 bg-white/20 dark:bg-black/10 overflow-y-auto no-scrollbar"
     >
-      {#each channelWorkspaces as workspace (workspace.id)}
-        <button
-          class="relative w-12 h-12 flex-shrink-0 rounded-2xl overflow-hidden transition-all duration-200 {selectedCommunityWorkspaceId ===
-          workspace.id
-            ? 'ring-2 ring-cn-yellow ring-offset-2 ring-offset-cn-bg'
-            : 'opacity-70 hover:opacity-100 hover:rounded-xl'}"
-          onclick={() => {
-            if (selectedCommunityWorkspaceId === workspace.id) return;
-            selectedCommunityWorkspaceId = workspace.id;
-            // Deselect the currently open channel so nothing is shown until the user
-            // explicitly picks a channel in the newly selected community.
-            onSelectCommunity?.(workspace.id);
-          }}
-          title={workspace.name}
-          aria-label={workspace.name}
-        >
-          <GroupAvatar
-            imageMediaId={workspace.imageMediaId}
-            name={workspace.name}
-            variant="community"
-            size="lg"
-          />
-        </button>
-      {/each}
+      <div
+        class="flex flex-col items-center gap-3"
+        use:dndzone={{ items: orderedWorkspaces, flipDurationMs: 150, type: 'community' }}
+        onconsider={handleCommunityDndConsider}
+        onfinalize={handleCommunityDndFinalize}
+      >
+        {#each orderedWorkspaces as workspace (workspace.id)}
+          <div animate:flip={{ duration: 150 }}>
+            <button
+              class="relative w-12 h-12 flex-shrink-0 rounded-2xl overflow-hidden transition-all duration-200 {selectedCommunityWorkspaceId ===
+              workspace.id
+                ? 'ring-2 ring-cn-yellow ring-offset-2 ring-offset-cn-bg'
+                : 'opacity-70 hover:opacity-100 hover:rounded-xl'}"
+              onclick={() => {
+                if (selectedCommunityWorkspaceId === workspace.id) return;
+                selectedCommunityWorkspaceId = workspace.id;
+                // Deselect the currently open channel so nothing is shown until the user
+                // explicitly picks a channel in the newly selected community.
+                onSelectCommunity?.(workspace.id);
+              }}
+              title={workspace.name}
+              aria-label={workspace.name}
+            >
+              <GroupAvatar
+                imageMediaId={workspace.imageMediaId}
+                name={workspace.name}
+                variant="community"
+                size="lg"
+              />
+            </button>
+          </div>
+        {/each}
+      </div>
 
       <div class="w-8 h-[2px] bg-white/30 dark:bg-white/10 rounded-full my-1"></div>
 

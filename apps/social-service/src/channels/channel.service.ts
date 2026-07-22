@@ -409,11 +409,39 @@ export class ChannelService {
       );
     }
 
-    return workspaces.map((w) => ({
-      ...w,
-      id: w.id,
-      viewerCanManage: canManageByWorkspace.get(w.id) ?? false,
-    }));
+    // Personal display order: pick the lowest sortOrder across a user's membership rows
+    // for a workspace (normally just one row per workspace, given the unique index).
+    const sortOrderByWorkspace = new Map<string, number>();
+    for (const membership of memberships) {
+      const current = sortOrderByWorkspace.get(membership.workspaceId);
+      if (current === undefined || membership.sortOrder < current) {
+        sortOrderByWorkspace.set(membership.workspaceId, membership.sortOrder);
+      }
+    }
+
+    return workspaces
+      .map((w) => ({
+        ...w,
+        id: w.id,
+        viewerCanManage: canManageByWorkspace.get(w.id) ?? false,
+      }))
+      .sort(
+        (a, b) =>
+          (sortOrderByWorkspace.get(a.id) ?? 0) - (sortOrderByWorkspace.get(b.id) ?? 0)
+      );
+  }
+
+  /**
+   * Persists the calling user's personal top-to-bottom order for their communities.
+   * Ids absent from `orderedIds` keep their previous sortOrder (sort after the reordered ones).
+   */
+  async reorderWorkspacesForUser(userId: string, orderedIds: string[]): Promise<void> {
+    this.logger.debug(`reorder ${orderedIds.length} workspaces for user=${userId}`);
+    await Promise.all(
+      orderedIds.map((workspaceId, index) =>
+        this.memberRepo.update({ userId, workspaceId }, { sortOrder: index })
+      )
+    );
   }
 
   // ================= ROLES =================

@@ -2070,5 +2070,6 @@
   "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Poll]",
   "chat_preview_gif": "[GIF]",
-  "chat_preview_link": "[Link]"
+  "chat_preview_link": "[Link]",
+  "channel_action_community_reorder": "Reordering communities"
 }

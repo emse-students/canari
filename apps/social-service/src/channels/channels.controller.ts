@@ -26,6 +26,7 @@ import {
   type GetChannelMessagesQuery,
   type MarkDistributionReceivedDto,
   type RenameChannelDto,
+  type ReorderWorkspacesDto,
   type SendChannelMessageDto,
   type SetChannelNotificationLevelDto,
   type UpdateChannelImageDto,
@@ -66,6 +67,13 @@ export class ChannelsController {
   @Get('workspaces/user/me')
   listWorkspaces(@Headers('x-user-id') xUserId: string) {
     return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
+  }
+
+  /** Persists the calling user's personal top-to-bottom order for their communities. */
+  @UseGuards(NginxAuthGuard)
+  @Patch('workspaces/reorder')
+  reorderWorkspaces(@Headers('x-user-id') xUserId: string, @Body() body: ReorderWorkspacesDto) {
+    return this.service.reorderWorkspacesForUser(xUserId.trim().toLowerCase(), body.orderedIds);
   }
 
   /** Creates a shareable invite link for a community (requires INVITE_USERS / MANAGE_WORKSPACE). */

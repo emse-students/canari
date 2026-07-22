@@ -54,7 +54,8 @@ Channels use server-assisted symmetric encryption (not MLS):
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/channels/workspaces` | Create workspace |
-| GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) so the client can gate admin controls without deriving permissions itself |
+| GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
+| PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels in workspace for caller |
 | POST | `/api/channels` | Create channel in a workspace |
 | POST | `/api/channels/:channelId/messages` | Send encrypted channel message |

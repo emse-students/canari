@@ -149,6 +149,7 @@
   "channel_action_role_update": "Mise à jour du rôle",
   "channel_action_channel_leave": "Quitter le canal",
   "channel_action_community_leave": "Quitter la communauté",
+  "channel_action_community_reorder": "Réorganisation des communautés",
   "channel_action_channel_rename": "Renommage du canal",
   "channel_action_channel_delete": "Suppression du canal",
   "channel_action_community_image": "Image de la communauté",

@@ -314,6 +314,8 @@
       ) => channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx()),
       onUpdateWorkspaceImage: (workspaceDbId: string, mediaId: string) =>
         void channels.updateCurrentWorkspaceImage(workspaceDbId, mediaId, channelsCtx()),
+      onReorderCommunities: (newOrder: typeof channels.channelWorkspaces) =>
+        void channels.reorderWorkspaces(newOrder, channelsCtx()),
       onLeaveWorkspace: (workspaceDbId: string) => {
         void channels.leaveCurrentWorkspace(workspaceDbId, channelsCtx());
         if (isSelectedChannel) {
