@@ -131,11 +131,15 @@
                 size="md"
                 fallbackLabel={cand.label}
               />
+            {:else if cand.conversation.conversationType === 'channel'}
+              <div class="w-8 h-8 flex items-center justify-center text-text-muted flex-shrink-0">
+                <Hash size={18} strokeWidth={2.5} />
+              </div>
             {:else}
               <GroupAvatar
                 imageMediaId={cand.conversation.imageMediaId}
                 name={cand.label}
-                variant={cand.conversation.conversationType === 'channel' ? 'channel' : 'group'}
+                variant="group"
                 size="md"
               />
             {/if}

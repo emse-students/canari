@@ -126,10 +126,12 @@
     onStartAudioCall?: () => void;
     /** Callback to start a video call. */
     onStartVideoCall?: () => void;
-    /** Optional media ID for the group or channel avatar image. */
+    /** Optional media ID for the group avatar image. Ignored for channels (name only, no avatar). */
     imageMediaId?: string | null;
-    /** Callback to open the channel members sidebar. */
+    /** Callback to toggle the channel members sidebar (drawer on mobile, collapsible panel on desktop). */
     onOpenMembers?: () => void;
+    /** Whether the channel members panel is currently open (desktop toggle active state). */
+    membersActive?: boolean;
     /** ID of the currently authenticated user. */
     currentUserId?: string;
     /** Whether the conversation history is being loaded (shows a skeleton). */
@@ -188,6 +190,7 @@
     onStartVideoCall,
     imageMediaId = null,
     onOpenMembers,
+    membersActive = false,
     currentUserId = '',
     isLoadingHistory = false,
     isCatchingUpMessages = false,
@@ -691,6 +694,7 @@
         {onStartAudioCall}
         {onStartVideoCall}
         {onOpenMembers}
+        {membersActive}
         onToggleSearch={() => {
           showSearch = !showSearch;
           if (!showSearch) {

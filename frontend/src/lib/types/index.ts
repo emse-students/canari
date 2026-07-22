@@ -101,7 +101,7 @@ export interface Conversation {
   unreadCount?: number;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
-  /** Media-service ID of the group/channel image (unencrypted avatar). */
+  /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */
   imageMediaId?: string | null;
   /**
    * Unix-ms timestamp of the most recent message in this conversation.

@@ -11,6 +11,16 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { PushService } from '../push/push.service';
+import {
+  pushReactionTitle,
+  pushReactionBody,
+  pushCommentTitle,
+  pushCommentBody,
+  pushReplyTitle,
+  pushReplyBody,
+  pushMentionTitle,
+  pushMentionBody,
+} from './push-messages';
 
 /** Handles reactions, comments, polls, and form submissions on posts. */
 @Injectable()
@@ -68,11 +78,12 @@ export class PostInteractionsService {
             postId,
             actorId: userId,
             text: reactionType,
+            skipPush: true,
           });
           await this.push.notify(
             post.authorId,
-            'New reaction',
-            `${actorName} reacted to your post ${reactionType}`,
+            pushReactionTitle(),
+            pushReactionBody(actorName, reactionType),
             { type: 'social', postId }
           );
         } catch (e) {
@@ -179,11 +190,12 @@ export class PostInteractionsService {
             postId,
             actorId: data.userId,
             text: preview,
+            skipPush: true,
           });
           await this.push.notify(
             post.authorId,
-            `${actorName} commented`,
-            preview || 'New comment',
+            pushCommentTitle(actorName),
+            pushCommentBody(preview),
             { type: 'social', postId }
           );
         } catch (e) {
@@ -205,11 +217,14 @@ export class PostInteractionsService {
               postId,
               actorId: data.userId,
               text: preview,
+              skipPush: true,
             });
-            await this.push.notify(parent.userId, `${actorName} replied`, preview || 'New reply', {
-              type: 'social',
-              postId,
-            });
+            await this.push.notify(
+              parent.userId,
+              pushReplyTitle(actorName),
+              pushReplyBody(preview),
+              { type: 'social', postId }
+            );
           } catch (e) {
             this.logger.warn(
               `[NOTIFY] reply notification failed for parent.userId=${parent.userId}`,
@@ -232,11 +247,12 @@ export class PostInteractionsService {
               postId,
               actorId: data.userId,
               text: preview,
+              skipPush: true,
             });
             await this.push.notify(
               recipientId,
-              `${actorName} mentioned you`,
-              preview || 'You were mentioned in a comment',
+              pushMentionTitle(actorName),
+              pushMentionBody(preview),
               { type: 'social', postId }
             );
           } catch (e) {

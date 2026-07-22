@@ -332,7 +332,6 @@ describe('ChannelService security hardening', () => {
         allowedRoles: [],
         keyVersion: 2,
         masterSecret: Buffer.alloc(32).toString('base64'),
-        imageMediaId: null,
       },
     ]);
 

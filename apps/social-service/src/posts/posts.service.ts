@@ -167,7 +167,7 @@ export class PostsService {
         try {
           const actorName = await this.notifications.resolveActorName(authorId);
           for (const recipientId of mentionedIds) {
-            // createNotification envoie aussi le push FCM (type 'social').
+            // createNotification also sends the FCM push (type 'social').
             await this.notifications.createNotification({
               recipientId,
               type: 'mention',

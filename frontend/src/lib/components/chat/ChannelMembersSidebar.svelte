@@ -13,11 +13,19 @@
     currentUserId?: string;
     /** Layout mode: desktop shows the sidebar inline, mobile shows it full-screen. */
     mode?: 'desktop' | 'mobile';
+    /** Whether the panel is visible (desktop mode only - the panel is collapsible at xl+). */
+    isOpen?: boolean;
     /** Callback to close the sidebar (used in mobile mode). */
     onClose?: () => void;
   }
 
-  let { selectedChannelId, currentUserId, mode = 'desktop', onClose }: Props = $props();
+  let {
+    selectedChannelId,
+    currentUserId,
+    mode = 'desktop',
+    isOpen = true,
+    onClose,
+  }: Props = $props();
 
   let fetchedMembers: ChannelMemberDto[] = $state([]);
 
@@ -64,7 +72,9 @@
 
 <div
   class="{mode === 'desktop'
-    ? 'hidden w-64 lg:w-72 xl:flex border-l border-black/5 dark:border-white/10'
+    ? isOpen
+      ? 'hidden w-64 lg:w-72 xl:flex border-l border-black/5 dark:border-white/10'
+      : 'hidden'
     : 'flex h-full w-full'} flex-col bg-white/70 dark:bg-[#151B2C]/90 backdrop-blur-2xl overflow-y-auto custom-scrollbar transition-all duration-300"
 >
   {#if mode === 'mobile'}

@@ -38,9 +38,6 @@ export class Channel {
   @Column({ default: false })
   archived: boolean;
 
-  @Column({ nullable: true, type: 'varchar' })
-  imageMediaId: string | null;
-
   @CreateDateColumn()
   createdAt: Date;
 

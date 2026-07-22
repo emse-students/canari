@@ -465,7 +465,7 @@
         }
         appendLog(`Removed from channel #${event.channelName || event.channelId}`);
       },
-      onChannelUpdated: (event: { channelId: string; name?: string; imageMediaId?: string }) => {
+      onChannelUpdated: (event: { channelId: string; name?: string }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         if (event.name) {
@@ -477,11 +477,10 @@
           }));
         }
         const convo = globalConvs.conversations.get(channelConversationId);
-        if (convo) {
+        if (convo && event.name) {
           globalConvs.conversations.set(channelConversationId, {
             ...convo,
-            ...(event.name ? { name: event.name } : {}),
-            ...(event.imageMediaId !== undefined ? { imageMediaId: event.imageMediaId } : {}),
+            name: event.name,
           });
         }
       },

@@ -8,6 +8,7 @@
     Phone,
     Video,
     Images,
+    Hash,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -29,7 +30,7 @@
     isGroupConversation?: boolean;
     /** Whether the conversation is a community channel. */
     isChannel?: boolean;
-    /** Optional media ID for the group or channel avatar image. */
+    /** Optional media ID for the group avatar image. Ignored for channels (name only, no avatar). */
     imageMediaId?: string | null;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers?: (ids: string[]) => void;
@@ -60,8 +61,10 @@
     onToggleSearch?: () => void;
     /** Whether the search bar is currently active. */
     searchActive?: boolean;
-    /** Callback to open the channel members sidebar. */
+    /** Callback to toggle the channel members sidebar (drawer on mobile, collapsible panel on desktop). */
     onOpenMembers?: () => void;
+    /** Whether the channel members panel is currently open (desktop toggle active state). */
+    membersActive?: boolean;
     /** Callback to start an audio-only call. */
     onStartAudioCall?: () => void;
     /** Callback to start a video call. */
@@ -91,6 +94,7 @@
     onToggleSearch,
     searchActive = false,
     onOpenMembers,
+    membersActive = false,
     onStartAudioCall,
     onStartVideoCall,
   }: Props = $props();
@@ -153,10 +157,10 @@
     {/if}
   </div>
 
-  <!-- Conversation icon (avatar, group or channel) -->
+  <!-- Conversation icon (avatar for groups/DMs; channels show no avatar, only a type icon) -->
   {#if isChannel}
-    <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
-      <GroupAvatar {imageMediaId} name={displayName} variant="channel" size="lg" />
+    <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center text-text-muted">
+      <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isGroupConversation}
     <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
@@ -227,7 +231,10 @@
         onclick={onOpenMembers}
         aria-label={m.chat_channel_members_title()}
         title={m.common_members_label()}
-        class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+        aria-pressed={membersActive}
+        class="p-2.5 rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {membersActive
+          ? 'text-amber-500 bg-amber-500/10'
+          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
       >
         <Users size={20} strokeWidth={2.5} />
       </button>

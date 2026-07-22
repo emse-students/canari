@@ -293,21 +293,6 @@ export class ChannelsController {
     );
   }
 
-  /** Updates the cover image of a channel. */
-  @UseGuards(NginxAuthGuard)
-  @Patch(':channelId/image')
-  async updateChannelImage(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Body() body: UpdateChannelImageDto
-  ) {
-    return await this.service.updateChannelImage(
-      channelId,
-      xUserId.trim().toLowerCase(),
-      body.mediaId
-    );
-  }
-
   /** Returns the channel's access settings (isPrivate, allowedRoles) and the workspace role list. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/access')

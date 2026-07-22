@@ -48,6 +48,7 @@ export class FormReminderScheduler {
         await this.reminderRepo.update(r.id, { notified5min: true });
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
         // In-app bell notification: postId holds the formId for deep linking.
+        // skipPush: the FCM push was already sent above with the exact wording.
         await this.notifications.createNotification({
           recipientId: r.userId,
           type: 'form_reminder',
@@ -55,6 +56,7 @@ export class FormReminderScheduler {
           actorId: 'system',
           actorName: 'Canari',
           text: body,
+          skipPush: true,
         });
         this.logger.log(
           `[REMINDER] 5min sent: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
@@ -78,7 +80,7 @@ export class FormReminderScheduler {
         // Mark as notified BEFORE sending to avoid duplicate notifications (same rationale as above).
         await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
         await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
-        // In-app bell notification.
+        // In-app bell notification. skipPush: the FCM push was already sent above.
         await this.notifications.createNotification({
           recipientId: r.userId,
           type: 'form_reminder',
@@ -86,6 +88,7 @@ export class FormReminderScheduler {
           actorId: 'system',
           actorName: 'Canari',
           text: body,
+          skipPush: true,
         });
         this.logger.log(
           `[REMINDER] open sent: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`

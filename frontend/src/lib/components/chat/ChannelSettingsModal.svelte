@@ -8,7 +8,6 @@
     Check,
     Minus,
     UserPlus,
-    Upload,
     Loader,
     Lock,
     Globe,
@@ -18,12 +17,9 @@
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import GroupAvatar from '../shared/GroupAvatar.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
-  import { MediaService } from '$lib/media';
-  import { getToken } from '$lib/stores/auth';
   import { channelService, type ChannelNotificationLevel } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
@@ -48,8 +44,6 @@
     selectedChannelId: string;
     /** List of workspaces and their channels, used to resolve the channel name. */
     channelWorkspaces: ChannelSidebarWorkspace[];
-    /** Optional media ID for the channel's current avatar image. */
-    imageMediaId?: string | null;
     /** Callback to invite a user to the channel with a given role. Rejects on key-distribution failure. */
     onInviteMember: (
       channelId: string,
@@ -68,8 +62,6 @@
     onDeleteChannel?: (channelId: string) => void;
     /** Callback fired when the current user leaves the channel. */
     onLeaveChannel?: (channelId: string) => void;
-    /** Callback to update the channel's avatar image. */
-    onUpdateChannelImage?: (channelId: string, mediaId: string) => void;
     /** Callback to close the modal. */
     onClose: () => void;
     /** Callback fired when channel access settings are updated. */
@@ -84,13 +76,11 @@
     open,
     selectedChannelId,
     channelWorkspaces,
-    imageMediaId = null,
     onInviteMember,
     onUpdateMemberRole,
     onRenameChannel,
     onDeleteChannel,
     onLeaveChannel,
-    onUpdateChannelImage,
     onClose,
     onUpdateChannelAccess,
   }: Props = $props();
@@ -259,33 +249,6 @@
     accessAllowedUserIds = accessAllowedUserIds.filter((u) => u !== userId);
   }
 
-  // Image upload state
-  let imageUploading = $state(false);
-  let imageUploadError = $state('');
-  const mediaService = new MediaService();
-
-  async function handleImageFileChange(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      imageUploadError = m.chat_community_select_image_error();
-      return;
-    }
-    imageUploading = true;
-    imageUploadError = '';
-    try {
-      const token = await getToken();
-      const mediaId = await mediaService.uploadRaw(file, token);
-      onUpdateChannelImage?.(selectedChannelId, mediaId);
-    } catch (e) {
-      imageUploadError = e instanceof Error ? e.message : m.chat_community_upload_error();
-    } finally {
-      imageUploading = false;
-      input.value = '';
-    }
-  }
-
   // Personal per-channel push notification level (all | mentions | none).
   let notifLevel = $state<ChannelNotificationLevel>('all');
   let notifLoading = $state(false);
@@ -435,44 +398,6 @@
         <div class="space-y-6 max-w-2xl">
           <h2 class="text-xl font-bold text-text-main">{m.chat_channel_overview_tab()}</h2>
           <div class="space-y-4">
-            <!-- Channel image -->
-            <div class="flex items-center gap-5">
-              <div class="relative flex-shrink-0">
-                <div class="w-20 h-20 rounded-2xl overflow-hidden">
-                  <GroupAvatar
-                    {imageMediaId}
-                    name={selectedChannel?.name ?? ''}
-                    variant="channel"
-                    fill
-                  />
-                </div>
-                <label
-                  class="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
-                  title={m.chat_community_change_image_title()}
-                >
-                  {#if imageUploading}
-                    <Loader size={12} class="animate-spin" />
-                  {:else}
-                    <Upload size={12} />
-                  {/if}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    class="sr-only"
-                    disabled={imageUploading}
-                    onchange={handleImageFileChange}
-                  />
-                </label>
-              </div>
-              <div class="flex-1">
-                {#if imageUploadError}
-                  <p class="text-xs text-red-600 mb-2">{imageUploadError}</p>
-                {/if}
-                <p class="text-sm text-text-muted">
-                  {m.chat_change_channel_image_description()}
-                </p>
-              </div>
-            </div>
             <div class="space-y-2">
               <label class="text-xs font-bold uppercase text-text-muted" for="channel-name"
                 >{m.chat_channel_name_label()}</label

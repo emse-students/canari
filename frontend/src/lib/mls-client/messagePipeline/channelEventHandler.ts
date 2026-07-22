@@ -118,7 +118,6 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       channelId: String(data.channelId || ''),
       name: data.name,
       workspaceId: data.workspaceId,
-      imageMediaId: data.imageMediaId,
     });
     return;
   }

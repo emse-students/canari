@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Users, Hash } from '@lucide/svelte';
+  import { Users } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
@@ -12,7 +12,7 @@
     /** Display name used for initials fallback. */
     name?: string;
     /** Visual variant controls the fallback icon and color scheme. */
-    variant?: 'group' | 'channel' | 'community';
+    variant?: 'group' | 'community';
     /** Avatar size preset. */
     size?: 'sm' | 'md' | 'lg';
     /** When true, the avatar stretches to fill its container instead of using a preset size. */
@@ -49,11 +49,7 @@
   const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
 
   const fallbackClasses = $derived(
-    variant === 'channel'
-      ? 'bg-amber-500 text-white'
-      : variant === 'community'
-        ? 'bg-amber-500 text-white'
-        : 'bg-cn-dark text-cn-yellow'
+    variant === 'community' ? 'bg-amber-500 text-white' : 'bg-cn-dark text-cn-yellow'
   );
 
   function getInitials(n: string): string {
@@ -121,8 +117,6 @@
   >
     {#if initials}
       {initials}
-    {:else if variant === 'channel'}
-      <Hash size={iconSize} />
     {:else}
       <Users size={iconSize} />
     {/if}

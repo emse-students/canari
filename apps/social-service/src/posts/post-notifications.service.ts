@@ -4,6 +4,16 @@ import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
+import {
+  pushMentionTitle,
+  pushMentionBody,
+  pushReplyTitle,
+  pushReplyBody,
+  pushReactionTitle,
+  pushReactionBody,
+  pushCommentTitle,
+  pushCommentBody,
+} from './push-messages';
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
@@ -14,7 +24,12 @@ export class PostNotificationsService {
     private readonly push: PushService
   ) {}
 
-  /** Builds the FCM push title/body for a notification type (mirrors the in-app wording). */
+  /**
+   * Builds the FCM push title/body for a notification type (mirrors the in-app wording).
+   * Fallback path for callers that don't build a richer push themselves (e.g. mentions in a
+   * brand-new post) - callers with more context (reaction emoji, comment preview) should send
+   * their own push and pass `skipPush: true` to `createNotification` instead of relying on this.
+   */
   private pushContent(
     type: string,
     actorName: string,
@@ -22,18 +37,15 @@ export class PostNotificationsService {
   ): { title: string; body: string } {
     switch (type) {
       case 'mention':
-        return { title: `${actorName} mentioned you`, body: 'You were mentioned' };
+        return { title: pushMentionTitle(actorName), body: pushMentionBody(text) };
       case 'reply':
-        return { title: actorName, body: 'replied to your comment' };
+        return { title: pushReplyTitle(actorName), body: pushReplyBody(text) };
       case 'reaction':
-        return { title: actorName, body: 'reacted to your post' };
+        return { title: pushReactionTitle(), body: pushReactionBody(actorName, text) };
       case 'comment':
-        return {
-          title: actorName,
-          body: text.trim() ? `commented: ${text.trim().slice(0, 120)}` : 'commented on your post',
-        };
+        return { title: pushCommentTitle(actorName), body: pushCommentBody(text) };
       default:
-        return { title: actorName, body: 'New notification' };
+        return { title: actorName, body: text || 'Nouvelle notification' };
     }
   }
 
@@ -74,6 +86,8 @@ export class PostNotificationsService {
   /**
    * Creates a notification unless actor and recipient are the same person.
    * Pass `actorName` to skip the DB lookup (e.g. system-generated notifications).
+   * Pass `skipPush: true` when the caller already sends its own push (e.g. with a richer
+   * message than `pushContent` can build) - otherwise the recipient gets duplicate pushes.
    */
   async createNotification(data: {
     recipientId: string;
@@ -82,10 +96,14 @@ export class PostNotificationsService {
     actorId: string;
     text: string;
     actorName?: string;
+    skipPush?: boolean;
   }) {
     if (data.recipientId === data.actorId) return;
+    const { skipPush, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
-    await this.notifRepo.save(this.notifRepo.create({ ...data, actorName }));
+    await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
+
+    if (skipPush) return;
 
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
     const { title, body } = this.pushContent(data.type, actorName, data.text);

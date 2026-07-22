@@ -79,7 +79,9 @@ export function useConversations() {
   // ── UI state ──────────────────────────────────────────────────────────────
   let selectedContact = $state<string | null>(null);
   let isConversationDrawerOpen = $state(false);
-  let isChannelMembersDrawerOpen = $state(false);
+  // Desktop (xl+) shows the members panel inline by default; mobile uses this same flag to
+  // gate a full-screen overlay drawer, which must start closed.
+  let isChannelMembersDrawerOpen = $state(!isMobileOverlayLayout());
   let isChannelSettingsModalOpen = $state(false);
   let groupMembers = $state<string[]>([]);
   // Optimistic invite feedback: user IDs with an add-member operation in flight,
@@ -628,6 +630,15 @@ export function useConversations() {
     isChannelMembersDrawerOpen = false;
   }
 
+  /** Toggles the members panel: opens/closes the mobile drawer, or shows/hides the desktop panel. */
+  function toggleChannelMembersDrawer() {
+    if (isChannelMembersDrawerOpen) {
+      closeChannelMembersDrawer();
+    } else {
+      openChannelMembersDrawer();
+    }
+  }
+
   // ── Group members ─────────────────────────────────────────────────────────
 
   /** Fetches the deduplicated list of member userIds for an MLS group and stores them in groupMembers. No-op for channel conversations. */
@@ -1088,6 +1099,7 @@ export function useConversations() {
     closeConversationDrawer,
     openChannelMembersDrawer,
     closeChannelMembersDrawer,
+    toggleChannelMembersDrawer,
     /** Fetches and stores the deduplicated member list for an MLS group. */
     loadGroupMembers,
     /** Checks and caches whether the current user is still in the given conversation. */

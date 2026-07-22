@@ -314,7 +314,6 @@ export function useChannelWorkspaces() {
             messages: existing?.messages ?? [],
             lifecycle: 'active',
             mlsStateHex: null,
-            imageMediaId: channel.imageMediaId ?? null,
             ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
           });
         }
@@ -387,7 +386,6 @@ export function useChannelWorkspaces() {
             messages: [],
             lifecycle: 'active',
             mlsStateHex: null,
-            imageMediaId: channel.imageMediaId ?? null,
             ...(existingEws?.unreadCount !== undefined
               ? { unreadCount: existingEws.unreadCount }
               : {}),
@@ -680,27 +678,6 @@ export function useChannelWorkspaces() {
     }
   }
 
-  /** Saves a new cover image for a channel (by media-service ID) and optimistically updates the conversation entry. */
-  async function updateCurrentChannelImage(
-    channelConversationId: string,
-    mediaId: string,
-    ctx: ChannelWorkspaceContext
-  ) {
-    const channelId = channelConversationId.replace(/^channel_/, '');
-    if (!channelId || !mediaId) return;
-    try {
-      await service.updateChannelImage(channelId, mediaId);
-      // Optimistically update the conversation
-      const convo = ctx.conversations.get(channelConversationId);
-      if (convo) {
-        ctx.conversations.set(channelConversationId, { ...convo, imageMediaId: mediaId });
-      }
-      ctx.log('Channel image updated.');
-    } catch (error) {
-      ctx.log(toUiActionError(m.channel_action_channel_image(), error));
-    }
-  }
-
   /** Saves a new cover image for a workspace and optimistically updates the local sidebar entry. */
   async function updateCurrentWorkspaceImage(
     workspaceDbId: string,
@@ -772,8 +749,6 @@ export function useChannelWorkspaces() {
     renameCurrentChannel,
     /** Permanently deletes a channel and removes it from conversations and the sidebar. */
     deleteCurrentChannel,
-    /** Saves a new cover image for a channel and updates the conversation optimistically. */
-    updateCurrentChannelImage,
     /** Saves a new cover image for a workspace and updates the sidebar entry optimistically. */
     updateCurrentWorkspaceImage,
     /** Applies an incoming real-time workspace-updated event (cover image change). */

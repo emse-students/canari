@@ -47,12 +47,7 @@ export interface MessageHandlerDeps {
     workspaceId?: string;
     kickedBy?: string;
   }) => void;
-  onChannelUpdated?: (event: {
-    channelId: string;
-    name?: string;
-    workspaceId?: string;
-    imageMediaId?: string;
-  }) => void;
+  onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
   onReadReceiptReceived?: (event: {

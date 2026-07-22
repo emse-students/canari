@@ -850,8 +850,9 @@
             void startCallForCurrentConversation(true);
           }}
           onOpenMembers={routeMode === 'communities' && isSelectedChannel
-            ? convs.openChannelMembersDrawer
+            ? convs.toggleChannelMembersDrawer
             : undefined}
+          membersActive={convs.isChannelMembersDrawerOpen}
           onLoadOlderMessages={() => convs.loadOlderMessages(convs.selectedContact!, convCtx())}
           onMessagesScrollEl={(el) => {
             convs.chatContainer = el ?? undefined;
@@ -864,6 +865,7 @@
           <ChannelMembersSidebar
             currentUserId={session.userId}
             selectedChannelId={channels.selectedChannelConversationId}
+            isOpen={convs.isChannelMembersDrawerOpen}
           />
         {/if}
 
@@ -902,15 +904,12 @@
         onClose={() => (convs.isChannelSettingsModalOpen = false)}
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
-        imageMediaId={convs.currentConvo?.imageMediaId ?? null}
         onInviteMember={(channelId, memberId, roleName) =>
           channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
         onUpdateMemberRole={(channelId, memberId, roleName) =>
           channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
         onRenameChannel={(channelId, newName) =>
           channels.renameCurrentChannel(channelId, newName, channelsCtx())}
-        onUpdateChannelImage={(channelId, mediaId) =>
-          void channels.updateCurrentChannelImage(channelId, mediaId, channelsCtx())}
         onDeleteChannel={(channelId) => {
           void channels.deleteCurrentChannel(channelId, channelsCtx());
           if (convs.selectedContact === channelId) convs.selectedContact = null;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Hash } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -30,7 +31,7 @@
     isSelected: boolean;
     /** Number of unread messages to display as a badge. */
     unreadCount?: number;
-    /** Optional media ID for the group or channel avatar image. */
+    /** Optional media ID for the group avatar image. Ignored for channels (name only, no avatar). */
     imageMediaId?: string | null;
     /** Callback fired when the user clicks the tile. */
     onClick: () => void;
@@ -121,13 +122,12 @@
           class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"
         ></span>
       {/if}
+    {:else if conversationType === 'channel'}
+      <div class="w-12 h-12 flex items-center justify-center text-text-muted">
+        <Hash size={22} strokeWidth={2.5} />
+      </div>
     {:else}
-      <GroupAvatar
-        {imageMediaId}
-        name={displayName}
-        variant={conversationType === 'channel' ? 'channel' : 'group'}
-        size="lg"
-      />
+      <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
     {/if}
   </div>
 

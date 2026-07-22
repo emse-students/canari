@@ -260,7 +260,6 @@
   "chat_delete_channel_button": "Delete channel",
   "chat_channel_prefix": "#",
   "chat_channel_label": "Channel",
-  "chat_change_channel_image_description": "Click the icon to change the channel image.",
   "chat_channel_name_label": "Channel name",
   "chat_channel_name_placeholder": "channel-name",
   "chat_rename_channel_button": "Rename",

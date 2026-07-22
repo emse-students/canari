@@ -489,47 +489,9 @@ export class ChannelService {
       workspaceId: savedChannel.workspaceId,
       name: savedChannel.name,
       visibility: savedChannel.isPrivate ? 'private' : 'public',
-      imageMediaId: savedChannel.imageMediaId ?? null,
       keyVersion: savedChannel.keyVersion,
       keyBootstrap: this.buildChannelBootstrap(savedChannel),
     };
-  }
-
-  /** Updates the channel's cover image and broadcasts a channel.updated event to all workspace members. */
-  async updateChannelImage(channelId: string, actorUserId: string, mediaId: string) {
-    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
-      throw new ForbiddenException('Invalid mediaId format');
-    }
-
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const actorMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: actorUserId },
-    });
-    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
-
-    channel.imageMediaId = mediaId;
-    await this.channelRepo.save(channel);
-
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    await this.redis.publishChannelEvent(
-      'channel.updated',
-      { channelId, imageMediaId: mediaId, workspaceId: channel.workspaceId },
-      workspaceMemberIds
-    );
-
-    return { success: true, channelId, imageMediaId: mediaId };
   }
 
   /** Updates the workspace's cover image and broadcasts a workspace.updated event to all members. */
@@ -857,7 +819,6 @@ export class ChannelService {
         workspaceId: channel.workspaceId,
         name: channel.name,
         visibility: channel.isPrivate ? 'private' : 'public',
-        imageMediaId: channel.imageMediaId ?? null,
         keyVersion: channel.keyVersion,
         keyBootstrap: this.buildChannelBootstrap(channel),
       }));
