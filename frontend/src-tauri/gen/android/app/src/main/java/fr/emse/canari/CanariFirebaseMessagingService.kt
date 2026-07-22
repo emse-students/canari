@@ -38,6 +38,21 @@ private typealias PushContext = MlsContextLoader.PushContext
 
 class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
+    /**
+     * An outbox mirror entry (cleartext AppMessage proto, base64). Declared as a nested class of
+     * the outer class (not the companion object): Kotlin lifts companion FUNCTIONS to the class
+     * name but NOT nested classes, so a companion-nested type is unreachable as
+     * `CanariFirebaseMessagingService.OutboxMirrorEntry` from CanariNotificationActionReceiver.
+     */
+    internal data class OutboxMirrorEntry(
+        val id: String,
+        val groupId: String,
+        val proto: String,
+        val sentAt: Long,
+        /** Silent send (no recipient notification): true for control events. */
+        val silent: Boolean,
+    )
+
     companion object {
         const val TAG = "CanariFCM"
 
@@ -243,16 +258,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             manager.notify(GROUP_SUMMARY_ID, summary)
             Log.d(TAG, "refreshBadgeSummary: badge=$count")
         }
-
-        /** An outbox mirror entry (cleartext AppMessage proto, base64). */
-        internal data class OutboxMirrorEntry(
-            val id: String,
-            val groupId: String,
-            val proto: String,
-            val sentAt: Long,
-            /** Silent send (no recipient notification): true for control events. */
-            val silent: Boolean,
-        )
 
         /**
          * Drains the outbox mirror: for each pending message, encrypts the proto against the live
