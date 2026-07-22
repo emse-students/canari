@@ -223,6 +223,33 @@ the background welcome-join/decrypt flows already use.
   write, or a control event that survives one failed drain attempt loses its silent flag on retry
   and resends as a visible push.
 
+#### App-icon unread badge
+
+The launcher/home-screen badge mirrors the number of **distinct unread conversations** (not
+messages). It is driven entirely off the currently displayed message notifications, so it moves up
+on push receipt and down on read-state cancel with no separate counter to keep in sync.
+
+- **Android** (`CanariFirebaseMessagingService`): `countUnreadConversations` counts the active
+  message notifications (excluding the group summary and the pending-sync nudge), and
+  `refreshBadgeSummary` rebuilds the group summary carrying that count via `setNumber(count)` (or
+  cancels the summary when it hits 0). It is the single source of truth for both the summary and the
+  badge, called after every message notification post (`showNotification`) and every cancel
+  (`cancelConversationNotification`); `cancelAllMessageNotifications` clears the summary and thus the
+  badge on app open. Numeric badges are honored by stock Android / Pixel / recent OEM launchers;
+  some older launchers only show a dot (no third-party ShortcutBadger dependency).
+- **iOS** has two writers because the badge owner depends on process state:
+  - App alive (`canari_push.mm`): `CanariUpdateAppBadge` recomputes from the delivered chat
+    notifications and calls `setBadgeCount` (iOS 16+) / `applicationIconBadgeNumber`, after
+    `CanariShowLocalNotification` (message threads only) and both cancel paths
+    (`CanariCancelConversationNotification`, `CanariPushCancelMessageNotifications`).
+  - App killed (`canari_NSE/NotificationService.swift`): the extension writes `content.badge`
+    directly (no `UIApplication` in an extension) via `applyBadgeCount`, counting the delivered chat
+    conversations plus the incoming one.
+  - Both count a conversation by its per-conversation `threadIdentifier` (NSE deliveries, WP-iOS-7)
+    or the stable request id (flat `canari_messages` thread, in-app deliveries) - both are unique
+    per conversation - and gate on `threadIdentifier == "canari_messages"` or a
+    `fr.emse.canari://chat` deep link so social/form notifications never count.
+
 ### Security / PIN
 
 | Method | Path | Description |

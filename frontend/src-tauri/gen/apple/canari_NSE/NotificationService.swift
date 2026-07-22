@@ -211,6 +211,7 @@ class NotificationService: UNNotificationServiceExtension {
     if let ctx = ctx, !senderId.isEmpty, let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId) {
       attachAvatar(content: content, fileUrl: avatarUrl)
     }
+    applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
   }
 
@@ -248,6 +249,7 @@ class NotificationService: UNNotificationServiceExtension {
     content.body = body ?? "Nouveau message dans #\(channelName)"
     content.threadIdentifier = "channel_\(channelId)"
     content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
+    applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
   }
 
@@ -265,6 +267,35 @@ class NotificationService: UNNotificationServiceExtension {
       return nil
     }
     return key
+  }
+
+  // MARK: - Badge (WP-XP-2) ---------------------------------------------------
+
+  /// Sets `content.badge` to the number of distinct unread conversations: the chat conversations
+  /// already delivered plus the incoming one. Runs inside the extension (killed app), so it writes
+  /// the badge onto the outgoing content - the app-process path uses `setBadgeCount` instead (see
+  /// canari_push.mm `CanariUpdateAppBadge`). A conversation is keyed by its per-conversation thread
+  /// (NSE deliveries) or the stable request id (flat "canari_messages" in-app deliveries).
+  private func applyBadgeCount(content: UNMutableNotificationContent, incomingThreadId: String) {
+    let center = UNUserNotificationCenter.current()
+    let sem = DispatchSemaphore(value: 0)
+    var keys = Set<String>()
+    center.getDeliveredNotifications { delivered in
+      for n in delivered {
+        let thread = n.request.content.threadIdentifier
+        let deepLink = (n.request.content.userInfo["deepLink"] as? String) ?? ""
+        let isChat = thread == "canari_messages" || deepLink.hasPrefix("fr.emse.canari://chat")
+        guard isChat else { continue }
+        keys.insert(thread == "canari_messages" ? n.request.identifier : thread)
+      }
+      sem.signal()
+    }
+    _ = sem.wait(timeout: .now() + 2.0)
+    if !incomingThreadId.isEmpty {
+      keys.insert(incomingThreadId)
+    }
+    content.badge = NSNumber(value: keys.count)
+    NSLog("[CanariNSE] applyBadgeCount: badge=\(keys.count)")
   }
 
   // MARK: - Shared App Group state --------------------------------------------

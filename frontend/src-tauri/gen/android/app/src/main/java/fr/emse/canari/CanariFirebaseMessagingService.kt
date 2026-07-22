@@ -192,19 +192,54 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             manager.cancel(notifId)
             Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
 
-            // Remove the summary if no message notification remains (excluding the summary itself).
-            if (android.os.Build.VERSION.SDK_INT >= 23) {
-                try {
-                    val remaining = manager.activeNotifications.count { sbn ->
-                        sbn.id != GROUP_SUMMARY_ID &&
-                            (android.os.Build.VERSION.SDK_INT < 26 ||
-                                sbn.notification.channelId == CHANNEL_MESSAGES)
-                    }
-                    if (remaining == 0) manager.cancel(GROUP_SUMMARY_ID)
-                } catch (e: Exception) {
-                    Log.w(TAG, "cancelConversationNotification: summary cleanup failed: ${e.message}")
+            // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
+            // drop the summary when no message notification remains.
+            refreshBadgeSummary(context)
+        }
+
+        /**
+         * Counts distinct unread conversations = active message notifications, excluding the group
+         * summary and the pending-sync nudge. Backs the launcher app-icon badge (WP-XP-2).
+         */
+        internal fun countUnreadConversations(manager: NotificationManager): Int {
+            if (android.os.Build.VERSION.SDK_INT < 23) return 0
+            return try {
+                manager.activeNotifications.count { sbn ->
+                    sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
+                        (android.os.Build.VERSION.SDK_INT < 26 ||
+                            sbn.notification.channelId == CHANNEL_MESSAGES)
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "countUnreadConversations: ${e.message}")
+                0
             }
+        }
+
+        /**
+         * (Re)builds the grouped-messages summary, carrying the unread-conversation count as its
+         * badge number so the launcher app-icon badge mirrors the real unread count (WP-XP-2).
+         * Cancels the summary entirely when nothing is unread. Called after every message
+         * notification post or cancel (push receipt + read-state sync) - the single source of
+         * truth for both the group summary and the badge.
+         */
+        internal fun refreshBadgeSummary(context: Context) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val count = countUnreadConversations(manager)
+            if (count == 0) {
+                manager.cancel(GROUP_SUMMARY_ID)
+                return
+            }
+            // The summary is also mandatory on Android 7+ for grouping to work: without it, the
+            // per-conversation notifications are not grouped.
+            val summary = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setGroup(GROUP_KEY_MESSAGES)
+                .setGroupSummary(true)
+                .setAutoCancel(true)
+                .setNumber(count)
+                .build()
+            manager.notify(GROUP_SUMMARY_ID, summary)
+            Log.d(TAG, "refreshBadgeSummary: badge=$count")
         }
 
         /** An outbox mirror entry (cleartext AppMessage proto, base64). */
@@ -1826,15 +1861,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
         manager.notify(notifId, notif)
 
-        // The summary notification is mandatory on Android 7+ for grouping to
-        // work: without it, individual notifications are not grouped.
-        val summary = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setGroup(GROUP_KEY_MESSAGES)
-            .setGroupSummary(true)
-            .setAutoCancel(true)
-            .build()
-        manager.notify(GROUP_SUMMARY_ID, summary)
+        // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
+        // conversation's notification is active.
+        refreshBadgeSummary(this)
     }
 
     /**

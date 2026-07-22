@@ -696,6 +696,41 @@ static NSArray<NSString *> *CanariReadCachedMessageIdsForGroup(NSString *groupId
   return messageIds;
 }
 
+/**
+ * Recomputes the app-icon badge (WP-XP-2) from the currently delivered chat notifications so it
+ * always mirrors the number of distinct unread conversations. A conversation is keyed by its
+ * per-conversation thread when the NSE delivered it (killed app), or by the stable request id when
+ * the in-app path delivered it (flat "canari_messages" thread) - both are unique per conversation.
+ * This is the app-process counterpart of the NSE's `content.badge` write (NotificationService.swift):
+ * when the app is alive it owns the badge; when killed the NSE does.
+ */
+static void CanariUpdateAppBadge(void) {
+  UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+  [center getDeliveredNotificationsWithCompletionHandler:^(
+              NSArray<UNNotification *> *_Nonnull delivered) {
+    NSMutableSet<NSString *> *convKeys = [NSMutableSet set];
+    for (UNNotification *n in delivered) {
+      NSString *thread = n.request.content.threadIdentifier ?: @"";
+      NSString *deepLink = n.request.content.userInfo[@"deepLink"] ?: @"";
+      BOOL isChat = [thread isEqualToString:@"canari_messages"] ||
+                    [deepLink hasPrefix:@"fr.emse.canari://chat"];
+      if (!isChat) {
+        continue;
+      }
+      [convKeys addObject:[thread isEqualToString:@"canari_messages"] ? n.request.identifier : thread];
+    }
+    NSUInteger count = convKeys.count;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (@available(iOS 16.0, *)) {
+        [center setBadgeCount:count withCompletionHandler:nil];
+      } else {
+        [UIApplication sharedApplication].applicationIconBadgeNumber = (NSInteger)count;
+      }
+      NSLog(@"[CanariPush] updateAppBadge: badge=%lu", (unsigned long)count);
+    });
+  }];
+}
+
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
                                       NSString *_Nullable attachmentPath,
@@ -748,6 +783,9 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
        withCompletionHandler:^(NSError *_Nullable error) {
          if (error != nil) {
            NSLog(@"[CanariPush] showNotification error: %@", error.localizedDescription);
+         } else if ([threadId isEqualToString:@"canari_messages"]) {
+           // Refresh the launcher badge (WP-XP-2) once this conversation's notification is live.
+           CanariUpdateAppBadge();
          }
        }];
 }
@@ -790,6 +828,8 @@ static void CanariCancelConversationNotification(NSString *groupId) {
   [[UNUserNotificationCenter currentNotificationCenter]
       removePendingNotificationRequestsWithIdentifiers:@[ requestId ]];
   NSLog(@"[CanariPush] cancelConversationNotification group=%@", groupId);
+  // Recompute the launcher badge (WP-XP-2) now that this conversation is read/cleared.
+  CanariUpdateAppBadge();
 }
 
 static NSData *_Nullable CanariHttpRequest(NSString *method, NSURL *url, NSString *_Nullable secret,
@@ -1858,6 +1898,8 @@ void CanariPushCancelMessageNotifications(void) {
     if (ids.count > 0) {
       [center removeDeliveredNotificationsWithIdentifiers:ids];
     }
+    // Clearing every message notification (app opened) drops the badge to 0 (WP-XP-2).
+    CanariUpdateAppBadge();
   }];
 }
 
