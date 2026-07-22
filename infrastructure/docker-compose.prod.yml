@@ -155,6 +155,9 @@ services:
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Server-to-server media fetch for rich media notifications (WP-XP-3): the push proxy relays
+      # the encrypted blob from media-service using INTERNAL_SECRET.
+      MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}

@@ -171,6 +171,36 @@ pub fn decrypt_channel_message(
     }
 }
 
+/// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail (WP-XP-3).
+///
+/// The CEK (`raw_key`, 32 bytes) and IV (`iv`, 12 bytes) come from the MLS-decrypted `MediaMsg`
+/// (never from the server); `ciphertext` is the opaque `ciphertext||tag` blob the native handler
+/// downloaded from the media service by `mediaId`. Identical crypto to the in-app WebCrypto
+/// `decryptMediaBuffer` (single-shot GCM, 16-byte tag appended). Returns the plaintext bytes
+/// (image/GIF) or None on any validation/decrypt failure.
+pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+    if raw_key.len() != 32 {
+        log::error!("[MediaBG] invalid key length: {} (want 32)", raw_key.len());
+        return None;
+    }
+    if iv.len() != 12 {
+        log::error!("[MediaBG] invalid iv length: {} (want 12)", iv.len());
+        return None;
+    }
+
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(raw_key));
+    match cipher.decrypt(Nonce::from_slice(iv), ciphertext) {
+        Ok(plaintext) => Some(plaintext),
+        Err(e) => {
+            log::error!("[MediaBG] AES-GCM decrypt failed: {e}");
+            None
+        }
+    }
+}
+
 /// Cree un Welcome MLS pour un nouveau device (background, app tuee).
 pub fn create_welcome_background(
     files_dir: &Path,

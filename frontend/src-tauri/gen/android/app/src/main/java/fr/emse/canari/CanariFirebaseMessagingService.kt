@@ -10,12 +10,14 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.net.Uri
 import android.os.PowerManager
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -482,6 +484,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ciphertextB64: String
     ): String
 
+    // Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
+    // (WP-XP-3). keyB64/ivB64 are the base64 CEK (32B) + IV (12B) from the decrypted MediaMsg;
+    // `ciphertext` is the downloaded ciphertext||tag. Returns the plaintext image bytes, or an EMPTY
+    // array on any failure (caller then shows the text-only notification).
+    external fun nativeDecryptMedia(
+        keyB64: String,
+        ivB64: String,
+        ciphertext: ByteArray
+    ): ByteArray
+
     /**
      * Creates an MLS Welcome package for [keyPackageB64] in group [groupId].
      * Saves the updated MLS state to {filesDir}/mls.bin.
@@ -549,6 +561,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val type: String,                 // "text" | "reply" | "media"
         val replyTo: JSONObject?,
         val mediaKind: String?,           // "image" | "video" | "audio" | "file" | null
+        // Media reference + CEK (WP-XP-3), populated only for `type == "media"`. Used to download and
+        // AES-256-GCM-decrypt the blob for a notification thumbnail. Empty for non-media messages.
+        val mediaId: String? = null,
+        val mediaKey: String? = null,     // base64 32-byte CEK
+        val mediaIv: String? = null,      // base64 12-byte GCM IV
+        val mimeType: String? = null,
     )
 
     override fun onNewToken(token: String) {
@@ -769,8 +787,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
             val largeIcon    = avatarBitmap ?: generateInitialsBitmap(senderName)
-            Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null}")
-            showNotification(senderName, groupName, body, largeIcon, groupId)
+            // Rich media thumbnail (WP-XP-3): for an image/GIF message, download + decrypt the blob and
+            // attach it inline. null for text/video/audio -> plain text notification.
+            val media = decrypted?.let { fetchAndDecryptMedia(it) }
+            Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null}")
+            showNotification(senderName, groupName, body, largeIcon, groupId, media?.first, media?.second)
 
             // Woken by this incoming message: try to send our own pending outgoing messages
             // (text/reply/control), without waiting for a Welcome push or a reopen. Since the
@@ -1457,6 +1478,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 type      = json.optString("type", "text"),
                 replyTo   = json.optJSONObject("replyTo"),
                 mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
+                mediaId   = json.optString("mediaId").takeIf { it.isNotEmpty() },
+                mediaKey  = json.optString("mediaKey").takeIf { it.isNotEmpty() },
+                mediaIv   = json.optString("mediaIv").takeIf { it.isNotEmpty() },
+                mimeType  = json.optString("mimeType").takeIf { it.isNotEmpty() },
             )
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
@@ -1565,6 +1590,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 type      = json.optString("type", "text"),
                 replyTo   = json.optJSONObject("replyTo"),
                 mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
+                mediaId   = json.optString("mediaId").takeIf { it.isNotEmpty() },
+                mediaKey  = json.optString("mediaKey").takeIf { it.isNotEmpty() },
+                mediaIv   = json.optString("mediaIv").takeIf { it.isNotEmpty() },
+                mimeType  = json.optString("mimeType").takeIf { it.isNotEmpty() },
             )
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); null
@@ -1739,6 +1768,89 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
+    /**
+     * Downloads and decrypts an image/GIF message blob for a rich notification thumbnail (WP-XP-3).
+     *
+     * The media service only stores opaque AES-256-GCM ciphertext; the CEK/IV live in the
+     * MLS-decrypted [DecryptedMessage] (never on the server). We fetch the ciphertext by mediaId via
+     * the PushSecret-authed proxy (the app may be killed -> no user JWT), decrypt it natively so the
+     * plaintext never transits Kotlin as a decryptable payload, and expose it as a FileProvider
+     * content Uri for `MessagingStyle.Message.setData`. Returns (contentUri, mimeType) or null on any
+     * failure (caller then shows the text-only notification). Only images/GIF are handled - the 2 MB
+     * proxy cap keeps videos out.
+     */
+    private fun fetchAndDecryptMedia(decrypted: DecryptedMessage): Pair<Uri, String>? {
+        if (decrypted.mediaKind != "image") return null
+        val mediaId = decrypted.mediaId ?: return null
+        val keyB64 = decrypted.mediaKey ?: return null
+        val ivB64 = decrypted.mediaIv ?: return null
+        val ctx = MlsContextLoader.loadPushContext(this) ?: return null
+        val secret = retrievePushSecret(this) ?: return null
+
+        return try {
+            val url = URL(
+                "${ctx.baseUrl}/api/mls/push/media/${java.net.URLEncoder.encode(mediaId, "UTF-8")}" +
+                    "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                    "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}"
+            )
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout = 5_000
+                requestMethod = "GET"
+                setRequestProperty("Authorization", "PushSecret $secret")
+                instanceFollowRedirects = true
+            }
+            val ciphertext = try {
+                val code = conn.responseCode
+                if (code != 200) {
+                    Log.d(TAG, "fetchAndDecryptMedia: HTTP $code for ${mediaId.take(8)} -> text only")
+                    return null
+                }
+                conn.inputStream.readBytes()
+            } finally {
+                conn.disconnect()
+            }
+
+            val plaintext = nativeDecryptMedia(keyB64, ivB64, ciphertext)
+            if (plaintext.isEmpty()) {
+                Log.w(TAG, "fetchAndDecryptMedia: native decrypt returned empty -> text only")
+                return null
+            }
+
+            // Persist the decrypted image under the FileProvider-mapped cache dir (cache-path "tauri/")
+            // and hand back a content Uri. Keyed by messageId so re-posts of the same conversation's
+            // stacked notification reuse a stable file. A best-effort sweep bounds disk growth.
+            val mediaDir = File(cacheDir, "tauri/notif_media").also { it.mkdirs() }
+            pruneNotifMediaCache(mediaDir)
+            val ext = mimeToExtension(decrypted.mimeType)
+            val safeName = (decrypted.messageId.ifEmpty { mediaId }).replace(Regex("[^A-Za-z0-9_-]"), "_")
+            val file = File(mediaDir, "$safeName.$ext")
+            file.writeBytes(plaintext)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            Log.d(TAG, "fetchAndDecryptMedia: thumbnail ready ${mediaId.take(8)} (${plaintext.size}B)")
+            Pair(uri, decrypted.mimeType ?: "image/jpeg")
+        } catch (e: Exception) {
+            Log.d(TAG, "fetchAndDecryptMedia: ${e.message} -> text only")
+            null
+        }
+    }
+
+    /** Maps a media MIME type to a file extension for the decrypted-thumbnail cache file. */
+    private fun mimeToExtension(mime: String?): String = when (mime) {
+        "image/png" -> "png"
+        "image/gif" -> "gif"
+        "image/webp" -> "webp"
+        else -> "jpg"
+    }
+
+    /** Deletes notification-thumbnail cache files older than 24h to bound disk usage. */
+    private fun pruneNotifMediaCache(dir: File) {
+        val cutoff = System.currentTimeMillis() - AVATAR_CACHE_MAX_AGE_MS
+        dir.listFiles()?.forEach { f ->
+            if (f.lastModified() < cutoff) runCatching { f.delete() }
+        }
+    }
+
     /** Crops a bitmap into a circle (for the notification icon). */
     private fun circleCrop(src: Bitmap): Bitmap {
         val size   = minOf(src.width, src.height)
@@ -1788,6 +1900,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         body: String,
         largeIcon: Bitmap,
         groupId: String,
+        mediaUri: Uri? = null,
+        mediaMime: String? = null,
     ) {
         if (MainActivity.isInForeground) {
             Log.d(TAG, "showNotification: app in foreground -> notification suppressed (groupId=${groupId.take(8)})")
@@ -1838,7 +1952,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             ?.messages
             ?.takeLast(MAX_NOTIF_MESSAGES - 1)
             ?.forEach { style.addMessage(it) }
-        style.addMessage(body, System.currentTimeMillis(), senderPerson)
+        // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
+        // thumbnail while keeping the conversation's MessagingStyle stacking. NotificationManager
+        // grants the system read access to the FileProvider content Uri carried in the notification.
+        val newMessage = NotificationCompat.MessagingStyle.Message(
+            body, System.currentTimeMillis(), senderPerson
+        )
+        if (mediaUri != null && mediaMime != null) {
+            newMessage.setData(mediaMime, mediaUri)
+        }
+        style.addMessage(newMessage)
 
         val notifBuilder = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)

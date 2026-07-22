@@ -1368,6 +1368,40 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
 
+/// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
+/// notification thumbnail (WP-XP-3). `key_b64`/`iv_b64` are the base64 CEK (32B) + IV (12B) parsed
+/// from the MLS-decrypted `MediaMsg`; `ciphertext` is the opaque `ciphertext||tag` blob Kotlin
+/// downloaded from `/api/mls/push/media/:mediaId`. Returns the decrypted bytes, or an EMPTY array on
+/// any failure (Kotlin treats empty as "no thumbnail" and shows the text-only notification).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMedia<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    key_b64: jni::objects::JString<'a>,
+    iv_b64: jni::objects::JString<'a>,
+    ciphertext: jni::objects::JByteArray<'a>,
+) -> jni::objects::JByteArray<'a> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let plaintext: Option<Vec<u8>> = (|| {
+        let key: String = env.get_string(&key_b64).ok()?.into();
+        let iv: String = env.get_string(&iv_b64).ok()?.into();
+        let key = STANDARD.decode(key.trim()).ok()?;
+        let iv = STANDARD.decode(iv.trim()).ok()?;
+        let cipher_vec = env.convert_byte_array(&ciphertext).ok()?;
+        mobile::background::decrypt_media_blob(&key, &iv, &cipher_vec)
+    })();
+
+    let bytes = plaintext.unwrap_or_default();
+    // Empty `bytes` already yields an empty (non-null) array on the Ok path, which Kotlin reads as
+    // "no thumbnail". The Err arm (JNI allocation failure) is a last resort - return a null array.
+    match env.byte_array_from_slice(&bytes) {
+        Ok(arr) => arr,
+        Err(_) => unsafe { jni::objects::JByteArray::from_raw(std::ptr::null_mut()) },
+    }
+}
+
 // ─── Commande Tauri : cache FCM ───────────────────────────────────────────────
 
 /// Lit {app_data_dir}/fcm_message_cache.ndjson, efface le fichier et retourne les entrées.

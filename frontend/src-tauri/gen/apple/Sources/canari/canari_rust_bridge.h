@@ -43,6 +43,15 @@ char *canari_native_decrypt_channel_message(
     const char *nonce_b64,
     const char *ciphertext_b64);
 
+unsigned char *canari_native_decrypt_media(
+    const char *key_b64,
+    const char *iv_b64,
+    const unsigned char *cipher_ptr,
+    size_t cipher_len,
+    size_t *out_len);
+
+void canari_free_bytes(unsigned char *ptr, size_t len);
+
 char *canari_native_create_welcome_background(
     const char *files_dir,
     const unsigned char *state_ptr,

@@ -224,6 +224,7 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     }
 
     if let Some(media_msg) = find_length_delimited_field(bytes, 4) {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
         let kind_str = match find_varint_field(&media_msg, 1) {
             Some(1) => "image",
             Some(2) => "video",
@@ -239,9 +240,26 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
             "audio" => "\u{1f3a4} Audio".to_string(),
             _ => "\u{1f4ce} Pi\u{00e8}ce jointe".to_string(),
         });
+        // Media reference + CEK (WP-XP-3): the native notification builder downloads the opaque
+        // ciphertext by `mediaId` and AES-256-GCM-decrypts it with `mediaKey`/`mediaIv` to attach a
+        // thumbnail. key/iv are stored as raw proto `bytes`; base64-encode them for the JSON bridge
+        // (the values never leave the device process). Only images/GIF are rendered downstream.
+        let media_id = find_length_delimited_field(&media_msg, 2)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let media_key = find_length_delimited_field(&media_msg, 3)
+            .map(|b| STANDARD.encode(b))
+            .unwrap_or_default();
+        let media_iv = find_length_delimited_field(&media_msg, 4)
+            .map(|b| STANDARD.encode(b))
+            .unwrap_or_default();
+        let mime_type = find_length_delimited_field(&media_msg, 5)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
         return serde_json::json!({
             "ok": true, "text": display_text, "messageId": message_id,
-            "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": kind_str
+            "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": kind_str,
+            "mediaId": media_id, "mediaKey": media_key, "mediaIv": media_iv, "mimeType": mime_type
         });
     }
 

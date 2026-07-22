@@ -235,6 +235,37 @@ export class MediaController {
     res.send(result.data);
   }
 
+  // ---------------------------------------------------------------------------
+  // GET /media/internal/:id - server-to-server ciphertext fetch (X-Internal-Secret)
+  // ---------------------------------------------------------------------------
+  /**
+   * Returns the encrypted blob to an internal caller authenticated by the shared X-Internal-Secret
+   * (no user JWT). Sole consumer: chat-delivery-service's `/api/mls/push/media/:id` proxy, which
+   * needs the ciphertext to build a rich media notification while the recipient's app is killed
+   * (background push has no user token). Same fail-closed secret gate as DELETE. Declared before the
+   * catch-all `@Get(':id')` so "internal" is matched as a literal segment, not an id.
+   */
+  @Get('internal/:id')
+  async downloadInternal(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') internalSecret: string | undefined,
+    @Res() res: Response
+  ): Promise<void> {
+    assertInternalSecret(internalSecret);
+
+    const result = await this.mediaService.download(id);
+    if (result.status === 'purged') {
+      throw new GoneException('Media purged after retention expiry.');
+    }
+    if (result.status !== 'ok' || !result.data) {
+      throw new NotFoundException('Media not found');
+    }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', result.data.length);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.send(result.data);
+  }
+
   // ---------------------------------------------------------------------------  // GET /media/:id
   // ---------------------------------------------------------------------------
   @Get(':id')

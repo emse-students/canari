@@ -154,6 +154,8 @@ services:
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-password}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
+      # Rich media notifications (WP-XP-3): push proxy fetches encrypted blobs from media-service.
+      MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-dev-call-room-secret-change-me}
     depends_on:
       redis:

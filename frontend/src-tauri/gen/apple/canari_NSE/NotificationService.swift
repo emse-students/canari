@@ -97,7 +97,7 @@ class NotificationService: UNNotificationServiceExtension {
       applyMessageContent(
         content: content, senderName: senderName, groupName: groupName,
         body: Self.fallbackText(senderName: senderName), groupId: groupId, senderId: senderId,
-        ctx: nil)
+        ctx: nil, media: nil)
       return
     }
 
@@ -107,28 +107,42 @@ class NotificationService: UNNotificationServiceExtension {
       protoB64 = fetchProtoFromBackend(queuedMessageId: queuedMessageId, ctx: ctx) ?? ""
     }
 
-    var decryptedText: String?
+    var decrypted: DecryptResult?
     if !protoB64.isEmpty, let state = loadMlsState() {
-      decryptedText = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
+      decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
       // Epoch gap (a device added to the group advanced an epoch this device never
       // applied): retry with an in-memory, read-only commit catch-up. Mirror of the
       // in-app CanariTryDecryptWithCommitCatchup path.
-      if decryptedText == nil, !groupId.isEmpty, !queuedMessageId.isEmpty {
-        decryptedText = decryptWithCommitCatchup(
-          ctx: ctx, groupId: groupId, protoB64: protoB64)
+      if decrypted == nil, !groupId.isEmpty, !queuedMessageId.isEmpty {
+        decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
       }
     }
 
-    let body = decryptedText ?? Self.fallbackText(senderName: senderName)
+    let body = decrypted?.text ?? Self.fallbackText(senderName: senderName)
     applyMessageContent(
       content: content, senderName: senderName, groupName: groupName, body: body,
-      groupId: groupId, senderId: senderId, ctx: ctx)
+      groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted)
+  }
+
+  /// Parsed decrypt result: the preview text plus the media reference/CEK for a thumbnail (WP-XP-3).
+  private struct DecryptResult {
+    let text: String
+    let mediaKind: String?
+    let mediaId: String?
+    let mediaKey: String?
+    let mediaIv: String?
+    let mimeType: String?
+    /// True for an image/GIF message that carries everything needed to fetch + decrypt a thumbnail.
+    var isImageMedia: Bool {
+      mediaKind == "image" && !(mediaId ?? "").isEmpty && !(mediaKey ?? "").isEmpty
+        && !(mediaIv ?? "").isEmpty
+    }
   }
 
   /// Decrypts the ciphertext directly against the persisted state. Read-only.
   private func decryptProto(
     ctx: PushContext, groupId: String, protoB64: String, state: Data
-  ) -> String? {
+  ) -> DecryptResult? {
     guard let cipher = Data(base64Encoded: protoB64, options: .ignoreUnknownCharacters),
       !cipher.isEmpty
     else { return nil }
@@ -144,14 +158,14 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
-    return Self.parseDecryptedText(json)
+    return Self.parseDecrypted(json)
   }
 
   /// Reads the current epoch, fetches the missing ordered commits, and applies them in
   /// memory to decrypt a push that is ahead of the persisted state. Never persists mls.bin.
   private func decryptWithCommitCatchup(
     ctx: PushContext, groupId: String, protoB64: String
-  ) -> String? {
+  ) -> DecryptResult? {
     guard let state = loadMlsState() else { return nil }
 
     let epoch: Int64 = state.withUnsafeBytes { statePtr in
@@ -186,13 +200,13 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
-    return Self.parseDecryptedText(json)
+    return Self.parseDecrypted(json)
   }
 
-  /// Fills the notification with the resolved title/subtitle/body + avatar, then delivers.
+  /// Fills the notification with the resolved title/subtitle/body + attachment, then delivers.
   private func applyMessageContent(
     content: UNMutableNotificationContent, senderName: String, groupName: String, body: String,
-    groupId: String, senderId: String, ctx: PushContext?
+    groupId: String, senderId: String, ctx: PushContext?, media: DecryptResult?
   ) {
     let isGroup = !groupName.isEmpty && groupName != senderName
     content.title = isGroup ? groupName : (senderName.isEmpty ? "Canari" : senderName)
@@ -215,11 +229,57 @@ class NotificationService: UNNotificationServiceExtension {
     content.userInfo["deepLink"] =
       groupId.isEmpty ? "fr.emse.canari://chat" : "fr.emse.canari://chat/\(groupId)"
 
-    if let ctx = ctx, !senderId.isEmpty, let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId) {
-      attachAvatar(content: content, fileUrl: avatarUrl)
+    // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows
+    // only the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
+    var attached = false
+    if let ctx = ctx, let media = media, media.isImageMedia,
+      let mediaUrl = fetchAndDecryptMedia(ctx: ctx, media: media)
+    {
+      attached = attachImage(content: content, fileUrl: mediaUrl, identifier: "media")
+    }
+    if !attached, let ctx = ctx, !senderId.isEmpty,
+      let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId)
+    {
+      _ = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
+  }
+
+  /// Downloads and decrypts an image/GIF blob for a notification thumbnail (WP-XP-3), writing the
+  /// plaintext to a unique temp file. The media service stores only opaque AES-256-GCM ciphertext;
+  /// the CEK/IV come from the MLS-decrypted MediaMsg (never the server). Fetched via the
+  /// PushSecret-authed proxy (2 MB cap) and decrypted natively. Returns a local file URL or nil.
+  private func fetchAndDecryptMedia(ctx: PushContext, media: DecryptResult) -> URL? {
+    guard let secret = loadPushSecret(), let mediaId = media.mediaId,
+      let keyB64 = media.mediaKey, let ivB64 = media.mediaIv
+    else { return nil }
+
+    let mid = Self.encode(mediaId)
+    let req = Self.encode(ctx.userId)
+    let dev = Self.encode(ctx.deviceId)
+    let urlStr = "\(ctx.baseUrl)/api/mls/push/media/\(mid)?requesterId=\(req)&deviceId=\(dev)"
+    guard let (cipher, status) = syncRequest(method: "GET", urlStr: urlStr, secret: secret, body: nil),
+      status == 200, !cipher.isEmpty
+    else { return nil }
+
+    let plaintext: Data? = cipher.withUnsafeBytes { cipherPtr -> Data? in
+      var outLen: Int = 0
+      guard let ptr = canari_native_decrypt_media(
+        keyB64, ivB64, cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count, &outLen),
+        outLen > 0
+      else { return nil }
+      defer { canari_free_bytes(ptr, outLen) }
+      return Data(bytes: ptr, count: outLen)
+    }
+    guard let data = plaintext else { return nil }
+
+    let ext = Self.mimeExtension(media.mimeType)
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("\(UUID().uuidString).\(ext)")
+    guard (try? data.write(to: tmp, options: .atomic)) != nil else { return nil }
+    NSLog("[CanariNSE] fetchAndDecryptMedia: thumbnail ready (\(data.count)B)")
+    return tmp
   }
 
   // MARK: - Channel (community) message ---------------------------------------
@@ -413,17 +473,24 @@ class NotificationService: UNNotificationServiceExtension {
     return cacheUrl
   }
 
-  /// Copies the cached avatar to a unique temp file and attaches it (an attachment URL
-  /// is consumed/moved by the OS, so we never hand it the shared cache file directly).
-  private func attachAvatar(content: UNMutableNotificationContent, fileUrl: URL) {
+  /// Copies an image file to a unique temp file and attaches it as the notification's preview (an
+  /// attachment URL is consumed/moved by the OS, so we never hand it a shared cache file directly).
+  /// Preserves the source extension so iOS infers the type (jpg/png/gif/webp). Returns true on success.
+  @discardableResult
+  private func attachImage(
+    content: UNMutableNotificationContent, fileUrl: URL, identifier: String
+  ) -> Bool {
+    let ext = fileUrl.pathExtension.isEmpty ? "jpg" : fileUrl.pathExtension
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("\(UUID().uuidString).jpg")
+      .appendingPathComponent("\(UUID().uuidString).\(ext)")
     do {
       try FileManager.default.copyItem(at: fileUrl, to: tmp)
-      let attachment = try UNNotificationAttachment(identifier: "avatar", url: tmp, options: nil)
+      let attachment = try UNNotificationAttachment(identifier: identifier, url: tmp, options: nil)
       content.attachments = [attachment]
+      return true
     } catch {
-      NSLog("[CanariNSE] attachAvatar error: \(error.localizedDescription)")
+      NSLog("[CanariNSE] attachImage error: \(error.localizedDescription)")
+      return false
     }
   }
 
@@ -455,8 +522,9 @@ class NotificationService: UNNotificationServiceExtension {
 
   // MARK: - Helpers -----------------------------------------------------------
 
-  /// Extracts `text` from a `{"ok":true,"text":...}` decrypt result, clamped. nil on failure.
-  private static func parseDecryptedText(_ json: String?) -> String? {
+  /// Parses a `{"ok":true,"text":...,"mediaKind":...}` decrypt result into a DecryptResult (text
+  /// clamped, plus the media reference/CEK for a thumbnail). nil on failure or empty text.
+  private static func parseDecrypted(_ json: String?) -> DecryptResult? {
     guard let json = json, let data = json.data(using: .utf8),
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       (dict["ok"] as? Bool) == true,
@@ -465,7 +533,25 @@ class NotificationService: UNNotificationServiceExtension {
     if text.count > maxPreviewLength {
       text = String(text.prefix(maxPreviewLength))
     }
-    return text
+    let nonEmpty: (String) -> String? = { (dict[$0] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+    return DecryptResult(
+      text: text, mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
+      mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"))
+  }
+
+  /// Convenience for the channel path, which needs only the preview text.
+  private static func parseDecryptedText(_ json: String?) -> String? {
+    parseDecrypted(json)?.text
+  }
+
+  /// Maps a media MIME type to a file extension so iOS infers the attachment type.
+  private static func mimeExtension(_ mime: String?) -> String {
+    switch mime {
+    case "image/png": return "png"
+    case "image/gif": return "gif"
+    case "image/webp": return "webp"
+    default: return "jpg"
+    }
   }
 
   private static func fallbackText(senderName: String) -> String {

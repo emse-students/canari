@@ -41,6 +41,19 @@ char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr,
 char *canari_native_decrypt_channel_message(const char *key_b64, const char *nonce_b64,
                                             const char *ciphertext_b64);
 
+/// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
+/// notification thumbnail (WP-XP-3). key_b64/iv_b64 are the base64 CEK (32 bytes) + IV (12 bytes)
+/// from the MLS-decrypted MediaMsg; cipher_ptr/cipher_len point at the downloaded ciphertext||tag.
+/// Writes the plaintext length to out_len and returns a heap buffer to free with canari_free_bytes,
+/// or NULL (out_len set to 0) on failure.
+unsigned char *canari_native_decrypt_media(const char *key_b64, const char *iv_b64,
+                                           const unsigned char *cipher_ptr, size_t cipher_len,
+                                           size_t *out_len);
+
+/// Frees a byte buffer returned by canari_native_decrypt_media. len MUST be the value written to
+/// out_len by that call.
+void canari_free_bytes(unsigned char *ptr, size_t len);
+
 /// Frees a string returned by any of the canari_native_* functions above.
 void canari_free_string(char *ptr);
 

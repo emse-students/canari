@@ -211,6 +211,61 @@ pub unsafe extern "C" fn canari_native_decrypt_channel_message(
     }
 }
 
+/// Dechiffre un blob media chiffre de bout en bout (AES-256-GCM) pour la miniature de notification
+/// (WP-XP-3). `key_b64`/`iv_b64` sont la CEK (32 octets) + IV (12 octets) en base64, extraits du
+/// `MediaMsg` MLS dechiffre ; `cipher_ptr`/`cipher_len` pointent sur le `ciphertext||tag` telecharge
+/// depuis `/api/mls/push/media/:mediaId`. Ecrit la longueur du plaintext dans `out_len` et retourne
+/// un pointeur tas a liberer avec `canari_free_bytes`. Retourne NULL (et `*out_len = 0`) sur echec.
+/// Miroir FFI du JNI Android `nativeDecryptMedia`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_decrypt_media(
+    key_b64: *const c_char,
+    iv_b64: *const c_char,
+    cipher_ptr: *const u8,
+    cipher_len: usize,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if !out_len.is_null() {
+        *out_len = 0;
+    }
+    if key_b64.is_null() || iv_b64.is_null() || cipher_ptr.is_null() || out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let decode = |s: String| STANDARD.decode(s.trim()).ok();
+    let key = match decode(str_from_c_str(key_b64)) {
+        Some(v) => v,
+        None => return std::ptr::null_mut(),
+    };
+    let iv = match decode(str_from_c_str(iv_b64)) {
+        Some(v) => v,
+        None => return std::ptr::null_mut(),
+    };
+    let ciphertext = slice::from_raw_parts(cipher_ptr, cipher_len);
+
+    let plaintext = match super::background::decrypt_media_blob(&key, &iv, ciphertext) {
+        Some(v) => v,
+        None => return std::ptr::null_mut(),
+    };
+
+    // Hand ownership to the caller as a boxed slice (capacity == length), matching `canari_free_bytes`.
+    let mut boxed = plaintext.into_boxed_slice();
+    let ptr = boxed.as_mut_ptr();
+    *out_len = boxed.len();
+    std::mem::forget(boxed);
+    ptr
+}
+
+/// Libere un buffer d'octets alloue par `canari_native_decrypt_media`. `len` doit etre la longueur
+/// renvoyee via `out_len` (l'allocation est une boxed slice, capacite == longueur).
+#[no_mangle]
+pub unsafe extern "C" fn canari_free_bytes(ptr: *mut u8, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    drop(Vec::from_raw_parts(ptr, len, len));
+}
+
 /// Cree un Welcome MLS. Retourne un JSON alloue (`welcome`, `commit`, `baseEpoch`, ...).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_create_welcome_background(

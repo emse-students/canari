@@ -135,6 +135,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
+| GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
 | POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active after push-triggered add |
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock from background service |
@@ -256,6 +257,44 @@ on push receipt and down on read-state cancel with no separate counter to keep i
     or the stable request id (flat `canari_messages` thread, in-app deliveries) - both are unique
     per conversation - and gate on `threadIdentifier == "canari_messages"` or a
     `fr.emse.canari://chat` deep link so social/form notifications never count.
+
+#### Rich media notifications (image/GIF thumbnail)
+
+An image or GIF message shows its decrypted thumbnail inside the notification, on both platforms and
+while the app is fully killed (WP-XP-3). Scope is **images + GIF only**: video/audio keep the existing
+text preview (`📷 Photo` / `🎥 Vidéo` ...). This is the MLS DM/group path only - community channels
+keep their text preview.
+
+Because media is end-to-end encrypted (the media service stores only opaque AES-256-GCM ciphertext,
+the CEK/IV live inside the MLS message), the native notification builder must fetch and decrypt the
+blob itself:
+
+1. **Decrypt metadata**: the shared Rust parser `extract_full_message_info` (`proto_fields.rs`) now
+   emits `mediaId` + base64 `mediaKey`/`mediaIv` + `mimeType` alongside `mediaKind` for a `MediaMsg`.
+   These ride the same decrypt JSON both platforms already parse.
+2. **Fetch ciphertext**: a killed app has no user JWT, so the blob is pulled through a new
+   PushSecret-authed proxy `GET /api/mls/push/media/:mediaId` (chat-delivery), which relays it from
+   media-service's server-to-server `GET /api/media/internal/:id` (X-Internal-Secret gate). A **2 MB
+   cap** (matching client-side send compression) keeps videos and oversized blobs out - above it the
+   proxy returns 413 and the native side shows the text-only notification.
+3. **Decrypt blob**: a new leaf FFI decrypts the ciphertext with the CEK, reusing the channel AES-GCM
+   path (`background::decrypt_media_blob`). Android JNI `nativeDecryptMedia(keyB64, ivB64, ciphertext)`
+   returns the plaintext bytes; iOS C-ABI `canari_native_decrypt_media(..., out_len)` returns a heap
+   buffer freed with `canari_free_bytes`. The plaintext (original image bytes) never transits the
+   server or FCM.
+4. **Attach**:
+   - **Android** (`CanariFirebaseMessagingService.fetchAndDecryptMedia`): writes the decrypted image
+     under the FileProvider-mapped cache dir (`cacheDir/tauri/notif_media/`, 24 h sweep) and attaches
+     it inline via `MessagingStyle.Message.setData(mime, contentUri)` - preserving conversation
+     stacking + quick actions. NotificationManager grants SystemUI read access to the content URI.
+   - **iOS** attaches a `UNNotificationAttachment` from a decrypted temp file. Since iOS shows only the
+     first image attachment as the banner preview, the **media thumbnail outranks the sender avatar**
+     (avatar is used only for text/non-image). App alive: `canari_push.mm`
+     `CanariFetchAndDecryptMedia` → `CanariShowLocalNotification`. App killed:
+     `canari_NSE/NotificationService.swift` `fetchAndDecryptMedia` → `attachImage`.
+
+Gotcha: only `mediaKind == "image"` (which also covers GIF, mime `image/gif`) is rendered; the
+extension budget (~30 s) and the 2 MB cap bound the background download + decrypt.
 
 ### Security / PIN
 

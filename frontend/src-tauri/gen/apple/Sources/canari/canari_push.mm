@@ -61,10 +61,31 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, assign) long long sentAt;
 @property(nonatomic, copy) NSString *type;
 @property(nonatomic, copy, nullable) NSString *mediaKind;
+// Media reference + CEK (WP-XP-3), populated only for a media message. Used to download and
+// AES-256-GCM-decrypt the blob for a notification thumbnail. nil for non-media messages.
+@property(nonatomic, copy, nullable) NSString *mediaId;
+@property(nonatomic, copy, nullable) NSString *mediaKey;
+@property(nonatomic, copy, nullable) NSString *mediaIv;
+@property(nonatomic, copy, nullable) NSString *mimeType;
 @end
 
 @implementation CanariDecryptedMessage
 @end
+
+/// Copies the media reference/CEK fields (WP-XP-3) from a decrypt-result JSON dict onto `msg`.
+/// Shared by both decrypt parsers (direct + commit catch-up).
+static void CanariPopulateMediaFields(CanariDecryptedMessage *msg, NSDictionary *dict) {
+  id kind = dict[@"mediaKind"];
+  msg.mediaKind = [kind isKindOfClass:[NSString class]] ? kind : nil;
+  id mediaId = dict[@"mediaId"];
+  msg.mediaId = [mediaId isKindOfClass:[NSString class]] ? mediaId : nil;
+  id mediaKey = dict[@"mediaKey"];
+  msg.mediaKey = [mediaKey isKindOfClass:[NSString class]] ? mediaKey : nil;
+  id mediaIv = dict[@"mediaIv"];
+  msg.mediaIv = [mediaIv isKindOfClass:[NSString class]] ? mediaIv : nil;
+  id mimeType = dict[@"mimeType"];
+  msg.mimeType = [mimeType isKindOfClass:[NSString class]] ? mimeType : nil;
+}
 
 @interface CanariOutboxEntry : NSObject
 @property(nonatomic, copy) NSString *entryId;
@@ -440,8 +461,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
                    ? [dict[@"sentAt"] longLongValue]
                    : (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   msg.type = [dict[@"type"] isKindOfClass:[NSString class]] ? dict[@"type"] : @"text";
-  id mediaKind = dict[@"mediaKind"];
-  msg.mediaKind = [mediaKind isKindOfClass:[NSString class]] ? mediaKind : nil;
+  CanariPopulateMediaFields(msg, dict);
   return msg;
 }
 
@@ -527,8 +547,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
                    ? [dict[@"sentAt"] longLongValue]
                    : (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   msg.type = [dict[@"type"] isKindOfClass:[NSString class]] ? dict[@"type"] : @"text";
-  id mediaKind = dict[@"mediaKind"];
-  msg.mediaKind = [mediaKind isKindOfClass:[NSString class]] ? mediaKind : nil;
+  CanariPopulateMediaFields(msg, dict);
   return msg;
 }
 
@@ -1578,8 +1597,65 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
   CanariMaybeNotifyPendingSync(remaining);
 }
 
+// Maps a media MIME type to a file extension so iOS infers the attachment type.
+static NSString *CanariMimeExtension(NSString *_Nullable mime) {
+  if ([mime isEqualToString:@"image/png"]) return @"png";
+  if ([mime isEqualToString:@"image/gif"]) return @"gif";
+  if ([mime isEqualToString:@"image/webp"]) return @"webp";
+  return @"jpg";
+}
+
+// Downloads and decrypts an image/GIF blob for a notification thumbnail (WP-XP-3), writing the
+// plaintext to a unique temp file. The media service stores only opaque AES-256-GCM ciphertext; the
+// CEK/IV come from the MLS-decrypted MediaMsg (never the server). Fetched via the PushSecret-authed
+// proxy (2 MB cap) and decrypted natively. Returns a local file path, or nil (text-only fallback).
+static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
+                                                      CanariDecryptedMessage *decrypted) {
+  if (![decrypted.mediaKind isEqualToString:@"image"] || decrypted.mediaId.length == 0 ||
+      decrypted.mediaKey.length == 0 || decrypted.mediaIv.length == 0) {
+    return nil;
+  }
+  NSString *secret = CanariRetrievePushSecret();
+  if (secret == nil) {
+    return nil;
+  }
+  NSCharacterSet *q = [NSCharacterSet URLQueryAllowedCharacterSet];
+  NSString *urlStr = [NSString
+      stringWithFormat:@"%@/api/mls/push/media/%@?requesterId=%@&deviceId=%@", ctx.baseUrl,
+                       [decrypted.mediaId stringByAddingPercentEncodingWithAllowedCharacters:q],
+                       [ctx.userId stringByAddingPercentEncodingWithAllowedCharacters:q],
+                       [ctx.deviceId stringByAddingPercentEncodingWithAllowedCharacters:q]];
+  int status = 0;
+  NSData *cipher = CanariHttpRequest(@"GET", [NSURL URLWithString:urlStr], secret, nil, &status);
+  if (status != 200 || cipher.length == 0) {
+    NSLog(@"[CanariPush] fetchAndDecryptMedia: HTTP %d", status);
+    return nil;
+  }
+
+  size_t outLen = 0;
+  unsigned char *plain = canari_native_decrypt_media(
+      decrypted.mediaKey.UTF8String, decrypted.mediaIv.UTF8String,
+      (const unsigned char *)cipher.bytes, cipher.length, &outLen);
+  if (plain == nullptr || outLen == 0) {
+    NSLog(@"[CanariPush] fetchAndDecryptMedia: native decrypt failed");
+    return nil;
+  }
+  NSData *plaintext = [NSData dataWithBytes:plain length:outLen];
+  canari_free_bytes(plain, outLen);
+
+  NSString *tmpPath = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.%@", [[NSUUID UUID] UUIDString],
+                                                                CanariMimeExtension(decrypted.mimeType)]];
+  if (![plaintext writeToFile:tmpPath atomically:YES]) {
+    return nil;
+  }
+  NSLog(@"[CanariPush] fetchAndDecryptMedia: thumbnail ready (%luB)", (unsigned long)plaintext.length);
+  return tmpPath;
+}
+
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
-                                          NSString *groupId, NSString *senderId) {
+                                          NSString *groupId, NSString *senderId,
+                                          CanariDecryptedMessage *_Nullable decrypted) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -1590,12 +1666,17 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
           ? [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId]
           : @"fr.emse.canari://chat";
   int notifId = CanariStableNotifId(groupId);
-  NSString *avatarPath = nil;
+  // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows only
+  // the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
+  NSString *attachmentPath = nil;
   CanariPushContext *ctx = CanariLoadPushContext();
-  if (ctx != nil && senderId.length > 0) {
-    avatarPath = CanariFetchAvatar(ctx, senderId);
+  if (ctx != nil && decrypted != nil) {
+    attachmentPath = CanariFetchAndDecryptMedia(ctx, decrypted);
   }
-  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, avatarPath, groupId);
+  if (attachmentPath == nil && ctx != nil && senderId.length > 0) {
+    attachmentPath = CanariFetchAvatar(ctx, senderId);
+  }
+  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, attachmentPath, groupId);
 }
 
 static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret, NSString *token) {
@@ -1670,7 +1751,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId);
+      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -1777,7 +1858,8 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
     NSString *displayName = [NSString stringWithFormat:@"#%@", channelName];
     dispatch_async(dispatch_get_main_queue(), ^{
       // groupName empty + senderName "#<channel>" -> title is "#<channel>"; avatar from senderId.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId);
+      // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
+      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil);
     });
   });
 }

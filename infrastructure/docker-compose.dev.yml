@@ -132,6 +132,10 @@ services:
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Rich media notifications (WP-XP-3): the push proxy fetches encrypted blobs from media-service
+      # server-to-server, gated by the shared INTERNAL_SECRET.
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
     depends_on:
       redis:

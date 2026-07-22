@@ -30,6 +30,13 @@ import type { Response } from 'express';
 import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
 
+/**
+ * Max size of an encrypted media blob the push proxy will relay for a notification thumbnail
+ * (WP-XP-3). Matches the client-side send compression; larger blobs (e.g. video) fall back to a
+ * text-only notification rather than being downloaded in a background handler.
+ */
+const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+
 /** Push notification token management and Firebase Cloud Messaging dispatch. */
 @Controller()
 export class PushController {
@@ -197,6 +204,72 @@ export class PushController {
           'Content-Type': upstream.headers.get('content-type') ?? 'image/jpeg',
           'Content-Length': String(buffer.length),
           'Cache-Control': 'public, max-age=3600',
+        })
+        .send(buffer);
+    } catch {
+      res.status(503).send();
+    }
+  }
+
+  /**
+   * Encrypted-media proxy for the background notification services (PushSecret auth, no JWT).
+   * Called by the native push handlers (Android `fetchAndDecryptMedia`, iOS NSE / canari_push.mm)
+   * to fetch the opaque ciphertext of an image/GIF message by `mediaId` so they can AES-256-GCM
+   * decrypt it with the CEK from the MLS message and show a thumbnail (WP-XP-3). The recipient's app
+   * may be killed, so no user token is available; this route bridges to media-service's internal
+   * ciphertext route with the shared X-Internal-Secret.
+   *
+   * A 2 MB cap (matching the client-side send compression) protects the notification handler and the
+   * device battery: blobs above it are refused so the native side falls back to a text-only alert.
+   * Auth: Authorization: PushSecret {secret} + ?requesterId=&deviceId= (ownership check).
+   */
+  @Get('mls/push/media/:mediaId')
+  async getMediaForPush(
+    @Headers('authorization') authHeader: string,
+    @Query('requesterId') requesterIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+    @Param('mediaId') mediaIdRaw: string,
+    @Res() res: Response
+  ) {
+    const requesterId = sanitizeQueryValue(requesterIdRaw ?? '', 'requesterId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    const mediaId = sanitizeQueryValue(mediaIdRaw, 'mediaId');
+
+    await this.verifyPushSecretAuth(authHeader, requesterId, deviceId);
+
+    const mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
+    const internalSecret = process.env.INTERNAL_SECRET ?? '';
+    if (!internalSecret) {
+      this.logger.warn('getMediaForPush: INTERNAL_SECRET unset - refusing');
+      res.status(503).send();
+      return;
+    }
+    try {
+      const upstream = await fetch(
+        `${mediaUrl}/api/media/internal/${encodeURIComponent(mediaId)}`,
+        { headers: { 'x-internal-secret': internalSecret }, signal: AbortSignal.timeout(5_000) }
+      );
+      if (!upstream.ok) {
+        res.status(upstream.status).send();
+        return;
+      }
+      // Reject oversized blobs (e.g. an uncompressed video) before buffering them into memory.
+      const declared = Number(upstream.headers.get('content-length') ?? '0');
+      if (declared > PUSH_MEDIA_MAX_BYTES) {
+        this.logger.debug(`getMediaForPush: ${mediaId} is ${declared}B > cap - text fallback`);
+        res.status(413).send();
+        return;
+      }
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      if (buffer.length > PUSH_MEDIA_MAX_BYTES) {
+        res.status(413).send();
+        return;
+      }
+      res
+        .set({
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(buffer.length),
+          'Cache-Control': 'no-store, no-cache, must-revalidate, private',
         })
         .send(buffer);
     } catch {
