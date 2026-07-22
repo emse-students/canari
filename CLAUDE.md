@@ -124,18 +124,7 @@ CONTEXT: some assos have >1 cotisant type (Le Cercle: forfait alcool XOR sans-al
 * \[ \] **WP-COT-7 (frontend - shop + forms):** `/shop` shows the tiers; the higher-tier card shows the delta price when the viewer already holds the lower tier (mirror of `memberPriceTag`). Forms' `pricingTagName` already accepts an arbitrary tag - verify it works with tier tags. i18n FR/EN.
 * \[ \] **WP-COT-8 (P3, optional inclusion + docs):** honour `variantLevel` so a gate "requires tier >= N" is satisfied by any higher tier (NOT needed for the Cercle - recharge is generic, upgrade is explicit `memberPriceTag` - so ship only if a real need appears). Update [docs/wiki/cotisations.md](docs/wiki/cotisations.md) (tiers + both API directions) and the end-user guide.
 
-#### OPEN BACKLOG (reported 2026-07-20, triaged by severity x speed)
-
-**P1 - broken functionality:**
-* \[x\] **Channel unusable until relaunch after in-session join** - fixed via `hydrateJoinedChannelKey(channelId)` on join (`ChatBackgroundService.svelte`). [device] confirm a freshly-added channel opens + decrypts without restart.
-* \[x\] **System-message notifs (`Message de XXX`)** - fixed+verified (0a985983); silent control events never notify, visible events decode+render via `format_system_event_text`.
-**P2 - UI correctness / polish:**
-* \[x\] **Channel avatars removed entirely** (7181d97f) - channels show name only (Hash icon inline, no `GroupAvatar` box); `channels.imageMediaId` dropped (migration 023). Community/group avatars untouched.
-* \[x\] **"Show members" desktop toggle fixed** (7181d97f) - product decision: made the desktop panel collapsible (shared `isChannelMembersDrawerOpen` state now also gates `ChannelMembersSidebar`'s `xl:flex`, defaults open on desktop / closed on mobile via `isMobileOverlayLayout()`); header button is a real toggle now (`ChatHeader` `membersActive` mirrors `searchActive`'s pattern).
-* \[x\] **Social push bodies localized to French** (7181d97f) - centralized in `apps/social-service/src/posts/push-messages.ts`, fixing an EN/FR inconsistency (product decision: fixed-FR Paraglide-style copy, no per-user locale infra). Also fixed a real duplicate-push bug found in the same code: `PostNotificationsService.createNotification` was firing its own generic English push in addition to the caller's explicit one - now takes `skipPush` (used by post-interactions.service.ts and forms-reminder.scheduler.ts, both of which already send their own push).
-
-**P3 - feature:**
-* \[ \] **Reorder communities** via drag-and-drop (user-defined display order, persisted).
+OPEN BACKLOG (reported 2026-07-20): all items shipped, including P3 community reordering (de0dcbc4) - per-user `channel_members.sortOrder` (migration 024), `PATCH /channels/workspaces/reorder`, drag-and-drop in `Sidebar.svelte` via `svelte-dnd-action`. Nothing open.
 
 ---
 
