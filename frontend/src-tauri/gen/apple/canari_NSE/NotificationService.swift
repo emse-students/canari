@@ -204,6 +204,13 @@ class NotificationService: UNNotificationServiceExtension {
     // Per-conversation stacking (WP-iOS-7): replaces the single flat thread.
     if !groupId.isEmpty {
       content.threadIdentifier = groupId
+      // Quick actions (WP-XP-1): opt this notification into the reply / mark-as-read category.
+      // When the app is fully killed the NSE is the ONLY path that builds the visible alert, so
+      // without this stamp the action buttons never appear (the app-alive path sets the same id in
+      // canari_push.mm CanariShowLocalNotification). Category id must match the one the app
+      // registers via CanariRegisterNotificationCategories; iOS retains it across app termination.
+      // MLS DM/group only - channels go through handleChannelMessage and get no quick actions.
+      content.categoryIdentifier = "canari_message_category"
     }
     content.userInfo["deepLink"] =
       groupId.isEmpty ? "fr.emse.canari://chat" : "fr.emse.canari://chat/\(groupId)"

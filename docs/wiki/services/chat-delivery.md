@@ -219,6 +219,13 @@ the background welcome-join/decrypt flows already use.
 - iOS: `CanariRegisterNotificationCategories`/`CanariHandleQuickReplyAction`/
   `CanariHandleMarkReadAction` in `canari_push.mm`, wired into `CanariNotificationDelegate`'s
   `didReceiveNotificationResponse`.
+- iOS gotcha: the action buttons only appear when the delivered notification carries
+  `categoryIdentifier == "canari_message_category"`. The app-alive path stamps it in
+  `CanariShowLocalNotification`, but when the app is fully killed the NSE
+  (`canari_NSE/NotificationService.swift` `applyMessageContent`) is the ONLY path that builds the
+  visible alert, so it must stamp the same id too (MLS DM/group only) - the backend APNs payload
+  does not send `aps.category`. iOS retains the category the app registered across termination, so
+  the stamp is enough.
 - Gotcha: the outbox mirror rewrite (both platforms) must persist the `silent` flag on every
   write, or a control event that survives one failed drain attempt loses its silent flag on retry
   and resends as a visible push.
