@@ -11,6 +11,7 @@ use super::background::{
     decrypt_channel_message, decrypt_push_message, decrypt_push_message_with_commits,
     process_welcome_background, send_message_background,
 };
+use super::proto_fields::{build_read_receipt_app_message, build_text_app_message};
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
     CString::new(value.to_string())
@@ -328,6 +329,50 @@ pub unsafe extern "C" fn canari_native_send_message_background(
         Ok(v) => json_to_c_string(v),
         Err(e) => err_json_to_c_string(e),
     }
+}
+
+/// Builds a plaintext `AppMessage` text proto (base64, heap-allocated C string) for a
+/// notification quick-reply (`UNTextInputNotificationAction`), without touching MLS state. The
+/// caller (canari_push.mm) appends the result as an entry to `outbox_pending.ndjson` and drains it
+/// through the existing `canari_native_send_message_background`-based `CanariDrainOutboxBackground`
+/// - no new send path, only a new way to produce the plaintext proto when the app may be killed.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_build_text_message_proto(
+    message_id: *const c_char,
+    sent_at: i64,
+    content: *const c_char,
+) -> *mut c_char {
+    if message_id.is_null() || content.is_null() {
+        return CString::new("").unwrap().into_raw();
+    }
+    let bytes = build_text_app_message(
+        &str_from_c_str(message_id),
+        sent_at,
+        &str_from_c_str(content),
+    );
+    CString::new(STANDARD.encode(&bytes))
+        .unwrap_or_else(|_| CString::new("").expect("static empty"))
+        .into_raw()
+}
+
+/// Builds a plaintext `AppMessage` read-receipt (system) proto (base64, heap-allocated C string)
+/// for the "mark as read" notification quick action. `message_ids_json` is a JSON array of message
+/// id strings (read from `fcm_message_cache.ndjson` on the ObjC side). Sent through the outbox
+/// drain like the reply above, but marked `silent` by the caller so it triggers the existing
+/// cross-device notification-cancel path instead of a peer push.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_build_read_receipt_proto(
+    message_ids_json: *const c_char,
+) -> *mut c_char {
+    if message_ids_json.is_null() {
+        return CString::new("").unwrap().into_raw();
+    }
+    let ids: Vec<String> =
+        serde_json::from_str(&str_from_c_str(message_ids_json)).unwrap_or_default();
+    let bytes = build_read_receipt_app_message(&ids);
+    CString::new(STANDARD.encode(&bytes))
+        .unwrap_or_else(|_| CString::new("").expect("static empty"))
+        .into_raw()
 }
 
 /// Nettoie `mls_pending.db`. Retourne 1 si succes.

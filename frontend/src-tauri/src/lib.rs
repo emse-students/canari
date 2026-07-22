@@ -2261,6 +2261,77 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     }
 }
 
+/// Builds a plaintext `AppMessage` text proto (base64) for a notification quick-reply (Android
+/// RemoteInput action), without touching MLS state. The caller (Kotlin) appends the result as an
+/// entry to `outbox_pending.ndjson` and drains it through the existing
+/// `nativeSendMessageBackground`-based `drainOutboxBackground` - no new send path, only a new way
+/// to produce the plaintext proto when the TS runtime that normally builds it is not alive.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeBuildTextMessageProto<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    message_id: jni::objects::JString<'a>,
+    sent_at: jni::sys::jlong,
+    content: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let result = (|| -> Result<String, String> {
+        let message_id_str: String = env
+            .get_string(&message_id)
+            .map_err(|e| e.to_string())?
+            .into();
+        let content_str: String = env.get_string(&content).map_err(|e| e.to_string())?.into();
+        let bytes =
+            mobile::proto_fields::build_text_app_message(&message_id_str, sent_at, &content_str);
+        Ok(STANDARD.encode(&bytes))
+    })();
+
+    let out = result.unwrap_or_else(|e| {
+        log::error!("[QUICK_REPLY] nativeBuildTextMessageProto failed: {e}");
+        String::new()
+    });
+    env.new_string(&out)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
+}
+
+/// Builds a plaintext `AppMessage` read-receipt (system) proto (base64) for the "mark as read"
+/// notification quick action. `message_ids_json` is a JSON array of message id strings (read from
+/// `fcm_message_cache.ndjson` on the Kotlin side). Sent through the outbox drain like the reply
+/// above, but marked `silent` by the caller so it triggers the existing cross-device
+/// notification-cancel path instead of a peer push.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeBuildReadReceiptProto<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    message_ids_json: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let result = (|| -> Result<String, String> {
+        let json_str: String = env
+            .get_string(&message_ids_json)
+            .map_err(|e| e.to_string())?
+            .into();
+        let ids: Vec<String> = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+        let bytes = mobile::proto_fields::build_read_receipt_app_message(&ids);
+        Ok(STANDARD.encode(&bytes))
+    })();
+
+    let out = result.unwrap_or_else(|e| {
+        log::error!("[MARK_READ] nativeBuildReadReceiptProto failed: {e}");
+        String::new()
+    });
+    env.new_string(&out)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
+}
+
 /// Chiffre et persiste un message sortant en attente (texte/reply) en arrière-plan (app tuée).
 ///
 /// Pendant de l'envoi : charge l'état MLS, chiffre le proto AppMessage *en clair* (`proto_b64`)

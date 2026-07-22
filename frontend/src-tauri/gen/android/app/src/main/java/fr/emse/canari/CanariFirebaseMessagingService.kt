@@ -15,6 +15,7 @@ import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -49,6 +50,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
+
+        /** Notification quick actions (WP-XP-1): reply inline / mark as read from the shade. */
+        const val ACTION_QUICK_REPLY = "fr.emse.canari.ACTION_QUICK_REPLY"
+        const val ACTION_MARK_READ   = "fr.emse.canari.ACTION_MARK_READ"
+        const val EXTRA_GROUP_ID     = "groupId"
+        const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         // Starts at 10_000 to avoid overlapping the stable IDs (1000-9998) or the summary (9999).
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(10_000)
@@ -114,6 +121,284 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
+            }
+        }
+
+        // --- Shared with CanariNotificationActionReceiver (quick reply / mark as read) ---------
+        //
+        // These take an explicit `context`/`service` instead of an implicit Service-as-Context
+        // receiver so the notification-action BroadcastReceiver can reuse the exact same
+        // outbox-drain and notification-cancel logic as the FCM service, with zero duplication.
+        // `service` only backs the JNI-bound `nativeSendMessageBackground` call (native code
+        // never touches Context/Service framework state), so a bare `CanariFirebaseMessagingService()`
+        // instance - never `attachBaseContext`-ed - is safe to pass there, but NOT as `context`.
+
+        /**
+         * Retrieves the push secret, falling back to [pending_push_secret.txt] when the Keystore
+         * entry is absent. This covers the race where Tauri writes the secret while the app is
+         * already running (so [CanariApplication.onCreate] never ran to migrate the file).
+         * On a successful fallback read the secret is migrated into the Keystore immediately.
+         */
+        internal fun retrievePushSecret(context: Context): String? {
+            val stored = PushSecretKeystore.retrieve(context)
+            if (stored != null) return stored
+
+            return try {
+                val file = File(MlsContextLoader.tauriDataDir(context), "pending_push_secret.txt")
+                if (!file.exists()) return null
+                val rawBytes = file.readBytes()
+                val secret = rawBytes.toString(Charsets.UTF_8).trim()
+                if (secret.isEmpty()) return null
+                PushSecretKeystore.store(context, secret)
+                file.writeBytes(ByteArray(rawBytes.size) { 0 })
+                file.delete()
+                Log.i(TAG, "retrievePushSecret: secret migrated from pending_push_secret.txt -> Keystore")
+                secret
+            } catch (e: Exception) {
+                Log.e(TAG, "retrievePushSecret: fallback failed: ${e.message}")
+                null
+            }
+        }
+
+        /**
+         * Returns a stable, unique notification ID for [groupId], persisted in
+         * SharedPreferences. Avoids groupId.hashCode() collisions between conversations.
+         */
+        internal fun getStableNotifId(context: Context, groupId: String): Int =
+            synchronized(NOTIF_ID_LOCK) {
+                val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+                val existing = prefs.getInt(groupId, -1)
+                if (existing != -1) return@synchronized existing
+                val next = prefs.getInt("__counter__", 1000)
+                // commit() guarantees the counter is incremented before exiting the synchronized block.
+                prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).commit()
+                next
+            }
+
+        /**
+         * Removes a conversation's notification (message read/sent from another device, or a
+         * "mark as read" notification quick action). Never creates an ID: if no notification
+         * exists for this group, does nothing. Also removes the group summary if no message
+         * notification remains.
+         */
+        internal fun cancelConversationNotification(context: Context, groupId: String) {
+            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+            val notifId = prefs.getInt(groupId, -1)
+            if (notifId == -1) {
+                Log.d(TAG, "cancelConversationNotification: no notif for group=${groupId.take(8)}")
+                return
+            }
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(notifId)
+            Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
+
+            // Remove the summary if no message notification remains (excluding the summary itself).
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                try {
+                    val remaining = manager.activeNotifications.count { sbn ->
+                        sbn.id != GROUP_SUMMARY_ID &&
+                            (android.os.Build.VERSION.SDK_INT < 26 ||
+                                sbn.notification.channelId == CHANNEL_MESSAGES)
+                    }
+                    if (remaining == 0) manager.cancel(GROUP_SUMMARY_ID)
+                } catch (e: Exception) {
+                    Log.w(TAG, "cancelConversationNotification: summary cleanup failed: ${e.message}")
+                }
+            }
+        }
+
+        /** An outbox mirror entry (cleartext AppMessage proto, base64). */
+        internal data class OutboxMirrorEntry(
+            val id: String,
+            val groupId: String,
+            val proto: String,
+            val sentAt: Long,
+            /** Silent send (no recipient notification): true for control events. */
+            val silent: Boolean,
+        )
+
+        /**
+         * Drains the outbox mirror: for each pending message, encrypts the proto against the live
+         * epoch (JNI under MlsStateLock), POSTs the ciphertext, and marks the send. Rewrites the
+         * mirror with the remaining entries and logs the delivered ids for TS reconciliation at
+         * login. Returns the number of NOT-sent entries (group not joined yet, network, etc.).
+         */
+        internal fun drainOutboxBackground(
+            context: Context,
+            service: CanariFirebaseMessagingService,
+            ctx: PushContext,
+        ): Int {
+            val entries = readOutboxMirror(context)
+            if (entries.isEmpty()) return 0
+            val secret = retrievePushSecret(context)
+            if (secret == null) {
+                Log.w(TAG, "drainOutboxBackground: pushSecret absent -> ${entries.size} message(s) remain queued")
+                return entries.size
+            }
+            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) to send")
+            val sentIds = mutableListOf<String>()
+            val remaining = mutableListOf<OutboxMirrorEntry>()
+            for (entry in entries) {
+                val ciphertext = encryptQueuedMessage(context, service, ctx, entry)
+                if (ciphertext == null) {
+                    remaining.add(entry)
+                    continue
+                }
+                if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent)) {
+                    sentIds.add(entry.id)
+                    Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
+                } else {
+                    remaining.add(entry)
+                    Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued")
+                }
+            }
+            if (sentIds.isNotEmpty()) appendOutboxSent(context, sentIds)
+            rewriteOutboxMirror(context, remaining)
+            Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${remaining.size} remaining")
+            return remaining.size
+        }
+
+        /**
+         * Encrypts a pending message via JNI under MlsStateLock (the JNI rewrites mls.bin after
+         * advancing the ratchet). Returns the MLS ciphertext (base64) or null if the state is
+         * absent, the lock is unavailable, or the group is not joined yet (send_message ->
+         * GroupNotFound).
+         */
+        private fun encryptQueuedMessage(
+            context: Context,
+            service: CanariFirebaseMessagingService,
+            ctx: PushContext,
+            entry: OutboxMirrorEntry,
+        ): String? {
+            val lockAcquired = try {
+                MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.e(TAG, "encryptQueuedMessage: interrupted during tryLock: ${e.message}")
+                return null
+            }
+            if (!lockAcquired) {
+                Log.w(TAG, "encryptQueuedMessage: MlsStateLock not acquired -> abort")
+                return null
+            }
+            try {
+                val stateBytes = MlsContextLoader.loadMlsState(context)
+                if (stateBytes == null) {
+                    Log.e(TAG, "encryptQueuedMessage: mls.bin absent -> abort")
+                    return null
+                }
+                val filesDir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
+                val jsonStr = service.nativeSendMessageBackground(
+                    filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
+                )
+                val json = JSONObject(jsonStr)
+                if (!json.optBoolean("ok", false)) {
+                    Log.d(TAG, "encryptQueuedMessage: ok=false (${json.optString("error").take(60)}) group=${entry.groupId.take(8)} - group not joined yet?")
+                    return null
+                }
+                return json.optString("ciphertext").takeIf { it.isNotEmpty() }
+            } catch (e: Exception) {
+                Log.e(TAG, "encryptQueuedMessage: exception: ${e.message}")
+                return null
+            } finally {
+                MlsStateLock.LOCK.unlock()
+            }
+        }
+
+        /** POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns true if delivered. */
+        private fun sendQueuedMessagePush(
+            ctx: PushContext,
+            secret: String,
+            groupId: String,
+            ciphertextB64: String,
+            messageId: String,
+            silent: Boolean,
+        ): Boolean {
+            return try {
+                val url = URL("${ctx.baseUrl}/api/mls/push/send")
+                val body = JSONObject().apply {
+                    put("userId", ctx.userId)
+                    put("deviceId", ctx.deviceId)
+                    put("groupId", groupId)
+                    put("proto", ciphertextB64)
+                    put("messageId", messageId)
+                    put("silent", silent)
+                }.toString()
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout    = 10_000
+                    requestMethod  = "POST"
+                    doOutput       = true
+                    setRequestProperty("Authorization", "PushSecret $secret")
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                try {
+                    conn.outputStream.use { it.write(body.toByteArray()) }
+                    val code = conn.responseCode
+                    Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
+                    code == 200 || code == 201
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
+                false
+            }
+        }
+
+        /** Reads the cleartext outbox mirror written by the TS. Returns [] if absent/unreadable. */
+        internal fun readOutboxMirror(context: Context): List<OutboxMirrorEntry> {
+            return try {
+                val file = File(MlsContextLoader.tauriDataDir(context), OUTBOX_PENDING_FILE)
+                if (!file.exists()) return emptyList()
+                file.readLines().filter { it.isNotBlank() }.mapNotNull { line ->
+                    try {
+                        val o = JSONObject(line)
+                        val id = o.optString("id")
+                        val groupId = o.optString("groupId")
+                        val proto = o.optString("proto")
+                        if (id.isEmpty() || groupId.isEmpty() || proto.isEmpty()) null
+                        else OutboxMirrorEntry(id, groupId, proto, o.optLong("sentAt", 0L), o.optBoolean("silent", false))
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "readOutboxMirror: ${e.message}")
+                emptyList()
+            }
+        }
+
+        /** Rewrites the outbox mirror with the remaining entries (deletes the file if empty). */
+        internal fun rewriteOutboxMirror(context: Context, remaining: List<OutboxMirrorEntry>) {
+            try {
+                val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, OUTBOX_PENDING_FILE)
+                if (remaining.isEmpty()) {
+                    if (file.exists()) file.delete()
+                    return
+                }
+                val body = remaining.joinToString("\n") { e ->
+                    JSONObject().apply {
+                        put("id", e.id)
+                        put("groupId", e.groupId)
+                        put("proto", e.proto)
+                        put("sentAt", e.sentAt)
+                    }.toString()
+                }
+                file.writeText(body + "\n")
+            } catch (e: Exception) {
+                Log.w(TAG, "rewriteOutboxMirror: ${e.message}")
+            }
+        }
+
+        /** Appends the delivered messageIds to the reconciliation log read by the TS at login. */
+        private fun appendOutboxSent(context: Context, ids: List<String>) {
+            try {
+                val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, OUTBOX_SENT_FILE)
+                val existing = if (file.exists()) file.readText() else ""
+                file.writeText(existing + ids.joinToString("\n") + "\n")
+            } catch (e: Exception) {
+                Log.w(TAG, "appendOutboxSent: ${e.message}")
             }
         }
     }
@@ -208,6 +493,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         protoB64: String,
     ): String
 
+    /**
+     * Builds a plaintext `AppMessage` text proto (base64) for a notification quick-reply, without
+     * touching MLS state - see [CanariNotificationActionReceiver]. Returns "" on failure.
+     */
+    external fun nativeBuildTextMessageProto(messageId: String, sentAt: Long, content: String): String
+
+    /**
+     * Builds a plaintext `AppMessage` read-receipt (system) proto (base64) for the "mark as read"
+     * quick action. `messageIdsJson` is a JSON array of message id strings. Returns "" on failure.
+     */
+    external fun nativeBuildReadReceiptProto(messageIdsJson: String): String
+
     /** Structured result of the MLS decryption, extracted from the JSON returned by Rust. */
     data class DecryptedMessage(
         val text: String,
@@ -235,7 +532,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // not enrolled yet), the foreground will register the token at the next startup.
         runWithWakeLock("fcm_token_refresh", 15_000L) {
             val ctx = MlsContextLoader.loadPushContext(this)
-            val secret = retrievePushSecret()
+            val secret = retrievePushSecret(this)
             if (ctx == null || secret == null) {
                 Log.d(TAG, "onNewToken: context/secret absent -> backend refresh deferred to foreground")
                 return@runWithWakeLock
@@ -337,7 +634,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val channelId = data["channelId"] ?: ""
             if (channelId.isNotEmpty()) {
                 Log.d(TAG, "type=channel_read → clearing notification for channel=$channelId")
-                cancelConversationNotification("channel_$channelId")
+                cancelConversationNotification(this, "channel_$channelId")
             }
             return
         }
@@ -423,7 +720,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // their read does not concern me.
                 val myUserId = MlsContextLoader.loadPushContext(this)?.userId
                 if (groupId.isNotEmpty() && senderId.isNotEmpty() && senderId.equals(myUserId, ignoreCase = true)) {
-                    cancelConversationNotification(groupId)
+                    cancelConversationNotification(this, groupId)
                 } else {
                     Log.d(TAG, "FCM silent -> MLS state updated, no notification shown")
                 }
@@ -444,7 +741,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // foreground guard (C1) is inactive in the background, writing mls.bin is allowed.
             // No-op if the outbox is empty. Notify if any remain (safety net).
             MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
-                val remaining = drainOutboxBackground(drainCtx)
+                val remaining = drainOutboxBackground(this, this, drainCtx)
                 maybeNotifyPendingSync(remaining)
             }
         }
@@ -465,33 +762,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
         WorkManager.getInstance(this).enqueue(workRequest)
-    }
-
-    /**
-     * Retrieves the push secret, falling back to [pending_push_secret.txt] when the Keystore
-     * entry is absent. This covers the race where Tauri writes the secret while the app is
-     * already running (so [CanariApplication.onCreate] never ran to migrate the file).
-     * On a successful fallback read the secret is migrated into the Keystore immediately.
-     */
-    private fun retrievePushSecret(): String? {
-        val stored = PushSecretKeystore.retrieve(this)
-        if (stored != null) return stored
-
-        return try {
-            val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
-            if (!file.exists()) return null
-            val rawBytes = file.readBytes()
-            val secret = rawBytes.toString(Charsets.UTF_8).trim()
-            if (secret.isEmpty()) return null
-            PushSecretKeystore.store(this, secret)
-            file.writeBytes(ByteArray(rawBytes.size) { 0 })
-            file.delete()
-            Log.i(TAG, "retrievePushSecret: secret migrated from pending_push_secret.txt -> Keystore")
-            secret
-        } catch (e: Exception) {
-            Log.e(TAG, "retrievePushSecret: fallback failed: ${e.message}")
-            null
-        }
     }
 
     /**
@@ -598,7 +868,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent -> abort")
             return
         }
-        val secret = retrievePushSecret()
+        val secret = retrievePushSecret(this)
         if (secret == null) {
             Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent -> abort")
             return
@@ -688,7 +958,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "processWelcomeRequestBackground: Redis lock released for group=$groupId")
             // 6. Opportunistic: this device may also have pending messages - try to send them
             //    now that the app is awake, and notify if any remain.
-            val remaining = drainOutboxBackground(ctx)
+            val remaining = drainOutboxBackground(this, this, ctx)
             maybeNotifyPendingSync(remaining)
         }
     }
@@ -907,7 +1177,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
-        val secret = retrievePushSecret()
+        val secret = retrievePushSecret(this)
         if (secret == null) {
             Log.e(TAG, "fetchProtoFromBackend: pushSecret absent")
             return null
@@ -978,7 +1248,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         var welcomeB64 = inlineProto
         var ratchetTreeB64 = ""
         if (queuedMessageId != null) {
-            val secret = retrievePushSecret()
+            val secret = retrievePushSecret(this)
             if (secret != null) {
                 val bundle = fetchWelcomeBundle(queuedMessageId, ctx, secret)
                 if (bundle != null) {
@@ -1024,7 +1294,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // the foreground path (updateInvitationStatus), so without this call the device stays
             // 'pending' and is never routed as a recipient of subsequent messages (neither real-time
             // nor push). PushSecret because the app may be killed (no JWT). Best-effort.
-            retrievePushSecret()?.let { markMembershipActive(ctx, it, groupId) }
+            retrievePushSecret(this)?.let { markMembershipActive(ctx, it, groupId) }
             // The group now exists: drain the queue to process the pending messages.
             val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -1037,7 +1307,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // The group may have just been joined: try to send the pending outgoing messages,
         // and notify the user if any remain (safety net of the background send).
-        val remaining = drainOutboxBackground(ctx)
+        val remaining = drainOutboxBackground(this, this, ctx)
         maybeNotifyPendingSync(remaining)
     }
 
@@ -1080,191 +1350,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     // --- Background outbox send (outgoing messages, app killed) ----------------
-
-    /** An outbox mirror entry (cleartext AppMessage proto, base64). */
-    private data class OutboxMirrorEntry(
-        val id: String,
-        val groupId: String,
-        val proto: String,
-        val sentAt: Long,
-        /** Silent send (no recipient notification): true for control events. */
-        val silent: Boolean,
-    )
-
-    /**
-     * Drains the outbox mirror: for each pending message, encrypts the proto against the live
-     * epoch (JNI under MlsStateLock), POSTs the ciphertext, and marks the send. Rewrites the mirror
-     * with the remaining entries and logs the delivered ids for TS reconciliation at login.
-     * Returns the number of NOT-sent entries (group not joined yet, network, etc.).
-     */
-    private fun drainOutboxBackground(ctx: PushContext): Int {
-        val entries = readOutboxMirror()
-        if (entries.isEmpty()) return 0
-        val secret = retrievePushSecret()
-        if (secret == null) {
-            Log.w(TAG, "drainOutboxBackground: pushSecret absent -> ${entries.size} message(s) remain queued")
-            return entries.size
-        }
-        Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) to send")
-        val sentIds = mutableListOf<String>()
-        val remaining = mutableListOf<OutboxMirrorEntry>()
-        for (entry in entries) {
-            val ciphertext = encryptQueuedMessage(ctx, entry)
-            if (ciphertext == null) {
-                remaining.add(entry)
-                continue
-            }
-            if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent)) {
-                sentIds.add(entry.id)
-                Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
-            } else {
-                remaining.add(entry)
-                Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued")
-            }
-        }
-        if (sentIds.isNotEmpty()) appendOutboxSent(sentIds)
-        rewriteOutboxMirror(remaining)
-        Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${remaining.size} remaining")
-        return remaining.size
-    }
-
-    /**
-     * Encrypts a pending message via JNI under MlsStateLock (the JNI rewrites mls.bin after
-     * advancing the ratchet). Returns the MLS ciphertext (base64) or null if the state is absent,
-     * the lock is unavailable, or the group is not joined yet (send_message -> GroupNotFound).
-     */
-    private fun encryptQueuedMessage(ctx: PushContext, entry: OutboxMirrorEntry): String? {
-        val lockAcquired = try {
-            MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            Log.e(TAG, "encryptQueuedMessage: interrupted during tryLock: ${e.message}")
-            return null
-        }
-        if (!lockAcquired) {
-            Log.w(TAG, "encryptQueuedMessage: MlsStateLock not acquired -> abort")
-            return null
-        }
-        try {
-            val stateBytes = MlsContextLoader.loadMlsState(this)
-            if (stateBytes == null) {
-                Log.e(TAG, "encryptQueuedMessage: mls.bin absent -> abort")
-                return null
-            }
-            val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
-            val jsonStr = nativeSendMessageBackground(
-                filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
-            )
-            val json = JSONObject(jsonStr)
-            if (!json.optBoolean("ok", false)) {
-                Log.d(TAG, "encryptQueuedMessage: ok=false (${json.optString("error").take(60)}) group=${entry.groupId.take(8)} - group not joined yet?")
-                return null
-            }
-            return json.optString("ciphertext").takeIf { it.isNotEmpty() }
-        } catch (e: Exception) {
-            Log.e(TAG, "encryptQueuedMessage: exception: ${e.message}")
-            return null
-        } finally {
-            MlsStateLock.LOCK.unlock()
-        }
-    }
-
-    /** POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns true if delivered. */
-    private fun sendQueuedMessagePush(
-        ctx: PushContext,
-        secret: String,
-        groupId: String,
-        ciphertextB64: String,
-        messageId: String,
-        silent: Boolean,
-    ): Boolean {
-        return try {
-            val url = URL("${ctx.baseUrl}/api/mls/push/send")
-            val body = JSONObject().apply {
-                put("userId", ctx.userId)
-                put("deviceId", ctx.deviceId)
-                put("groupId", groupId)
-                put("proto", ciphertextB64)
-                put("messageId", messageId)
-                put("silent", silent)
-            }.toString()
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 10_000
-                readTimeout    = 10_000
-                requestMethod  = "POST"
-                doOutput       = true
-                setRequestProperty("Authorization", "PushSecret $secret")
-                setRequestProperty("Content-Type", "application/json")
-            }
-            try {
-                conn.outputStream.use { it.write(body.toByteArray()) }
-                val code = conn.responseCode
-                Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
-                code == 200 || code == 201
-            } finally {
-                conn.disconnect()
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
-            false
-        }
-    }
-
-    /** Reads the cleartext outbox mirror written by the TS. Returns [] if absent/unreadable. */
-    private fun readOutboxMirror(): List<OutboxMirrorEntry> {
-        return try {
-            val file = File(MlsContextLoader.tauriDataDir(this), OUTBOX_PENDING_FILE)
-            if (!file.exists()) return emptyList()
-            file.readLines().filter { it.isNotBlank() }.mapNotNull { line ->
-                try {
-                    val o = JSONObject(line)
-                    val id = o.optString("id")
-                    val groupId = o.optString("groupId")
-                    val proto = o.optString("proto")
-                    if (id.isEmpty() || groupId.isEmpty() || proto.isEmpty()) null
-                    else OutboxMirrorEntry(id, groupId, proto, o.optLong("sentAt", 0L), o.optBoolean("silent", false))
-                } catch (e: Exception) {
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "readOutboxMirror: ${e.message}")
-            emptyList()
-        }
-    }
-
-    /** Rewrites the outbox mirror with the remaining entries (deletes the file if empty). */
-    private fun rewriteOutboxMirror(remaining: List<OutboxMirrorEntry>) {
-        try {
-            val file = File(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }, OUTBOX_PENDING_FILE)
-            if (remaining.isEmpty()) {
-                if (file.exists()) file.delete()
-                return
-            }
-            val body = remaining.joinToString("\n") { e ->
-                JSONObject().apply {
-                    put("id", e.id)
-                    put("groupId", e.groupId)
-                    put("proto", e.proto)
-                    put("sentAt", e.sentAt)
-                }.toString()
-            }
-            file.writeText(body + "\n")
-        } catch (e: Exception) {
-            Log.w(TAG, "rewriteOutboxMirror: ${e.message}")
-        }
-    }
-
-    /** Appends the delivered messageIds to the reconciliation log read by the TS at login. */
-    private fun appendOutboxSent(ids: List<String>) {
-        try {
-            val file = File(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }, OUTBOX_SENT_FILE)
-            val existing = if (file.exists()) file.readText() else ""
-            file.writeText(existing + ids.joinToString("\n") + "\n")
-        } catch (e: Exception) {
-            Log.w(TAG, "appendOutboxSent: ${e.message}")
-        }
-    }
+    //
+    // Relocated to top-level `internal` functions below the class (see OutboxMirrorEntry /
+    // drainOutboxBackground / readOutboxMirror / etc. near the end of this file): they take an
+    // explicit `context: Context` instead of the implicit Service-as-Context, so
+    // CanariNotificationActionReceiver (quick reply / mark as read) can reuse them without
+    // duplicating the outbox-drain logic.
 
     /** Shows the "messages pending" nudge if sends remain queued and the app is closed. */
     private fun maybeNotifyPendingSync(remaining: Int) {
@@ -1358,7 +1449,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): DecryptedMessage? {
         if (queuedMessageId.isNullOrEmpty() || groupId.isEmpty()) return null
         val ctx = MlsContextLoader.loadPushContext(this) ?: return null
-        val secret = retrievePushSecret() ?: return null
+        val secret = retrievePushSecret(this) ?: return null
 
         // Fetch the ciphertext (outside the lock, as tryDecrypt does).
         val protoB64: String = inlineProto ?: fetchProtoFromBackend(queuedMessageId, ctx) ?: return null
@@ -1573,7 +1664,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // 2. HTTP fetch (app in foreground or cache expired)
         val ctx    = MlsContextLoader.loadPushContext(this) ?: return null
-        val secret = retrievePushSecret() ?: return null
+        val secret = retrievePushSecret(this) ?: return null
         return try {
             val url = URL(
                 "${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
@@ -1645,51 +1736,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     // --- Notification display --------------------------------------------------
-
-    /**
-     * Returns a stable, unique notification ID for [groupId], persisted in
-     * SharedPreferences. Avoids groupId.hashCode() collisions between conversations.
-     */
-    private fun getStableNotifId(groupId: String): Int = synchronized(NOTIF_ID_LOCK) {
-        val prefs = getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-        val existing = prefs.getInt(groupId, -1)
-        if (existing != -1) return@synchronized existing
-        val next = prefs.getInt("__counter__", 1000)
-        // commit() guarantees the counter is incremented before exiting the synchronized block.
-        prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).commit()
-        next
-    }
-
-    /**
-     * Removes a conversation's notification (message read/sent from another device).
-     * Never creates an ID: if no notification exists for this group, does nothing.
-     * Also removes the group summary if no message notification remains.
-     */
-    private fun cancelConversationNotification(groupId: String) {
-        val prefs = getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-        val notifId = prefs.getInt(groupId, -1)
-        if (notifId == -1) {
-            Log.d(TAG, "cancelConversationNotification: no notif for group=${groupId.take(8)}")
-            return
-        }
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.cancel(notifId)
-        Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
-
-        // Remove the summary if no message notification remains (excluding the summary itself).
-        if (android.os.Build.VERSION.SDK_INT >= 23) {
-            try {
-                val remaining = manager.activeNotifications.count { sbn ->
-                    sbn.id != GROUP_SUMMARY_ID &&
-                        (android.os.Build.VERSION.SDK_INT < 26 ||
-                            sbn.notification.channelId == CHANNEL_MESSAGES)
-                }
-                if (remaining == 0) manager.cancel(GROUP_SUMMARY_ID)
-            } catch (e: Exception) {
-                Log.w(TAG, "cancelConversationNotification: summary cleanup failed: ${e.message}")
-            }
-        }
-    }
+    //
+    // getStableNotifId / cancelConversationNotification live in the companion object above
+    // (shared with CanariNotificationActionReceiver).
 
     /**
      * Shows (or updates) a notification for an MLS message (DM or group).
@@ -1714,7 +1763,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val isGroup = groupName.isNotEmpty() && groupName != senderName
 
         // Stable ID per conversation: notify() with the same ID updates the existing notification
-        val notifId = if (groupId.isNotEmpty()) getStableNotifId(groupId) else 0
+        val notifId = if (groupId.isNotEmpty()) getStableNotifId(this, groupId) else 0
 
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -1755,7 +1804,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             ?.forEach { style.addMessage(it) }
         style.addMessage(body, System.currentTimeMillis(), senderPerson)
 
-        val notif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+        val notifBuilder = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(style)
             .setAutoCancel(true)
@@ -1763,7 +1812,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setContentIntent(pendingIntent)
             .setLargeIcon(largeIcon)
             .setGroup(GROUP_KEY_MESSAGES)
-            .build()
+
+        // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
+        // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
+        if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
+            notifBuilder.addAction(buildReplyAction(groupId, notifId))
+            notifBuilder.addAction(buildMarkReadAction(groupId, notifId))
+        }
+
+        val notif = notifBuilder.build()
 
         Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup")
         manager.notify(notifId, notif)
@@ -1777,6 +1834,46 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .build()
         manager.notify(GROUP_SUMMARY_ID, summary)
+    }
+
+    /**
+     * Builds the inline "Repondre" action (RemoteInput text field), routed to
+     * [CanariNotificationActionReceiver]. Its PendingIntent MUST be mutable: RemoteInput writes the
+     * typed text into the intent extras when the system delivers the broadcast, which
+     * `FLAG_IMMUTABLE` would silently drop.
+     */
+    private fun buildReplyAction(groupId: String, notifId: Int): NotificationCompat.Action {
+        val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
+            .setLabel(getString(R.string.notif_action_reply))
+            .build()
+        val intent = Intent(this, CanariNotificationActionReceiver::class.java).apply {
+            action = ACTION_QUICK_REPLY
+            putExtra(EXTRA_GROUP_ID, groupId)
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, notifId, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        return NotificationCompat.Action.Builder(
+            R.drawable.ic_notification, getString(R.string.notif_action_reply), pendingIntent
+        ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
+    }
+
+    /** Builds the "Marquer comme lu" action, routed to [CanariNotificationActionReceiver]. */
+    private fun buildMarkReadAction(groupId: String, notifId: Int): NotificationCompat.Action {
+        val intent = Intent(this, CanariNotificationActionReceiver::class.java).apply {
+            action = ACTION_MARK_READ
+            putExtra(EXTRA_GROUP_ID, groupId)
+        }
+        // A distinct requestId (notifId + 1) so this PendingIntent does not collide/merge with the
+        // reply action's (same notifId would make FLAG_UPDATE_CURRENT overwrite one with the other).
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, notifId + 1, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Action.Builder(
+            R.drawable.ic_notification, getString(R.string.notif_action_mark_read), pendingIntent
+        ).build()
     }
 
     /**

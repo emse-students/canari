@@ -73,6 +73,13 @@ char *canari_native_send_message_background(
     const char *group_id,
     const char *proto_b64);
 
+char *canari_native_build_text_message_proto(
+    const char *message_id,
+    long long sent_at,
+    const char *content);
+
+char *canari_native_build_read_receipt_proto(const char *message_ids_json);
+
 int canari_native_cleanup_pending_db(const char *files_dir);
 
 void canari_ios_on_resume(void);

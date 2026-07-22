@@ -277,6 +277,92 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     serde_json::json!({ "ok": false })
 }
 
+// --- Minimal protobuf ENCODING (notification quick actions) ----------------
+//
+// The inverse of the read helpers above: builds a plaintext `AppMessage` proto (see
+// libs/proto/canari.proto) from a notification action fired while the app may be fully killed
+// (Android RemoteInput reply / mark-as-read, iOS UNNotificationAction). Proto3 field order does
+// not matter for decoding, so this only has to be valid protobuf, not byte-identical to
+// protobufjs's output - but the field numbers below MUST match canari.proto exactly.
+
+/// Writes a protobuf varint (LEB128, 7 bits per byte, MSB = continuation).
+fn write_varint(out: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            break;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+/// Writes a field tag: `(field_num << 3) | wire_type`, as a varint.
+fn write_tag(out: &mut Vec<u8>, field_num: u32, wire_type: u8) {
+    write_varint(out, ((field_num as u64) << 3) | wire_type as u64);
+}
+
+/// Writes a length-delimited field (wire type 2: bytes, string, or nested message).
+fn write_bytes_field(out: &mut Vec<u8>, field_num: u32, bytes: &[u8]) {
+    write_tag(out, field_num, 2);
+    write_varint(out, bytes.len() as u64);
+    out.extend_from_slice(bytes);
+}
+
+fn write_string_field(out: &mut Vec<u8>, field_num: u32, s: &str) {
+    if !s.is_empty() {
+        write_bytes_field(out, field_num, s.as_bytes());
+    }
+}
+
+/// Wraps an already-encoded `oneof kind` member (e.g. `TextMsg`, `SystemMsg`) into a full
+/// `AppMessage` envelope: `kind_field_num` (1=text, 5=system, ...) + `message_id` (field 6) +
+/// `sent_at` (field 8). Proto3 omits zero-value fields, so an empty `message_id`/`sent_at=0`
+/// (control events never set them - see `enqueueControlEvent` in messaging.ts) simply encodes
+/// as absent, matching the TS encoder's output.
+fn wrap_app_message(
+    kind_field_num: u32,
+    kind_bytes: &[u8],
+    message_id: &str,
+    sent_at: i64,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(kind_bytes.len() + message_id.len() + 24);
+    write_bytes_field(&mut out, kind_field_num, kind_bytes);
+    write_string_field(&mut out, 6, message_id);
+    if sent_at != 0 {
+        write_tag(&mut out, 8, 0);
+        write_varint(&mut out, sent_at as u64);
+    }
+    out
+}
+
+/// Builds a plaintext `AppMessage{ text: TextMsg{ content } }` proto for a quick-reply sent from
+/// a notification action (RemoteInput on Android, `UNTextInputNotificationAction` on iOS). Mirrors
+/// `encodeAppMessage(mkText(content))` with `messageId`/`sentAt` set, exactly like a normal
+/// composer send (`buildOutboxProto` in outbox.ts). The caller writes the returned bytes
+/// (base64-encoded) straight into `outbox_pending.ndjson` so the existing background drain
+/// (`drainOutboxBackground`/`CanariDrainOutboxBackground`) delivers it - no new send path.
+pub fn build_text_app_message(message_id: &str, sent_at: i64, content: &str) -> Vec<u8> {
+    let mut text_msg = Vec::with_capacity(content.len() + 8);
+    write_string_field(&mut text_msg, 1, content);
+    wrap_app_message(1, &text_msg, message_id, sent_at)
+}
+
+/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_receipt", data } }` proto for
+/// the "mark as read" notification quick action. `data` is `{"messageIds":[...]}` (same shape
+/// `sendReadReceipt` in messaging.ts sends). `message_id`/`sent_at` are left unset: control events
+/// never carry them (`enqueueControlEvent` encodes the system message verbatim, with no envelope
+/// fields). Silent-sent by the caller (existing `silent` outbox flag) so it triggers the same
+/// cross-device notification-cancel path as a foreground read receipt, never a peer push.
+pub fn build_read_receipt_app_message(message_ids: &[String]) -> Vec<u8> {
+    let data = serde_json::json!({ "messageIds": message_ids }).to_string();
+    let mut system_msg = Vec::with_capacity(data.len() + 24);
+    write_string_field(&mut system_msg, 1, "read_receipt");
+    write_string_field(&mut system_msg, 2, &data);
+    wrap_app_message(5, &system_msg, "", 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +385,32 @@ mod tests {
     fn silent_system_events_return_none() {
         assert!(format_system_event_text("read_receipt", "{}").is_none());
         assert!(format_system_event_text("delete_message", r#"{"messageId":"x"}"#).is_none());
+    }
+
+    #[test]
+    fn build_text_app_message_roundtrips_through_extract() {
+        let bytes = build_text_app_message("msg-123", 1_700_000_000_000, "hello quick reply");
+        let info = extract_full_message_info(&bytes);
+        assert_eq!(info["ok"], true);
+        assert_eq!(info["type"], "text");
+        assert_eq!(info["text"], "hello quick reply");
+        assert_eq!(info["messageId"], "msg-123");
+        assert_eq!(info["sentAt"], 1_700_000_000_000i64);
+    }
+
+    #[test]
+    fn build_read_receipt_app_message_is_silent_control() {
+        let bytes = build_read_receipt_app_message(&["m1".to_string(), "m2".to_string()]);
+        // Mirrors proto_fields' own classification: read_receipt is a control event with no
+        // user-visible preview - extract_full_message_info must reject it, not fabricate text.
+        let info = extract_full_message_info(&bytes);
+        assert_eq!(info["ok"], false);
+        // But the raw system fields must still be present and decodable.
+        let system_msg = find_length_delimited_field(&bytes, 5).expect("system field present");
+        let event = find_length_delimited_field(&system_msg, 1).unwrap();
+        assert_eq!(String::from_utf8(event).unwrap(), "read_receipt");
+        let data = find_length_delimited_field(&system_msg, 2).unwrap();
+        let data_json: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        assert_eq!(data_json["messageIds"], serde_json::json!(["m1", "m2"]));
     }
 }

@@ -170,5 +170,10 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="canari_messages" />
+
+        <!-- Notification quick actions (WP-XP-1): inline reply / mark as read from the shade. -->
+        <receiver
+            android:name=".CanariNotificationActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

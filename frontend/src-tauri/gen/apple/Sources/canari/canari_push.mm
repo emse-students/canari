@@ -35,6 +35,13 @@ static NSString *const kCanariBgCleanupTaskId = @"fr.emse.canari.cleanup";
 static const int kPendingSyncNotifId = 9998;
 static const NSTimeInterval kAvatarCacheMaxAgeSec = 24 * 60 * 60;
 
+// Notification quick actions (WP-XP-1): inline reply / mark as read from the notification.
+static NSString *const kCanariMessageCategoryId = @"canari_message_category";
+static NSString *const kCanariReplyActionId = @"CANARI_REPLY_ACTION";
+static NSString *const kCanariMarkReadActionId = @"CANARI_MARK_READ_ACTION";
+static NSString *const kFcmCacheGroupIdKey = @"groupId";
+static NSString *const kFcmCacheMessageIdKey = @"messageId";
+
 static NSLock *g_mlsStateLock = nil;
 static NSLock *g_cacheLock = nil;
 
@@ -647,7 +654,8 @@ static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString 
 
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
-                                      NSString *_Nullable attachmentPath) {
+                                      NSString *_Nullable attachmentPath,
+                                      NSString *_Nullable groupId) {
   if (canari_ios_is_in_foreground() && [threadId isEqualToString:@"canari_messages"]) {
     return;
   }
@@ -658,8 +666,18 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   content.sound = [UNNotificationSound defaultSound];
   content.threadIdentifier = threadId;
 
+  NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
   if (deepLink.length > 0) {
-    content.userInfo = @{@"deepLink" : deepLink};
+    userInfo[@"deepLink"] = deepLink;
+  }
+  // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels are
+  // server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
+  if (groupId.length > 0 && ![groupId hasPrefix:@"channel_"]) {
+    userInfo[@"groupId"] = groupId;
+    content.categoryIdentifier = kCanariMessageCategoryId;
+  }
+  if (userInfo.count > 0) {
+    content.userInfo = userInfo;
   }
 
   if (attachmentPath.length > 0 &&
@@ -688,6 +706,33 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
            NSLog(@"[CanariPush] showNotification error: %@", error.localizedDescription);
          }
        }];
+}
+
+/**
+ * Registers the `UNNotificationCategory` backing the message notification quick actions
+ * (WP-XP-1): inline reply (text input) and mark as read. Only notifications built with
+ * `groupId` set (see `CanariShowLocalNotification`) opt into this category - never a `channel_`
+ * conversation (channels are server-authoritative, no MLS outbox to route a reply/receipt through).
+ */
+static void CanariRegisterNotificationCategories(void) {
+  UNTextInputNotificationAction *replyAction =
+      [UNTextInputNotificationAction actionWithIdentifier:kCanariReplyActionId
+                                                     title:@"Repondre"
+                                                   options:UNNotificationActionOptionNone
+                                      textInputButtonTitle:@"Envoyer"
+                                      textInputPlaceholder:@""];
+  UNNotificationAction *markReadAction =
+      [UNNotificationAction actionWithIdentifier:kCanariMarkReadActionId
+                                            title:@"Marquer comme lu"
+                                          options:UNNotificationActionOptionNone];
+  UNNotificationCategory *category =
+      [UNNotificationCategory categoryWithIdentifier:kCanariMessageCategoryId
+                                              actions:@[ replyAction, markReadAction ]
+                                    intentIdentifiers:@[]
+                                              options:UNNotificationCategoryOptionNone];
+  [[UNUserNotificationCenter currentNotificationCenter]
+      setNotificationCategories:[NSSet setWithObject:category]];
+  NSLog(@"[CanariPush] notification categories registered");
 }
 
 static void CanariCancelConversationNotification(NSString *groupId) {
@@ -1119,7 +1164,7 @@ static void CanariShowPendingSyncNotification(void) {
   NSString *body =
       @"Vous avez peut-etre des messages en attente, ouvrez l'application pour les envoyer.";
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
-                              kPendingSyncNotifId, nil);
+                              kPendingSyncNotifId, nil, nil);
   NSLog(@"[CanariPush] showPendingSyncNotification");
 }
 
@@ -1358,7 +1403,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   if (ctx != nil && senderId.length > 0) {
     avatarPath = CanariFetchAvatar(ctx, senderId);
   }
-  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, avatarPath);
+  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, avatarPath, groupId);
 }
 
 static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret, NSString *token) {
