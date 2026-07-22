@@ -383,6 +383,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         put("groupId", e.groupId)
                         put("proto", e.proto)
                         put("sentAt", e.sentAt)
+                        put("silent", e.silent)
                     }.toString()
                 }
                 file.writeText(body + "\n")

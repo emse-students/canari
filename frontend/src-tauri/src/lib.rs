@@ -1941,11 +1941,15 @@ pub fn run() {
                     tauri::WebviewUrl::External(localhost_url)
                 };
 
-                tauri::WebviewWindowBuilder::from_config(
-                    app.handle(),
-                    &app.config().app.windows[0],
-                )?
-                .build()?;
+                // `from_config` reads `url` from the config struct itself, so the computed
+                // `url` above (localhost in production, App("/") in dev) must be injected
+                // into a cloned config - passing the config unmodified silently drops it and
+                // the window loads the bundled asset:// origin instead of http://localhost,
+                // breaking the OIDC-over-HTTP workaround this block exists for.
+                let mut window_config = app.config().app.windows[0].clone();
+                window_config.url = url;
+
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?.build()?;
             }
 
             // ── Create main window on mobile ─────────────────────────────────────

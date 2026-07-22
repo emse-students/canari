@@ -185,6 +185,44 @@ is a platform constraint with no workaround; visible (`mutable-content`) alert p
 and wake the (future) Notification Service Extension, so the user is never fully silenced, but
 background state-sync only resumes on next open. Android has no equivalent restriction.
 
+#### Notification quick actions (reply / mark as read)
+
+Both platforms attach two inline actions to an MLS message notification (never on a `channel_`
+conversation - channels are server-authoritative, no MLS outbox to route through): "Repondre"
+(text input) and "Marquer comme lu". Both fire while the app is fully killed - Android via a
+`BroadcastReceiver`, iOS via a brief OS relaunch to deliver `didReceiveNotificationResponse`.
+
+Since the TS runtime that normally builds an `AppMessage` proto isn't running, a minimal
+dependency-free protobuf encoder (`mobile::proto_fields::build_text_app_message` /
+`build_read_receipt_app_message` in `frontend/src-tauri/src/mobile/proto_fields.rs`) is exposed
+identically to Android JNI (`nativeBuildTextMessageProto`/`nativeBuildReadReceiptProto` on
+`CanariFirebaseMessagingService`) and iOS FFI (`canari_native_build_text_message_proto`/
+`canari_native_build_read_receipt_proto`). Both actions reuse the existing outbox-drain path
+unchanged: the built proto is appended to the `outbox_pending.ndjson` mirror and drained
+immediately via the same `drainOutboxBackground`/JNI-or-FFI encrypt + `/api/mls/push/send` call
+the background welcome-join/decrypt flows already use.
+
+- **Reply** queues a plaintext `TextMsg` entry (`silent: false`) and only clears the notification
+  once the drain actually delivers it (0 remaining) - a queued-but-undelivered reply keeps the
+  notification so the user can retry from the app.
+- **Mark as read** clears the notification immediately (visible feedback), then best-effort sends
+  a silent `SystemMsg{event:"read_receipt"}` (`silent: true`) covering every messageId cached for
+  that conversation in `fcm_message_cache.ndjson`. This is cross-device sync only - a peer/sibling
+  device receiving that silent push cancels its own notification (existing read-state-sync path);
+  this device's local unread-badge/readBy state is not reconciled and self-corrects next time the
+  conversation is opened in-app.
+- Android: `CanariNotificationActionReceiver.kt` (`ACTION_QUICK_REPLY`/`ACTION_MARK_READ`
+  broadcasts). The outbox/notification helpers it shares with `CanariFirebaseMessagingService` live
+  in that service's companion object, taking an explicit `Context` param (a bare
+  `CanariFirebaseMessagingService()` instance is Context-unsafe - `Service` extends
+  `ContextWrapper`, and `attachBaseContext` is never called on a manually-instantiated one).
+- iOS: `CanariRegisterNotificationCategories`/`CanariHandleQuickReplyAction`/
+  `CanariHandleMarkReadAction` in `canari_push.mm`, wired into `CanariNotificationDelegate`'s
+  `didReceiveNotificationResponse`.
+- Gotcha: the outbox mirror rewrite (both platforms) must persist the `silent` flag on every
+  write, or a control event that survives one failed drain attempt loses its silent flag on retry
+  and resends as a visible push.
+
 ### Security / PIN
 
 | Method | Path | Description |

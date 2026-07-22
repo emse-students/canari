@@ -1,0 +1,4 @@
+<resources>
+    <string name="notif_action_reply">Reply</string>
+    <string name="notif_action_mark_read">Mark as read</string>
+</resources>

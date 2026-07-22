@@ -652,6 +652,50 @@ static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString 
   }
 }
 
+/**
+ * Reads `fcm_message_cache.ndjson` (bounded, written by `CanariWriteFcmCache` on every decrypted
+ * push) and returns the messageIds cached for `groupId` - used by the "mark as read" quick action
+ * (WP-XP-1) to know which messages to cover in the read receipt. iOS twin of Android's
+ * readCachedMessageIdsForGroup in CanariNotificationActionReceiver.kt.
+ */
+static NSArray<NSString *> *CanariReadCachedMessageIdsForGroup(NSString *groupId) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil || groupId.length == 0) {
+    return @[];
+  }
+  NSString *path = [dir stringByAppendingPathComponent:kFcmCacheFileName];
+  NSMutableArray<NSString *> *messageIds = [NSMutableArray array];
+  [g_cacheLock lock];
+  @try {
+    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (content.length == 0) {
+      return @[];
+    }
+    for (NSString *line in [content componentsSeparatedByString:@"\n"]) {
+      if (line.length == 0) {
+        continue;
+      }
+      id json = [NSJSONSerialization JSONObjectWithData:[line dataUsingEncoding:NSUTF8StringEncoding]
+                                                options:0
+                                                  error:nil];
+      if (![json isKindOfClass:[NSDictionary class]]) {
+        continue;
+      }
+      NSDictionary *o = (NSDictionary *)json;
+      NSString *entryGroupId =
+          [o[kFcmCacheGroupIdKey] isKindOfClass:[NSString class]] ? o[kFcmCacheGroupIdKey] : @"";
+      NSString *messageId =
+          [o[kFcmCacheMessageIdKey] isKindOfClass:[NSString class]] ? o[kFcmCacheMessageIdKey] : @"";
+      if ([entryGroupId isEqualToString:groupId] && messageId.length > 0) {
+        [messageIds addObject:messageId];
+      }
+    }
+  } @finally {
+    [g_cacheLock unlock];
+  }
+  return messageIds;
+}
+
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
                                       NSString *_Nullable attachmentPath,
@@ -1042,6 +1086,7 @@ static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
       @"groupId" : e.groupId,
       @"proto" : e.proto,
       @"sentAt" : @(e.sentAt),
+      @"silent" : @(e.silent),
     };
     NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
     if (data != nil) {
@@ -1158,6 +1203,113 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
   NSLog(@"[CanariPush] drainOutboxBackground: %lu envoye(s), %lu restant(s)",
         (unsigned long)sentIds.count, (unsigned long)remaining.count);
   return (int)remaining.count;
+}
+
+/**
+ * Notification quick action (WP-XP-1): builds a plaintext text `AppMessage` proto for the typed
+ * reply (via the Rust FFI, no TS runtime involved), queues it into the same `outbox_pending.ndjson`
+ * mirror the composer writes to, and drains it immediately. The notification is cleared only once
+ * actually delivered (drain returns 0 remaining) - a queued-but-undelivered reply must keep the
+ * notification so the user can retry from the app. Android twin: handleReply in
+ * CanariNotificationActionReceiver.kt.
+ */
+static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
+  if (groupId.length == 0 || text.length == 0) {
+    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text manquant");
+    return;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    NSLog(@"[CanariPush] handleQuickReplyAction: push_context.json absent -> abort");
+    return;
+  }
+  NSString *messageId = [[NSUUID UUID] UUIDString];
+  long long sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  char *protoPtr = canari_native_build_text_message_proto(messageId.UTF8String, sentAt, text.UTF8String);
+  if (protoPtr == nil) {
+    NSLog(@"[CanariPush] handleQuickReplyAction: nativeBuildTextMessageProto echoue");
+    return;
+  }
+  NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
+  canari_free_string(protoPtr);
+  if (protoB64.length == 0) {
+    return;
+  }
+
+  CanariOutboxEntry *entry = [[CanariOutboxEntry alloc] init];
+  entry.entryId = messageId;
+  entry.groupId = groupId;
+  entry.proto = protoB64;
+  entry.sentAt = sentAt;
+  entry.silent = NO;
+  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
+  [entries addObject:entry];
+  CanariRewriteOutboxMirror(entries);
+  NSLog(@"[CanariPush] handleQuickReplyAction: queued id=%@ group=%@",
+        [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)], groupId);
+
+  int remaining = CanariDrainOutboxBackground(ctx);
+  if (remaining == 0) {
+    CanariCancelConversationNotification(groupId);
+  } else {
+    NSLog(@"[CanariPush] handleQuickReplyAction: reply still queued (remaining=%d) - notification left as-is",
+          remaining);
+  }
+}
+
+/**
+ * Notification quick action (WP-XP-1): clears this device's local notification immediately
+ * (visible part of "mark as read"), then best-effort sends a silent `read_receipt` system event for
+ * every cached message of this conversation - reusing the same silent-push cross-device-cancel path
+ * already used when a conversation is read in the foreground. No cached messageId (cache
+ * evicted/never decrypted) -> notification is still cleared, just no receipt is sent. Android twin:
+ * handleMarkRead in CanariNotificationActionReceiver.kt.
+ */
+static void CanariHandleMarkReadAction(NSString *groupId) {
+  if (groupId.length == 0) {
+    return;
+  }
+  CanariCancelConversationNotification(groupId);
+
+  NSArray<NSString *> *messageIds = CanariReadCachedMessageIdsForGroup(groupId);
+  if (messageIds.count == 0) {
+    NSLog(@"[CanariPush] handleMarkReadAction: aucun messageId en cache group=%@ - notif effacee, pas de recu",
+          groupId);
+    return;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    NSLog(@"[CanariPush] handleMarkReadAction: push_context.json absent -> abort recu");
+    return;
+  }
+  NSData *idsData = [NSJSONSerialization dataWithJSONObject:messageIds options:0 error:nil];
+  if (idsData == nil) {
+    return;
+  }
+  NSString *idsJson = [[NSString alloc] initWithData:idsData encoding:NSUTF8StringEncoding];
+  char *protoPtr = canari_native_build_read_receipt_proto(idsJson.UTF8String);
+  if (protoPtr == nil) {
+    NSLog(@"[CanariPush] handleMarkReadAction: nativeBuildReadReceiptProto echoue");
+    return;
+  }
+  NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
+  canari_free_string(protoPtr);
+  if (protoB64.length == 0) {
+    return;
+  }
+
+  CanariOutboxEntry *entry = [[CanariOutboxEntry alloc] init];
+  entry.entryId = [[NSUUID UUID] UUIDString];
+  entry.groupId = groupId;
+  entry.proto = protoB64;
+  entry.sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  entry.silent = YES;
+  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
+  [entries addObject:entry];
+  CanariRewriteOutboxMirror(entries);
+  CanariDrainOutboxBackground(ctx);
+  NSLog(@"[CanariPush] handleMarkReadAction: read receipt queued+drained for %lu message(s) group=%@",
+        (unsigned long)messageIds.count, groupId);
 }
 
 static void CanariShowPendingSyncNotification(void) {
@@ -1650,7 +1802,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       deepLink = [NSString stringWithFormat:@"fr.emse.canari://form/%@", formId];
     }
     NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
-    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil);
+    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil);
     return;
   }
 
@@ -1847,6 +1999,34 @@ static CanariFcmPushDelegate *g_fcmPushDelegate = nil;
   (void)center;
   NSDictionary *userInfo = response.notification.request.content.userInfo;
   CanariPushProcessRemoteNotificationUserInfo(userInfo);
+
+  // Notification quick actions (WP-XP-1): reply / mark as read fire even from a killed app - the
+  // OS briefly relaunches the process to deliver this callback. Both reuse the background
+  // outbox-drain machinery, never open the app or a deep link.
+  if ([response.actionIdentifier isEqualToString:kCanariReplyActionId]) {
+    NSString *groupId =
+        [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
+    NSString *text = @"";
+    if ([response isKindOfClass:[UNTextInputNotificationResponse class]]) {
+      text = ((UNTextInputNotificationResponse *)response).userText ?: @"";
+    }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      CanariHandleQuickReplyAction(groupId, [text stringByTrimmingCharactersInSet:
+                                                        [NSCharacterSet whitespaceAndNewlineCharacterSet]]);
+      completionHandler();
+    });
+    return;
+  }
+  if ([response.actionIdentifier isEqualToString:kCanariMarkReadActionId]) {
+    NSString *groupId =
+        [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+      CanariHandleMarkReadAction(groupId);
+      completionHandler();
+    });
+    return;
+  }
+
   NSString *deepLink = nil;
   if ([userInfo[@"deepLink"] isKindOfClass:[NSString class]]) {
     deepLink = userInfo[@"deepLink"];
@@ -1870,6 +2050,7 @@ void CanariPushSetup(void) {
   g_cacheLock = [[NSLock alloc] init];
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
+  CanariRegisterNotificationCategories();
 
   [[NSNotificationCenter defaultCenter]
       addObserverForName:UIApplicationDidFinishLaunchingNotification
