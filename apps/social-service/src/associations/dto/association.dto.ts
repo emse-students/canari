@@ -433,6 +433,17 @@ export class CreateProductDto {
   @IsOptional()
   amountCentsMember?: number;
 
+  /** Named cotisation tier (e.g. "avec-alcool"), suffixed onto the derived cotisation tag. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  variantKey?: string;
+
+  /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8). */
+  @IsInt()
+  @IsOptional()
+  variantLevel?: number;
+
   @IsBoolean()
   @IsOptional()
   allowCustomAmount?: boolean;
@@ -523,6 +534,17 @@ export class UpdateProductDto {
   @Min(0)
   @IsOptional()
   amountCentsMember?: number | null;
+
+  /** Named cotisation tier (e.g. "avec-alcool"), suffixed onto the derived cotisation tag. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  variantKey?: string | null;
+
+  /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8). */
+  @IsInt()
+  @IsOptional()
+  variantLevel?: number | null;
 
   @IsBoolean()
   @IsOptional()

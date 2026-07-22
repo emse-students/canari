@@ -21,25 +21,30 @@ export function getAcademicYear(now: Date = new Date()): string {
 }
 
 /**
- * Derives the canonical cotisation tag for an association from its slug and validity mode.
- * This is the single source of truth for the tag string - it MUST be used both when
- * provisioning the canonical membership product and when checking product/form
- * member-gating, so product pricing, gating, and forms' `pricingTagName` all stay aligned.
+ * Derives the canonical cotisation tag for an association (or one of its named tiers) from its
+ * slug and validity mode. This is the single source of truth for the tag string - it MUST be
+ * used both when provisioning membership products and when checking product/form member-gating,
+ * so product pricing, gating, and forms' `pricingTagName` all stay aligned.
  *
  * - `lifetime`: tag `cotisant:<slug>`, never expires.
  * - `dated`: tag `cotisant:<slug>-<academicYear>` (e.g. `cotisant:bde-2026-2027`), rolled over
  *   every academic year so per-year rosters stay clean; expires 31 August of the end year.
+ * - `variant`: when set, suffixes the tag with `-<variant>` (e.g. an association with several
+ *   cotisation tiers, such as Le Cercle's "avec-alcool"/"sans-alcool" forfaits) so each tier gets
+ *   its own tag namespace. Omitted, the tag is unchanged from the single-tier form (back-compat).
  */
 export function deriveCotisationTag(
   slug: string,
   mode: CotisationMode,
-  now: Date = new Date()
+  now: Date = new Date(),
+  variant?: string | null
 ): CotisationTag {
+  const base = variant ? `${slug}-${variant}` : slug;
   if (mode === 'lifetime') {
-    return { tagName: `cotisant:${slug}`, expiresAt: null };
+    return { tagName: `cotisant:${base}`, expiresAt: null };
   }
   const academicYear = getAcademicYear(now);
   const endYear = Number(academicYear.split('-')[1]);
   const expiresAt = new Date(Date.UTC(endYear, 7, 31, 23, 59, 59)); // 31 Aug, end of day UTC
-  return { tagName: `cotisant:${slug}-${academicYear}`, expiresAt };
+  return { tagName: `cotisant:${base}-${academicYear}`, expiresAt };
 }

@@ -53,6 +53,21 @@ export class AssociationProduct {
   @Column({ type: 'int', nullable: true })
   amountCentsMember: number | null;
 
+  /**
+   * Named cotisation tier this product grants (e.g. `"avec-alcool"`), suffixed onto the
+   * association's cotisation tag by `deriveCotisationTag`. Null means the single-tier form
+   * (association-wide `cotisant:<slug>` tag) - the default, unchanged behavior.
+   */
+  @Column({ length: 100, nullable: true })
+  variantKey: string | null;
+
+  /**
+   * Ordinal rank of this tier among the association's cotisation products, for "tier >= N"
+   * optional-inclusion checks (higher includes lower). Null when tiers aren't ranked.
+   */
+  @Column({ type: 'int', nullable: true })
+  variantLevel: number | null;
+
   /** Whether the buyer may choose a custom amount (useful for topups). */
   @Column({ default: false })
   allowCustomAmount: boolean;
