@@ -158,9 +158,16 @@ would be noise for the common single-tier association.
 End-user (paying) surfaces:
 
 - **`/shop`** - buy a membership product (Stripe Checkout; returns to `/shop?purchase_success=1`).
+  Tiers of one association are sorted base-first (`compareTiers`, stable sort by `variantLevel`).
   Members-only products are disabled with a hint, and member pricing is shown struck-through next to
-  the reduced price. Gating/labeling uses the per-product `viewerIsCotisant`/`viewerActiveTier` flags
-  returned by `/products/all` (computed server-side; no client-side tag derivation).
+  the reduced price - but only when `qualifiesForMemberPrice` says the viewer is actually eligible
+  (WP-COT-7): the asso-wide `viewerIsCotisant` check when the product has no `memberPriceTag`, or
+  (for a tier-upgrade product) finding the sibling product whose `grantedTagName` equals
+  `memberPriceTag` and comparing `viewerActiveTier` to that sibling's `variantKey` - the same join the
+  admin tab's dropdown already encodes, mirrored client-side since `/products/all` returns every
+  sibling in one array. A product whose `variantKey` matches `viewerActiveTier` gets a "your current
+  tier" badge. Gating/labeling all reads the per-product `viewerIsCotisant`/`viewerActiveTier` flags
+  returned by `/products/all` (computed server-side; no client-side tag *derivation*, only this join).
   `viewerActiveTier` is the specific tier `variantKey` the viewer currently holds for that
   association, if any (`null` for a single-tier association or a non-cotisant).
 - **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller

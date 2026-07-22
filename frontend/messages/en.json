@@ -1699,6 +1699,8 @@
   "shop_members_only_badge": "Reserved to cotisants",
   "shop_members_only_hint": "Reserved to this association's cotisants.",
   "shop_member_price_suffix": "for cotisants",
+  "shop_tier_upgrade_price_suffix": "for holders of {tier}",
+  "shop_current_tier_badge": "Your current tier",
   "calendar_heading": "Association calendar",
   "calendar_subtitle": "Monthly view - click a day to see its events.",
   "calendar_back_associations": "Associations",

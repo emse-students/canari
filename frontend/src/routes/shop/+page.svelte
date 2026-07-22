@@ -22,13 +22,26 @@
 
   const isLoggedIn = $derived(!!currentUserId());
 
-  /** Products grouped by associationId. */
+  /** Orders membership tiers base-first then by ascending variantLevel; leaves other pairs untouched (stable sort). */
+  function compareTiers(a: AssociationProduct, b: AssociationProduct): number {
+    if (a.type === 'membership' && b.type === 'membership') {
+      const rankA = a.variantKey === null ? -1 : (a.variantLevel ?? 0);
+      const rankB = b.variantKey === null ? -1 : (b.variantLevel ?? 0);
+      if (rankA !== rankB) return rankA - rankB;
+    }
+    return 0;
+  }
+
+  /** Products grouped by associationId, membership tiers sorted base-first. */
   const grouped = $derived.by(() => {
     const map = new SvelteMap<string, AssociationProduct[]>();
     for (const p of products) {
       const list = map.get(p.associationId) ?? [];
       list.push(p);
       map.set(p.associationId, list);
+    }
+    for (const [id, list] of map) {
+      map.set(id, [...list].sort(compareTiers));
     }
     return map;
   });
@@ -83,6 +96,27 @@
   function memberPriceLabel(p: AssociationProduct): string | null {
     if (p.amountCentsMember == null) return null;
     return `${(p.amountCentsMember / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
+  }
+
+  /** Sibling tier whose grantedTagName matches this product's memberPriceTag (tier-upgrade pricing), if any. */
+  function upgradeSibling(
+    p: AssociationProduct,
+    siblings: AssociationProduct[]
+  ): AssociationProduct | null {
+    if (!p.memberPriceTag) return null;
+    return siblings.find((s) => s.grantedTagName === p.memberPriceTag) ?? null;
+  }
+
+  /**
+   * Returns true when the viewer actually qualifies for `amountCentsMember`: either the
+   * asso-wide cotisant reduction (no memberPriceTag), or holding the specific sibling tier
+   * tag a tier-upgrade price is linked to. Mirrors the server-side check in resolvePurchase.
+   */
+  function qualifiesForMemberPrice(p: AssociationProduct, siblings: AssociationProduct[]): boolean {
+    if (p.amountCentsMember == null) return false;
+    if (!p.memberPriceTag) return p.viewerIsCotisant === true;
+    const sibling = upgradeSibling(p, siblings);
+    return sibling != null && p.viewerActiveTier === sibling.variantKey;
   }
 </script>
 
@@ -146,6 +180,8 @@
           <!-- Products grid -->
           <div class="grid gap-4 sm:grid-cols-2">
             {#each assocProducts as product (product.id)}
+              {@const sibling = upgradeSibling(product, assocProducts)}
+              {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
               <div
                 class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 flex flex-col gap-3"
               >
@@ -169,8 +205,15 @@
                         {m.shop_members_only_badge()}
                       </span>
                     {/if}
+                    {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
+                      <span
+                        class="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-cn-accent/15 text-cn-accent"
+                      >
+                        {m.shop_current_tier_badge()}
+                      </span>
+                    {/if}
                   </div>
-                  {#if memberPriceLabel(product)}
+                  {#if memberEligible && memberPriceLabel(product)}
                     <span class="text-sm font-bold text-right">
                       <span class="line-through text-text-muted font-normal"
                         >{priceLabel(product)}</span
@@ -179,7 +222,9 @@
                         >{memberPriceLabel(product)}</span
                       >
                       <span class="text-xs text-text-muted font-normal block sm:inline"
-                        >{m.shop_member_price_suffix()}</span
+                        >{sibling
+                          ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
+                          : m.shop_member_price_suffix()}</span
                       >
                     </span>
                   {:else}
