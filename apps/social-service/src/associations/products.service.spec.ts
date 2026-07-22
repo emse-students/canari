@@ -33,6 +33,10 @@ describe("ProductsService cotisation gating/pricing and Cercle re-gating", () =>
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
       hasActiveTag: jest.fn(),
+      getActiveTag: jest.fn(
+        (_userId: string, _tagName: string): Promise<{ expiresAt: Date | null } | null> =>
+          Promise.resolve(null),
+      ),
       listByUser: jest.fn(() => Promise.resolve([])),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       revokeByName: jest.fn(() => Promise.resolve()),
@@ -615,6 +619,65 @@ describe("ProductsService cotisation gating/pricing and Cercle re-gating", () =>
       const [result] = await service.listAllActive("user1");
       expect(result.viewerIsCotisant).toBe(false);
       expect(result.viewerActiveTier).toBeNull();
+    });
+  });
+
+  describe("getCotisantStatusBySlug (WP-COT-4, inbound Cercle check)", () => {
+    it("throws NotFoundException for an unknown slug", async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.getCotisantStatusBySlug("missing", "user1")).rejects.toThrow(
+        "Association not found",
+      );
+    });
+
+    it("returns isCotisant=false when the association has no cotisation mode", async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+
+      const status = await service.getCotisantStatusBySlug("bde", "user1");
+      expect(status).toEqual({ isCotisant: false, tier: null, expiresAt: null });
+    });
+
+    it("returns isCotisant=false when the user holds no active tier tag", async () => {
+      const { service, assoRepo, productRepo, userTagService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: "bde", cotisationMode: "lifetime" }));
+      productRepo.find.mockResolvedValue([]);
+      userTagService.getActiveTag.mockResolvedValue(null);
+
+      const status = await service.getCotisantStatusBySlug("bde", "user1");
+      expect(status).toEqual({ isCotisant: false, tier: null, expiresAt: null });
+    });
+
+    it("returns the held tier and its expiry for a multi-tier association", async () => {
+      const { service, assoRepo, productRepo, userTagService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: "cercle", cotisationMode: "lifetime" }));
+      productRepo.find.mockResolvedValue([
+        { variantKey: "avec-alcool" },
+        { variantKey: "sans-alcool" },
+      ]);
+      const expiresAt = new Date("2999-01-01T00:00:00Z");
+      userTagService.getActiveTag.mockImplementation((_userId: string, tagName: string) =>
+        Promise.resolve(tagName === "cotisant:cercle-sans-alcool" ? { expiresAt } : null),
+      );
+
+      const status = await service.getCotisantStatusBySlug("cercle", "user1");
+      expect(status).toEqual({
+        isCotisant: true,
+        tier: "sans-alcool",
+        expiresAt: expiresAt.toISOString(),
+      });
+    });
+
+    it("returns a null expiresAt for a lifetime single-tier tag", async () => {
+      const { service, assoRepo, productRepo, userTagService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: "bde", cotisationMode: "lifetime" }));
+      productRepo.find.mockResolvedValue([]);
+      userTagService.getActiveTag.mockResolvedValue({ expiresAt: null });
+
+      const status = await service.getCotisantStatusBySlug("bde", "user1");
+      expect(status).toEqual({ isCotisant: true, tier: null, expiresAt: null });
     });
   });
 });

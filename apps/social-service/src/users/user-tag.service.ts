@@ -156,6 +156,18 @@ export class UserTagService {
     return tag.expiresAt > new Date();
   }
 
+  /**
+   * Returns the user's active (non-expired) tag row with the given name, or null if absent or
+   * expired. Like `hasActiveTag` but also surfaces `expiresAt` - used where a caller needs the
+   * expiry itself, not just a yes/no (e.g. the Cercle inbound cotisant-status check).
+   */
+  async getActiveTag(userId: string, tagName: string): Promise<UserTag | null> {
+    const tag = await this.repo.findOne({ where: { userId, tagName } });
+    if (!tag) return null;
+    if (tag.expiresAt && tag.expiresAt <= new Date()) return null;
+    return tag;
+  }
+
   /** Revokes (deletes) a tag by its primary key. Throws 404 if not found. */
   async revoke(tagId: string): Promise<void> {
     const res = await this.repo.delete({ id: tagId });

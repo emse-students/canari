@@ -159,6 +159,46 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
+  describe('getActiveTag', () => {
+    it('returns null when the user holds no such tag', async () => {
+      const { service, repo } = makeService();
+      repo.findOne.mockResolvedValue(null);
+
+      expect(await service.getActiveTag('user1', 'cotisant:bde')).toBeNull();
+    });
+
+    it('returns the tag row when it never expires', async () => {
+      const { service, repo } = makeService();
+      const tag = { userId: 'user1', tagName: 'cotisant:bde', expiresAt: null };
+      repo.findOne.mockResolvedValue(tag);
+
+      expect(await service.getActiveTag('user1', 'cotisant:bde')).toBe(tag);
+    });
+
+    it('returns null once the tag has expired', async () => {
+      const { service, repo } = makeService();
+      repo.findOne.mockResolvedValue({
+        userId: 'user1',
+        tagName: 'cotisant:bde-2025-2026',
+        expiresAt: new Date('2020-01-01T00:00:00Z'),
+      });
+
+      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026')).toBeNull();
+    });
+
+    it('returns the tag row while it is still valid', async () => {
+      const { service, repo } = makeService();
+      const tag = {
+        userId: 'user1',
+        tagName: 'cotisant:bde-2025-2026',
+        expiresAt: new Date('2999-01-01T00:00:00Z'),
+      };
+      repo.findOne.mockResolvedValue(tag);
+
+      expect(await service.getActiveTag('user1', 'cotisant:bde-2025-2026')).toBe(tag);
+    });
+  });
+
   describe('grantCotisant', () => {
     it('derives the canonical tag from the association slug/mode and grants it', async () => {
       const { service, repo } = makeService();

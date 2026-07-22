@@ -306,6 +306,7 @@ services:
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
+      CERCLE_API_KEY: ${CERCLE_API_KEY:-}
     depends_on:
       postgres:
         condition: service_started

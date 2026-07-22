@@ -267,6 +267,7 @@ services:
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MEDIA_SERVICE_URL: http://media-service:3011
+      CERCLE_API_KEY: ${CERCLE_API_KEY:-}
     depends_on:
       postgres:
         condition: service_started

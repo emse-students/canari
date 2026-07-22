@@ -181,6 +181,50 @@ baseCents     = memberPricing && form.basePriceMember != null ? basePriceMember 
 The same check runs in the submission-status endpoint so the public form page can show the reduced
 total before payment. No coupon or code is involved.
 
+## Cercle integration (outbound + inbound)
+
+Cercle (external service) tracks a per-user cash **balance**; Canari tracks **cotisant status**.
+Each service is the source of truth for its own half, and neither caches the other's data.
+
+### Outbound: Canari -> Cercle (`balance_topup` webhook)
+
+When a `balance_topup` product (created at `/admin/cercle`, global admin only) is purchased via
+Stripe, `ProductsService.dispatchCercleWebhook` (`products.service.ts`) POSTs the recharge to the
+product's `webhookUrl`:
+
+- **Signature**: `X-Canari-Signature: sha256=<hex hmac>` - HMAC-SHA256 of the raw JSON body, keyed
+  by the product's own `webhookSecret` (set per-product, not a shared env secret).
+- **Payload**: `{ productId, userId, amountCents, paymentIntentId, timestamp }`. `userId` doubles as
+  the OIDC `sub` (see below) and `paymentIntentId` is the idempotency key.
+- **Retries**: up to 3 attempts (`CERCLE_RETRY_DELAYS = [1s, 5s, 15s]`), each attempt recorded in
+  `webhook_deliveries` (`status: pending|delivered|failed`) for admin visibility and manual retry
+  from `/admin/cercle`.
+
+### Inbound: Cercle -> Canari (`GET /api/public/cotisant-status`)
+
+Before crediting a recharge or granting a forfait-priced action, Cercle can query a user's live
+cotisant status:
+
+```
+GET /api/public/cotisant-status?assoSlug=<slug>&sub=<oidcSub>
+X-Api-Key: <CERCLE_API_KEY>
+
+200 -> { "isCotisant": boolean, "tier": string | null, "expiresAt": string | null }
+```
+
+- **Auth**: `X-Api-Key` matched (timing-safe) against `CERCLE_API_KEY`; unset/mismatched key ->
+  403. Rate-limited (20 req/min) via `@nestjs/throttler` to blunt key brute-forcing. Reachable
+  through the nginx `/api/public/` location, which skips `auth_request` and strips client-supplied
+  trust headers - this endpoint's own guard is the only auth in front of it.
+- **No id-mapping needed**: `sub` (the caller's OIDC subject) IS the Canari `userId`
+  (`findOrCreateFromOidc` uses `userinfo.sub` as the primary key), so Cercle can call this directly
+  with the `sub` it already has from its own OIDC session.
+- **`tier`** is the held product's `variantKey` (`null` for a single-tier association or a
+  non-cotisant); `expiresAt` is ISO 8601 or `null` for a lifetime tag. Implemented by
+  `ProductsService.getCotisantStatusBySlug`, which reuses the same tier-enumeration pattern as
+  `isBuyerCotisant`/`cotisantStatusFor` rather than a separate tag-derivation path.
+- Always queried live (never cached) - Canari is authoritative for this half of the relationship.
+
 ## Permissions
 
 - `MANAGE_MEMBERS` - grant/revoke tags (`/tags`, `/cotisants`), read/export the roster, manage the
@@ -205,6 +249,7 @@ total before payment. No coupon or code is involved.
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |
+| GET | `/api/public/cotisant-status` | Cercle-facing live cotisant status by `assoSlug`+`sub` (`X-Api-Key`, not `MANAGE_*`) |
 
 ## See also
 

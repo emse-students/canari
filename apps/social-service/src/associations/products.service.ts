@@ -628,6 +628,34 @@ export class ProductsService {
   }
 
   /**
+   * Resolves a user's cotisant status for an association by slug, for the inbound Cercle
+   * `GET /public/cotisant-status` check (WP-COT-4). Mirrors `isBuyerCotisant`'s tier enumeration
+   * but also surfaces WHICH tier tag is held and its expiry, since Cercle needs to distinguish
+   * forfaits rather than a plain yes/no. Throws NotFoundException for an unknown slug.
+   */
+  async getCotisantStatusBySlug(
+    assoSlug: string,
+    userId: string,
+  ): Promise<{ isCotisant: boolean; tier: string | null; expiresAt: string | null }> {
+    const asso = await this.assoRepo.findOne({ where: { slug: assoSlug } });
+    if (!asso) throw new NotFoundException("Association not found");
+    if (!asso.cotisationMode) return { isCotisant: false, tier: null, expiresAt: null };
+
+    const tiers = await this.productRepo.find({
+      where: { associationId: asso.id, type: "membership", isActive: true },
+      select: { variantKey: true },
+    });
+    for (const variantKey of tierVariantKeys(tiers)) {
+      const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), variantKey);
+      const tag = await this.userTagService.getActiveTag(userId, tagName);
+      if (tag) {
+        return { isCotisant: true, tier: variantKey, expiresAt: tag.expiresAt?.toISOString() ?? null };
+      }
+    }
+    return { isCotisant: false, tier: null, expiresAt: null };
+  }
+
+  /**
    * Returns true when the user holds ANY of the association's active tier tags (see
    * `deriveCotisationTag`/`tierVariantKeys`) - i.e. is a cotisant of at least one tier, regardless
    * of which. Kept deliberately generic (not tier-specific) so `membersOnly` gating and the Cercle

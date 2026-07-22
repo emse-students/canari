@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ChannelsModule } from './channels/channels.module';
 import { PostsModule } from './posts/posts.module';
 import { FormsModule } from './forms/forms.module';
@@ -20,6 +21,8 @@ import { MinesweeperModule } from './minesweeper/minesweeper.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    // Guards the public Cercle cotisant-status check (`PublicController`) against API-key brute-forcing.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
     RedisModule,
     TypeOrmModule.forRootAsync({
       useFactory: () => ({
