@@ -28,7 +28,10 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
   describe('listCotisants', () => {
     it('queries active tags only, enriched with users, sorted promo/lastName/firstName', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ count: '1' }]).mockResolvedValueOnce([row()]);
+      repo.manager.query
+        .mockResolvedValueOnce([{ count: '1' }])
+        .mockResolvedValueOnce([row()])
+        .mockResolvedValueOnce([]); // buildTierLabelMap: association not found -> empty map
 
       const page = await service.listCotisants('asso1');
 
@@ -57,7 +60,10 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('passes a case-insensitive search term as a parameterized value', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ count: '0' }]).mockResolvedValueOnce([]);
+      repo.manager.query
+        .mockResolvedValueOnce([{ count: '0' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       await service.listCotisants('asso1', { search: '  ali  ' });
 
@@ -68,7 +74,10 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('treats an empty/whitespace-only search as no filter (null param)', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ count: '0' }]).mockResolvedValueOnce([]);
+      repo.manager.query
+        .mockResolvedValueOnce([{ count: '0' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       await service.listCotisants('asso1', { search: '   ' });
 
@@ -80,7 +89,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const { service, repo } = makeService();
       repo.manager.query
         .mockResolvedValueOnce([{ count: '3' }])
-        .mockResolvedValueOnce([row(), row()]);
+        .mockResolvedValueOnce([row(), row()])
+        .mockResolvedValueOnce([]);
 
       const page = await service.listCotisants('asso1');
 
@@ -93,7 +103,10 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
     it('honors a requested offset/limit and caps the limit at 200', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ count: '500' }]).mockResolvedValueOnce([]);
+      repo.manager.query
+        .mockResolvedValueOnce([{ count: '500' }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       await service.listCotisants('asso1', { offset: 40, limit: 999 });
 
@@ -106,7 +119,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const { service, repo } = makeService();
       repo.manager.query
         .mockResolvedValueOnce([{ count: '2' }])
-        .mockResolvedValueOnce([row(), row()]);
+        .mockResolvedValueOnce([row(), row()])
+        .mockResolvedValueOnce([]);
 
       const page = await service.listCotisants('asso1', { offset: 0, limit: 50 });
       expect(page.hasMore).toBe(false);
@@ -116,12 +130,29 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const { service, repo } = makeService();
       repo.manager.query
         .mockResolvedValueOnce([{ count: '1' }])
-        .mockResolvedValueOnce([row({ promo: null, firstName: 'External', lastName: 'Staffer' })]);
+        .mockResolvedValueOnce([row({ promo: null, firstName: 'External', lastName: 'Staffer' })])
+        .mockResolvedValueOnce([]);
 
       const page = await service.listCotisants('asso1');
       expect(page.items[0].promo).toBeNull();
       const [rowsSql] = repo.manager.query.mock.calls[1];
       expect(rowsSql).toMatch(/promo ASC NULLS LAST/);
+    });
+
+    it('labels tiered roster rows with their tier product name, leaving the base tier unlabeled', async () => {
+      const { service, repo } = makeService();
+      repo.manager.query
+        .mockResolvedValueOnce([{ count: '2' }])
+        .mockResolvedValueOnce([
+          row({ tagName: 'cotisant:cercle-avec-alcool' }),
+          row({ userId: 'user2', tagName: 'cotisant:cercle' }),
+        ])
+        .mockResolvedValueOnce([{ slug: 'cercle', cotisationMode: 'lifetime' }])
+        .mockResolvedValueOnce([{ name: 'Avec alcool', variantKey: 'avec-alcool' }]);
+
+      const page = await service.listCotisants('asso1');
+      expect(page.items[0].tier).toBe('Avec alcool');
+      expect(page.items[1].tier).toBeNull();
     });
   });
 
@@ -130,7 +161,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const { service, repo } = makeService();
       repo.manager.query
         .mockResolvedValueOnce([{ name: 'BDE' }])
-        .mockResolvedValueOnce([row(), row({ userId: 'user2', promo: null, lastName: 'Zed' })]);
+        .mockResolvedValueOnce([row(), row({ userId: 'user2', promo: null, lastName: 'Zed' })])
+        .mockResolvedValueOnce([]); // buildTierLabelMap: association not found -> empty map
 
       const { buffer, title } = await service.exportCotisants('asso1');
 
@@ -146,16 +178,34 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const sheet = workbook.worksheets[0];
       const headerRow = sheet.getRow(1).values as unknown[];
       const headers = headerRow.slice(1) as string[];
-      expect(headers).toEqual(['Nom', 'Prénom', 'Promo', 'Cotisation', 'Date', 'Échéance']);
+      expect(headers).toEqual(['Nom', 'Prénom', 'Promo', 'Cotisation', 'Forfait', 'Date', 'Échéance']);
       expect(headers).not.toContain('Email');
     });
 
     it('falls back to a generic title when the association name cannot be resolved', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      repo.manager.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
       const { title } = await service.exportCotisants('missing-asso');
       expect(title).toBe('cotisants_cotisants');
+    });
+
+    it('fills the Forfait column with the tier name for tiered rows', async () => {
+      const { service, repo } = makeService();
+      repo.manager.query
+        .mockResolvedValueOnce([{ name: 'Cercle' }])
+        .mockResolvedValueOnce([row({ tagName: 'cotisant:cercle-avec-alcool' })])
+        .mockResolvedValueOnce([{ slug: 'cercle', cotisationMode: 'lifetime' }])
+        .mockResolvedValueOnce([{ name: 'Avec alcool', variantKey: 'avec-alcool' }]);
+
+      const { buffer } = await service.exportCotisants('asso1');
+
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
+      const sheet = workbook.worksheets[0];
+      const dataRow = sheet.getRow(2).values as unknown[];
+      expect(dataRow[5]).toBe('Avec alcool'); // 1-indexed: Nom,Prenom,Promo,Cotisation,Forfait
     });
   });
 

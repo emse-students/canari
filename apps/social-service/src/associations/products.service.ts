@@ -197,6 +197,25 @@ export class ProductsService {
 
     const { webhookUrl, webhookSecret, ...rest } = dto;
 
+    // Membership tiers derive their granted tag server-side from the association's own
+    // slug/mode + this tier's variantKey - the single source of truth (`deriveCotisationTag`),
+    // never a client-supplied value, so tag/product data can't drift apart.
+    let grantedTagName = rest.grantedTagName ?? null;
+    let tagExpiresAt: Date | null = rest.tagExpiresAt ? new Date(rest.tagExpiresAt) : null;
+    if (dto.type === "membership") {
+      if (!asso.cotisationMode) {
+        throw new BadRequestException("Cotisation must be enabled before adding a tier product");
+      }
+      const derived = deriveCotisationTag(
+        asso.slug,
+        asso.cotisationMode,
+        new Date(),
+        dto.variantKey ?? null,
+      );
+      grantedTagName = derived.tagName;
+      tagExpiresAt = derived.expiresAt;
+    }
+
     // Payments may be served by an approved parent's account (delegation), so gate on the
     // resolved target's readiness rather than this association's own onboarding flag.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
@@ -204,6 +223,8 @@ export class ProductsService {
       ...rest,
       currency: "eur",
       associationId,
+      grantedTagName,
+      tagExpiresAt,
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
       // Product is inactive until payments can be taken (own or delegated Stripe account ready).
@@ -266,34 +287,37 @@ export class ProductsService {
   // ── Cotisation config ─────────────────────────────────────────────────────
 
   /**
-   * Upserts the single canonical `membership` product for an association whose cotisations
-   * are enabled (D1): derives `grantedTagName`/`tagExpiresAt` from `deriveCotisationTag` so the
-   * granted tag always matches the association's current slug/mode. Called after
-   * `PATCH /associations/:id` when `cotisationEnabled` is true.
+   * Upserts the canonical `membership` product(s) for an association whose cotisations are
+   * enabled (D1, WP-COT-6): derives each tier's `grantedTagName`/`tagExpiresAt` from
+   * `deriveCotisationTag` (keyed on that product's own `variantKey`) so every tier's granted tag
+   * always matches the association's current slug/mode. Called after `PATCH /associations/:id`
+   * when `cotisationEnabled` is true.
    *
-   * The product's `name` (editable label) and `amountCents` (price) are preserved across calls
-   * once set, so this never overwrites admin edits made through the regular product endpoints -
-   * it only ever (re)synchronizes the derived tag fields.
+   * On first activation (no membership product yet) this creates the single base tier
+   * (`variantKey: null`). Once tiers exist, ALL of them are resynced - not just one - since a
+   * multi-tier association (e.g. Le Cercle) has several. Each product's `name`/`amountCents`/
+   * `variantKey` are preserved across calls, so this never overwrites admin edits made through
+   * the regular product endpoints - it only ever (re)synchronizes the derived tag fields.
    */
   async provisionCotisationProduct(asso: Association): Promise<AssociationProduct> {
     this.logger.debug(
-      `[COTISATION] provisioning canonical product: association=${asso.id.slice(0, 8)} mode=${asso.cotisationMode}`,
+      `[COTISATION] provisioning canonical product(s): association=${asso.id.slice(0, 8)} mode=${asso.cotisationMode}`,
     );
     if (!asso.cotisationMode) {
       throw new BadRequestException("cotisationMode is required when cotisationEnabled is true");
     }
+    const cotisationMode = asso.cotisationMode;
 
-    const { tagName, expiresAt } = deriveCotisationTag(asso.slug, asso.cotisationMode);
-
-    let product = await this.productRepo.findOne({
+    const existing = await this.productRepo.find({
       where: { associationId: asso.id, type: "membership" },
     });
 
-    if (!product) {
+    if (existing.length === 0) {
+      const { tagName, expiresAt } = deriveCotisationTag(asso.slug, cotisationMode);
       this.logger.log(
         `[COTISATION] creating canonical membership product for association=${asso.id.slice(0, 8)} tag=${tagName}`,
       );
-      product = this.productRepo.create({
+      const product = this.productRepo.create({
         associationId: asso.id,
         name: "Cotisation",
         currency: "eur",
@@ -303,15 +327,26 @@ export class ProductsService {
         // Active once payments can be taken - own account or an approved parent's (delegation).
         isActive: (await this.resolvePaymentTargetFor(asso)).ready,
       });
-    } else {
-      this.logger.log(
-        `[COTISATION] updating canonical membership product tag for association=${asso.id.slice(0, 8)} tag=${tagName}`,
-      );
-      product.grantedTagName = tagName;
-      product.tagExpiresAt = expiresAt;
+      return this.productRepo.save(product);
     }
 
-    return this.productRepo.save(product);
+    this.logger.log(
+      `[COTISATION] resyncing ${existing.length} membership tier(s) for association=${asso.id.slice(0, 8)}`,
+    );
+    const resynced = await Promise.all(
+      existing.map((product) => {
+        const { tagName, expiresAt } = deriveCotisationTag(
+          asso.slug,
+          cotisationMode,
+          new Date(),
+          product.variantKey,
+        );
+        product.grantedTagName = tagName;
+        product.tagExpiresAt = expiresAt;
+        return this.productRepo.save(product);
+      }),
+    );
+    return resynced.find((p) => p.variantKey === null) ?? resynced[0];
   }
 
   // ── Stripe Checkout ───────────────────────────────────────────────────────

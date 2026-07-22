@@ -7,14 +7,25 @@
     revokeAssociationTag,
     updateAssociation,
     listAssociationProductsForManage,
+    createProduct,
     updateProduct,
+    deleteProduct,
     type Association,
     type AssociationProduct,
     type CotisantRosterItem,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
-  import { HandCoins, Pencil, Search, Trash2, UserPlus, Download } from '@lucide/svelte';
+  import {
+    HandCoins,
+    Pencil,
+    Search,
+    Trash2,
+    UserPlus,
+    Download,
+    Plus,
+    ChevronDown,
+  } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -42,16 +53,23 @@
   let configSaving = $state(false);
   let configError = $state('');
 
-  // ── Cotisation price (canonical membership product) ────────────────────────
-  let membershipProduct = $state<AssociationProduct | null>(null);
-  let membershipLoading = $state(false);
-  let membershipError = $state('');
-  let membershipSaving = $state(false);
-  let membershipSaved = $state(false);
-  let editMembershipName = $state('');
-  let editMembershipPriceEuros = $state<number | ''>('');
-  /** Tracks the last association we loaded the membership product for, to avoid refetch loops. */
-  let membershipLoadedForAssoId: string | null = null;
+  // ── Cotisation tiers (membership products, WP-COT-6 multi-tier) ────────────
+  let tierProducts = $state<AssociationProduct[]>([]);
+  let tiersLoading = $state(false);
+  let tiersError = $state('');
+  /** Tracks the last association we loaded tiers for, to avoid refetch loops. */
+  let tiersLoadedForAssoId: string | null = null;
+
+  let showAddTierForm = $state(false);
+  let addingTier = $state(false);
+  let newTierName = $state('');
+  let newTierVariantKey = $state('');
+  let newTierPriceEuros = $state<number | ''>('');
+  let newTierMemberPriceTag = $state('');
+  let newTierMemberPriceEuros = $state<number | ''>('');
+
+  let expandedTierId = $state<string | null>(null);
+  let savingTierId = $state<string | null>(null);
 
   // ── Roster ────────────────────────────────────────────────────────────────
   let search = $state('');
@@ -116,12 +134,12 @@
     }, SEARCH_DEBOUNCE_MS);
   });
 
-  /** Loads the canonical membership product once per association, whenever cotisation is enabled. */
+  /** Loads the tier (membership) products once per association, whenever cotisation is enabled. */
   $effect(() => {
     if (!asso.cotisationEnabled || !canManageProducts) return;
-    if (membershipLoadedForAssoId === asso.id) return;
-    membershipLoadedForAssoId = asso.id;
-    void loadMembershipProduct();
+    if (tiersLoadedForAssoId === asso.id) return;
+    tiersLoadedForAssoId = asso.id;
+    void loadTierProducts();
   });
 
   // Infinite scroll: fetch the next page once the sentinel enters the viewport.
@@ -211,51 +229,111 @@
     }
   }
 
-  /** Fetches the association's products and picks the auto-provisioned canonical membership one. */
-  async function loadMembershipProduct() {
-    membershipLoading = true;
-    membershipError = '';
-    console.log(`[Cotisations] Loading membership product - asso=${asso.id.slice(0, 8)}`);
+  /** Fetches the association's products and keeps every tier (membership-type) product, base tier first. */
+  async function loadTierProducts() {
+    tiersLoading = true;
+    tiersError = '';
+    console.log(`[Cotisations] Loading tier products - asso=${asso.id.slice(0, 8)}`);
     try {
       const productsList = await listAssociationProductsForManage(asso.id);
-      const found = productsList.find((p) => p.type === 'membership') ?? null;
-      membershipProduct = found;
-      if (found) {
-        editMembershipName = found.name;
-        editMembershipPriceEuros = found.amountCents != null ? found.amountCents / 100 : '';
-      }
+      tierProducts = productsList
+        .filter((p) => p.type === 'membership')
+        .sort((a, b) => (a.variantKey === null ? -1 : 1) - (b.variantKey === null ? -1 : 1));
     } catch (e) {
-      membershipError = e instanceof Error ? e.message : m.asso_cotisations_membership_load_error();
-      console.error('[Cotisations] Failed to load membership product:', e);
+      tiersError = e instanceof Error ? e.message : m.asso_cotisations_membership_load_error();
+      console.error('[Cotisations] Failed to load tier products:', e);
     } finally {
-      membershipLoading = false;
+      tiersLoading = false;
     }
   }
 
-  /** Saves the cotisation's editable label and price onto the canonical membership product. */
-  async function handleSaveMembership() {
-    if (!membershipProduct || !editMembershipName.trim()) return;
-    membershipSaving = true;
-    membershipError = '';
-    membershipSaved = false;
+  function resetAddTierForm() {
+    newTierName = '';
+    newTierVariantKey = '';
+    newTierPriceEuros = '';
+    newTierMemberPriceTag = '';
+    newTierMemberPriceEuros = '';
+    showAddTierForm = false;
+  }
+
+  /** Creates an additional cotisation tier (the base tier already exists once cotisation is enabled). */
+  async function handleCreateTier() {
+    if (!newTierName.trim() || !newTierVariantKey.trim()) return;
+    addingTier = true;
+    tiersError = '';
     console.log(
-      `[Cotisations] Saving membership price - asso=${asso.id.slice(0, 8)} product=${membershipProduct.id.slice(0, 8)}`
+      `[Cotisations] Creating tier - asso=${asso.id.slice(0, 8)} variantKey=${newTierVariantKey.trim()}`
     );
     try {
-      const updated = await updateProduct(asso.id, membershipProduct.id, {
-        name: editMembershipName.trim(),
+      await createProduct(asso.id, {
+        name: newTierName.trim(),
+        type: 'membership',
+        variantKey: newTierVariantKey.trim(),
         amountCents:
-          editMembershipPriceEuros !== ''
-            ? Math.round(Number(editMembershipPriceEuros) * 100)
-            : null,
+          newTierPriceEuros !== '' ? Math.round(Number(newTierPriceEuros) * 100) : undefined,
+        memberPriceTag: newTierMemberPriceTag || undefined,
+        amountCentsMember:
+          newTierMemberPriceTag && newTierMemberPriceEuros !== ''
+            ? Math.round(Number(newTierMemberPriceEuros) * 100)
+            : undefined,
       });
-      membershipProduct = updated;
-      membershipSaved = true;
+      resetAddTierForm();
+      await loadTierProducts();
     } catch (e) {
-      membershipError = e instanceof Error ? e.message : m.asso_cotisations_membership_save_error();
-      console.error('[Cotisations] Failed to save membership price:', e);
+      tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_create_error();
+      console.error('[Cotisations] Failed to create tier:', e);
     } finally {
-      membershipSaving = false;
+      addingTier = false;
+    }
+  }
+
+  function toggleTierEdit(product: AssociationProduct) {
+    expandedTierId = expandedTierId === product.id ? null : product.id;
+  }
+
+  /** Saves a tier's editable label/price and upgrade-pricing link (variantKey is immutable once created). */
+  async function handleSaveTier(product: AssociationProduct, form: HTMLFormElement) {
+    const fd = new FormData(form);
+    savingTierId = product.id;
+    tiersError = '';
+    try {
+      const name = String(fd.get('name') ?? '').trim();
+      const priceRaw = String(fd.get('priceEuros') ?? '').trim();
+      const memberPriceTag = String(fd.get('memberPriceTag') ?? '');
+      const memberPriceRaw = String(fd.get('memberPriceEuros') ?? '').trim();
+      if (!name) return;
+      const updated = await updateProduct(asso.id, product.id, {
+        name,
+        amountCents: priceRaw ? Math.round(Number(priceRaw) * 100) : null,
+        memberPriceTag: memberPriceTag || null,
+        amountCentsMember:
+          memberPriceTag && memberPriceRaw ? Math.round(Number(memberPriceRaw) * 100) : null,
+      });
+      tierProducts = tierProducts.map((p) => (p.id === product.id ? updated : p));
+      expandedTierId = null;
+    } catch (e) {
+      tiersError = e instanceof Error ? e.message : m.asso_cotisations_membership_save_error();
+      console.error('[Cotisations] Failed to save tier:', e);
+    } finally {
+      savingTierId = null;
+    }
+  }
+
+  /** Deletes an additional tier. The base tier (variantKey null) is never deletable from this UI. */
+  async function handleDeleteTier(product: AssociationProduct) {
+    if (
+      !(await showConfirm(m.asso_cotisations_tier_delete_confirm({ name: product.name }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
+    try {
+      await deleteProduct(asso.id, product.id);
+      tierProducts = tierProducts.filter((p) => p.id !== product.id);
+    } catch (e) {
+      tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_delete_error();
+      console.error('[Cotisations] Failed to delete tier:', e);
     }
   }
 
@@ -446,72 +524,301 @@
 
       {#if canManageProducts}
         <div class="border-t border-cn-border pt-4 space-y-3">
-          <h4 class="text-xs font-bold text-text-main uppercase tracking-wide">
-            {m.asso_cotisations_price_title()}
-          </h4>
-          {#if membershipLoading}
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <h4 class="text-xs font-bold text-text-main uppercase tracking-wide">
+              {m.asso_cotisations_price_title()}
+            </h4>
+            {#if !tiersLoading && tierProducts.length > 0}
+              <button
+                type="button"
+                onclick={() => (showAddTierForm = !showAddTierForm)}
+                class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+              >
+                <Plus size={14} />
+                {m.asso_cotisations_tier_add_button()}
+              </button>
+            {/if}
+          </div>
+
+          {#if tiersError}
+            <p class="text-sm text-red-600">{tiersError}</p>
+          {/if}
+
+          {#if tiersLoading}
             <div class="flex items-center gap-2 text-sm text-text-muted">
               <div
                 class="h-4 w-4 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent"
               ></div>
               {m.common_loading_label()}
             </div>
-          {:else if membershipError}
-            <p class="text-sm text-red-600">{membershipError}</p>
-          {:else if !membershipProduct}
+          {:else if tierProducts.length === 0}
             <p class="text-sm text-text-muted">{m.asso_cotisations_membership_missing()}</p>
           {:else}
+            <ul class="space-y-3">
+              {#each tierProducts as product (product.id)}
+                <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 overflow-hidden">
+                  <div class="flex items-center gap-3 px-4 py-3">
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <p class="font-semibold text-sm text-text-main">{product.name}</p>
+                        {#if product.variantKey}
+                          <span
+                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800"
+                          >
+                            {product.variantKey}
+                          </span>
+                        {:else}
+                          <span
+                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-cn-surface-alt text-text-muted"
+                          >
+                            {m.asso_cotisations_tier_base_badge()}
+                          </span>
+                        {/if}
+                      </div>
+                      <p class="text-xs text-text-muted mt-0.5">
+                        {product.amountCents != null
+                          ? `${(product.amountCents / 100).toFixed(2)} €`
+                          : m.asso_cotisations_tier_price_free_label()}
+                        {#if product.memberPriceTag && product.amountCentsMember != null}
+                          · {m.asso_cotisations_tier_upgrade_price_label({
+                            price: (product.amountCentsMember / 100).toFixed(2),
+                          })}
+                        {/if}
+                      </p>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onclick={() => toggleTierEdit(product)}
+                        class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                      >
+                        <Pencil size={12} />
+                        <ChevronDown
+                          size={12}
+                          class="transition-transform {expandedTierId === product.id
+                            ? 'rotate-180'
+                            : ''}"
+                        />
+                      </button>
+                      {#if product.variantKey}
+                        <button
+                          type="button"
+                          onclick={() => void handleDeleteTier(product)}
+                          title={m.common_delete_button()}
+                          class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+
+                  {#if expandedTierId === product.id}
+                    <div class="border-t border-cn-border/60 px-4 py-3 bg-cn-bg/20">
+                      <form
+                        class="grid gap-3 sm:grid-cols-2"
+                        onsubmit={(e) => {
+                          e.preventDefault();
+                          void handleSaveTier(product, e.currentTarget);
+                        }}
+                      >
+                        <div class="space-y-1">
+                          <label
+                            for="tier-name-{product.id}"
+                            class="text-xs font-semibold text-text-muted"
+                            >{m.asso_cotisations_price_name_label()}</label
+                          >
+                          <input
+                            id="tier-name-{product.id}"
+                            name="name"
+                            type="text"
+                            value={product.name}
+                            required
+                            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div class="space-y-1">
+                          <label
+                            for="tier-price-{product.id}"
+                            class="text-xs font-semibold text-text-muted"
+                            >{m.asso_cotisations_price_amount_label()}</label
+                          >
+                          <input
+                            id="tier-price-{product.id}"
+                            name="priceEuros"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={product.amountCents != null ? product.amountCents / 100 : ''}
+                            placeholder="10.00"
+                            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                          />
+                        </div>
+                        {#if tierProducts.length > 1}
+                          <div class="space-y-1 sm:col-span-2">
+                            <label
+                              for="tier-upgrade-from-{product.id}"
+                              class="text-xs font-semibold text-text-muted"
+                              >{m.asso_cotisations_tier_upgrade_from_label()}</label
+                            >
+                            <select
+                              id="tier-upgrade-from-{product.id}"
+                              name="memberPriceTag"
+                              value={product.memberPriceTag ?? ''}
+                              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+                            >
+                              <option value="">{m.asso_cotisations_tier_upgrade_none()}</option>
+                              {#each tierProducts.filter((p) => p.id !== product.id) as sibling (sibling.id)}
+                                <option value={sibling.grantedTagName ?? ''}>{sibling.name}</option>
+                              {/each}
+                            </select>
+                          </div>
+                          <div class="space-y-1 sm:col-span-2">
+                            <label
+                              for="tier-upgrade-price-{product.id}"
+                              class="text-xs font-semibold text-text-muted"
+                              >{m.asso_cotisations_tier_upgrade_price_field_label()}</label
+                            >
+                            <input
+                              id="tier-upgrade-price-{product.id}"
+                              name="memberPriceEuros"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={product.amountCentsMember != null
+                                ? product.amountCentsMember / 100
+                                : ''}
+                              placeholder={m.asso_cotisations_tier_upgrade_price_placeholder()}
+                              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                            />
+                          </div>
+                        {/if}
+                        <button
+                          type="submit"
+                          disabled={savingTierId === product.id}
+                          class="sm:col-span-2 text-xs rounded-lg bg-cn-yellow px-4 py-2 font-bold text-cn-dark disabled:opacity-50 w-fit"
+                        >
+                          {savingTierId === product.id
+                            ? m.common_saving_label()
+                            : m.common_save_button()}
+                        </button>
+                      </form>
+                    </div>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          {#if showAddTierForm}
             <form
-              class="grid gap-3 sm:grid-cols-2"
+              class="rounded-xl border border-cn-border bg-cn-bg/40 p-4 space-y-3"
               onsubmit={(e) => {
                 e.preventDefault();
-                void handleSaveMembership();
+                void handleCreateTier();
               }}
             >
-              <div class="space-y-1">
-                <label for="membership-name" class="text-xs font-semibold text-text-muted"
-                  >{m.asso_cotisations_price_name_label()}</label
-                >
-                <input
-                  id="membership-name"
-                  type="text"
-                  bind:value={editMembershipName}
-                  required
-                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                />
+              <p class="text-xs font-bold text-text-main uppercase tracking-wide">
+                {m.asso_cotisations_tier_add_title()}
+              </p>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="space-y-1">
+                  <label for="new-tier-name" class="text-xs font-semibold text-text-muted"
+                    >{m.asso_cotisations_price_name_label()}</label
+                  >
+                  <input
+                    id="new-tier-name"
+                    type="text"
+                    bind:value={newTierName}
+                    required
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label for="new-tier-variant" class="text-xs font-semibold text-text-muted"
+                    >{m.asso_cotisations_tier_variant_key_label()}</label
+                  >
+                  <input
+                    id="new-tier-variant"
+                    type="text"
+                    bind:value={newTierVariantKey}
+                    placeholder="avec-alcool"
+                    required
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label for="new-tier-price" class="text-xs font-semibold text-text-muted"
+                    >{m.asso_cotisations_price_amount_label()}</label
+                  >
+                  <input
+                    id="new-tier-price"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    bind:value={newTierPriceEuros}
+                    placeholder="10.00"
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
               </div>
+              <p class="text-xs text-text-muted">{m.asso_cotisations_tier_variant_key_hint()}</p>
               <div class="space-y-1">
-                <label for="membership-price" class="text-xs font-semibold text-text-muted"
-                  >{m.asso_cotisations_price_amount_label()}</label
+                <label for="new-tier-upgrade-from" class="text-xs font-semibold text-text-muted"
+                  >{m.asso_cotisations_tier_upgrade_from_label()}</label
                 >
-                <input
-                  id="membership-price"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  bind:value={editMembershipPriceEuros}
-                  placeholder="10.00"
-                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                />
+                <select
+                  id="new-tier-upgrade-from"
+                  bind:value={newTierMemberPriceTag}
+                  class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+                >
+                  <option value="">{m.asso_cotisations_tier_upgrade_none()}</option>
+                  {#each tierProducts as sibling (sibling.id)}
+                    <option value={sibling.grantedTagName ?? ''}>{sibling.name}</option>
+                  {/each}
+                </select>
               </div>
-              <div class="sm:col-span-2 flex items-center gap-3">
+              {#if newTierMemberPriceTag}
+                <div class="space-y-1">
+                  <label for="new-tier-upgrade-price" class="text-xs font-semibold text-text-muted"
+                    >{m.asso_cotisations_tier_upgrade_price_field_label()}</label
+                  >
+                  <input
+                    id="new-tier-upgrade-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    bind:value={newTierMemberPriceEuros}
+                    placeholder={m.asso_cotisations_tier_upgrade_price_placeholder()}
+                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                  />
+                </div>
+              {/if}
+              <div class="flex items-center gap-3 pt-1">
                 <button
                   type="submit"
-                  disabled={membershipSaving || !editMembershipName.trim()}
+                  disabled={addingTier || !newTierName.trim() || !newTierVariantKey.trim()}
                   class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
                 >
-                  {membershipSaving ? m.common_saving_label() : m.common_save_button()}
+                  {addingTier ? m.common_saving_label() : m.asso_cotisations_tier_create_button()}
                 </button>
-                {#if membershipSaved}
-                  <span class="text-xs font-semibold text-emerald-600"
-                    >{m.common_saved_label()}</span
-                  >
-                {/if}
+                <button
+                  type="button"
+                  onclick={resetAddTierForm}
+                  class="text-sm text-text-muted hover:text-text-main"
+                  >{m.common_cancel_button()}</button
+                >
               </div>
             </form>
-            {#if membershipProduct.amountCents == null}
-              <p class="text-xs text-amber-700">{m.asso_cotisations_price_unset_hint()}</p>
-            {/if}
+          {:else if tierProducts.length === 1 && !tiersLoading}
+            <button
+              type="button"
+              onclick={() => (showAddTierForm = true)}
+              class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+            >
+              <Plus size={15} />
+              {m.asso_cotisations_tier_add_button()}
+            </button>
           {/if}
         </div>
       {/if}
@@ -580,7 +887,16 @@
                     class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3"
                   >
                     <div class="min-w-0 flex-1">
-                      <p class="text-sm font-semibold text-text-main">{cotisantName(item)}</p>
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <p class="text-sm font-semibold text-text-main">{cotisantName(item)}</p>
+                        {#if item.tier}
+                          <span
+                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800"
+                          >
+                            {item.tier}
+                          </span>
+                        {/if}
+                      </div>
                       <p class="text-xs text-text-muted mt-0.5">
                         {m.asso_cotisations_col_granted()}: {formatDate(item.grantedAt)}
                         {#if item.expiresAt}

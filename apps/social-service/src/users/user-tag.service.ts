@@ -26,6 +26,8 @@ export interface CotisantRosterItem {
   firstName: string | null;
   lastName: string | null;
   promo: number | null;
+  /** Tier product name (e.g. "Avec alcool") for multi-tier associations; null for the base tier. */
+  tier: string | null;
 }
 
 /** Paginated result of `UserTagService.listCotisants`. */
@@ -50,8 +52,8 @@ interface RawCotisantRow {
 const DEFAULT_ROSTER_LIMIT = 50;
 const MAX_ROSTER_LIMIT = 200;
 
-/** Maps a raw SQL row to a `CotisantRosterItem`, normalizing date fields. */
-function toRosterItem(row: RawCotisantRow): CotisantRosterItem {
+/** Maps a raw SQL row to a `CotisantRosterItem`, normalizing date fields and attaching the tier label. */
+function toRosterItem(row: RawCotisantRow, tierByTagName: Map<string, string>): CotisantRosterItem {
   return {
     tagId: row.id,
     userId: row.userId,
@@ -65,6 +67,7 @@ function toRosterItem(row: RawCotisantRow): CotisantRosterItem {
     firstName: row.firstName,
     lastName: row.lastName,
     promo: row.promo,
+    tier: tierByTagName.get(row.tagName) ?? null,
   };
 }
 
@@ -203,6 +206,34 @@ export class UserTagService {
     return qb.orderBy('t.createdAt', 'DESC').getMany();
   }
 
+  /**
+   * Maps each active tiered membership product's derived tag name to its display name (e.g.
+   * `cotisant:cercle-avec-alcool-2026-2027` -> `"Avec alcool"`), for multi-tier associations only.
+   * The base tier (`variantKey: null`) is intentionally left unmapped so its roster/export rows
+   * show a blank tier column - only named tiers need a label.
+   */
+  private async buildTierLabelMap(assocId: string): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const assoRows: { slug: string; cotisationMode: CotisationMode | null }[] =
+      await this.repo.manager.query(`SELECT slug, "cotisationMode" FROM associations WHERE id = $1`, [
+        assocId,
+      ]);
+    const asso = assoRows[0];
+    if (!asso?.cotisationMode) return map;
+
+    const products: { name: string; variantKey: string | null }[] = await this.repo.manager.query(
+      `SELECT name, "variantKey" FROM association_products
+       WHERE "associationId" = $1 AND type = 'membership' AND "isActive" = true`,
+      [assocId]
+    );
+    for (const p of products) {
+      if (!p.variantKey) continue;
+      const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), p.variantKey);
+      map.set(tagName, p.name);
+    }
+    return map;
+  }
+
   /** Distinct tag names ever issued by an association (including expired). */
   async listDistinctNamesForAssoc(assocId: string): Promise<string[]> {
     const rows = await this.repo
@@ -243,23 +274,24 @@ export class UserTagService {
          AND (t."expiresAt" IS NULL OR t."expiresAt" > NOW())
          ${searchClause}`;
 
-    const countRows: { count: string }[] = await this.repo.manager.query(
-      `SELECT COUNT(*)::text AS count ${baseFrom}`,
-      [assocId, search]
-    );
+    const [countRows, rows, tierMap] = await Promise.all([
+      this.repo.manager.query(`SELECT COUNT(*)::text AS count ${baseFrom}`, [assocId, search]) as Promise<
+        { count: string }[]
+      >,
+      this.repo.manager.query(
+        `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
+                t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",
+                u.promo AS "promo"
+         ${baseFrom}
+         ORDER BY u.promo ASC NULLS LAST, u."lastName" ASC, u."firstName" ASC
+         LIMIT $3 OFFSET $4`,
+        [assocId, search, limit, offset]
+      ) as Promise<RawCotisantRow[]>,
+      this.buildTierLabelMap(assocId),
+    ]);
     const total = Number(countRows[0]?.count ?? 0);
 
-    const rows: RawCotisantRow[] = await this.repo.manager.query(
-      `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
-              t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",
-              u.promo AS "promo"
-       ${baseFrom}
-       ORDER BY u.promo ASC NULLS LAST, u."lastName" ASC, u."firstName" ASC
-       LIMIT $3 OFFSET $4`,
-      [assocId, search, limit, offset]
-    );
-
-    const items = rows.map(toRosterItem);
+    const items = rows.map((row) => toRosterItem(row, tierMap));
     const hasMore = offset + items.length < total;
     this.logger.debug(
       `[UserTag] listCotisants assoc=${assocId} returned ${items.length}/${total} (hasMore=${hasMore})`
@@ -269,30 +301,31 @@ export class UserTagService {
 
   /**
    * Builds an XLSX export of the association's full active cotisant roster (no pagination),
-   * same active-only filter and sort as `listCotisants`. Columns (D8): Nom, Prenom, Promo,
-   * Cotisation, Date, Echeance - no email (PII, per the rework plan).
+   * same active-only filter and sort as `listCotisants`. Columns (D8, WP-COT-6): Nom, Prenom,
+   * Promo, Cotisation, Forfait, Date, Echeance - no email (PII, per the rework plan).
    */
   async exportCotisants(assocId: string): Promise<{ buffer: Buffer; title: string }> {
     this.logger.debug(`[UserTag] exportCotisants assoc=${assocId}`);
 
-    const nameRows: { name: string }[] = await this.repo.manager.query(
-      `SELECT name FROM associations WHERE id = $1`,
-      [assocId]
-    );
+    const [nameRows, rows, tierMap] = await Promise.all([
+      this.repo.manager.query(`SELECT name FROM associations WHERE id = $1`, [assocId]) as Promise<
+        { name: string }[]
+      >,
+      this.repo.manager.query(
+        `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
+                t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",
+                u.promo AS "promo"
+         FROM user_tags t
+         INNER JOIN users u ON u.id = t."userId"
+         WHERE t."issuingAssocId" = $1
+           AND (t."expiresAt" IS NULL OR t."expiresAt" > NOW())
+         ORDER BY u.promo ASC NULLS LAST, u."lastName" ASC, u."firstName" ASC`,
+        [assocId]
+      ) as Promise<RawCotisantRow[]>,
+      this.buildTierLabelMap(assocId),
+    ]);
     const assocName = nameRows[0]?.name ?? 'cotisants';
-
-    const rows: RawCotisantRow[] = await this.repo.manager.query(
-      `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
-              t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",
-              u.promo AS "promo"
-       FROM user_tags t
-       INNER JOIN users u ON u.id = t."userId"
-       WHERE t."issuingAssocId" = $1
-         AND (t."expiresAt" IS NULL OR t."expiresAt" > NOW())
-       ORDER BY u.promo ASC NULLS LAST, u."lastName" ASC, u."firstName" ASC`,
-      [assocId]
-    );
-    const items = rows.map(toRosterItem);
+    const items = rows.map((row) => toRosterItem(row, tierMap));
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Cotisants');
@@ -301,6 +334,7 @@ export class UserTagService {
       { header: 'Prénom', key: 'firstName', width: 20 },
       { header: 'Promo', key: 'promo', width: 10 },
       { header: 'Cotisation', key: 'tagName', width: 30 },
+      { header: 'Forfait', key: 'tier', width: 20 },
       { header: 'Date', key: 'grantedAt', width: 14, style: { numFmt: 'dd/mm/yyyy' } },
       { header: 'Échéance', key: 'expiresAt', width: 14, style: { numFmt: 'dd/mm/yyyy' } },
     ];
@@ -311,6 +345,7 @@ export class UserTagService {
         firstName: item.firstName ?? '',
         promo: item.promo ?? '',
         tagName: item.tagName,
+        tier: item.tier ?? '',
         grantedAt: item.grantedAt,
         expiresAt: item.expiresAt ?? '',
       });

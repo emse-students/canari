@@ -51,10 +51,22 @@ academic-year rollover grants the new year's tag, not a stale one.
 
 ### The membership product
 
-Each cotisation is sold as **one canonical boutique product** of `type: 'membership'`
+Each cotisation is sold as one or more boutique product(s) of `type: 'membership'`
 (`apps/social-service/src/associations/entities/association-product.entity.ts`). Its granted tag is
 derived by `deriveCotisationTag` at fulfillment - admins never type a `tagName` or expiry for it.
-Enabling a cotisation auto-provisions this product; the Cotisations tab only edits its label/price.
+Enabling a cotisation auto-provisions the base (single-tier) product; the Cotisations tab edits its
+label/price and lets admins add further tiers (WP-COT-6).
+
+`ProductsService.create` **auto-derives** `grantedTagName`/`tagExpiresAt` server-side for any
+`type: 'membership'` product from the association's `slug`/`cotisationMode` + the product's own
+`variantKey` - a client-supplied `grantedTagName` is always ignored for this type, so the tag string
+never drifts from `deriveCotisationTag`. Creating a membership product requires cotisation to already
+be enabled (`cotisationMode` set), since the tag can't be derived otherwise.
+
+`ProductsService.provisionCotisationProduct` (called after `PATCH /associations/:id` when
+`cotisationEnabled` is true, e.g. mode edits) resyncs **every** `membership` product's tag - not just
+one - so a slug rename or `lifetime`<->`dated` mode switch keeps all tiers' tags aligned, not just the
+base one.
 
 ### Multi-tier cotisations (named variants)
 
@@ -62,7 +74,14 @@ Some associations sell more than one cotisation tier (e.g. Le Cercle's "avec-alc
 "sans-alcool" forfaits). A `membership` product can carry a `variantKey` (e.g. `"avec-alcool"`),
 which `deriveCotisationTag(slug, mode, now, variantKey)` suffixes onto the tag
 (`cotisant:cercle-avec-alcool`) so each tier gets its own tag namespace. `variantLevel` is a reserved
-ordinal for a future "tier >= N" inclusion check (not used yet).
+ordinal for a future "tier >= N" inclusion check (not used yet, see WP-COT-8).
+
+Admins manage tiers from the Cotisations tab (`EditCotisationsTab.svelte`, WP-COT-6): the
+auto-provisioned base tier (`variantKey: null`) is always listed first and can't be deleted from this
+UI; additional tiers are created with a name, price, and a required `variantKey` (locked/read-only
+after creation - changing it would orphan already-granted tags). Each tier's edit form can also set
+the upgrade-pricing link (`memberPriceTag` + `amountCentsMember`, next section) via a dropdown of
+sibling tiers.
 
 **Upgrade pricing (`memberPriceTag`)**: a tier-upgrade product can set `memberPriceTag` to a sibling
 tier's tag name and `amountCentsMember` to the price delta. The reduced price then applies **iff the
@@ -126,9 +145,15 @@ since a global admin recharges on behalf of an association), and the boutique it
 `EditCotisationsTab.svelte` shows the association's **active** cotisants (D9: `expiresAt IS NULL OR
 expiresAt > NOW()`), enriched with `firstName`/`lastName`/`promo` from the shared `users` table.
 It is promo-sorted (**NULLS LAST** - "Sans promo" grouped last), searchable, offset-paginated
-(infinite scroll), and exportable to `.xlsx` (headers: Nom, Prenom, Promo, Cotisation, Date,
+(infinite scroll), and exportable to `.xlsx` (headers: Nom, Prenom, Promo, Cotisation, Forfait, Date,
 Echeance). Manual add grants the canonical tag only (D10: no payment/amount recorded); revoke
 deletes the tag.
+
+**Tier label (`tier`/"Forfait", WP-COT-6)**: `UserTagService.buildTierLabelMap` maps each active
+tiered product's *derived* tag name to its display name (e.g. `Avec alcool`), so both the roster and
+the export can show which forfait a cotisant holds without the client re-deriving tags. The base tier
+(`variantKey: null`) is intentionally left unlabeled - its column/badge stays blank, since labeling it
+would be noise for the common single-tier association.
 
 End-user (paying) surfaces:
 

@@ -218,7 +218,7 @@ describe("ProductsService cotisation gating/pricing and Cercle re-gating", () =>
   describe("cotisation config provisioning", () => {
     it("creates the canonical membership product when none exists", async () => {
       const { service, productRepo } = makeService();
-      productRepo.findOne.mockResolvedValue(null);
+      productRepo.find.mockResolvedValue([]);
 
       const created = await service.provisionCotisationProduct(asso());
 
@@ -241,13 +241,31 @@ describe("ProductsService cotisation gating/pricing and Cercle re-gating", () =>
         amountCents: 2000,
         grantedTagName: "cotisant:old-tag",
       });
-      productRepo.findOne.mockResolvedValue(existing);
+      productRepo.find.mockResolvedValue([existing]);
 
       const result = await service.provisionCotisationProduct(asso());
 
       expect(result.grantedTagName).toBe("cotisant:bde");
       expect(result.name).toBe("Cotisation BDE annuelle");
       expect(result.amountCents).toBe(2000);
+    });
+
+    it("re-syncs every tier's own tag when an association has multiple membership products", async () => {
+      const { service, productRepo } = makeService();
+      const base = product({ id: "prod1", type: "membership", variantKey: null });
+      const tier = product({
+        id: "prod2",
+        type: "membership",
+        variantKey: "avec-alcool",
+        grantedTagName: "cotisant:old-avec-alcool",
+      });
+      productRepo.find.mockResolvedValue([base, tier]);
+
+      const result = await service.provisionCotisationProduct(asso());
+
+      expect(base.grantedTagName).toBe("cotisant:bde");
+      expect(tier.grantedTagName).toBe("cotisant:bde-avec-alcool");
+      expect(result.id).toBe("prod1");
     });
 
     it("throws when cotisationMode is not set", async () => {
@@ -292,6 +310,44 @@ describe("ProductsService cotisation gating/pricing and Cercle re-gating", () =>
       const { service } = makeService();
       const grant = await (service as any).resolveGrantTag(product({ type: "other" }));
       expect(grant).toBeNull();
+    });
+  });
+
+  describe("multi-tier membership creation (WP-COT-6)", () => {
+    it("derives grantedTagName/tagExpiresAt server-side from the association's slug/mode + variantKey", async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: "lifetime" }));
+
+      const created = await service.create(
+        "asso1",
+        { name: "Avec alcool", type: "membership", variantKey: "avec-alcool" },
+        false,
+      );
+
+      expect(created.grantedTagName).toBe("cotisant:bde-avec-alcool");
+      expect(created.tagExpiresAt).toBeNull();
+    });
+
+    it("ignores any client-supplied grantedTagName for membership products", async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: "lifetime" }));
+
+      const created = await service.create(
+        "asso1",
+        { name: "Base", type: "membership", grantedTagName: "cotisant:spoofed" },
+        false,
+      );
+
+      expect(created.grantedTagName).toBe("cotisant:bde");
+    });
+
+    it("rejects creating a membership tier when cotisation is not enabled", async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
+
+      await expect(
+        service.create("asso1", { name: "Avec alcool", type: "membership" }, false),
+      ).rejects.toThrow("Cotisation must be enabled");
     });
   });
 

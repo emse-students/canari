@@ -926,6 +926,8 @@ export interface CotisantRosterItem {
   lastName: string | null;
   /** Promotion year, or null for cotisants without one (externals, staff) - grouped last. */
   promo: number | null;
+  /** Tier product name (e.g. "Avec alcool") for multi-tier associations; null for the base tier. */
+  tier: string | null;
 }
 
 /** One paginated page of the cotisant roster. */
@@ -1043,6 +1045,12 @@ export interface AssociationProduct {
   viewerActiveTier?: string | null;
   /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
   requiredTags: string[] | null;
+  /** Named cotisation tier (e.g. "avec-alcool"), suffixed onto the derived cotisation tag. Null = base/single tier. */
+  variantKey: string | null;
+  /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8, unused today). */
+  variantLevel: number | null;
+  /** Sibling tier's granted tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
+  memberPriceTag: string | null;
   allowCustomAmount: boolean;
   customAmountMinCents: number | null;
   customAmountMaxCents: number | null;
@@ -1086,6 +1094,14 @@ export interface CreateProductPayload {
   membersOnly?: boolean;
   /** Reduced price in cents for cotisants (defaults to `amountCents` when omitted). */
   amountCentsMember?: number;
+  /** Named cotisation tier (e.g. "avec-alcool"); only meaningful for `type: 'membership'`. */
+  variantKey?: string;
+  /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8, unused today). */
+  variantLevel?: number;
+  /** Sibling tier's granted tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
+  memberPriceTag?: string;
+  /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
+  requiredTags?: string[];
   allowCustomAmount?: boolean;
   customAmountMinCents?: number;
   customAmountMaxCents?: number;
@@ -1100,7 +1116,12 @@ export interface CreateProductPayload {
 
 export type UpdateProductPayload = Omit<
   Partial<CreateProductPayload>,
-  'amountCents' | 'amountCentsMember' | 'customAmountMinCents' | 'customAmountMaxCents'
+  | 'amountCents'
+  | 'amountCentsMember'
+  | 'customAmountMinCents'
+  | 'customAmountMaxCents'
+  | 'memberPriceTag'
+  | 'requiredTags'
 > & {
   maxPurchasesPerUser?: number | null;
   maxPurchasesTotal?: number | null;
@@ -1112,6 +1133,10 @@ export type UpdateProductPayload = Omit<
   customAmountMinCents?: number | null;
   /** Pass null to clear the custom-amount maximum. */
   customAmountMaxCents?: number | null;
+  /** Pass null to remove the upgrade-pricing link to a sibling tier. */
+  memberPriceTag?: string | null;
+  /** Pass null to clear the eligibility-gating tag list. */
+  requiredTags?: string[] | null;
 };
 
 /** Returns all active products across all associations (login required). */
