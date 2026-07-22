@@ -56,6 +56,28 @@ Each cotisation is sold as **one canonical boutique product** of `type: 'members
 derived by `deriveCotisationTag` at fulfillment - admins never type a `tagName` or expiry for it.
 Enabling a cotisation auto-provisions this product; the Cotisations tab only edits its label/price.
 
+### Multi-tier cotisations (named variants)
+
+Some associations sell more than one cotisation tier (e.g. Le Cercle's "avec-alcool" /
+"sans-alcool" forfaits). A `membership` product can carry a `variantKey` (e.g. `"avec-alcool"`),
+which `deriveCotisationTag(slug, mode, now, variantKey)` suffixes onto the tag
+(`cotisant:cercle-avec-alcool`) so each tier gets its own tag namespace. `variantLevel` is a reserved
+ordinal for a future "tier >= N" inclusion check (not used yet).
+
+**Upgrade pricing (`memberPriceTag`)**: a tier-upgrade product can set `memberPriceTag` to a sibling
+tier's tag name and `amountCentsMember` to the price delta. The reduced price then applies **iff the
+buyer holds that specific tag** - it does NOT fall back to the generic asso-wide cotisant check the
+way plain `amountCentsMember` does when `memberPriceTag` is unset. Example: the "avec-alcool" product
+sets `memberPriceTag = "cotisant:cercle-sans-alcool"` so a sans-alcool cotisant switching up only
+pays the difference; someone with no cotisation at all pays full price.
+
+**XOR on fulfillment**: granting a tiered product's tag also revokes the buyer's tag(s) for the
+association's *other* tiers, in the same DB transaction (`revokeSiblingTierTags` in
+`products.service.ts`) - a cotisant holds exactly one tier of a given association at a time. Buying a
+sibling tier for the first time is allowed even if another tier was already purchased (purchase caps
+are tracked per-product, not per-association), but re-buying the *same* tier while its tag is still
+active is blocked like any other membership renewal check.
+
 ### Product member gating & pricing
 
 Any boutique product (not just membership) can gate or discount on cotisant status:

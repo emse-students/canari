@@ -11,12 +11,18 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 
 describe('ProductsService cotisation gating/pricing and Cercle re-gating', () => {
   function makeService() {
+    const manager: any = {
+      query: jest.fn(() => Promise.resolve([])),
+      findOne: jest.fn(),
+      find: jest.fn(),
+    };
+    manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(manager));
     const productRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      manager,
     };
     const deliveryRepo = {};
     const assoRepo = {
@@ -26,6 +32,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
       hasActiveTag: jest.fn(),
+      grantOrRenew: jest.fn(() => Promise.resolve({})),
+      revokeByName: jest.fn(() => Promise.resolve()),
     };
     const purchaseRecordService = {
       countPaidByUserAndProduct: jest.fn(() => Promise.resolve(0)),
@@ -43,7 +51,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       purchaseRecordService as unknown as PurchaseRecordService
     );
 
-    return { service, productRepo, assoRepo, userTagService, purchaseRecordService };
+    return { service, productRepo, assoRepo, userTagService, purchaseRecordService, manager };
   }
 
   const asso = (overrides: Partial<Association> = {}): Association =>
@@ -69,6 +77,9 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       allowRepeatPurchase: false,
       membersOnly: false,
       amountCentsMember: null,
+      variantKey: null,
+      variantLevel: null,
+      memberPriceTag: null,
       allowCustomAmount: false,
       customAmountMinCents: null,
       customAmountMaxCents: null,
@@ -319,6 +330,151 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(
         service.update('asso1', 'prod1', { name: 'New name' }, false)
       ).resolves.toBeDefined();
+    });
+  });
+
+  describe('multi-tier upgrade pricing via memberPriceTag (WP-COT-2)', () => {
+    it('applies the member price when the buyer holds the named memberPriceTag, even without the generic tag', async () => {
+      const { service, productRepo, assoRepo, userTagService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle' }));
+      productRepo.findOne.mockResolvedValue(
+        product({ amountCentsMember: 300, memberPriceTag: 'cotisant:cercle-sans-alcool' })
+      );
+      userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
+        Promise.resolve(tagName === 'cotisant:cercle-sans-alcool')
+      );
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(300);
+      expect(userTagService.hasActiveTag).toHaveBeenCalledWith(
+        'user1',
+        'cotisant:cercle-sans-alcool'
+      );
+    });
+
+    it('does not fall back to the generic cotisant tag when memberPriceTag is set but not held', async () => {
+      const { service, productRepo, assoRepo, userTagService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle' }));
+      productRepo.findOne.mockResolvedValue(
+        product({ amountCentsMember: 300, memberPriceTag: 'cotisant:cercle-sans-alcool' })
+      );
+      // Buyer holds the generic asso tag, but not the specific sibling-tier tag required here.
+      userTagService.hasActiveTag.mockImplementation((_userId: string, tagName: string) =>
+        Promise.resolve(tagName === 'cotisant:cercle')
+      );
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(1000);
+    });
+  });
+
+  describe('tier-specific grant tag (WP-COT-2)', () => {
+    it('suffixes the granted tag with the product variantKey', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle', cotisationMode: 'lifetime' }));
+      const tiered = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:cercle-avec-alcool',
+        variantKey: 'avec-alcool',
+      });
+
+      const grant = await (service as any).resolveGrantTag(tiered);
+      expect(grant.tagName).toBe('cotisant:cercle-avec-alcool');
+    });
+  });
+
+  describe('assertCanPurchase: same-tier rebuy blocked / sibling switch allowed (WP-COT-2)', () => {
+    it('blocks re-buying the same tier while its tag is still active', async () => {
+      const { service, assoRepo, purchaseRecordService, userTagService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle', cotisationMode: 'lifetime' }));
+      purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(1);
+      userTagService.hasActiveTag.mockResolvedValue(true);
+      const avecAlcool = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:cercle-avec-alcool',
+        variantKey: 'avec-alcool',
+      });
+
+      await expect(
+        (service as any).assertCanPurchase(avecAlcool, 'user1', true)
+      ).rejects.toThrow('You have already purchased this product');
+    });
+
+    it('allows buying the sibling tier product even after purchasing another tier', async () => {
+      const { service, purchaseRecordService } = makeService();
+      // Purchase history is tracked per-product, so the buyer's prior "avec-alcool" purchase
+      // does not count against a first purchase of the sibling "sans-alcool" product.
+      purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(0);
+      const sansAlcool = product({
+        type: 'membership',
+        grantedTagName: 'cotisant:cercle-sans-alcool',
+        variantKey: 'sans-alcool',
+      });
+
+      await expect(
+        (service as any).assertCanPurchase(sansAlcool, 'user1', true)
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('XOR sibling-tier revoke on fulfillment (WP-COT-2)', () => {
+    it('grants the new tier tag and revokes the sibling tier tag in the same transaction', async () => {
+      const { service, assoRepo, userTagService, manager } = makeService();
+      const cercle = asso({ slug: 'cercle', cotisationMode: 'lifetime' });
+      assoRepo.findOne.mockResolvedValue(cercle);
+      manager.findOne.mockResolvedValue(cercle);
+      const avecAlcool = product({
+        id: 'prod-avec',
+        type: 'membership',
+        grantedTagName: 'cotisant:cercle-avec-alcool',
+        variantKey: 'avec-alcool',
+      });
+      const sansAlcool = product({
+        id: 'prod-sans',
+        type: 'membership',
+        grantedTagName: 'cotisant:cercle-sans-alcool',
+        variantKey: 'sans-alcool',
+      });
+      manager.find.mockResolvedValue([avecAlcool, sansAlcool]);
+
+      await (service as any).fulfillProductPurchase({
+        product: avecAlcool,
+        userId: 'user1',
+        amountCents: 1000,
+        paymentMethod: 'cash',
+        stripePaymentIntentId: null,
+        grantedBy: 'admin1',
+        dispatchWebhook: false,
+      });
+
+      expect(userTagService.grantOrRenew).toHaveBeenCalledWith(
+        expect.objectContaining({ tagName: 'cotisant:cercle-avec-alcool' }),
+        manager
+      );
+      expect(userTagService.revokeByName).toHaveBeenCalledWith(
+        'user1',
+        'cotisant:cercle-sans-alcool',
+        manager
+      );
+    });
+
+    it('does not attempt a sibling revoke for a single-tier (no variantKey) product', async () => {
+      const { service, assoRepo, userTagService, manager } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'bde', cotisationMode: 'lifetime' }));
+      const single = product({ type: 'membership', grantedTagName: 'cotisant:bde' });
+
+      await (service as any).fulfillProductPurchase({
+        product: single,
+        userId: 'user1',
+        amountCents: 1000,
+        paymentMethod: 'cash',
+        stripePaymentIntentId: null,
+        grantedBy: 'admin1',
+        dispatchWebhook: false,
+      });
+
+      expect(userTagService.revokeByName).not.toHaveBeenCalled();
+      expect(manager.find).not.toHaveBeenCalled();
     });
   });
 });

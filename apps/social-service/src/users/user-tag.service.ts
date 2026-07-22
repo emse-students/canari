@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import { UserTag } from './entities/user-tag.entity';
 import { CotisationMode, deriveCotisationTag } from '../associations/cotisation-tag.util';
@@ -82,21 +82,23 @@ export class UserTagService {
   /**
    * Creates the tag or, if `(userId, tagName)` already exists, updates `expiresAt`
    * (and metadata) without changing `issuingAssocId` or `grantedBy`.
+   * Pass `manager` to run within an existing transaction (e.g. alongside a sibling-tier revoke).
    */
-  async grantOrRenew(data: GrantTagData): Promise<UserTag> {
-    const existing = await this.repo.findOne({
+  async grantOrRenew(data: GrantTagData, manager?: EntityManager): Promise<UserTag> {
+    const repo = manager ? manager.getRepository(UserTag) : this.repo;
+    const existing = await repo.findOne({
       where: { userId: data.userId, tagName: data.tagName },
     });
     if (existing) {
       existing.expiresAt = data.expiresAt !== undefined ? data.expiresAt : existing.expiresAt;
       if (data.metadata) existing.metadata = { ...existing.metadata, ...data.metadata };
-      const saved = await this.repo.save(existing);
+      const saved = await repo.save(existing);
       this.logger.log(
         `[UserTag] Renewed ${data.tagName} for ${data.userId} (expiresAt=${saved.expiresAt?.toISOString() ?? 'never'})`
       );
       return saved;
     }
-    const tag = this.repo.create({
+    const tag = repo.create({
       userId: data.userId,
       tagName: data.tagName,
       issuingAssocId: data.issuingAssocId ?? null,
@@ -104,9 +106,22 @@ export class UserTagService {
       expiresAt: data.expiresAt ?? null,
       metadata: data.metadata ?? {},
     });
-    const saved = await this.repo.save(tag);
+    const saved = await repo.save(tag);
     this.logger.log(`[UserTag] Granted ${data.tagName} to ${data.userId} by ${data.grantedBy}`);
     return saved;
+  }
+
+  /**
+   * Deletes a user's tag by name (rather than by primary key like `revoke`) - used for XOR
+   * sibling-tier enforcement, where the tag id isn't known ahead of time. No-op if not held.
+   * Pass `manager` to run within an existing transaction.
+   */
+  async revokeByName(userId: string, tagName: string, manager?: EntityManager): Promise<void> {
+    const repo = manager ? manager.getRepository(UserTag) : this.repo;
+    const res = await repo.delete({ userId, tagName });
+    if (res.affected) {
+      this.logger.log(`[UserTag] Revoked ${tagName} for ${userId} (sibling-tier switch)`);
+    }
   }
 
   /**

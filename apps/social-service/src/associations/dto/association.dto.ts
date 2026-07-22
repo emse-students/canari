@@ -444,6 +444,12 @@ export class CreateProductDto {
   @IsOptional()
   variantLevel?: number;
 
+  /** Sibling tier's tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  memberPriceTag?: string;
+
   @IsBoolean()
   @IsOptional()
   allowCustomAmount?: boolean;
@@ -545,6 +551,12 @@ export class UpdateProductDto {
   @IsInt()
   @IsOptional()
   variantLevel?: number | null;
+
+  /** Sibling tier's tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  memberPriceTag?: string | null;
 
   @IsBoolean()
   @IsOptional()

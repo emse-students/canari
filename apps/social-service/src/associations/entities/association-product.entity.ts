@@ -68,6 +68,15 @@ export class AssociationProduct {
   @Column({ type: 'int', nullable: true })
   variantLevel: number | null;
 
+  /**
+   * Tag name that, when held by the buyer, qualifies them for `amountCentsMember` on THIS
+   * product instead of the generic asso-wide cotisant check - the "pay the difference" lever
+   * for tier upgrades (e.g. the "avec-alcool" product sets this to the "sans-alcool" tier's tag
+   * so switchers only pay the delta). Null falls back to the generic `isBuyerCotisant` check.
+   */
+  @Column({ length: 100, nullable: true })
+  memberPriceTag: string | null;
+
   /** Whether the buyer may choose a custom amount (useful for topups). */
   @Column({ default: false })
   allowCustomAmount: boolean;

@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
@@ -431,7 +431,10 @@ export class ProductsService {
 
     let amountCents: number;
     if (product.amountCents !== null) {
-      if (isCotisant && product.amountCentsMember != null) {
+      const qualifiesForMemberPrice = product.memberPriceTag
+        ? await this.userTagService.hasActiveTag(userId, product.memberPriceTag)
+        : isCotisant;
+      if (qualifiesForMemberPrice && product.amountCentsMember != null) {
         amountCents = product.amountCentsMember;
         this.logger.debug(
           `[SHOP] member price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
@@ -757,10 +760,10 @@ export class ProductsService {
    * Resolves the tag name and expiry to grant for a product purchase.
    * Returns null for non-membership products or membership products with no tag configured.
    * For an association with an active cotisation mode, the tag is derived fresh from the current
-   * academic year (see `deriveCotisationTag`), so a purchase always grants the current period's
-   * tag even when the stored product tag has not been re-provisioned since the last yearly
-   * rollover. Falls back to the product's stored tag for membership products without a cotisation
-   * mode (arbitrary/legacy tags).
+   * academic year and the product's `variantKey` (see `deriveCotisationTag`), so a purchase always
+   * grants the current period's tier-specific tag even when the stored product tag has not been
+   * re-provisioned since the last yearly rollover. Falls back to the product's stored tag for
+   * membership products without a cotisation mode (arbitrary/legacy tags).
    */
   private async resolveGrantTag(
     product: AssociationProduct
@@ -768,9 +771,44 @@ export class ProductsService {
     if (product.type !== 'membership' || !product.grantedTagName) return null;
     const asso = await this.assoRepo.findOne({ where: { id: product.associationId } });
     if (asso?.cotisationMode) {
-      return deriveCotisationTag(asso.slug, asso.cotisationMode);
+      return deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), product.variantKey);
     }
     return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
+  }
+
+  /**
+   * XOR enforcement for multi-tier cotisations: when a purchased product carries a `variantKey`,
+   * revokes the buyer's tag(s) for the association's OTHER tiers (e.g. buying "avec-alcool"
+   * revokes an existing "sans-alcool" tag), so a cotisant holds exactly one tier at a time. A
+   * no-op for single-tier products (`variantKey` null) or associations without a cotisation mode.
+   * Runs inside the same transaction as the grant so a switch is atomic.
+   */
+  private async revokeSiblingTierTags(
+    manager: EntityManager,
+    product: AssociationProduct,
+    userId: string
+  ): Promise<void> {
+    if (!product.variantKey) return;
+    const asso = await manager.findOne(Association, { where: { id: product.associationId } });
+    if (!asso?.cotisationMode) return;
+
+    const siblings = await manager.find(AssociationProduct, {
+      where: {
+        associationId: product.associationId,
+        type: 'membership',
+        variantKey: Not(IsNull()),
+      },
+    });
+    for (const sibling of siblings) {
+      if (sibling.variantKey === product.variantKey) continue;
+      const siblingTag = deriveCotisationTag(
+        asso.slug,
+        asso.cotisationMode,
+        new Date(),
+        sibling.variantKey
+      );
+      await this.userTagService.revokeByName(userId, siblingTag.tagName, manager);
+    }
   }
 
   /** Grants tags, optionally dispatches webhooks, and persists the purchase record. */
@@ -795,19 +833,25 @@ export class ProductsService {
 
     const grant = await this.resolveGrantTag(product);
     if (grant) {
-      await this.userTagService.grantOrRenew({
-        userId,
-        tagName: grant.tagName,
-        issuingAssocId: product.associationId,
-        grantedBy,
-        expiresAt: grant.expiresAt,
-        metadata: {
-          productId: product.id,
-          paymentIntentId: stripePaymentIntentId,
-          manualGrant: paymentMethod === 'cash',
-        },
+      await this.productRepo.manager.transaction(async (manager) => {
+        await this.userTagService.grantOrRenew(
+          {
+            userId,
+            tagName: grant.tagName,
+            issuingAssocId: product.associationId,
+            grantedBy,
+            expiresAt: grant.expiresAt,
+            metadata: {
+              productId: product.id,
+              paymentIntentId: stripePaymentIntentId,
+              manualGrant: paymentMethod === 'cash',
+            },
+          },
+          manager
+        );
+        this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
+        await this.revokeSiblingTierTags(manager, product, userId);
       });
-      this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
     }
 
     if (
