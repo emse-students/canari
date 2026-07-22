@@ -4,34 +4,39 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-} from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, IsNull, Not, Repository } from 'typeorm';
-import { ConfigService } from '@nestjs/config';
-import { createHmac } from 'crypto';
-import { firstValueFrom } from 'rxjs';
-import * as ExcelJS from 'exceljs';
-import { AssociationProduct } from './entities/association-product.entity';
-import { WebhookDelivery } from './entities/webhook-delivery.entity';
-import { Association } from './entities/association.entity';
-import { UserTagService } from '../users/user-tag.service';
-import { PurchaseRecordService } from '../users/purchase-record.service';
-import { PurchaseRecord } from '../users/entities/purchase-record.entity';
-import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
-import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
-import { deriveCotisationTag } from './cotisation-tag.util';
-import { isDelegating, resolvePaymentTarget, type PaymentTarget } from './payment-delegation.util';
+} from "@nestjs/common";
+import { HttpService } from "@nestjs/axios";
+import { InjectRepository } from "@nestjs/typeorm";
+import { EntityManager, In, IsNull, Not, Repository } from "typeorm";
+import { ConfigService } from "@nestjs/config";
+import { createHmac } from "crypto";
+import { firstValueFrom } from "rxjs";
+import * as ExcelJS from "exceljs";
+import { AssociationProduct } from "./entities/association-product.entity";
+import { WebhookDelivery } from "./entities/webhook-delivery.entity";
+import { Association } from "./entities/association.entity";
+import { UserTagService } from "../users/user-tag.service";
+import { PurchaseRecordService } from "../users/purchase-record.service";
+import { PurchaseRecord } from "../users/entities/purchase-record.entity";
+import { resolveStripeCallbackUrl } from "../common/stripe-callback-url";
+import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from "./dto/association.dto";
+import { deriveCotisationTag, tierVariantKeys } from "./cotisation-tag.util";
+import { isDelegating, resolvePaymentTarget, type PaymentTarget } from "./payment-delegation.util";
 
 /** Delays used between Cercle webhook delivery attempts (ms). */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
 
 /**
- * A shop product annotated with whether the requesting user is an active cotisant of its
- * association. Lets the client gate/label members-only products without mirroring the
- * cotisation-tag derivation client-side (the flag is computed authoritatively server-side).
+ * A shop product annotated with the requesting user's cotisation status for its association:
+ * whether they hold ANY active tier tag (back-compat `membersOnly`/generic semantics), and which
+ * specific tier (`variantKey`) they currently hold, if any (WP-COT-3). Lets the client gate/label
+ * members-only products without mirroring the cotisation-tag derivation client-side (both flags
+ * are computed authoritatively server-side).
  */
-export type ShopProduct = AssociationProduct & { viewerIsCotisant: boolean };
+export type ShopProduct = AssociationProduct & {
+  viewerIsCotisant: boolean;
+  viewerActiveTier: string | null;
+};
 
 /** Boutique CRUD, Stripe Checkout creation, and Cercle webhook dispatch for association products. */
 @Injectable()
@@ -48,7 +53,7 @@ export class ProductsService {
     private readonly httpService: HttpService,
     private readonly config: ConfigService,
     private readonly userTagService: UserTagService,
-    private readonly purchaseRecordService: PurchaseRecordService
+    private readonly purchaseRecordService: PurchaseRecordService,
   ) {}
 
   /**
@@ -66,43 +71,76 @@ export class ProductsService {
 
   /**
    * Returns all active products across all associations (login required, listed on /shop), each
-   * annotated with `viewerIsCotisant` for `userId` so the client can gate/label members-only
-   * products without mirroring the cotisation-tag derivation.
+   * annotated with `viewerIsCotisant`/`viewerActiveTier` for `userId` so the client can gate/label
+   * members-only products without mirroring the cotisation-tag derivation.
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
     const products = await this.productRepo.find({
       where: { isActive: true },
-      order: { associationId: 'ASC', sortOrder: 'ASC', createdAt: 'ASC' },
+      order: { associationId: "ASC", sortOrder: "ASC", createdAt: "ASC" },
     });
-    const cotisantAssocIds = await this.cotisantAssocIdsFor(userId, [
+    const statusByAssoc = await this.cotisantStatusFor(userId, [
       ...new Set(products.map((p) => p.associationId)),
     ]);
-    return products.map((p) => ({
-      ...p,
-      viewerIsCotisant: cotisantAssocIds.has(p.associationId),
-    }));
+    return products.map((p) => {
+      const status = statusByAssoc.get(p.associationId);
+      return {
+        ...p,
+        viewerIsCotisant: status?.isCotisant ?? false,
+        viewerActiveTier: status?.activeTier ?? null,
+      };
+    });
   }
 
   /**
-   * Given a user and a set of association ids, returns the subset for which the user holds the
-   * association's current active cotisation tag (`deriveCotisationTag`). Loads the user's active
-   * tags once and matches them locally, so annotating N products costs a single tag query.
+   * Given a user and a set of association ids, returns per-association cotisation status: whether
+   * the user holds ANY active tier tag for it (`isCotisant`, back-compat `membersOnly`/generic
+   * semantics - see `isBuyerCotisant`), and which specific tier (`variantKey`) they currently hold,
+   * if any (`activeTier`, WP-COT-3). Loads each association's tiered products and the user's active
+   * tags once, so annotating N products costs a fixed number of queries regardless of product count.
    */
-  private async cotisantAssocIdsFor(userId: string, assocIds: string[]): Promise<Set<string>> {
-    if (assocIds.length === 0) return new Set();
-    const [assos, activeTags] = await Promise.all([
+  private async cotisantStatusFor(
+    userId: string,
+    assocIds: string[],
+  ): Promise<Map<string, { isCotisant: boolean; activeTier: string | null }>> {
+    const result = new Map<string, { isCotisant: boolean; activeTier: string | null }>();
+    if (assocIds.length === 0) return result;
+    const [assos, tierProducts, activeTags] = await Promise.all([
       this.assoRepo.find({
         where: { id: In(assocIds) },
         select: { id: true, slug: true, cotisationMode: true },
       }),
+      this.productRepo.find({
+        where: { associationId: In(assocIds), type: "membership", isActive: true },
+        select: { associationId: true, variantKey: true },
+      }),
       this.userTagService.listByUser(userId),
     ]);
     const activeTagNames = new Set(activeTags.map((t) => t.tagName));
-    const result = new Set<string>();
+    const tiersByAssoc = new Map<string, { variantKey: string | null }[]>();
+    for (const p of tierProducts) {
+      const list = tiersByAssoc.get(p.associationId) ?? [];
+      list.push({ variantKey: p.variantKey });
+      tiersByAssoc.set(p.associationId, list);
+    }
     for (const asso of assos) {
       if (!asso.cotisationMode) continue;
-      const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode);
-      if (activeTagNames.has(tagName)) result.add(asso.id);
+      let isCotisant = false;
+      let activeTier: string | null = null;
+      for (const variantKey of tierVariantKeys(tiersByAssoc.get(asso.id) ?? [])) {
+        const { tagName } = deriveCotisationTag(
+          asso.slug,
+          asso.cotisationMode,
+          new Date(),
+          variantKey,
+        );
+        if (activeTagNames.has(tagName)) {
+          isCotisant = true;
+          activeTier = variantKey;
+          break;
+        }
+      }
+      result.set(asso.id, { isCotisant, activeTier });
     }
     return result;
   }
@@ -111,7 +149,7 @@ export class ProductsService {
   async listByAssoc(associationId: string): Promise<AssociationProduct[]> {
     return this.productRepo.find({
       where: { associationId, isActive: true },
-      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+      order: { sortOrder: "ASC", createdAt: "ASC" },
     });
   }
 
@@ -119,7 +157,7 @@ export class ProductsService {
   async listAllByAssoc(associationId: string): Promise<AssociationProduct[]> {
     return this.productRepo.find({
       where: { associationId },
-      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+      order: { sortOrder: "ASC", createdAt: "ASC" },
     });
   }
 
@@ -132,29 +170,29 @@ export class ProductsService {
   async create(
     associationId: string,
     dto: CreateProductDto,
-    isGlobalAdmin: boolean
+    isGlobalAdmin: boolean,
   ): Promise<AssociationProduct> {
     this.logger.debug(
-      `[SHOP] create product: association=${associationId.slice(0, 8)} type=${dto.type} isGlobalAdmin=${isGlobalAdmin}`
+      `[SHOP] create product: association=${associationId.slice(0, 8)} type=${dto.type} isGlobalAdmin=${isGlobalAdmin}`,
     );
-    if (dto.type === 'balance_topup' && !isGlobalAdmin) {
+    if (dto.type === "balance_topup" && !isGlobalAdmin) {
       this.logger.debug(
-        `[CERCLE] rejected balance_topup creation by non-global-admin for association=${associationId.slice(0, 8)}`
+        `[CERCLE] rejected balance_topup creation by non-global-admin for association=${associationId.slice(0, 8)}`,
       );
       throw new ForbiddenException(
-        'Only platform global admins may create Cercle balance_topup products'
+        "Only platform global admins may create Cercle balance_topup products",
       );
     }
 
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-    if (!asso) throw new NotFoundException('Association not found');
+    if (!asso) throw new NotFoundException("Association not found");
 
     if (
       dto.customAmountMinCents !== undefined &&
       dto.customAmountMaxCents !== undefined &&
       dto.customAmountMinCents > dto.customAmountMaxCents
     ) {
-      throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
+      throw new BadRequestException("customAmountMinCents must be ≤ customAmountMaxCents");
     }
 
     const { webhookUrl, webhookSecret, ...rest } = dto;
@@ -164,7 +202,7 @@ export class ProductsService {
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
     const product = this.productRepo.create({
       ...rest,
-      currency: 'eur',
+      currency: "eur",
       associationId,
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
@@ -184,19 +222,19 @@ export class ProductsService {
     associationId: string,
     productId: string,
     dto: UpdateProductDto,
-    isGlobalAdmin: boolean
+    isGlobalAdmin: boolean,
   ): Promise<AssociationProduct> {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product) throw new NotFoundException("Product not found");
 
-    if (product.type === 'balance_topup' && !isGlobalAdmin) {
+    if (product.type === "balance_topup" && !isGlobalAdmin) {
       this.logger.debug(
-        `[CERCLE] rejected balance_topup update by non-global-admin for product=${productId.slice(0, 8)}`
+        `[CERCLE] rejected balance_topup update by non-global-admin for product=${productId.slice(0, 8)}`,
       );
       throw new ForbiddenException(
-        'Only platform global admins may modify Cercle balance_topup products'
+        "Only platform global admins may modify Cercle balance_topup products",
       );
     }
 
@@ -209,10 +247,10 @@ export class ProductsService {
       maxCents !== undefined &&
       minCents > maxCents
     ) {
-      throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
+      throw new BadRequestException("customAmountMinCents must be ≤ customAmountMaxCents");
     }
 
-    Object.assign(product, dto, { currency: 'eur' });
+    Object.assign(product, dto, { currency: "eur" });
     return this.productRepo.save(product);
   }
 
@@ -221,7 +259,7 @@ export class ProductsService {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product) throw new NotFoundException("Product not found");
     await this.productRepo.remove(product);
   }
 
@@ -239,27 +277,27 @@ export class ProductsService {
    */
   async provisionCotisationProduct(asso: Association): Promise<AssociationProduct> {
     this.logger.debug(
-      `[COTISATION] provisioning canonical product: association=${asso.id.slice(0, 8)} mode=${asso.cotisationMode}`
+      `[COTISATION] provisioning canonical product: association=${asso.id.slice(0, 8)} mode=${asso.cotisationMode}`,
     );
     if (!asso.cotisationMode) {
-      throw new BadRequestException('cotisationMode is required when cotisationEnabled is true');
+      throw new BadRequestException("cotisationMode is required when cotisationEnabled is true");
     }
 
     const { tagName, expiresAt } = deriveCotisationTag(asso.slug, asso.cotisationMode);
 
     let product = await this.productRepo.findOne({
-      where: { associationId: asso.id, type: 'membership' },
+      where: { associationId: asso.id, type: "membership" },
     });
 
     if (!product) {
       this.logger.log(
-        `[COTISATION] creating canonical membership product for association=${asso.id.slice(0, 8)} tag=${tagName}`
+        `[COTISATION] creating canonical membership product for association=${asso.id.slice(0, 8)} tag=${tagName}`,
       );
       product = this.productRepo.create({
         associationId: asso.id,
-        name: 'Cotisation',
-        currency: 'eur',
-        type: 'membership',
+        name: "Cotisation",
+        currency: "eur",
+        type: "membership",
         grantedTagName: tagName,
         tagExpiresAt: expiresAt,
         // Active once payments can be taken - own account or an approved parent's (delegation).
@@ -267,7 +305,7 @@ export class ProductsService {
       });
     } else {
       this.logger.log(
-        `[COTISATION] updating canonical membership product tag for association=${asso.id.slice(0, 8)} tag=${tagName}`
+        `[COTISATION] updating canonical membership product tag for association=${asso.id.slice(0, 8)} tag=${tagName}`,
       );
       product.grantedTagName = tagName;
       product.tagExpiresAt = expiresAt;
@@ -287,19 +325,19 @@ export class ProductsService {
     productId: string,
     userId: string,
     customAmountCents?: number,
-    callbackUrls?: { successUrl?: string; cancelUrl?: string }
+    callbackUrls?: { successUrl?: string; cancelUrl?: string },
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
     const { product, amountCents, paymentTarget } = await this.resolvePurchase(
       associationId,
       productId,
       userId,
-      customAmountCents
+      customAmountCents,
     );
 
     const paymentBase = (
-      this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://core-service:3012'
-    ).replace(/\/$/, '');
-    const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost';
+      this.config.get<string>("PAYMENT_SERVICE_URL") ?? "http://core-service:3012"
+    ).replace(/\/$/, "");
+    const frontendUrl = this.config.get<string>("FRONTEND_URL") ?? "http://localhost";
 
     // Resolve the Stripe customer ID so the card gets saved after checkout
     let customerId: string | undefined;
@@ -308,8 +346,8 @@ export class ProductsService {
         this.httpService.post<{ customerId: string | null }>(
           `${paymentBase}/api/payments/internal/customer-id`,
           { userId },
-          { maxRedirects: 0 }
-        )
+          { maxRedirects: 0 },
+        ),
       );
       customerId = resp.data.customerId ?? undefined;
     } catch {
@@ -319,12 +357,12 @@ export class ProductsService {
     const successUrl = resolveStripeCallbackUrl(
       callbackUrls?.successUrl,
       `${frontendUrl}/shop?purchase_success=1&productId=${product.id}`,
-      frontendUrl
+      frontendUrl,
     );
     const cancelUrl = resolveStripeCallbackUrl(
       callbackUrls?.cancelUrl,
       `${frontendUrl}/shop?purchase_cancel=1`,
-      frontendUrl
+      frontendUrl,
     );
 
     const resp = await firstValueFrom(
@@ -347,16 +385,16 @@ export class ProductsService {
           stripeConnectAccountId: paymentTarget.stripeAccountId,
           customerId,
         },
-        { maxRedirects: 0 }
-      )
+        { maxRedirects: 0 },
+      ),
     );
 
     if (!resp.data?.url) {
-      throw new BadRequestException('Payment service did not return a checkout URL');
+      throw new BadRequestException("Payment service did not return a checkout URL");
     }
 
     this.logger.log(
-      `[SHOP] Checkout session created: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`
+      `[SHOP] Checkout session created: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`,
     );
     return { checkoutUrl: resp.data.url, amountCents, currency: product.currency };
   }
@@ -369,7 +407,7 @@ export class ProductsService {
     associationId: string,
     productId: string,
     userId: string,
-    customAmountCents?: number
+    customAmountCents?: number,
   ): Promise<{
     productId: string;
     userId: string;
@@ -381,10 +419,10 @@ export class ProductsService {
       associationId,
       productId,
       userId,
-      customAmountCents
+      customAmountCents,
     );
     this.logger.debug(
-      `[SHOP] charge context: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+      `[SHOP] charge context: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`,
     );
     return {
       productId: product.id,
@@ -401,7 +439,7 @@ export class ProductsService {
     associationId: string,
     productId: string,
     userId: string,
-    customAmountCents?: number
+    customAmountCents?: number,
   ): Promise<{
     asso: Association;
     product: AssociationProduct;
@@ -413,16 +451,16 @@ export class ProductsService {
       this.productRepo.findOne({ where: { id: productId, associationId } }),
     ]);
 
-    if (!asso) throw new NotFoundException('Association not found');
-    if (!product || !product.isActive) throw new NotFoundException('Product not found or inactive');
+    if (!asso) throw new NotFoundException("Association not found");
+    if (!product || !product.isActive) throw new NotFoundException("Product not found or inactive");
 
     // Route to the association's own account, or an approved parent's when delegating.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
     if (!paymentTarget.ready || !paymentTarget.stripeAccountId) {
       throw new BadRequestException(
         paymentTarget.delegated
-          ? 'The parent association this club delegates payments to has not completed Stripe Connect onboarding'
-          : 'Association has not completed Stripe Connect onboarding'
+          ? "The parent association this club delegates payments to has not completed Stripe Connect onboarding"
+          : "Association has not completed Stripe Connect onboarding",
       );
     }
 
@@ -437,7 +475,7 @@ export class ProductsService {
       if (qualifiesForMemberPrice && product.amountCentsMember != null) {
         amountCents = product.amountCentsMember;
         this.logger.debug(
-          `[SHOP] member price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+          `[SHOP] member price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`,
         );
       } else {
         amountCents = product.amountCents;
@@ -450,7 +488,7 @@ export class ProductsService {
       }
       amountCents = customAmountCents;
     } else {
-      throw new BadRequestException('No amount provided for this product');
+      throw new BadRequestException("No amount provided for this product");
     }
 
     return { asso, product, amountCents, paymentTarget };
@@ -464,12 +502,12 @@ export class ProductsService {
     Array<{
       id: string;
       userId: string;
-      source: 'form' | 'product';
+      source: "form" | "product";
       productId: string | null;
       formId: string | null;
       productName: string;
       amountCents: number;
-      paymentMethod: 'stripe' | 'cash';
+      paymentMethod: "stripe" | "cash";
       paidAt: string;
       firstName: string | null;
       lastName: string | null;
@@ -485,36 +523,36 @@ export class ProductsService {
    * an approved parent's delegated-accounting view. Columns match the treasurer-facing table.
    */
   async exportAssociationPurchases(
-    associationId: string
+    associationId: string,
   ): Promise<{ buffer: Buffer; title: string }> {
     this.logger.debug(`[SHOP] exportAssociationPurchases assoc=${associationId.slice(0, 8)}`);
     const nameRows: { name: string }[] = await this.productRepo.manager.query(
       `SELECT name FROM associations WHERE id = $1`,
-      [associationId]
+      [associationId],
     );
-    const assocName = nameRows[0]?.name ?? 'achats';
+    const assocName = nameRows[0]?.name ?? "achats";
     const purchases = await this.listAssociationPurchases(associationId);
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Achats');
+    const sheet = workbook.addWorksheet("Achats");
     sheet.columns = [
-      { header: 'Nom', key: 'lastName', width: 20 },
-      { header: 'Prénom', key: 'firstName', width: 20 },
-      { header: 'Type', key: 'source', width: 12 },
-      { header: 'Produit', key: 'productName', width: 30 },
-      { header: 'Montant', key: 'amount', width: 12, style: { numFmt: '0.00 "€"' } },
-      { header: 'Paiement', key: 'paymentMethod', width: 12 },
-      { header: 'Date', key: 'paidAt', width: 18, style: { numFmt: 'dd/mm/yyyy hh:mm' } },
+      { header: "Nom", key: "lastName", width: 20 },
+      { header: "Prénom", key: "firstName", width: 20 },
+      { header: "Type", key: "source", width: 12 },
+      { header: "Produit", key: "productName", width: 30 },
+      { header: "Montant", key: "amount", width: 12, style: { numFmt: '0.00 "€"' } },
+      { header: "Paiement", key: "paymentMethod", width: 12 },
+      { header: "Date", key: "paidAt", width: 18, style: { numFmt: "dd/mm/yyyy hh:mm" } },
     ];
 
     purchases.forEach((p) => {
       sheet.addRow({
-        lastName: p.lastName ?? '',
-        firstName: p.firstName ?? '',
-        source: p.source === 'form' ? 'Formulaire' : 'Boutique',
+        lastName: p.lastName ?? "",
+        firstName: p.firstName ?? "",
+        source: p.source === "form" ? "Formulaire" : "Boutique",
         productName: p.productName,
         amount: p.amountCents / 100,
-        paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'Stripe',
+        paymentMethod: p.paymentMethod === "cash" ? "Espèces" : "Stripe",
         paidAt: new Date(p.paidAt),
       });
     });
@@ -529,7 +567,7 @@ export class ProductsService {
    */
   async listProductPurchases(
     associationId: string,
-    productId: string
+    productId: string,
   ): Promise<
     Array<{
       id: string;
@@ -541,7 +579,7 @@ export class ProductsService {
     }>
   > {
     const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product) throw new NotFoundException("Product not found");
 
     const records = await this.purchaseRecordService.listPaidByProduct(productId);
     return this.enrichPurchaseRecords(records);
@@ -552,12 +590,12 @@ export class ProductsService {
     Array<{
       id: string;
       userId: string;
-      source: 'form' | 'product';
+      source: "form" | "product";
       productId: string | null;
       formId: string | null;
       productName: string;
       amountCents: number;
-      paymentMethod: 'stripe' | 'cash';
+      paymentMethod: "stripe" | "cash";
       paidAt: string;
       firstName: string | null;
       lastName: string | null;
@@ -569,7 +607,7 @@ export class ProductsService {
       const rows: { id: string; firstName: string | null; lastName: string | null }[] =
         await this.productRepo.manager.query(
           `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
-          [userIds]
+          [userIds],
         );
       rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
     }
@@ -590,41 +628,76 @@ export class ProductsService {
   }
 
   /**
-   * Returns true when the user holds the association's current active cotisation tag
-   * (see `deriveCotisationTag`). Always false when the association has no cotisation
-   * mode configured (`cotisationMode` null), regardless of `cotisationEnabled`.
+   * Returns true when the user holds ANY of the association's active tier tags (see
+   * `deriveCotisationTag`/`tierVariantKeys`) - i.e. is a cotisant of at least one tier, regardless
+   * of which. Kept deliberately generic (not tier-specific) so `membersOnly` gating and the Cercle
+   * `balance_topup` recharge stay open to every forfait, per-tier gating being what `requiredTags`
+   * is for. Always false when the association has no cotisation mode configured (`cotisationMode`
+   * null), regardless of `cotisationEnabled`.
    */
   private async isBuyerCotisant(asso: Association, userId: string): Promise<boolean> {
     if (!asso.cotisationMode) return false;
-    const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode);
-    return this.userTagService.hasActiveTag(userId, tagName);
+    const tiers = await this.productRepo.find({
+      where: { associationId: asso.id, type: "membership", isActive: true },
+      select: { variantKey: true },
+    });
+    for (const variantKey of tierVariantKeys(tiers)) {
+      const { tagName } = deriveCotisationTag(
+        asso.slug,
+        asso.cotisationMode,
+        new Date(),
+        variantKey,
+      );
+      if (await this.userTagService.hasActiveTag(userId, tagName)) return true;
+    }
+    return false;
+  }
+
+  /** Returns true when the user holds at least one of the given tag names. */
+  private async hasAnyActiveTag(userId: string, tagNames: string[]): Promise<boolean> {
+    for (const tagName of tagNames) {
+      if (await this.userTagService.hasActiveTag(userId, tagName)) return true;
+    }
+    return false;
   }
 
   /** Enforces member-gating, per-user/global purchase limits, and membership renewal rules. */
   private async assertCanPurchase(
     product: AssociationProduct,
     userId: string,
-    isCotisant: boolean
+    isCotisant: boolean,
   ): Promise<void> {
+    const requiredTags = product.requiredTags ?? [];
     this.logger.debug(
-      `[SHOP] assertCanPurchase: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} membersOnly=${product.membersOnly} isCotisant=${isCotisant}`
+      `[SHOP] assertCanPurchase: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} membersOnly=${product.membersOnly} requiredTags=${requiredTags.length} isCotisant=${isCotisant}`,
     );
-    if (product.membersOnly && !isCotisant) {
+    // requiredTags generalizes membersOnly (any listed tag, not just the asso's own cotisation
+    // tiers) and takes precedence when set; membersOnly falls back to "any active tier tag of
+    // the owning association" (isCotisant, back-compat).
+    const gateFailed =
+      requiredTags.length > 0
+        ? !(await this.hasAnyActiveTag(userId, requiredTags))
+        : product.membersOnly && !isCotisant;
+    if (gateFailed) {
       this.logger.debug(
-        `[SHOP] rejected: product=${product.id.slice(0, 8)} is reserved to cotisants, user=${userId.slice(0, 8)} is not one`
+        `[SHOP] rejected: product=${product.id.slice(0, 8)} gating not satisfied for user=${userId.slice(0, 8)}`,
       );
-      throw new ForbiddenException("This product is reserved to the association's cotisants");
+      throw new ForbiddenException(
+        requiredTags.length > 0
+          ? "This product is reserved to users holding one of the required tags"
+          : "This product is reserved to the association's cotisants",
+      );
     }
 
     const paidCount = await this.purchaseRecordService.countPaidByUserAndProduct(
       userId,
-      product.id
+      product.id,
     );
 
     if (product.maxPurchasesTotal != null) {
       const totalPaid = await this.purchaseRecordService.countPaidByProduct(product.id);
       if (totalPaid >= product.maxPurchasesTotal) {
-        throw new BadRequestException('Ce produit est en rupture de stock');
+        throw new BadRequestException("Ce produit est en rupture de stock");
       }
     }
 
@@ -637,7 +710,7 @@ export class ProductsService {
 
     if (paidCount === 0) return;
 
-    if (product.type === 'membership' && product.grantedTagName) {
+    if (product.type === "membership" && product.grantedTagName) {
       // Renewal: allow re-buying once the CURRENT tag has expired. Resolve the effective tag
       // (derived per academic year for cotisation-mode associations) rather than the stored one,
       // so the check stays correct across a yearly rollover.
@@ -648,7 +721,7 @@ export class ProductsService {
       }
     }
 
-    throw new BadRequestException('You have already purchased this product');
+    throw new BadRequestException("You have already purchased this product");
   }
 
   /**
@@ -659,28 +732,28 @@ export class ProductsService {
     associationId: string,
     productId: string,
     grantedBy: string,
-    dto: GrantProductPurchaseDto
+    dto: GrantProductPurchaseDto,
   ): Promise<{
     id: string;
     userId: string;
-    source: 'form' | 'product';
+    source: "form" | "product";
     productId: string | null;
     formId: string | null;
     productName: string;
     amountCents: number;
-    paymentMethod: 'stripe' | 'cash';
+    paymentMethod: "stripe" | "cash";
     paidAt: string;
     firstName: string | null;
     lastName: string | null;
   }> {
     const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product) throw new NotFoundException("Product not found");
 
     const userRows: { id: string }[] = await this.productRepo.manager.query(
       `SELECT id FROM users WHERE id = $1`,
-      [dto.userId]
+      [dto.userId],
     );
-    if (userRows.length === 0) throw new NotFoundException('User not found');
+    if (userRows.length === 0) throw new NotFoundException("User not found");
 
     let amountCents: number;
     if (dto.amountCents != null) {
@@ -688,7 +761,7 @@ export class ProductsService {
     } else if (product.amountCents != null) {
       amountCents = product.amountCents;
     } else {
-      throw new BadRequestException('amountCents is required for this product');
+      throw new BadRequestException("amountCents is required for this product");
     }
 
     if (product.allowCustomAmount && product.customAmountMinCents != null) {
@@ -700,14 +773,14 @@ export class ProductsService {
     }
 
     this.logger.log(
-      `[SHOP] manual grant: product=${productId.slice(0, 8)} user=${dto.userId.slice(0, 8)} by=${grantedBy.slice(0, 8)}`
+      `[SHOP] manual grant: product=${productId.slice(0, 8)} user=${dto.userId.slice(0, 8)} by=${grantedBy.slice(0, 8)}`,
     );
 
     const record = await this.fulfillProductPurchase({
       product,
       userId: dto.userId,
       amountCents,
-      paymentMethod: 'cash',
+      paymentMethod: "cash",
       stripePaymentIntentId: null,
       grantedBy,
       dispatchWebhook: false,
@@ -727,7 +800,7 @@ export class ProductsService {
     productId: string,
     userId: string,
     amountCents: number,
-    paymentIntentId: string
+    paymentIntentId: string,
   ): Promise<void> {
     const existing = await this.purchaseRecordService.findByPaymentIntent(paymentIntentId);
     if (existing) {
@@ -745,14 +818,14 @@ export class ProductsService {
       product,
       userId,
       amountCents,
-      paymentMethod: 'stripe',
+      paymentMethod: "stripe",
       stripePaymentIntentId: paymentIntentId,
-      grantedBy: 'system',
+      grantedBy: "system",
       dispatchWebhook: true,
     });
 
     this.logger.log(
-      `[SHOP] purchase completed: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}`
+      `[SHOP] purchase completed: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}`,
     );
   }
 
@@ -766,9 +839,9 @@ export class ProductsService {
    * membership products without a cotisation mode (arbitrary/legacy tags).
    */
   private async resolveGrantTag(
-    product: AssociationProduct
+    product: AssociationProduct,
   ): Promise<{ tagName: string; expiresAt: Date | null } | null> {
-    if (product.type !== 'membership' || !product.grantedTagName) return null;
+    if (product.type !== "membership" || !product.grantedTagName) return null;
     const asso = await this.assoRepo.findOne({ where: { id: product.associationId } });
     if (asso?.cotisationMode) {
       return deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), product.variantKey);
@@ -786,7 +859,7 @@ export class ProductsService {
   private async revokeSiblingTierTags(
     manager: EntityManager,
     product: AssociationProduct,
-    userId: string
+    userId: string,
   ): Promise<void> {
     if (!product.variantKey) return;
     const asso = await manager.findOne(Association, { where: { id: product.associationId } });
@@ -795,7 +868,7 @@ export class ProductsService {
     const siblings = await manager.find(AssociationProduct, {
       where: {
         associationId: product.associationId,
-        type: 'membership',
+        type: "membership",
         variantKey: Not(IsNull()),
       },
     });
@@ -805,7 +878,7 @@ export class ProductsService {
         asso.slug,
         asso.cotisationMode,
         new Date(),
-        sibling.variantKey
+        sibling.variantKey,
       );
       await this.userTagService.revokeByName(userId, siblingTag.tagName, manager);
     }
@@ -816,7 +889,7 @@ export class ProductsService {
     product: AssociationProduct;
     userId: string;
     amountCents: number;
-    paymentMethod: 'stripe' | 'cash';
+    paymentMethod: "stripe" | "cash";
     stripePaymentIntentId: string | null;
     grantedBy: string;
     dispatchWebhook: boolean;
@@ -844,10 +917,10 @@ export class ProductsService {
             metadata: {
               productId: product.id,
               paymentIntentId: stripePaymentIntentId,
-              manualGrant: paymentMethod === 'cash',
+              manualGrant: paymentMethod === "cash",
             },
           },
-          manager
+          manager,
         );
         this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
         await this.revokeSiblingTierTags(manager, product, userId);
@@ -856,7 +929,7 @@ export class ProductsService {
 
     if (
       dispatchWebhook &&
-      product.type === 'balance_topup' &&
+      product.type === "balance_topup" &&
       product.webhookUrl &&
       product.webhookSecret &&
       stripePaymentIntentId
@@ -866,11 +939,11 @@ export class ProductsService {
 
     return this.purchaseRecordService.create({
       userId,
-      source: 'product',
+      source: "product",
       productId: product.id,
       amountCents,
       paymentMethod,
-      status: 'paid',
+      status: "paid",
       stripePaymentIntentId,
       associationId: product.associationId,
       productName: product.name,
@@ -887,7 +960,7 @@ export class ProductsService {
     product: AssociationProduct,
     userId: string,
     amountCents: number,
-    paymentIntentId: string
+    paymentIntentId: string,
   ): Promise<void> {
     const delivery = await this.deliveryRepo.save(
       this.deliveryRepo.create({
@@ -895,8 +968,8 @@ export class ProductsService {
         userId,
         amountCents,
         paymentIntentId,
-        status: 'pending',
-      })
+        status: "pending",
+      }),
     );
 
     const payload = JSON.stringify({
@@ -907,9 +980,9 @@ export class ProductsService {
       timestamp: new Date().toISOString(),
     });
 
-    const signature = createHmac('sha256', product.webhookSecret).update(payload).digest('hex');
+    const signature = createHmac("sha256", product.webhookSecret).update(payload).digest("hex");
 
-    let lastError = '';
+    let lastError = "";
     for (let i = 0; i < CERCLE_RETRY_DELAYS.length; i++) {
       if (i > 0) {
         await new Promise((r) => setTimeout(r, CERCLE_RETRY_DELAYS[i]));
@@ -921,33 +994,33 @@ export class ProductsService {
         await firstValueFrom(
           this.httpService.post(product.webhookUrl, payload, {
             headers: {
-              'Content-Type': 'application/json',
-              'X-Canari-Signature': `sha256=${signature}`,
+              "Content-Type": "application/json",
+              "X-Canari-Signature": `sha256=${signature}`,
             },
             timeout: 10_000,
             maxRedirects: 0,
             validateStatus: (s) => s >= 200 && s < 300,
-          })
+          }),
         );
 
-        delivery.status = 'delivered';
+        delivery.status = "delivered";
         delivery.lastError = null;
         await this.deliveryRepo.save(delivery);
         this.logger.log(
-          `[CERCLE] webhook delivered: product=${product.id.slice(0, 8)} attempt=${i + 1}`
+          `[CERCLE] webhook delivered: product=${product.id.slice(0, 8)} attempt=${i + 1}`,
         );
         return;
       } catch (err: unknown) {
-        lastError = err instanceof Error ? err.message : '[unknown error]';
+        lastError = err instanceof Error ? err.message : "[unknown error]";
         this.logger.warn(`[CERCLE] webhook attempt ${i + 1} failed: ${lastError}`);
       }
     }
 
-    delivery.status = 'failed';
+    delivery.status = "failed";
     delivery.lastError = lastError;
     await this.deliveryRepo.save(delivery);
     this.logger.error(
-      `[CERCLE] all ${CERCLE_RETRY_DELAYS.length} attempts failed for product=${product.id.slice(0, 8)}`
+      `[CERCLE] all ${CERCLE_RETRY_DELAYS.length} attempts failed for product=${product.id.slice(0, 8)}`,
     );
   }
 
@@ -962,28 +1035,28 @@ export class ProductsService {
     if (productIds.length === 0) return [];
 
     return this.deliveryRepo
-      .createQueryBuilder('d')
-      .where('d.productId IN (:...ids)', { ids: productIds })
+      .createQueryBuilder("d")
+      .where("d.productId IN (:...ids)", { ids: productIds })
       .andWhere("d.status = 'failed'")
-      .orderBy('d.createdAt', 'DESC')
+      .orderBy("d.createdAt", "DESC")
       .getMany();
   }
 
   /** Retries a failed webhook delivery once. */
   async retryWebhookDelivery(deliveryId: string): Promise<void> {
     const delivery = await this.deliveryRepo.findOne({ where: { id: deliveryId } });
-    if (!delivery) throw new NotFoundException('Webhook delivery not found');
+    if (!delivery) throw new NotFoundException("Webhook delivery not found");
 
     const product = await this.productRepo.findOne({ where: { id: delivery.productId } });
     if (!product || !product.webhookUrl || !product.webhookSecret) {
-      throw new BadRequestException('Product webhook not configured');
+      throw new BadRequestException("Product webhook not configured");
     }
 
     await this.dispatchCercleWebhook(
       product,
       delivery.userId,
       delivery.amountCents,
-      delivery.paymentIntentId
+      delivery.paymentIntentId,
     );
   }
 }

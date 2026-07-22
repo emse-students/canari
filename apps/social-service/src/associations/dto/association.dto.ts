@@ -16,9 +16,9 @@ import {
   MaxLength,
   Min,
   ValidateIf,
-} from 'class-validator';
-import { Type } from 'class-transformer';
-import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
+} from "class-validator";
+import { Type } from "class-transformer";
+import { AssociationCalendarEventKind } from "../entities/association-calendar-event.entity";
 
 export class ReorderMembersDto {
   /** Ordered list of member user IDs - position in the array becomes the new sortOrder. */
@@ -37,7 +37,7 @@ export class CreateAssociationDto {
   @IsNotEmpty()
   @MaxLength(60)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
-    message: 'slug must be lowercase alphanumeric with hyphens',
+    message: "slug must be lowercase alphanumeric with hyphens",
   })
   slug: string;
 
@@ -62,9 +62,9 @@ export class CreateAssociationDto {
   contactEmail?: string;
 
   /** 'association' (default) or 'list' (promo list). */
-  @IsIn(['association', 'list'])
+  @IsIn(["association", "list"])
   @IsOptional()
-  type?: 'association' | 'list';
+  type?: "association" | "list";
 
   /** Lists only: the promotion year the list belongs to (e.g. 2027). */
   @IsInt()
@@ -130,7 +130,7 @@ export class UpdateAssociationDto {
 
   /** Primary thematic category id (managed table). Pass `""`/`null` to clear (uncategorised). */
   @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @ValidateIf((_, v) => typeof v === "string" && v.length > 0)
   @IsUUID()
   categoryId?: string | null;
 
@@ -154,7 +154,7 @@ export class UpdateAssociationDto {
 
   /** Lists only: optional parent association. */
   @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @ValidateIf((_, v) => typeof v === "string" && v.length > 0)
   @IsUUID()
   parentAssociationId?: string | null;
 
@@ -166,7 +166,7 @@ export class UpdateAssociationDto {
 
   /** Lists only: optional second theme logo. Pass `""`/null to clear. */
   @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @ValidateIf((_, v) => typeof v === "string" && v.length > 0)
   @IsUUID()
   logoMediaId2?: string | null;
 
@@ -178,8 +178,8 @@ export class UpdateAssociationDto {
   /** Validity mode of the cotisation. Required when enabling; pass `null` to clear when disabling. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
-  @IsIn(['lifetime', 'dated'])
-  cotisationMode?: 'lifetime' | 'dated' | null;
+  @IsIn(["lifetime", "dated"])
+  cotisationMode?: "lifetime" | "dated" | null;
 
   /** Deadline for the current `dated` period. Pass `null` to clear. */
   @IsOptional()
@@ -276,9 +276,9 @@ export class UpdateAssociationDocumentDto {
   name?: string;
 
   /** `public` is rejected for password-protected documents (enforced in the service). */
-  @IsIn(['private', 'public'])
+  @IsIn(["private", "public"])
   @IsOptional()
-  visibility?: 'private' | 'public';
+  visibility?: "private" | "public";
 }
 
 /** Body for granting global document-reviewer access to a user. */
@@ -323,7 +323,7 @@ export class CreateAssociationCalendarEventDto {
 
   /** Optional form (same association). */
   @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @ValidateIf((_, v) => typeof v === "string" && v.length > 0)
   @IsUUID()
   linkedFormId?: string;
 
@@ -339,7 +339,7 @@ export class CreateAssociationCalendarEventDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
-  @IsUUID('all', { each: true })
+  @IsUUID("all", { each: true })
   coOwnerIds?: string[];
 }
 
@@ -368,7 +368,7 @@ export class UpdateAssociationCalendarEventDto {
   kind?: AssociationCalendarEventKind;
 
   @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
+  @ValidateIf((_, v) => typeof v === "string" && v.length > 0)
   @IsUUID()
   linkedFormId?: string | null;
 
@@ -376,7 +376,7 @@ export class UpdateAssociationCalendarEventDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
-  @IsUUID('all', { each: true })
+  @IsUUID("all", { each: true })
   coOwnerIds?: string[];
 }
 
@@ -410,8 +410,8 @@ export class CreateProductDto {
   @MaxLength(10)
   currency?: string;
 
-  @IsIn(['membership', 'balance_topup', 'other'])
-  type: 'membership' | 'balance_topup' | 'other';
+  @IsIn(["membership", "balance_topup", "other"])
+  type: "membership" | "balance_topup" | "other";
 
   @IsString()
   @IsOptional()
@@ -449,6 +449,12 @@ export class CreateProductDto {
   @IsOptional()
   @MaxLength(100)
   memberPriceTag?: string;
+
+  /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  requiredTags?: string[];
 
   @IsBoolean()
   @IsOptional()
@@ -557,6 +563,12 @@ export class UpdateProductDto {
   @IsOptional()
   @MaxLength(100)
   memberPriceTag?: string | null;
+
+  /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  requiredTags?: string[] | null;
 
   @IsBoolean()
   @IsOptional()

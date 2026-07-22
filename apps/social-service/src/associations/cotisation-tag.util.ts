@@ -1,5 +1,5 @@
 /** Validity mode for an association's cotisation program. */
-export type CotisationMode = 'lifetime' | 'dated';
+export type CotisationMode = "lifetime" | "dated";
 
 /** Canonical cotisation tag name and its expiry, derived from an association's slug and mode. */
 export interface CotisationTag {
@@ -37,14 +37,24 @@ export function deriveCotisationTag(
   slug: string,
   mode: CotisationMode,
   now: Date = new Date(),
-  variant?: string | null
+  variant?: string | null,
 ): CotisationTag {
   const base = variant ? `${slug}-${variant}` : slug;
-  if (mode === 'lifetime') {
+  if (mode === "lifetime") {
     return { tagName: `cotisant:${base}`, expiresAt: null };
   }
   const academicYear = getAcademicYear(now);
-  const endYear = Number(academicYear.split('-')[1]);
+  const endYear = Number(academicYear.split("-")[1]);
   const expiresAt = new Date(Date.UTC(endYear, 7, 31, 23, 59, 59)); // 31 Aug, end of day UTC
   return { tagName: `cotisant:${base}-${academicYear}`, expiresAt };
+}
+
+/**
+ * Returns the distinct `variantKey`s among an association's `membership` products, one per
+ * cotisation tier - `[null]` (the base, un-suffixed tier) when the association has no explicit
+ * tiered products yet. Used to enumerate "any tier" tag names for `membersOnly`/generic cotisant
+ * gating, so a multi-tier association isn't wrongly gated on just the base tag.
+ */
+export function tierVariantKeys(products: Array<{ variantKey: string | null }>): (string | null)[] {
+  return products.length > 0 ? [...new Set(products.map((p) => p.variantKey))] : [null];
 }

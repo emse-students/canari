@@ -1031,10 +1031,18 @@ export interface AssociationProduct {
   /** Reduced price in cents for cotisants; null = same as amountCents. */
   amountCentsMember: number | null;
   /**
-   * True when the requesting user holds this product association's active cotisation tag.
+   * True when the requesting user holds ANY active tier tag of this product's association.
    * Set only by `listAllProducts` (`/products/all`, shop); undefined on admin/public listings.
    */
   viewerIsCotisant?: boolean;
+  /**
+   * The variantKey of the tier the viewer currently holds for this product's association, if
+   * any (null for a single-tier association or when the viewer holds no tag). Set only by
+   * `listAllProducts`, same as `viewerIsCotisant`.
+   */
+  viewerActiveTier?: string | null;
+  /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
+  requiredTags: string[] | null;
   allowCustomAmount: boolean;
   customAmountMinCents: number | null;
   customAmountMaxCents: number | null;

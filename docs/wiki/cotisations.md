@@ -82,10 +82,18 @@ active is blocked like any other membership renewal check.
 
 Any boutique product (not just membership) can gate or discount on cotisant status:
 
-- `membersOnly` - reserved to holders of the association's active cotisation tag.
+- `membersOnly` - reserved to holders of **any** of the association's active cotisation tier tags
+  (`isBuyerCotisant` enumerates every distinct `variantKey` among the association's `membership`
+  products via `tierVariantKeys()` - not just the base, un-suffixed tag - so this stays correct for
+  multi-tier associations).
+- `requiredTags` - a generalized gate: an arbitrary list of tag names, the buyer needing **any one**
+  of them (`text[]`, OR semantics). Not scoped to the owning association - lets a product be gated on
+  a tag from another association or a form's `pricingTagName`. Takes **precedence** over
+  `membersOnly` when set (checked instead of, not in addition to, the asso-wide check); `null`/empty
+  falls back to the `membersOnly` behavior above.
 - `amountCentsMember` - reduced price in cents for cotisants (`null` = same as `amountCents`).
 
-Both are enforced server-side in `products.service.ts` (`isBuyerCotisant` +
+All three are enforced server-side in `products.service.ts` (`isBuyerCotisant`, `hasAnyActiveTag` +
 `assertCanPurchase`); the client only mirrors the *display*.
 
 ### Form pricing fields
@@ -126,8 +134,10 @@ End-user (paying) surfaces:
 
 - **`/shop`** - buy a membership product (Stripe Checkout; returns to `/shop?purchase_success=1`).
   Members-only products are disabled with a hint, and member pricing is shown struck-through next to
-  the reduced price. Gating/labeling uses the per-product `viewerIsCotisant` flag returned by
-  `/products/all` (computed server-side; no client-side tag derivation).
+  the reduced price. Gating/labeling uses the per-product `viewerIsCotisant`/`viewerActiveTier` flags
+  returned by `/products/all` (computed server-side; no client-side tag derivation).
+  `viewerActiveTier` is the specific tier `variantKey` the viewer currently holds for that
+  association, if any (`null` for a single-tier association or a non-cotisant).
 - **`/forms/[id]`** - fill a paid form; member pricing is applied automatically when the caller
   holds the form's `pricingTagName`.
 
@@ -190,7 +200,7 @@ total before payment. No coupon or code is involved.
 | GET | `/api/associations/:id/cotisants` | Paginated, searchable active roster (`MANAGE_MEMBERS`) |
 | POST | `/api/associations/:id/cotisants` | Grant the canonical tag only, no payment (`MANAGE_MEMBERS`) |
 | GET | `/api/associations/:id/cotisants/export` | Roster as `.xlsx` (`MANAGE_MEMBERS`) |
-| GET | `/api/associations/products/all` | All active products + per-product `viewerIsCotisant` (shop) |
+| GET | `/api/associations/products/all` | All active products + per-product `viewerIsCotisant`/`viewerActiveTier` (shop) |
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
