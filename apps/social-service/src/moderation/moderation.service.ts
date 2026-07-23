@@ -91,7 +91,8 @@ export class ModerationService {
       await this.reportRepo.manager.query(
         `DELETE FROM content_reports
          WHERE status <> 'pending'
-           AND COALESCE("reviewedAt", "createdAt") < NOW() - INTERVAL '${HANDLED_REPORT_RETENTION_DAYS} days'`
+           AND COALESCE("reviewedAt", "createdAt") < NOW() - make_interval(days => $1)`,
+        [HANDLED_REPORT_RETENTION_DAYS]
       );
     } catch (e) {
       this.logger.warn(

@@ -121,7 +121,8 @@ export class FormReminderScheduler {
   async purgeOldPostNotifications() {
     try {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
-        `DELETE FROM post_notifications WHERE "createdAt" < NOW() - INTERVAL '${GC_NOTIFICATION_DAYS} days'`
+        `DELETE FROM post_notifications WHERE "createdAt" < NOW() - make_interval(days => $1)`,
+        [GC_NOTIFICATION_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
@@ -140,7 +141,8 @@ export class FormReminderScheduler {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM form_reminders
          WHERE "notifiedOnOpen" = true
-           AND "opensAt" < NOW() - INTERVAL '${GC_REMINDER_DAYS} days'`
+           AND "opensAt" < NOW() - make_interval(days => $1)`,
+        [GC_REMINDER_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
@@ -162,7 +164,8 @@ export class FormReminderScheduler {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM user_tags
          WHERE "expiresAt" IS NOT NULL
-           AND "expiresAt" < NOW() - INTERVAL '${GC_USER_TAG_GRACE_DAYS} days'`
+           AND "expiresAt" < NOW() - make_interval(days => $1)`,
+        [GC_USER_TAG_GRACE_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
@@ -184,7 +187,8 @@ export class FormReminderScheduler {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM webhook_deliveries
          WHERE status = 'delivered'
-           AND "createdAt" < NOW() - INTERVAL '${GC_WEBHOOK_DELIVERY_DAYS} days'`
+           AND "createdAt" < NOW() - make_interval(days => $1)`,
+        [GC_WEBHOOK_DELIVERY_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
@@ -206,7 +210,8 @@ export class FormReminderScheduler {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM content_reports
          WHERE status IN ('reviewed', 'dismissed')
-           AND "createdAt" < NOW() - INTERVAL '${GC_CONTENT_REPORT_DAYS} days'`
+           AND "createdAt" < NOW() - make_interval(days => $1)`,
+        [GC_CONTENT_REPORT_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
