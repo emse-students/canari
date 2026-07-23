@@ -63,14 +63,28 @@ static WKWebView * _Nullable FindWebView(void) {
   return nil;
 }
 
+/// Synchronously loads data from an NSItemProvider for a given type identifier.
+/// Uses a semaphore with a 2-second timeout.
+static NSData * _Nullable LoadDataSync(NSItemProvider *provider, NSString *typeIdentifier) {
+  __block NSData *result = nil;
+  dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+  [provider loadDataRepresentationForTypeIdentifier:typeIdentifier
+                                  completionHandler:^(NSData * _Nullable data, NSError * _Nullable error) {
+    if (error == nil) result = data;
+    dispatch_semaphore_signal(sem);
+  }];
+  dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
+  return result;
+}
+
 /// Returns the first item index in the pasteboard that carries a supported image type,
 /// or NSNotFound.
 static NSInteger IndexOfImageItem(UIPasteboard *pasteboard) {
-  for (NSInteger i = 0; i < pasteboard.numberOfItems; i++) {
-    NSIndexSet *itemSet = [NSIndexSet indexSetWithIndex:i];
-    NSArray<NSString *> *types = [pasteboard pasteboardTypesForItemSet:itemSet];
-    for (NSString *type in kImageTypes()) {
-      if ([types containsObject:type]) {
+  NSArray<NSItemProvider *> *providers = pasteboard.itemProviders;
+  for (NSInteger i = 0; i < (NSInteger)providers.count; i++) {
+    NSItemProvider *provider = providers[i];
+    for (NSString *typeIdentifier in kImageTypes()) {
+      if ([provider hasItemConformingToTypeIdentifier:typeIdentifier]) {
         return i;
       }
     }
@@ -81,27 +95,33 @@ static NSInteger IndexOfImageItem(UIPasteboard *pasteboard) {
 /// Reads the image data from `pasteboard` at `itemIndex`, preferring the first available type
 /// that yields non-nil data. Returns nil on failure.
 static NSData * _Nullable ReadImageData(UIPasteboard *pasteboard, NSInteger itemIndex) {
-  // Try image/png first (lossless for stickers), then jpeg, then gif, then raw image.
-  // The type order matters because pasteboard may carry multiple representations.
-  NSData *data = [pasteboard dataForPasteboardType:UTTypePNG.identifier atIndex:itemIndex];
-  if (data != nil) return data;
+  NSArray<NSItemProvider *> *providers = pasteboard.itemProviders;
+  if (itemIndex < 0 || itemIndex >= (NSInteger)providers.count) return nil;
+  NSItemProvider *provider = providers[itemIndex];
 
-  data = [pasteboard dataForPasteboardType:UTTypeJPEG.identifier atIndex:itemIndex];
-  if (data != nil) return data;
-
-  data = [pasteboard dataForPasteboardType:UTTypeGIF.identifier atIndex:itemIndex];
-  if (data != nil) return data;
-
-  data = [pasteboard dataForPasteboardType:UTTypeWebP.identifier atIndex:itemIndex];
-  if (data != nil) return data;
-
-  // Last resort: raw image property (UIImage-backed pasteboard items).
-  // Use the first item's image; keyboard pasteboards typically carry a single item.
-  if (itemIndex == 0) {
-    UIImage *image = [pasteboard image];
-    if (image != nil) {
-      return UIImagePNGRepresentation(image);
+  // Try image/png first (lossless for stickers), then jpeg, then gif, then webp.
+  NSArray<NSString *> *preferred = @[ UTTypePNG.identifier,
+                                       UTTypeJPEG.identifier,
+                                       UTTypeGIF.identifier,
+                                       UTTypeWebP.identifier ];
+  for (NSString *typeIdentifier in preferred) {
+    if ([provider hasItemConformingToTypeIdentifier:typeIdentifier]) {
+      NSData *data = LoadDataSync(provider, typeIdentifier);
+      if (data != nil) return data;
     }
+  }
+
+  // Last resort: load as UIImage and re-encode as PNG.
+  if ([provider hasItemConformingToTypeIdentifier:UTTypeImage.identifier]) {
+    __block UIImage *image = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [provider loadObjectOfClass:UIImage.class
+              completionHandler:^(id<NSItemProviderReading> _Nullable obj, NSError * _Nullable error) {
+      if (error == nil && [obj isKindOfClass:UIImage.class]) image = (UIImage *)obj;
+      dispatch_semaphore_signal(sem);
+    }];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
+    if (image != nil) return UIImagePNGRepresentation(image);
   }
 
   return nil;
@@ -109,14 +129,15 @@ static NSData * _Nullable ReadImageData(UIPasteboard *pasteboard, NSInteger item
 
 /// Guesses a MIME type from the pasteboard's first available image type at the given index.
 static NSString *MimeFromPasteboard(UIPasteboard *pasteboard, NSInteger itemIndex) {
-  NSIndexSet *itemSet = [NSIndexSet indexSetWithIndex:itemIndex];
-  NSArray<NSString *> *types = [pasteboard pasteboardTypesForItemSet:itemSet];
+  NSArray<NSItemProvider *> *providers = pasteboard.itemProviders;
+  if (itemIndex < 0 || itemIndex >= (NSInteger)providers.count) return @"image/png";
+  NSItemProvider *provider = providers[itemIndex];
+
   for (NSString *typeIdentifier in kImageTypes()) {
-    if ([types containsObject:typeIdentifier]) {
+    if ([provider hasItemConformingToTypeIdentifier:typeIdentifier]) {
       UTType *utType = [UTType typeWithIdentifier:typeIdentifier];
       NSString *mime = utType.preferredMIMEType;
-      if (mime != nil) return mime;
-      return typeIdentifier;
+      return mime ?: @"image/png";
     }
   }
   return @"image/png";
