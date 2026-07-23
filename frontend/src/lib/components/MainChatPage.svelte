@@ -546,10 +546,11 @@
   }
 
   /**
-   * Handles rich content committed by the Android soft keyboard (e.g. a Gboard GIF), delivered by
-   * the native KeyboardMediaBridge as a `canari-keyboard-media` event. Rebuilds a File from the
-   * base64 payload and routes it through the normal media pipeline (encrypted upload), so a
-   * keyboard GIF behaves exactly like a picked file - in DMs, groups, and channels alike.
+   * Handles rich content committed by the soft keyboard (e.g. a Gboard GIF), delivered by
+   * the native KeyboardMediaBridge (Android `InputConnection.commitContent`, iOS `UIPasteboard`
+   * polling) as a `canari-keyboard-media` event. Rebuilds a File from the base64 payload and
+   * routes it through the normal media pipeline (encrypted upload), so a keyboard GIF behaves
+   * exactly like a picked file - in DMs, groups, and channels alike.
    */
   function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
     if (!convs.selectedContact || !detail?.data) return;

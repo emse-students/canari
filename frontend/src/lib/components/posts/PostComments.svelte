@@ -163,7 +163,7 @@
     }
   }
 
-  /** Rebuilds a File from an Android keyboard-committed GIF (base64) and stages it as comment media. */
+  /** Rebuilds a File from a keyboard-committed GIF (base64, Android/iOS) and stages it as comment media. */
   function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
     if (!commentInputFocused || !detail?.data) return;
     try {

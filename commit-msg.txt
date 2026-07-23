@@ -1,0 +1,18 @@
+feat(ios): WP-XP-6 KeyboardMediaBridge for GIF/sticker pasteboard parity
+
+Adds iOS KeyboardMediaBridge (ObjC++) that polls UIPasteboard.general at
+0.5s intervals while the app is in the foreground, detecting keyboard-committed
+images (GIFs, stickers) and dispatching them as 'canari-keyboard-media' DOM
+events - matching the existing Android KeyboardMediaBridge.kt byte-for-byte.
+
+Files:
+- New: KeyboardMediaBridge.h/.mm - UIPasteboard polling bridge with WKWebView
+  traversal, base64 dispatch, become/resign-active lifecycle
+- Modified: canari_ios.mm - imports and calls CanariKeyboardMediaStart(nil)
+  at bootstrap
+- Modified: MainChatPage.svelte, PostComments.svelte - updated comments from
+  'Android' to 'Android/iOS'
+
+No backend changes needed - keyboard media flows through the existing encrypted
+upload pipeline. No Rust FFI changes needed. Frontend 'canari-keyboard-media'
+event handlers are already cross-platform.

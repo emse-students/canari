@@ -1,6 +1,7 @@
 #import "canari_ios.h"
 #import "canari_push.h"
 #import "canari_rust_bridge.h"
+#import "KeyboardMediaBridge.h"
 
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
@@ -125,6 +126,10 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
+  // Start the keyboard media bridge (WP-XP-6). The WKWebView is not yet created at this point
+  // (Tauri/wry creates it inside ffi::start_app() which runs after us), so we pass nil and the
+  // bridge will find the WebView lazily on the first UIApplicationDidBecomeActiveNotification.
+  CanariKeyboardMediaStart(nil);
 }
 
 bool canari_ios_is_in_foreground(void) { return g_isInForeground; }
