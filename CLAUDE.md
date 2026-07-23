@@ -86,7 +86,7 @@ Shipped:
 - \[x\] WP-XP-8 Shared deferred-retry engine: Android `OutboxRetryWorker` (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) + iOS `BGTaskScheduler` `fr.emse.canari.outboxRetry` (`BGProcessingTaskRequest`, `requiresNetworkConnectivity=YES`). Both triggered from `maybeNotifyPendingSync`/`CanariMaybeNotifyPendingSync` when opportunistic drain leaves remaining>0. [device] verify Android WorkManager retry + iOS BGTask wake-up.
 
 Todo:
-- \[ \] **WP-Calls-UX call UI overhaul** (user-approved 2026-07-23; audit of `CallOverlay.svelte`/`CallService.ts`). Priority: (1) outgoing audio call must be full-screen in `calling` state; (2) web/desktop ringtone + blinking title + web Notification; (3) call-duration mm:ss chrono; (4) missed-call/call-ended system messages; (5) incoming hero screen + desktop compact toast. Secondary: (6) mobile speaker/earpiece toggle; (7) compact-widget camera split; (8) edge-to-edge mobile video; (9) web decline alignment. Points 1-5 pure Svelte/TS.
+- \[x\] **WP-Calls-UX call UI overhaul** (P1-P9 implemented; svelte-check 0/0, oxlint 0/0, tests 8/8).
 
 #### MULTI-TIER COTISATIONS (Cercle) - COMPLETE
 

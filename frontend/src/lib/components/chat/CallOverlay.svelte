@@ -16,10 +16,13 @@
     PictureInPicture2,
     ShieldCheck,
     ShieldAlert,
+    Speaker,
+    Volume2,
   } from '@lucide/svelte';
   import { fade, scale, fly } from 'svelte/transition';
   import type { CallState } from '$lib/services/CallService';
   import { m } from '$lib/paraglide/messages';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 
   let {
     callService,
@@ -41,6 +44,8 @@
   let isMuted = $state(false);
   let isVideoOff = $state(false);
   let e2eActive = $state(true);
+  /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
+  let isSpeakerOn = $state(true);
 
   $effect(() => {
     const unsubs = [
@@ -106,15 +111,28 @@
   /**
    * Compact, non-blocking widget mode: used for audio-only calls (so the user can
    * keep navigating the app, a la Messenger/Discord) and whenever the user minimizes.
-   * Incoming rings always use the prominent expanded prompt.
+   * Incoming rings and the calling state always use the prominent expanded prompt.
+   * Ended state also shows expanded briefly for the summary.
    */
   let compact = $derived(
-    callState !== 'incoming' && callState !== 'calling' && (userMinimized || !hasAnyVideo)
+    callState !== 'incoming' &&
+      callState !== 'calling' &&
+      callState !== 'ended' &&
+      (userMinimized || !hasAnyVideo)
   );
   let primaryParticipant = $derived(participants[0]);
   let isGroupCall = $derived(participants.length > 1);
   /** Grid only for multi-party; audio+video from one peer stay on a single tile. */
   let showRemoteGrid = $derived(isGroupCall && remoteEntries.length > 1);
+
+  /** Whether the platform supports speaker/earpiece toggling (mobile via setSinkId). */
+  let speakerSupported = $derived(
+    typeof navigator !== 'undefined' &&
+      'mediaDevices' in navigator &&
+      typeof AudioContext !== 'undefined'
+  );
+  /** True on mobile Tauri runtime (Android / iOS). */
+  let isMobileRtc = $derived(isMobileTauriRuntime());
 
   /** Formats elapsed seconds as mm:ss. */
   function formatDuration(sec: number): string {
@@ -123,11 +141,11 @@
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
 
-  /** Chronometer: starts when connected, resets on idle. */
+  /** Chronometer: starts when connected, persists through ended state, resets on idle. */
   let callDurationDisplay = $derived(formatDuration(callElapsedSec));
 
   $effect(() => {
-    if (callState === 'incall') {
+    if (callState === 'incall' || callState === 'ended') {
       if (callStartTime === null) {
         callStartTime = Date.now();
         callElapsedSec = 0;
@@ -136,7 +154,7 @@
         if (callStartTime !== null) {
           callElapsedSec = Math.floor((Date.now() - callStartTime) / 1000);
         }
-      }, 250);
+      }, 1000);
       return () => clearInterval(timer);
     } else {
       callStartTime = null;
@@ -195,6 +213,35 @@
       void remoteAudioSink.play().catch(() => {});
     }
   });
+
+  /** Routes remote audio to speaker or earpiece on mobile. Best-effort. */
+  async function applySpeakerRouting() {
+    if (!remoteAudioSink || !speakerSupported) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const kind = isSpeakerOn ? 'speaker' : 'earpiece';
+      const target = devices.find(
+        (d) => d.kind === 'audiooutput' && d.label.toLowerCase().includes(kind)
+      );
+      if (target && 'setSinkId' in remoteAudioSink) {
+        await (
+          remoteAudioSink as HTMLAudioElement & { setSinkId: (id: string) => Promise<void> }
+        ).setSinkId(target.deviceId);
+      }
+    } catch {
+      /* setSinkId not supported or permission denied - ignore */
+    }
+  }
+
+  $effect(() => {
+    if (isSpeakerOn !== undefined && remoteAudioSink) {
+      void applySpeakerRouting();
+    }
+  });
+
+  function toggleSpeaker() {
+    isSpeakerOn = !isSpeakerOn;
+  }
 
   $effect(() => {
     if (localStreamVal && localVideo && !isVideoOff) {
@@ -367,6 +414,30 @@
     transition:fly={{ y: 30, duration: 250 }}
   >
     <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
+
+    <!-- Compact self-view PiP when camera is active (P8) -->
+    {#if localStreamVal && !isVideoOff}
+      <div
+        class="absolute -top-2 -right-2 z-20 w-16 h-20 rounded-xl overflow-hidden shadow-lg ring-1 ring-white/20 bg-black/60"
+        transition:scale={{ duration: 300, start: 0.8 }}
+      >
+        <video
+          autoplay
+          playsinline
+          muted
+          class="w-full h-full object-cover -scale-x-100"
+          srcObject={localStreamVal}
+        ></video>
+        {#if isMuted}
+          <div
+            class="absolute top-1 right-1 bg-red-500/80 backdrop-blur-md p-0.5 rounded-full text-white"
+          >
+            <MicOff size={10} strokeWidth={2.5} />
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <div class="flex items-center gap-3">
       <div class="relative h-12 w-12 shrink-0">
         <span
@@ -408,7 +479,9 @@
           <p class="truncate text-sm font-bold text-white">{m.call_label()}</p>
         {/if}
         <p class="truncate text-xs font-medium text-white/55">
-          {#if remoteAudioConnected}
+          {#if callState === 'ended'}
+            <span class="text-red-300">{m.call_ended_label()}</span> · {callDurationDisplay}
+          {:else if remoteAudioConnected}
             {m.call_audio_only_label()}
           {:else if callState === 'calling'}
             {m.call_calling_label()}
@@ -440,6 +513,17 @@
       >
         {#if isMuted}<MicOff size={20} />{:else}<Mic size={20} />{/if}
       </button>
+      {#if isMobileRtc && speakerSupported}
+        <button
+          class="rounded-full p-3 transition-all {isSpeakerOn
+            ? 'bg-white/10 text-white hover:bg-white/20'
+            : 'bg-white text-[#151B2C]'}"
+          onclick={toggleSpeaker}
+          aria-label={isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label()}
+        >
+          {#if isSpeakerOn}<Speaker size={20} />{:else}<Volume2 size={20} />{/if}
+        </button>
+      {/if}
       <button
         class="rounded-full bg-white/10 p-3 text-white transition-all hover:bg-white/20"
         onclick={() => {
@@ -461,14 +545,48 @@
     </div>
   </div>
 {:else}
+  <!-- Expanded / full-screen call view -->
   <div
-    class="fixed inset-0 z-[300] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center p-4 sm:p-6 select-none"
+    class="fixed inset-0 z-[300] bg-black/90 backdrop-blur-2xl flex flex-col items-center justify-center select-none {isMobileRtc
+      ? 'p-0'
+      : 'p-4 sm:p-6'}"
     transition:fade={{ duration: 300 }}
   >
     <div
-      class="relative w-full h-full max-w-6xl max-h-[82vh] bg-[#0a0d14] rounded-[2rem] overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
+      class="relative w-full h-full {isMobileRtc
+        ? 'max-w-full max-h-full rounded-none'
+        : 'max-w-6xl max-h-[82vh] rounded-[2rem]'} bg-[#0a0d14] overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
+      style={isMobileRtc
+        ? 'padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);'
+        : ''}
     >
-      {#if showRemoteGrid}
+      {#if callState === 'ended'}
+        <!-- Ended summary: brief overlay showing the call result (P4) -->
+        <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1 px-6">
+          <div
+            class="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center ring-4 ring-red-500/30"
+          >
+            <PhoneOff size={36} class="text-red-400" />
+          </div>
+          <div class="flex flex-col items-center gap-2 text-center">
+            <p class="text-xl font-bold text-white">{m.call_ended_label()}</p>
+            <p class="text-sm font-mono tabular-nums text-white/60">{callDurationDisplay}</p>
+          </div>
+          {#if primaryParticipant}
+            <div class="flex flex-col items-center gap-2">
+              <p class="text-xs text-white/40 uppercase tracking-widest">
+                {m.call_with_label()}
+              </p>
+              <UserName
+                userId={primaryParticipant.userId}
+                fallback={primaryParticipant.displayName}
+                link={false}
+                class="text-white font-semibold"
+              />
+            </div>
+          {/if}
+        </div>
+      {:else if showRemoteGrid}
         <div
           class="w-full h-full grid gap-1 p-1 {remoteEntries.length <= 4
             ? 'grid-cols-2'
@@ -513,7 +631,7 @@
           {/if}
         </div>
       {:else if participants.length > 0}
-        <!-- Audio-only remote: hidden sink keeps the voice playing behind the avatar. -->
+        <!-- Audio-only remote or calling state: hidden sink keeps the voice playing behind the avatar. -->
         <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
         <div class="flex flex-col items-center justify-center gap-8 text-white/70 flex-1 px-6">
           {#if isGroupCall}
@@ -572,7 +690,16 @@
           </p>
         </div>
       {:else}
-        <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1">
+        <!-- No participants yet: show calling/connecting with call type indicator (P1) -->
+        <div class="flex flex-col items-center justify-center gap-6 text-white/70 flex-1 px-6">
+          {#if callState === 'calling'}
+            <div
+              class="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center ring-4 ring-white/10 animate-pulse"
+            >
+              <Phone size={36} class="text-white/60" />
+            </div>
+            <p class="text-lg font-bold text-white">{m.call_outgoing_label()}</p>
+          {/if}
           <p class="animate-pulse text-sm font-medium text-white/60 tracking-widest uppercase">
             {callState === 'calling' ? m.call_calling_label() : m.call_connecting_label()}
           </p>
@@ -637,13 +764,16 @@
         </div>
       {/if}
 
+      <!-- Top-left status badge -->
       <div
         class="absolute top-6 left-6 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full text-white/90 text-sm font-bold border border-white/10 flex items-center gap-3 z-10"
       >
         <span
           class="w-2.5 h-2.5 rounded-full {callState === 'incall'
             ? 'bg-emerald-400'
-            : 'bg-amber-400 animate-pulse'}"
+            : callState === 'ended'
+              ? 'bg-red-400'
+              : 'bg-amber-400 animate-pulse'}"
         ></span>
         {#if currentUserId}
           <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 ring-1 ring-white/20">
@@ -654,8 +784,10 @@
           ? m.call_outgoing_label()
           : callState === 'incoming'
             ? m.call_incoming_label()
-            : m.call_online_label()}
-        {#if callState === 'incall'}
+            : callState === 'ended'
+              ? m.call_ended_label()
+              : m.call_online_label()}
+        {#if callState === 'incall' || callState === 'ended'}
           <span class="text-white/70 font-mono tabular-nums ml-1">{callDurationDisplay}</span>
         {/if}
         {#if remoteEntries.length > 1}
@@ -678,28 +810,50 @@
       </div>
     </div>
 
+    <!-- Bottom control bar -->
     <div
-      class="mt-6 flex items-center gap-3 sm:gap-4 bg-white/10 backdrop-blur-2xl px-6 sm:px-8 py-4 rounded-full border border-white/20 shadow-2xl"
+      class="{isMobileRtc
+        ? 'mb-[env(safe-area-inset-bottom,12px)]'
+        : 'mt-6'} flex items-center gap-3 sm:gap-4 bg-white/10 backdrop-blur-2xl px-6 sm:px-8 py-4 rounded-full border border-white/20 shadow-2xl"
       transition:fly={{ y: 40, duration: 500, delay: 100 }}
     >
       {#if callState === 'incoming'}
+        <div class="flex flex-col items-center gap-1">
+          <button
+            class="p-4 sm:p-5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all hover:scale-110 active:scale-95"
+            onclick={() =>
+              callService.acceptCall(
+                callService.currentGroupId ?? '',
+                callService.currentCallId ?? ''
+              )}
+            title={m.call_accept_label()}
+            aria-label={m.call_accept_incoming_label()}
+          >
+            <Phone size={28} class="fill-current" />
+          </button>
+          <span class="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider"
+            >{m.call_accept_label()}</span
+          >
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <button
+            class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110 active:scale-95"
+            onclick={endCall}
+            title={m.call_decline_label()}
+            aria-label={m.call_decline_incoming_label()}
+          >
+            <PhoneOff size={28} />
+          </button>
+          <span class="text-[10px] font-semibold text-red-400 uppercase tracking-wider"
+            >{m.call_decline_label()}</span
+          >
+        </div>
+      {:else if callState === 'ended'}
+        <!-- Ended state: only a dismiss button (P4) -->
         <button
-          class="p-4 sm:p-5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all hover:scale-110 active:scale-95"
-          onclick={() =>
-            callService.acceptCall(
-              callService.currentGroupId ?? '',
-              callService.currentCallId ?? ''
-            )}
-          title={m.call_accept_label()}
-          aria-label={m.call_accept_incoming_label()}
-        >
-          <Phone size={28} class="fill-current" />
-        </button>
-        <button
-          class="p-4 sm:p-5 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all hover:scale-110 active:scale-95"
-          onclick={endCall}
-          title={m.call_decline_label()}
-          aria-label={m.call_decline_incoming_label()}
+          class="p-4 sm:p-5 rounded-full bg-white/10 text-white transition-all hover:bg-white/20 hover:scale-105"
+          onclick={() => callService.endCall()}
+          aria-label={m.call_close_label()}
         >
           <PhoneOff size={28} />
         </button>
@@ -713,6 +867,17 @@
         >
           {#if isMuted}<MicOff size={24} />{:else}<Mic size={24} />{/if}
         </button>
+        {#if isMobileRtc && speakerSupported}
+          <button
+            class="p-4 rounded-full transition-all {isSpeakerOn
+              ? 'bg-white/10 text-white hover:bg-white/20'
+              : 'bg-white text-[#151B2C]'}"
+            onclick={toggleSpeaker}
+            aria-label={isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label()}
+          >
+            {#if isSpeakerOn}<Speaker size={24} />{:else}<Volume2 size={24} />{/if}
+          </button>
+        {/if}
         <button
           class="p-4 rounded-full transition-all {isVideoOff
             ? 'bg-white text-[#151B2C]'

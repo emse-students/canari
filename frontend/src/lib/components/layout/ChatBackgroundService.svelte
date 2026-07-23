@@ -34,7 +34,7 @@
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { Fingerprint, Phone, PhoneOff } from '@lucide/svelte';
+  import { Fingerprint, Phone, PhoneOff, Video } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
@@ -1034,8 +1034,9 @@
 />
 
 {#if showIncomingToast}
-  <!-- Compact incoming-call toast when user is browsing another page -->
+  <!-- Compact incoming-call toast when user is browsing another page (P5) -->
   {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
+  {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
   <div
     class="fixed top-4 left-1/2 -translate-x-1/2 z-[310] max-w-sm w-[calc(100%-2rem)] bg-[#0a0d14]/95 backdrop-blur-2xl rounded-2xl shadow-2xl ring-1 ring-white/10 px-4 py-3 flex items-center gap-3 animate-[slideDown_0.3s_ease-out]"
     transition:fly={{ y: -20, duration: 250 }}
@@ -1055,27 +1056,44 @@
     </div>
     <div class="min-w-0 flex-1">
       <p class="text-sm font-bold text-white truncate">{callerName || m.call_incoming_label()}</p>
-      <p class="text-xs text-white/55">{m.call_incoming_label()}</p>
+      <p class="text-xs text-white/55 flex items-center gap-1">
+        {#if isVideoCall}
+          <Video size={12} strokeWidth={2.5} />
+        {:else}
+          <Phone size={12} strokeWidth={2.5} />
+        {/if}
+        {isVideoCall ? m.chat_video_call_label() : m.chat_audio_call_label()}
+      </p>
     </div>
-    <div class="flex items-center gap-1.5 shrink-0">
-      <button
-        class="p-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all active:scale-95"
-        onclick={() =>
-          globalSession.callService?.acceptCall(
-            globalSession.callService.currentGroupId ?? '',
-            globalSession.callService.currentCallId ?? ''
-          )}
-        aria-label={m.call_accept_label()}
-      >
-        <Phone size={18} class="fill-current" />
-      </button>
-      <button
-        class="p-2 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all active:scale-95"
-        onclick={() => globalSession.callService?.endCall()}
-        aria-label={m.call_decline_label()}
-      >
-        <PhoneOff size={18} />
-      </button>
+    <div class="flex items-center gap-2 shrink-0">
+      <div class="flex flex-col items-center gap-0.5">
+        <button
+          class="p-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all active:scale-95"
+          onclick={() =>
+            globalSession.callService?.acceptCall(
+              globalSession.callService.currentGroupId ?? '',
+              globalSession.callService.currentCallId ?? ''
+            )}
+          aria-label={m.call_accept_label()}
+        >
+          <Phone size={18} class="fill-current" />
+        </button>
+        <span class="text-[9px] font-bold text-emerald-400 uppercase tracking-wider"
+          >{m.call_accept_label()}</span
+        >
+      </div>
+      <div class="flex flex-col items-center gap-0.5">
+        <button
+          class="p-2 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all active:scale-95"
+          onclick={() => globalSession.callService?.endCall()}
+          aria-label={m.call_decline_label()}
+        >
+          <PhoneOff size={18} />
+        </button>
+        <span class="text-[9px] font-bold text-red-400 uppercase tracking-wider"
+          >{m.call_decline_label()}</span
+        >
+      </div>
     </div>
   </div>
 {:else if globalSession.callService && globalSession.callState !== 'idle'}

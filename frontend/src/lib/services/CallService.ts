@@ -238,6 +238,8 @@ export class CallService {
   public endCall(notify: boolean = true) {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
+    // Guard against double-calls: if cleanup already ran, do not re-enter.
+    if (get(this.callState) === 'idle') return;
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
     const wasCalling = get(this.callState) === 'calling';
     if (notify && groupId && callId) {
@@ -256,7 +258,20 @@ export class CallService {
         void recordCallMissed(ctx, groupId, callId, callerId);
       }
     }
-    this.cleanup();
+
+    // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
+    // duration and result before the overlay disappears (P4).
+    if (get(this.callState) === 'incall' || get(this.callState) === 'calling') {
+      this.callState.set('ended');
+      setTimeout(() => {
+        if (get(this.callState) === 'ended') {
+          this.cleanup();
+        }
+      }, 1_500);
+    } else {
+      // incoming → declined: no summary, go straight to idle.
+      this.cleanup();
+    }
   }
 
   /**
