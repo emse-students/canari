@@ -2,6 +2,7 @@
 #import "canari_ios.h"
 
 #import <UIKit/UIKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebKit/WebKit.h>
 
 /// Polling interval in seconds. 0.5 s is low enough to feel instant and high enough to be
@@ -11,15 +12,15 @@ static const NSTimeInterval kPollInterval = 0.5;
 /// Maximum payload size in bytes (12 MiB, matching KeyboardMediaBridge.kt).
 static const NSUInteger kMaxBytes = 12 * 1024 * 1024;
 
-/// MIME types we dispatch to the frontend (Gboard GIFs, stickers, and pasted photos).
+/// UTType identifiers we dispatch to the frontend (Gboard GIFs, stickers, and pasted photos).
 static NSArray<NSString *> *kImageTypes(void) {
   static NSArray<NSString *> *types = nil;
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-    types = @[ (__bridge NSString *)kUTTypeGIF,
-               (__bridge NSString *)kUTTypePNG,
-               (__bridge NSString *)kUTTypeJPEG,
-               (__bridge NSString *)kUTTypeWebP ];
+    types = @[ UTTypeGIF.identifier,
+               UTTypePNG.identifier,
+               UTTypeJPEG.identifier,
+               UTTypeWebP.identifier ];
   });
   return types;
 }
@@ -66,7 +67,8 @@ static WKWebView * _Nullable FindWebView(void) {
 /// or NSNotFound.
 static NSInteger IndexOfImageItem(UIPasteboard *pasteboard) {
   for (NSInteger i = 0; i < pasteboard.numberOfItems; i++) {
-    NSArray<NSString *> *types = [pasteboard typesAtIndex:i];
+    NSIndexSet *itemSet = [NSIndexSet indexSetWithIndex:i];
+    NSArray<NSString *> *types = [pasteboard pasteboardTypesForItemSet:itemSet];
     for (NSString *type in kImageTypes()) {
       if ([types containsObject:type]) {
         return i;
@@ -81,22 +83,25 @@ static NSInteger IndexOfImageItem(UIPasteboard *pasteboard) {
 static NSData * _Nullable ReadImageData(UIPasteboard *pasteboard, NSInteger itemIndex) {
   // Try image/png first (lossless for stickers), then jpeg, then gif, then raw image.
   // The type order matters because pasteboard may carry multiple representations.
-  NSData *data = [pasteboard dataForType:(__bridge NSString *)kUTTypePNG atIndex:itemIndex];
+  NSData *data = [pasteboard dataForPasteboardType:UTTypePNG.identifier atIndex:itemIndex];
   if (data != nil) return data;
 
-  data = [pasteboard dataForType:(__bridge NSString *)kUTTypeJPEG atIndex:itemIndex];
+  data = [pasteboard dataForPasteboardType:UTTypeJPEG.identifier atIndex:itemIndex];
   if (data != nil) return data;
 
-  data = [pasteboard dataForType:(__bridge NSString *)kUTTypeGIF atIndex:itemIndex];
+  data = [pasteboard dataForPasteboardType:UTTypeGIF.identifier atIndex:itemIndex];
   if (data != nil) return data;
 
-  data = [pasteboard dataForType:(__bridge NSString *)kUTTypeWebP atIndex:itemIndex];
+  data = [pasteboard dataForPasteboardType:UTTypeWebP.identifier atIndex:itemIndex];
   if (data != nil) return data;
 
   // Last resort: raw image property (UIImage-backed pasteboard items).
-  UIImage *image = [pasteboard imageAtIndex:itemIndex];
-  if (image != nil) {
-    return UIImagePNGRepresentation(image);
+  // Use the first item's image; keyboard pasteboards typically carry a single item.
+  if (itemIndex == 0) {
+    UIImage *image = [pasteboard image];
+    if (image != nil) {
+      return UIImagePNGRepresentation(image);
+    }
   }
 
   return nil;
@@ -104,9 +109,15 @@ static NSData * _Nullable ReadImageData(UIPasteboard *pasteboard, NSInteger item
 
 /// Guesses a MIME type from the pasteboard's first available image type at the given index.
 static NSString *MimeFromPasteboard(UIPasteboard *pasteboard, NSInteger itemIndex) {
-  NSArray<NSString *> *types = [pasteboard typesAtIndex:itemIndex];
-  for (NSString *type in kImageTypes()) {
-    if ([types containsObject:type]) return (__bridge_transfer NSString *)UTTypeCopyPreferredTagWithClass((__bridge CFStringRef)type, kUTTagClassMIMEType) ?: (NSString *)type;
+  NSIndexSet *itemSet = [NSIndexSet indexSetWithIndex:itemIndex];
+  NSArray<NSString *> *types = [pasteboard pasteboardTypesForItemSet:itemSet];
+  for (NSString *typeIdentifier in kImageTypes()) {
+    if ([types containsObject:typeIdentifier]) {
+      UTType *utType = [UTType typeWithIdentifier:typeIdentifier];
+      NSString *mime = utType.preferredMIMEType;
+      if (mime != nil) return mime;
+      return typeIdentifier;
+    }
   }
   return @"image/png";
 }
