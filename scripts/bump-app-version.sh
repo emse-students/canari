@@ -83,6 +83,31 @@ bump_ios_nse_pbxproj() {
   echo "  pbxproj (NSE) $file → $version"
 }
 
+bump_ios_app_infoplist() {
+  # The app target's Info.plist hardcodes CFBundleShortVersionString/CFBundleVersion
+  # literals (no MARKETING_VERSION build setting on that target - it does not use
+  # GENERATE_INFOPLIST_FILE). `tauri ios build` re-syncs them from tauri.conf.json
+  # during the build, but an early xcodebuild pass links the NSE against the stale
+  # committed literals and warns "CFBundleVersion of an app extension must match its
+  # containing parent app". Keeping the committed plist in lockstep kills the warning
+  # and removes the dependency on Tauri's in-build rewrite.
+  local file="$1"
+  local version="$2"
+  if [ ! -f "$file" ]; then
+    echo "  skip (no Info.plist): $file" >&2
+    return
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  awk -v ver="$version" '
+    /<key>CFBundleShortVersionString<\/key>/ { print; getline; sub(/<string>[^<]*<\/string>/, "<string>" ver "</string>"); print; next }
+    /<key>CFBundleVersion<\/key>/ { print; getline; sub(/<string>[^<]*<\/string>/, "<string>" ver "</string>"); print; next }
+    { print }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+  echo "  Info.plist (app) $file → $version"
+}
+
 discover_package_json_files() {
   local -a files=("$ROOT/frontend/package.json")
   local pkg
@@ -133,6 +158,8 @@ TAURI_CONF="$ROOT/frontend/src-tauri/tauri.conf.json"
 bump_tauri_conf "$TAURI_CONF" "$VERSION"
 
 bump_ios_nse_pbxproj "$ROOT/frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj" "$VERSION"
+
+bump_ios_app_infoplist "$ROOT/frontend/src-tauri/gen/apple/canari_iOS/Info.plist" "$VERSION"
 
 while IFS= read -r f; do
   [ -f "$f" ] || { echo "Missing: $f" >&2; exit 1; }

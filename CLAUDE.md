@@ -71,6 +71,8 @@ SHIPPED (Canari core - gotchas only):
 
 Normalization-sweep gotcha: accent-grep MISSES French comments written without accents ("Section Membres") - use both accent-grep AND French-token grep.
 
+**Build-warnings audit (2026-07-23):** fixed = iOS ld noise (~75 warn/run, `IPHONEOS_DEPLOYMENT_TARGET=14.0` on the cargo step of `ios-release.yml`), appex/parent CFBundleVersion warning (`bump-app-version.sh` now patches `canari_iOS/Info.plist` literals too), KeystorePlugin deprecated `setUserAuthenticationValidityDurationSeconds` (API-30 guard, new keys only) + stray debug alias-dump removed. Deliberately REMAINING: `KeyboardMediaBridge.createWrapper` deprecation (device-verified GIF flow, rewrite folded into WP-XP-6); `android.builtInKotlin=false` deprecation (documented constraint in `gradle.properties` - drop with the explicit kotlin-android plugin decl); upstream noise (tauri/tauri-plugin-notification Kotlin in cargo registry, javac source-8, xcodebuild destination pick, AppIntents metadata skip) - not ours.
+
 #### iOS PARITY ROADMAP (Apple compatibility) - shipped, verified in git
 
 iOS is ~80% a port of the Android native push stack: `gen/apple/Sources/canari/canari_push.mm` mirrors `CanariFirebaseMessagingService.kt`; `src-tauri/src/mobile/ios_ffi.rs` is a C-ABI twin of the Android JNI. `canari.xcodeproj/project.pbxproj` is the hand-maintained build source of truth (NOT `project.yml`/xcodegen) - targets/resources/variant groups are added directly to it, no Mac needed (CI macOS runner builds it). Builds+signs+exports end-to-end in CI (`ios-release.yml`).

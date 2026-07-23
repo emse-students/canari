@@ -14,7 +14,6 @@ import android.util.Base64
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import app.tauri.plugin.Invoke
-import java.util.Enumeration
 import javax.crypto.KeyGenerator
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -145,7 +144,7 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         if (!keyStore.containsAlias(KEY_ALIAS)) {
             val keyGenerator =
                 KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-            val keyGenParameterSpec = KeyGenParameterSpec.Builder(
+            val builder = KeyGenParameterSpec.Builder(
                 KEY_ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
             )
@@ -153,8 +152,16 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 // Require authentication on every use:
                 .setUserAuthenticationRequired(true)
-                .setUserAuthenticationValidityDurationSeconds(-1)
-                .build()
+            // Per-use strong-biometric auth. Only affects NEWLY generated keys (existing
+            // aliases keep their spec), so enrolled devices are untouched either way.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                builder.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+            } else {
+                // Pre-API 30 equivalent of the above (-1 = biometric auth on every use).
+                @Suppress("DEPRECATION")
+                builder.setUserAuthenticationValidityDurationSeconds(-1)
+            }
+            val keyGenParameterSpec = builder.build()
             keyGenerator.init(keyGenParameterSpec)
             keyGenerator.generateKey()
         }
@@ -163,12 +170,6 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     // Prepares and returns a Cipher instance for encryption using the key from the Keystore.
     private fun getEncryptionCipher(): Cipher {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-
-        // ######## TODO: remove
-        val aliases: Enumeration<String> = keyStore.aliases()
-        Logger.warn("########## aliases:", aliases.toList().joinToString())
-        // ###############
-
         val secretKey = keyStore.getKey(KEY_ALIAS, null) as SecretKey
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, secretKey)

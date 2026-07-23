@@ -220,6 +220,12 @@ jobs:
 
       - name: Prebuild Rust static lib (libapp.a)
         working-directory: frontend/src-tauri
+        env:
+          # Match the lowest pbxproj IPHONEOS_DEPLOYMENT_TARGET (14.0). Without it,
+          # rustc/cc default the objects' min-iOS to the SDK version, and every link
+          # pass floods "object file built for newer iOS version than being linked"
+          # (~75 ld warnings per run).
+          IPHONEOS_DEPLOYMENT_TARGET: "14.0"
         run: |
           # The Xcode "Build Rust Code" phase is disabled in the hand-maintained pbxproj
           # (it shells out to bun, which isn't on Xcode's PATH), and Externals/ is
