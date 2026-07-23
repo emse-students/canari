@@ -1,0 +1,15 @@
+feat(ios): WP-XP-7 unified rich notification grouping
+
+Brings iOS notification grouping to full parity with Android's MessagingStyle
+model: per-conversation stacking, group summary, sender subtitle in group
+chats.
+- canari_push.mm: app-alive path now uses per-conversation threadIdentifier
+  (groupId instead of the flat "canari_messages" thread), matching the NSE
+  path that already did this (WP-iOS-7). CanariShowLocalNotification gains
+  subtitle + summaryArgument parameters. CanariPushCancelMessageNotifications
+  updated to clear per-conversation notifs via deepLink prefix check.
+- NotificationService.swift: add summaryArgument for iOS 15+ group summary.
+- chat-delivery.md: document the unified model across both platforms.
+
+Android MessagingStyle + GROUP_KEY_MESSAGES summary already provided the
+same model since day one - no Kotlin changes needed.

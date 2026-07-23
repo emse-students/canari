@@ -744,7 +744,13 @@ static void CanariUpdateAppBadge(void) {
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
                                       NSString *_Nullable attachmentPath,
-                                      NSString *_Nullable groupId, BOOL timeSensitive) {
+                                      NSString *_Nullable groupId, BOOL timeSensitive,
+                                      NSString *_Nullable subtitle,
+                                      NSString *_Nullable summaryArgument) {
+  // WP-XP-7: per-conversation notifications use the groupId as thread, not the flat
+  // "canari_messages" thread. Suppress the foreground guard ONLY for the old flat thread;
+  // per-conversation notifications should still post (they might be from a conversation
+  // that isn't the one currently open - iOS handles stacking gracefully).
   if (canari_ios_is_in_foreground() && [threadId isEqualToString:@"canari_messages"]) {
     return;
   }
@@ -754,6 +760,18 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   content.body = body ?: @"";
   content.sound = [UNNotificationSound defaultSound];
   content.threadIdentifier = threadId;
+  // Inside a group conversation, surface who spoke as a subtitle (WP-XP-7). NSE twin is
+  // in NotificationService.swift applyMessageContent.
+  if (subtitle.length > 0) {
+    content.subtitle = subtitle;
+  }
+  // Group summary (WP-XP-7): iOS 15+ uses this text in the stacked-notification summary line.
+  // Android twin is the GROUP_KEY_MESSAGES summary notification (refreshBadgeSummary).
+  if (@available(iOS 15.0, *)) {
+    if (summaryArgument.length > 0) {
+      content.summaryArgument = summaryArgument;
+    }
+  }
   // @-mention of me (WP-XP-5): break through Focus. Requires the app's Time Sensitive
   // Notifications entitlement; silently downgraded to .active without it.
   if (timeSensitive) {
@@ -800,8 +818,9 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
        withCompletionHandler:^(NSError *_Nullable error) {
          if (error != nil) {
            NSLog(@"[CanariPush] showNotification error: %@", error.localizedDescription);
-         } else if ([threadId isEqualToString:@"canari_messages"]) {
-           // Refresh the launcher badge (WP-XP-2) once this conversation's notification is live.
+         } else {
+           // Refresh the launcher badge (WP-XP-2) after ANY chat notification is posted.
+           // The badge counts distinct delivered conversations, not just the old flat thread.
            CanariUpdateAppBadge();
          }
        }];
@@ -1373,7 +1392,7 @@ static void CanariShowPendingSyncNotification(void) {
   NSString *body =
       @"Vous avez peut-etre des messages en attente, ouvrez l'application pour les envoyer.";
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
-                              kPendingSyncNotifId, nil, nil, NO);
+                              kPendingSyncNotifId, nil, nil, NO, nil, nil);
   NSLog(@"[CanariPush] showPendingSyncNotification");
 }
 
@@ -1681,8 +1700,17 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
     NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
-  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, attachmentPath,
-                              groupId, mentionsMe);
+  // WP-XP-7: per-conversation stacking via threadIdentifier = groupId (Android twin:
+  // MessagingStyle with per-conversation notifId). NSE already does this for the killed-app path.
+  NSString *threadId = groupId.length > 0 ? groupId : @"canari_messages";
+  // Inside a group conversation, surface who spoke as a subtitle (Android: MessagingStyle.Message
+  // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
+  NSString *subtitle = isGroup ? senderName : nil;
+  // Group summary (WP-XP-7): iOS 15+ uses summaryArgument as the text in the group-summary line.
+  // Android twin: GROUP_KEY_MESSAGES summary notification (refreshBadgeSummary).
+  NSString *summaryArg = isGroup ? groupName : (senderName.length > 0 ? senderName : @"Canari");
+  CanariShowLocalNotification(title, body, deepLink, threadId, notifId, attachmentPath,
+                              groupId, mentionsMe, subtitle, summaryArg);
 }
 
 static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret, NSString *token) {
@@ -2298,7 +2326,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       deepLink = [NSString stringWithFormat:@"fr.emse.canari://form/%@", formId];
     }
     NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
-    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO);
+    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, nil);
     return;
   }
 
@@ -2347,7 +2375,13 @@ void CanariPushCancelMessageNotifications(void) {
     NSMutableArray<NSString *> *ids = [NSMutableArray array];
     for (UNNotification *n in notifications) {
       NSString *thread = n.request.content.threadIdentifier;
-      if ([thread isEqualToString:@"canari_messages"] || thread.length == 0) {
+      NSString *deepLink = n.request.content.userInfo[@"deepLink"];
+      // WP-XP-7: per-conversation notifications use the groupId as threadIdentifier, not the
+      // old flat "canari_messages" thread. Also catch legacy notifications that have no thread
+      // (empty) or the old flat thread. The deepLink prefix check is a safety net.
+      BOOL isChatNotif = [thread isEqualToString:@"canari_messages"] || thread.length == 0 ||
+                         [deepLink hasPrefix:@"fr.emse.canari://chat"];
+      if (isChatNotif) {
         [ids addObject:n.request.identifier];
       }
     }

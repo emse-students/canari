@@ -254,8 +254,8 @@ on push receipt and down on read-state cancel with no separate counter to keep i
     directly (no `UIApplication` in an extension) via `applyBadgeCount`, counting the delivered chat
     conversations plus the incoming one.
   - Both count a conversation by its per-conversation `threadIdentifier` (NSE deliveries, WP-iOS-7)
-    or the stable request id (flat `canari_messages` thread, in-app deliveries) - both are unique
-    per conversation - and gate on `threadIdentifier == "canari_messages"` or a
+    or the stable request id (app-alive deliveries, both now use per-conversation `groupId` as
+    `threadIdentifier` since WP-XP-7) - both are unique per conversation - and gate on a
     `fr.emse.canari://chat` deep link so social/form notifications never count.
 
 #### Rich media notifications (image/GIF thumbnail)
@@ -379,6 +379,55 @@ opened the app.
 - **NSE** (`NotificationService.swift`): `call_invite` → ringtone + time-sensitive banner with
   the accept deep link; `call_control` with `callEnded` → blank passive content + removes any
   delivered notification whose `userInfo["canariCallId"]` matches.
+
+#### Unified rich notification grouping (WP-XP-7)
+
+One conceptual notification model shared across both platforms: per-conversation stacking, a
+group summary, avatar/initials fallback, and sender-name subtitles inside group chats.
+
+**Per-conversation stacking**
+
+- **Android** — `NotificationCompat.MessagingStyle` already stacks successive messages of the same
+  conversation into a single notification since the initial implementation. Each conversation gets a
+  stable `notifId` (`getStableNotifId(groupId)`); rebuilding from the active notification (bounded to
+  `MAX_NOTIF_MESSAGES = 6`) preserves history across pushes. All conversation notifications carry
+  `.setGroup(GROUP_KEY_MESSAGES)` so Android bundles them under one expandable group.
+- **iOS** — two paths, unified under the same `threadIdentifier = groupId` model:
+  - **App killed** (`NotificationService.swift`): the NSE already set per-conversation
+    `threadIdentifier` (WP-iOS-7), so successive pushes from the same groupId stack naturally.
+  - **App alive** (`canari_push.mm`): `CanariShowMessageNotification` previously passed the flat
+    `@"canari_messages"` thread for every chat notification — successive messages overwrote each
+    other regardless of conversation. Now it passes `groupId` as `threadIdentifier` (fallback
+    `@"canari_messages"` when empty), mirroring the NSE. Social/form notifications keep their own
+    threads (`canari_social`/`canari_forms`).
+
+**Group summary**
+
+- **Android** — `refreshBadgeSummary` builds a group-summary notification (`.setGroupSummary(true)`)
+  on `GROUP_KEY_MESSAGES` every time a message notification is posted or cancelled. The summary
+  carries the unread-conversation count via `.setNumber(count)` which also serves as the launcher
+  badge (WP-XP-2). When the count hits 0 the summary is cancelled.
+- **iOS 15+** — `UNMutableNotificationContent.summaryArgument` is set to the conversation title
+  (group name for groups, sender name for DMs, `"Canari"` fallback). The system shows this text in
+  the stacked-notification group summary line. Set by both paths:
+  - App alive: `CanariShowLocalNotification` (new `summaryArgument` parameter).
+  - App killed: `NotificationService.swift` `applyMessageContent`.
+
+**Subtitle (group chats)**
+
+- **Android** — `MessagingStyle.Message` already carries the sender `Person` object, so the sender
+  name is shown inline with each stacked message.
+- **iOS** — `UNMutableNotificationContent.subtitle` is set to the sender name inside group
+  conversations (when `isGroup && senderName` is non-empty). Both the app-alive path
+  (`CanariShowLocalNotification` new `subtitle` parameter) and the NSE path
+  (`applyMessageContent`) set it. Flat DMs already have the sender as the title, so no subtitle is
+  set.
+
+**App-open cancel**
+
+When the app opens, `CanariPushCancelMessageNotifications` now clears every delivered chat
+notification — both the legacy flat-thread ones and the new per-conversation ones — by checking
+the `deepLink` prefix (`fr.emse.canari://chat`) in addition to the `threadIdentifier`.
 
 ### Security / PIN
 

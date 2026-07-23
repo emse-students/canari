@@ -306,6 +306,11 @@ class NotificationService: UNNotificationServiceExtension {
       // MLS DM/group only - channels go through handleChannelMessage and get no quick actions.
       content.categoryIdentifier = "canari_message_category"
     }
+    // Group summary (WP-XP-7): iOS 15+ uses summaryArgument as the text shown in the stacked-
+    // notification group summary line. Android twin: GROUP_KEY_MESSAGES summary notification.
+    if #available(iOS 15.0, *), !groupId.isEmpty {
+      content.summaryArgument = isGroup ? groupName : (senderName.isEmpty ? "Canari" : senderName)
+    }
     content.userInfo["deepLink"] =
       groupId.isEmpty ? "fr.emse.canari://chat" : "fr.emse.canari://chat/\(groupId)"
 
