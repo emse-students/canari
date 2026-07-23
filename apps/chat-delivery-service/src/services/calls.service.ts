@@ -374,7 +374,10 @@ export class CallsService {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
 
-    const members = await this.groupMemberRepo.find({ where: { groupId }, select: { userId: true } });
+    const members = await this.groupMemberRepo.find({
+      where: { groupId },
+      select: { userId: true },
+    });
     const calleeIds = [...new Set(members.map((m) => m.userId))].filter((id) => id !== callerId);
     if (calleeIds.length === 0) return { rang: 0 };
 
@@ -418,10 +421,15 @@ export class CallsService {
     callId: string,
     reason: 'cancelled' | 'answered' | 'ended'
   ): Promise<{ notified: number }> {
-    this.logger.debug(`[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`);
+    this.logger.debug(
+      `[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`
+    );
     await this.assertMembership(userId, groupId, 'ring-end');
 
-    const members = await this.groupMemberRepo.find({ where: { groupId }, select: { userId: true } });
+    const members = await this.groupMemberRepo.find({
+      where: { groupId },
+      select: { userId: true },
+    });
     const memberIds = [...new Set(members.map((m) => m.userId))];
     if (memberIds.length === 0) return { notified: 0 };
     const tokens = await this.pushTokenRepo.find({ where: { userId: In(memberIds) } });
@@ -514,7 +522,9 @@ export class CallsService {
             aps: {
               alert: {
                 title: callerName || 'Canari',
-                body: groupName ? `\u{1f4de} Appel entrant - ${groupName}` : '\u{1f4de} Appel entrant',
+                body: groupName
+                  ? `\u{1f4de} Appel entrant - ${groupName}`
+                  : '\u{1f4de} Appel entrant',
               },
               sound: 'default',
               'mutable-content': 1,
@@ -536,7 +546,9 @@ export class CallsService {
     const msg = String(e);
     if (msg.includes('registration-token-not-registered') || msg.includes('invalid-argument')) {
       await this.pushTokenRepo.delete({ id: pt.id });
-      this.logger.warn(`[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId}`);
+      this.logger.warn(
+        `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
+      );
     } else {
       this.logger.warn(`[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${msg}`);
     }

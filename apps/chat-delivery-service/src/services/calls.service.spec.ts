@@ -184,9 +184,30 @@ describe('CallsService', () => {
 
     it('routes each platform to its ring transport and never rings the caller', async () => {
       pushTokenRepo.find.mockResolvedValue([
-        { id: '1', userId: 'callee-android', deviceId: 'd1', token: 'fcm-a', platform: 'android', voipToken: null },
-        { id: '2', userId: 'callee-ios-voip', deviceId: 'd2', token: 'fcm-b', platform: 'ios', voipToken: 'voip-b' },
-        { id: '3', userId: 'callee-ios-legacy', deviceId: 'd3', token: 'fcm-c', platform: 'ios', voipToken: null },
+        {
+          id: '1',
+          userId: 'callee-android',
+          deviceId: 'd1',
+          token: 'fcm-a',
+          platform: 'android',
+          voipToken: null,
+        },
+        {
+          id: '2',
+          userId: 'callee-ios-voip',
+          deviceId: 'd2',
+          token: 'fcm-b',
+          platform: 'ios',
+          voipToken: 'voip-b',
+        },
+        {
+          id: '3',
+          userId: 'callee-ios-legacy',
+          deviceId: 'd3',
+          token: 'fcm-c',
+          platform: 'ios',
+          voipToken: null,
+        },
       ]);
 
       const result = await service.ringGroup('caller', 'group-1', 'call-1', true);
@@ -207,7 +228,14 @@ describe('CallsService', () => {
 
     it('clears the voipToken when APNs reports it gone', async () => {
       pushTokenRepo.find.mockResolvedValue([
-        { id: '2', userId: 'callee-ios-voip', deviceId: 'd2', token: 'fcm-b', platform: 'ios', voipToken: 'voip-b' },
+        {
+          id: '2',
+          userId: 'callee-ios-voip',
+          deviceId: 'd2',
+          token: 'fcm-b',
+          platform: 'ios',
+          voipToken: 'voip-b',
+        },
       ]);
       apnsVoip.sendVoipPush.mockResolvedValue('gone');
 
@@ -219,8 +247,22 @@ describe('CallsService', () => {
 
     it('ring-end notifies every member device including the sender user', async () => {
       pushTokenRepo.find.mockResolvedValue([
-        { id: '1', userId: 'caller', deviceId: 'd0', token: 'fcm-0', platform: 'android', voipToken: null },
-        { id: '2', userId: 'callee-android', deviceId: 'd1', token: 'fcm-a', platform: 'android', voipToken: null },
+        {
+          id: '1',
+          userId: 'caller',
+          deviceId: 'd0',
+          token: 'fcm-0',
+          platform: 'android',
+          voipToken: null,
+        },
+        {
+          id: '2',
+          userId: 'callee-android',
+          deviceId: 'd1',
+          token: 'fcm-a',
+          platform: 'android',
+          voipToken: null,
+        },
       ]);
 
       const result = await service.endRing('caller', 'group-1', 'call-1', 'answered');

@@ -79,7 +79,10 @@ export class ApnsVoipService {
    * PKPushRegistry handler receives; callers include type/groupId/callId/caller info.
    * Returns `"gone"` on APNs 410 (token no longer valid) so the caller can clear it.
    */
-  async sendVoipPush(voipToken: string, payload: Record<string, unknown>): Promise<boolean | 'gone'> {
+  async sendVoipPush(
+    voipToken: string,
+    payload: Record<string, unknown>
+  ): Promise<boolean | 'gone'> {
     if (!this.isConfigured()) {
       this.logger.warn('[apns-voip] not configured - skipping VoIP push');
       return false;
