@@ -47,6 +47,7 @@ jobs:
           git add frontend/package.json frontend/src-tauri/tauri.conf.json
           git add frontend/src-tauri/Cargo.toml frontend/mls-wasm/Cargo.toml frontend/mls-core/Cargo.toml
           git add frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
+          git add frontend/src-tauri/gen/apple/canari_iOS/Info.plist
           git add libs/shared-rust/Cargo.toml
           shopt -s nullglob
           git add libs/*/package.json
