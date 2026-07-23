@@ -33,6 +33,7 @@
 		D58951ACC99D4C771311695B /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 41BB032BCA6FE9823617B71A /* MetalKit.framework */; };
 		DA41E4ADF45E623DF4770CEF /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BDF257BC19D5AF44226720EA /* Metal.framework */; };
 		E5F6012345678ABCDEF02 /* canari_push.mm in Sources */ = {isa = PBXBuildFile; fileRef = F6012345678ABCDEF0123 /* canari_push.mm */; };
+		BDCC40C02FED454100576E31 /* KeyboardMediaBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = BDCC40C12FED454100576E31 /* KeyboardMediaBridge.mm */; };
 		EB4C666589AF7B0EDEBED1B6 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 686315A99C66DB3616192FD2 /* assets */; };
 /* End PBXBuildFile section */
 
@@ -97,6 +98,8 @@
 		DA10CA11E0000000000000E1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		E5F6012345678ABCDEF011 /* canari_push.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_push.h; sourceTree = "<group>"; };
 		F6012345678ABCDEF0123 /* canari_push.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_push.mm; sourceTree = "<group>"; };
+		BDCC40C12FED454100576E31 /* KeyboardMediaBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = KeyboardMediaBridge.mm; sourceTree = "<group>"; };
+		BDCC40C22FED454100576E31 /* KeyboardMediaBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = KeyboardMediaBridge.h; sourceTree = "<group>"; };
 		FC45C8DC231D096C520FA226 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -169,9 +172,11 @@
 				366E8C028B4E6CE070877F28 /* main.mm */,
 				B2C3D4E5F6012345678ABCD /* canari_ios.mm */,
 				F6012345678ABCDEF0123 /* canari_push.mm */,
+				BDCC40C12FED454100576E31 /* KeyboardMediaBridge.mm */,
 				A3B4C5D6E7F801234567890 /* canari_ios.h */,
 				E5F6012345678ABCDEF011 /* canari_push.h */,
 				C4D5E6F7012345678ABCDEF /* canari_rust_bridge.h */,
+				BDCC40C22FED454100576E31 /* KeyboardMediaBridge.h */,
 				21FD6DCCB10C1C75E94327C2 /* bindings */,
 			);
 			path = canari;
@@ -401,6 +406,7 @@
 				D12281421027684D406D14E6 /* main.mm in Sources */,
 				A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */,
 				E5F6012345678ABCDEF02 /* canari_push.mm in Sources */,
+				BDCC40C02FED454100576E31 /* KeyboardMediaBridge.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
