@@ -246,6 +246,10 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: fr.emse.canari
           releaseFiles: ${{ steps.outputs.outputs.aab }}
-          track: production
+          # `tracks` (plural) is the non-deprecated input name for the same thing.
+          tracks: production
           status: completed
-          changesNotSentForReview: true
+          # NO `changesNotSentForReview`: once the app is fully published, Google always
+          # sends changes for review automatically and REJECTS the query parameter
+          # ("changesNotSentForReview must not be set", seen on v0.10.2). It was only
+          # tolerated while the app was in its pre-launch review state.
