@@ -21,6 +21,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { resolveUserDisplayName } from '../utils/display-name';
 import {
   buildPushDataFields,
   buildApnsRequest,
@@ -308,23 +309,7 @@ export class MessagingService {
 
     // Resolve sender display name so the notification title is human-readable
     // when decryption fails in the background (SQLite lock / MLS state absent).
-    let senderName = '';
-    try {
-      const rows: {
-        displayName: string | null;
-        firstName: string | null;
-        lastName: string | null;
-      }[] = await this.groupRepo.manager.query(
-        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
-        [senderId]
-      );
-      if (rows[0]) {
-        const { displayName, firstName, lastName } = rows[0];
-        senderName = displayName?.trim() || [firstName, lastName].filter(Boolean).join(' ') || '';
-      }
-    } catch {
-      /* non-fatal */
-    }
+    const senderName = await resolveUserDisplayName(this.groupRepo.manager, senderId);
 
     // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
     // service and avoids auth issues when the app is cold-started.

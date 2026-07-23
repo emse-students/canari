@@ -483,6 +483,9 @@ jobs:
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
           CALL_ROOM_SECRET: ${{ secrets.CALL_ROOM_SECRET }}
+          APNS_VOIP_KEY_P8: ${{ secrets.APNS_VOIP_KEY_P8 }}
+          APNS_VOIP_KEY_ID: ${{ secrets.APNS_VOIP_KEY_ID }}
+          APNS_VOIP_TEAM_ID: ${{ secrets.APNS_VOIP_TEAM_ID }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -637,6 +640,20 @@ jobs:
           else
             echo "::error::CALL_ROOM_SECRET is not set - WebRTC room access control will be disabled (security risk)"
             exit 1
+          fi
+
+          # APNs VoIP key (WP-XP-5, iOS CallKit rings). Optional: without it iOS falls back
+          # to an FCM alert banner. The .env file is line-based, so a raw multi-line PEM is
+          # base64-encoded before writing (ApnsVoipService accepts both forms).
+          if [ -n "$APNS_VOIP_KEY_P8" ]; then
+            case "$APNS_VOIP_KEY_P8" in
+              *"BEGIN PRIVATE KEY"*) APNS_VOIP_KEY_P8="$(printf '%s' "$APNS_VOIP_KEY_P8" | base64 -w0)" ;;
+            esac
+            upsert_env_var "APNS_VOIP_KEY_P8" "$APNS_VOIP_KEY_P8"
+            upsert_env_var "APNS_VOIP_KEY_ID" "$APNS_VOIP_KEY_ID"
+            upsert_env_var "APNS_VOIP_TEAM_ID" "$APNS_VOIP_TEAM_ID"
+          else
+            echo "::warning::APNS_VOIP_KEY_P8 is not set - iOS CallKit VoIP pushes disabled (FCM banner fallback)"
           fi
 
           echo "✅ Runtime secrets synced to infrastructure/.env"

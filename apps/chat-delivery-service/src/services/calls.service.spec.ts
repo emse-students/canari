@@ -4,12 +4,32 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { CallsService } from './calls.service';
+import { ApnsVoipService } from './apns-voip.service';
 import { GroupMember } from '../entities/group-member.entity';
+import { PushToken } from '../entities/push-token.entity';
+
+// Firebase Admin is mocked so the ring fan-out is observable without credentials.
+const fcmSend = jest.fn();
+jest.mock('firebase-admin/app', () => ({ getApps: jest.fn(() => [{}]) }));
+jest.mock('firebase-admin/messaging', () => ({
+  getMessaging: jest.fn(() => ({ send: fcmSend })),
+}));
 
 describe('CallsService', () => {
   let service: CallsService;
   const groupMemberRepo = {
     findOne: jest.fn(),
+    find: jest.fn(),
+    manager: { query: jest.fn(() => Promise.resolve([])) },
+  };
+  const pushTokenRepo = {
+    find: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+  };
+  const apnsVoip = {
+    isConfigured: jest.fn(() => true),
+    sendVoipPush: jest.fn(),
   };
   const redisStore = new Map<string, string>();
   const redis = {
@@ -50,8 +70,16 @@ describe('CallsService', () => {
           useValue: groupMemberRepo,
         },
         {
+          provide: getRepositoryToken(PushToken),
+          useValue: pushTokenRepo,
+        },
+        {
           provide: 'REDIS_CLIENT',
           useValue: redis,
+        },
+        {
+          provide: ApnsVoipService,
+          useValue: apnsVoip,
         },
       ],
     }).compile();
@@ -132,5 +160,77 @@ describe('CallsService', () => {
     await service.reportCallPresence('user-1', 'device-a', { active: false });
     const afterClear = await service.getSiblingCallStatus('user-1', 'device-b');
     expect(afterClear).toEqual({ active: false });
+  });
+
+  describe('ring fan-out (WP-XP-5)', () => {
+    beforeEach(() => {
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      groupMemberRepo.find.mockResolvedValue([
+        { userId: 'caller' },
+        { userId: 'callee-android' },
+        { userId: 'callee-ios-voip' },
+        { userId: 'callee-ios-legacy' },
+      ]);
+      fcmSend.mockResolvedValue('msg-id');
+      apnsVoip.sendVoipPush.mockResolvedValue(true);
+    });
+
+    it('rejects ring from non-members', async () => {
+      groupMemberRepo.findOne.mockResolvedValue(null);
+      await expect(service.ringGroup('intruder', 'group-1', 'call-1', false)).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('routes each platform to its ring transport and never rings the caller', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        { id: '1', userId: 'callee-android', deviceId: 'd1', token: 'fcm-a', platform: 'android', voipToken: null },
+        { id: '2', userId: 'callee-ios-voip', deviceId: 'd2', token: 'fcm-b', platform: 'ios', voipToken: 'voip-b' },
+        { id: '3', userId: 'callee-ios-legacy', deviceId: 'd3', token: 'fcm-c', platform: 'ios', voipToken: null },
+      ]);
+
+      const result = await service.ringGroup('caller', 'group-1', 'call-1', true);
+
+      expect(result.rang).toBe(3);
+      // Caller's own userId is excluded from the token lookup.
+      const lookup = pushTokenRepo.find.mock.calls[0][0].where.userId._value as string[];
+      expect(lookup).not.toContain('caller');
+      // Android + legacy iOS ride FCM; the VoIP-capable iOS device rides APNs directly.
+      expect(fcmSend).toHaveBeenCalledTimes(2);
+      expect(fcmSend.mock.calls[0][0].data.type).toBe('call_ring');
+      expect(fcmSend.mock.calls[0][0].data.hasVideo).toBe('true');
+      expect(apnsVoip.sendVoipPush).toHaveBeenCalledWith(
+        'voip-b',
+        expect.objectContaining({ type: 'call_ring', callId: 'call-1', groupId: 'group-1' })
+      );
+    });
+
+    it('clears the voipToken when APNs reports it gone', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        { id: '2', userId: 'callee-ios-voip', deviceId: 'd2', token: 'fcm-b', platform: 'ios', voipToken: 'voip-b' },
+      ]);
+      apnsVoip.sendVoipPush.mockResolvedValue('gone');
+
+      const result = await service.ringGroup('caller', 'group-1', 'call-1', false);
+
+      expect(result.rang).toBe(0);
+      expect(pushTokenRepo.update).toHaveBeenCalledWith({ id: '2' }, { voipToken: null });
+    });
+
+    it('ring-end notifies every member device including the sender user', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        { id: '1', userId: 'caller', deviceId: 'd0', token: 'fcm-0', platform: 'android', voipToken: null },
+        { id: '2', userId: 'callee-android', deviceId: 'd1', token: 'fcm-a', platform: 'android', voipToken: null },
+      ]);
+
+      const result = await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(result.notified).toBe(2);
+      const lookup = pushTokenRepo.find.mock.calls[0][0].where.userId._value as string[];
+      expect(lookup).toContain('caller');
+      expect(fcmSend.mock.calls[0][0].data).toEqual(
+        expect.objectContaining({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' })
+      );
+    });
   });
 });

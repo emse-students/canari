@@ -65,6 +65,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Normal-priority channel: form reminders (silent). */
         const val CHANNEL_FORMS    = "canari_forms"
 
+        /** Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request). */
+        const val CHANNEL_CALLS    = "canari_calls"
+
+        /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
+        const val CHANNEL_MENTIONS = "canari_mentions"
+
         const val PREFS_NAME    = "canari_prefs"
         const val KEY_FCM_TOKEN = "fcm_token"
 
@@ -73,6 +79,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val ACTION_MARK_READ   = "fr.emse.canari.ACTION_MARK_READ"
         const val EXTRA_GROUP_ID     = "groupId"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
+
+        /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
+        const val ACTION_CALL_DECLINE = "fr.emse.canari.ACTION_CALL_DECLINE"
+        const val EXTRA_CALL_ID       = "callId"
+
+        /** A ring is abandoned after 60s (same order as the OS phone app). */
+        private const val CALL_RING_TIMEOUT_MS = 60_000L
+
+        /** Distinct ID range for ring notifications (stable per callId, far above the counters). */
+        private const val CALL_NOTIF_ID_BASE = 700_000
+
+        /**
+         * callIds currently ringing. Dedupe between the two ring sources: the cleartext
+         * `call_ring` push (fast path) and the decrypted MLS `call_invite` (fallback for
+         * pre-WP-XP-5 callers) can both arrive for the same call.
+         */
+        private val activeCallRings = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
         // Starts at 10_000 to avoid overlapping the stable IDs (1000-9998) or the summary (9999).
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(10_000)
@@ -133,9 +156,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 for (sbn in manager.activeNotifications) {
                     val channelId =
                         if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
-                    // Only touch message notifications (leave social/forms alone).
-                    if (channelId == null || channelId == CHANNEL_MESSAGES) manager.cancel(sbn.id)
+                    // Only touch message notifications (leave social/forms alone; the mentions
+                    // channel is a message tier so it clears on open too). Ring notifications
+                    // are also cleared: once the app is open the in-app CallOverlay rings.
+                    if (channelId == null || channelId == CHANNEL_MESSAGES ||
+                        channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS
+                    ) {
+                        manager.cancel(sbn.id)
+                    }
                 }
+                // Ring dedupe entries die with their notifications, so a re-ring can post again.
+                activeCallRings.clear()
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
             }
@@ -214,6 +245,121 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             refreshBadgeSummary(context)
         }
 
+        /** Stable ring-notification ID for a callId (distinct range, no counter collision). */
+        private fun callNotifId(callId: String): Int =
+            CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
+
+        /**
+         * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
+         * (system call UI with Answer/Decline), classic high-priority notification with the same
+         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen
+         * intent (shown immediately on a locked/idle device when the OS grants USE_FULL_SCREEN_INTENT)
+         * and self-expires after [CALL_RING_TIMEOUT_MS]. Deduped per callId: the cleartext
+         * `call_ring` push and the decrypted MLS `call_invite` may both arrive.
+         */
+        internal fun showIncomingCallNotification(
+            context: Context,
+            groupId: String,
+            callId: String,
+            callerName: String,
+            groupName: String,
+            hasVideo: Boolean,
+        ) {
+            if (MainActivity.isInForeground) {
+                Log.d(TAG, "showIncomingCallNotification: app foreground -> WS/CallOverlay rings, skip")
+                return
+            }
+            if (!activeCallRings.add(callId)) {
+                Log.d(TAG, "showIncomingCallNotification: already ringing call=$callId -> dedupe")
+                return
+            }
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            CanariApplication.ensureChannels(manager)
+            val notifId = callNotifId(callId)
+
+            // Answer = deep link into the conversation with an accept marker: the frontend
+            // auto-accepts the call once the user has unlocked (PIN) and the invite arrived via WS.
+            val videoFlag = if (hasVideo) 1 else 0
+            val answerIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                setData(Uri.parse("fr.emse.canari://chat/$groupId?acceptCall=$callId&video=$videoFlag"))
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val answerPending = PendingIntent.getActivity(
+                context, notifId, answerIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                action = ACTION_CALL_DECLINE
+                putExtra(EXTRA_GROUP_ID, groupId)
+                putExtra(EXTRA_CALL_ID, callId)
+            }
+            val declinePending = PendingIntent.getBroadcast(
+                context, notifId + 1, declineIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = callerName.ifEmpty { "Canari" }
+            val body = buildString {
+                append(context.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call))
+                if (groupName.isNotEmpty()) append(" - ").append(groupName)
+            }
+            val person = Person.Builder().setName(title).setImportant(true).build()
+
+            val builder = NotificationCompat.Builder(context, CHANNEL_CALLS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setTimeoutAfter(CALL_RING_TIMEOUT_MS)
+                .setFullScreenIntent(answerPending, true)
+                .setContentIntent(answerPending)
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                builder.setStyle(
+                    NotificationCompat.CallStyle.forIncomingCall(person, declinePending, answerPending)
+                        .setIsVideo(hasVideo)
+                )
+            } else {
+                builder
+                    .addAction(
+                        NotificationCompat.Action.Builder(
+                            R.drawable.ic_notification,
+                            context.getString(R.string.notif_action_decline_call),
+                            declinePending
+                        ).build()
+                    )
+                    .addAction(
+                        NotificationCompat.Action.Builder(
+                            R.drawable.ic_notification,
+                            context.getString(R.string.notif_action_answer_call),
+                            answerPending
+                        ).build()
+                    )
+            }
+            val notif = builder.build()
+            // Loop the ringtone until the ring is answered, declined, cancelled or times out.
+            notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
+            manager.notify(notifId, notif)
+            Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
+
+            // Belt-and-braces expiry: setTimeoutAfter is API 26+; also drop the dedupe entry.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                cancelIncomingCallNotification(context, callId)
+            }, CALL_RING_TIMEOUT_MS)
+        }
+
+        /** Stops an active ring (answered elsewhere, caller hung up, timeout, or user declined). */
+        internal fun cancelIncomingCallNotification(context: Context, callId: String) {
+            if (callId.isEmpty()) return
+            if (!activeCallRings.remove(callId)) return
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(callNotifId(callId))
+            Log.d(TAG, "cancelIncomingCallNotification: ring stopped call=$callId")
+        }
+
         /**
          * Counts distinct unread conversations = active message notifications, excluding the group
          * summary and the pending-sync nudge. Backs the launcher app-icon badge (WP-XP-2).
@@ -224,7 +370,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 manager.activeNotifications.count { sbn ->
                     sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
                         (android.os.Build.VERSION.SDK_INT < 26 ||
-                            sbn.notification.channelId == CHANNEL_MESSAGES)
+                            sbn.notification.channelId == CHANNEL_MESSAGES ||
+                            sbn.notification.channelId == CHANNEL_MENTIONS)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "countUnreadConversations: ${e.message}")
@@ -596,7 +743,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val text: String,
         val messageId: String,
         val sentAt: Long,
-        val type: String,                 // "text" | "reply" | "media"
+        val type: String,                 // "text" | "reply" | "media" | "call_invite" | "call_control" | ...
         val replyTo: JSONObject?,
         val mediaKind: String?,           // "image" | "video" | "audio" | "file" | null
         // Media reference + CEK (WP-XP-3), populated only for `type == "media"`. Used to download and
@@ -605,6 +752,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val mediaKey: String? = null,     // base64 32-byte CEK
         val mediaIv: String? = null,      // base64 12-byte GCM IV
         val mimeType: String? = null,
+        // Call signaling (WP-XP-5), populated only for `type == "call_invite" | "call_control"`.
+        val callId: String? = null,
+        val callEnded: Boolean = false,
+        val hasVideo: Boolean = false,
     )
 
     override fun onNewToken(token: String) {
@@ -640,6 +791,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         val msgType = data["type"]
 
+        // Ring-end (WP-XP-5), handled BEFORE the foreground guard: a stale ringing notification
+        // must be cleared even when the app is foreground (the user may have opened the app by
+        // hand while the ring notification was still up).
+        if (msgType == "call_ring_end") {
+            Log.d(TAG, "call_ring_end: call=${data["callId"]} reason=${data["reason"]}")
+            cancelIncomingCallNotification(this, data["callId"] ?: "")
+            return
+        }
+
         // --- Foreground guard: a single MLS engine writes mls.bin at a time --------------
         // When the app is in the foreground, the Tauri MLS engine (WebView/Rust, in-memory state)
         // already handles everything via WebSocket and persists mls.bin. Letting the background JNI
@@ -653,6 +813,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        // Incoming-call ring (WP-XP-5): cleartext fan-out from POST /api/calls/ring. No MLS
+        // involved - instant CallStyle ring, no Argon2/decrypt latency. Foreground already
+        // returned above (WS/CallOverlay rings there).
+        if (msgType == "call_ring") {
+            val groupId = data["groupId"] ?: ""
+            val callId = data["callId"] ?: ""
+            val callerName = data["callerName"]?.takeIf { it.isNotEmpty() }
+                ?: data["senderName"] ?: ""
+            if (groupId.isEmpty() || callId.isEmpty()) {
+                Log.e(TAG, "call_ring: missing groupId/callId -> abort")
+                return
+            }
+            showIncomingCallNotification(
+                this, groupId, callId, callerName,
+                data["groupName"] ?: "", data["hasVideo"] == "true",
+            )
+            return
+        }
         // Pending welcome request: an offline peer needs to be added to a group.
         // We handle it directly in the background (JNI + HTTP PushSecret) without opening the WebView.
         if (msgType == "welcome_request_pending") {
@@ -789,6 +967,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
             }
 
+            // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
+            // that did not hit POST /api/calls/ring; deduped per callId with the cleartext ring).
+            // Control (answer/ICE/hangup/answered) -> never a message notification; hangup/answered
+            // additionally stops an active ring.
+            if (decrypted?.type == "call_invite") {
+                showIncomingCallNotification(
+                    this, groupId, decrypted.callId ?: "mls-$groupId",
+                    senderName, groupName, decrypted.hasVideo,
+                )
+                return@runWithWakeLock
+            }
+            if (decrypted?.type == "call_control") {
+                if (decrypted.callEnded) cancelIncomingCallNotification(this, decrypted.callId ?: "")
+                Log.d(TAG, "call_control: suppressed (ended=${decrypted.callEnded})")
+                return@runWithWakeLock
+            }
+
             val body: String = decrypted?.text
                 ?: run {
                     // Insufficient catch-up (no commit, below the floor, or group not joined yet):
@@ -828,8 +1023,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Rich media thumbnail (WP-XP-3): for an image/GIF message, download + decrypt the blob and
             // attach it inline. null for text/video/audio -> plain text notification.
             val media = decrypted?.let { fetchAndDecryptMedia(it) }
-            Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null}")
-            showNotification(senderName, groupName, body, largeIcon, groupId, media?.first, media?.second)
+            // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one
+            // targets my own userId the notification is posted on the higher-tier mentions channel
+            // (bypass-DND request) instead of the regular messages channel.
+            val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+            val mentionsMe = myUserId != null &&
+                decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
+            val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
+            Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
+            showNotification(senderName, groupName, body, largeIcon, groupId, media?.first, media?.second, channel)
 
             // Woken by this incoming message: try to send our own pending outgoing messages
             // (text/reply/control), without waiting for a Welcome push or a reopen. Since the
@@ -1476,19 +1678,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "decryptProto: ok=false -> decryption failed")
                 return null
             }
-            val text = json.optString("text").takeIf { it.isNotEmpty() } ?: return null
-            Log.d(TAG, "decryptProto: success type=${json.optString("type")} -> \"${text.take(60)}\"")
+            val type = json.optString("type", "text")
+            // Call signaling (WP-XP-5) legitimately has an empty text ("call_control"); every
+            // other type without text is unrenderable -> null (generic fallback path).
+            val isCall = type == "call_invite" || type == "call_control"
+            val text = json.optString("text").takeIf { it.isNotEmpty() || isCall } ?: return null
+            Log.d(TAG, "decryptProto: success type=$type -> \"${text.take(60)}\"")
             DecryptedMessage(
                 text      = text.take(200),
                 messageId = json.optString("messageId"),
                 sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
-                type      = json.optString("type", "text"),
+                type      = type,
                 replyTo   = json.optJSONObject("replyTo"),
                 mediaKind = json.optString("mediaKind").takeIf { it.isNotEmpty() },
                 mediaId   = json.optString("mediaId").takeIf { it.isNotEmpty() },
                 mediaKey  = json.optString("mediaKey").takeIf { it.isNotEmpty() },
                 mediaIv   = json.optString("mediaIv").takeIf { it.isNotEmpty() },
                 mimeType  = json.optString("mimeType").takeIf { it.isNotEmpty() },
+                callId    = json.optString("callId").takeIf { it.isNotEmpty() },
+                callEnded = json.optBoolean("callEnded", false),
+                hasVideo  = json.optBoolean("hasVideo", false),
             )
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
@@ -1909,6 +2118,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         mediaUri: Uri? = null,
         mediaMime: String? = null,
+        channel: String = CHANNEL_MESSAGES,
     ) {
         if (MainActivity.isInForeground) {
             Log.d(TAG, "showNotification: app in foreground -> notification suppressed (groupId=${groupId.take(8)})")
@@ -1970,7 +2180,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         style.addMessage(newMessage)
 
-        val notifBuilder = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+        // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
+        // a mention upgrades (or a plain message downgrades) this conversation's channel, cancel
+        // the old post first - the rebuilt MessagingStyle above already carries its history.
+        if (existingNotif != null && android.os.Build.VERSION.SDK_INT >= 26 &&
+            existingNotif.channelId != channel
+        ) {
+            manager.cancel(notifId)
+        }
+
+        val notifBuilder = NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(style)
             .setAutoCancel(true)

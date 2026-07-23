@@ -6,6 +6,7 @@ import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { consumePendingCallAccept } from '$lib/stores/pendingCallAccept';
 import { getToken } from '$lib/stores/auth';
 import {
   buildCallAudioConstraints,
@@ -153,6 +154,15 @@ export class CallService {
       this.incomingCallerId = senderNorm;
       this.incomingHasVideo = callMsg.hasVideo !== false;
       this.callState.set('incoming');
+
+      // WP-XP-5: the user may have ALREADY answered this call on a system surface (Android
+      // CallStyle notification deep link / iOS CallKit) before the app was unlocked and the
+      // invite reached us over WS. Consume the recorded intent and auto-accept.
+      const pendingAccept = consumePendingCallAccept(callMsg.callId);
+      if (pendingAccept) {
+        appendLog(`[Call] auto-accepting call ${callMsg.callId} (system-surface answer)`);
+        void this.acceptCall(groupId, callMsg.callId);
+      }
     }
   }
 
@@ -179,6 +189,9 @@ export class CallService {
       await this.connectToSfu(this.currentCallId!);
       const deviceId = this.mlsService.getDeviceId();
       await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video, deviceId));
+      // WP-XP-5: explicit cleartext ring for killed/background devices - the server cannot
+      // read the MLS invite, so it fans out call_ring (Android) / APNs VoIP (iOS CallKit).
+      void this.triggerServerRing(groupId, this.currentCallId!, video);
       void this.chatNotifier?.onCallStarted(groupId, this.currentCallId!);
       this.syncCallPresence(true);
     } catch (e) {
@@ -203,6 +216,8 @@ export class CallService {
       const deviceId = this.mlsService.getDeviceId();
       // Tell our other devices to stop ringing before joining the SFU.
       await this.sendMlsNotification(groupId, mkCallAnswered(callId, deviceId));
+      // WP-XP-5: also stop the system-surface rings (CallStyle notifs / CallKit) everywhere.
+      void this.endServerRing(groupId, callId, 'answered');
       // Fetch our own room token before connecting (the initiator already has theirs).
       this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
       await this.setupMedia(useVideo);
@@ -222,10 +237,15 @@ export class CallService {
   public endCall(notify: boolean = true) {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
+    // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
+    const wasCalling = get(this.callState) === 'calling';
     if (notify && groupId && callId) {
       this.sendMlsNotification(groupId, mkCallHangup(callId, this.mlsService.getDeviceId())).catch(
         console.error
       );
+      // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
+      // or a late ring after the call ended).
+      void this.endServerRing(groupId, callId, wasCalling ? 'cancelled' : 'ended');
     }
     if (groupId && callId) {
       void this.chatNotifier?.onCallEnded(groupId, callId);
@@ -299,6 +319,51 @@ export class CallService {
 
     this.remoteStream.set(null);
     this.remoteStreams.set(new Map());
+  }
+
+  /**
+   * Triggers the cleartext incoming-call ring fan-out (WP-XP-5): POST /api/calls/ring makes the
+   * backend push call_ring (Android CallStyle) / APNs VoIP (iOS CallKit) to every other member
+   * device. Best-effort: a ring failure must never break the call itself.
+   */
+  private async triggerServerRing(groupId: string, callId: string, hasVideo: boolean) {
+    try {
+      const { historyUrl } = resolveMlsPublicUrls();
+      const url = new URL('/api/calls/ring', historyUrl);
+      const res = await apiFetch(url.toString(), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId, callId, hasVideo }),
+      });
+      appendLog(`[Call] server ring ${res.ok ? 'sent' : `failed (${res.status})`}`);
+    } catch (e) {
+      appendLog(`[Call] server ring error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * Stops the system-surface rings on every member device (WP-XP-5): POST /api/calls/ring-end.
+   * `reason`: 'answered' (someone picked up), 'cancelled' (caller gave up before pickup),
+   * 'ended' (call over). Best-effort - the 60s local timeout covers a lost signal.
+   */
+  private async endServerRing(
+    groupId: string,
+    callId: string,
+    reason: 'answered' | 'cancelled' | 'ended'
+  ) {
+    try {
+      const { historyUrl } = resolveMlsPublicUrls();
+      const url = new URL('/api/calls/ring-end', historyUrl);
+      await apiFetch(url.toString(), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId, callId, reason }),
+      });
+    } catch (e) {
+      appendLog(`[Call] ring-end error: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /**
@@ -1104,7 +1169,10 @@ export class CallService {
       ...appMsgPartial,
     };
     const buffer = encodeAppMessage(appMsg);
-    await this.mlsService.sendMessage(groupId, buffer);
+    // WP-XP-5: ALL call signaling is sent silent - visible ringing on killed devices comes
+    // exclusively from the explicit /api/calls/ring fan-out (CallStyle/CallKit), so these
+    // protos must never surface as "new message" pushes (they used to, as generic fallbacks).
+    await this.mlsService.sendMessage(groupId, buffer, undefined, true);
   }
 
   /** Toggles microphone mute on the local audio track. */

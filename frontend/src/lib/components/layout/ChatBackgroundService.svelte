@@ -51,6 +51,7 @@
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
   import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
+  import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
@@ -695,6 +696,9 @@
     w.wasm_bindings_log = (level: string, msg: string) => appendLog(`[RUST::${level}] ${msg}`);
 
     globalSession.initServices(appendLog);
+    // WP-XP-5: a CallKit answer may predate this cold start (app launched from the call UI).
+    // Drain it before login so the auto-accept fires as soon as the invite arrives over WS.
+    void drainNativePendingCallAccept();
     void startLoginFlow();
 
     /** Fire-and-forget native MLS foreground-guard command (mobile only; no-op on desktop/web). */
@@ -740,6 +744,9 @@
         void (async () => {
           await globalSession.ensureMls().reloadStateFromDisk();
           if (storage) await reconcileOutboxSent(storage).catch(() => {});
+          // WP-XP-5: the user may have answered a CallKit ring while we were away - record
+          // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
+          await drainNativePendingCallAccept();
           if (!globalSession.isWsConnected) {
             appendLog('Page visible again - reconnecting…');
             void globalSession.attemptReconnect(sessionCb());

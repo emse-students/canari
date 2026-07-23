@@ -78,6 +78,22 @@ if (isTauriRuntime()) {
             // A community channel target (`channel_<uuid>`) opens under /communities, not /chat.
             if (u.protocol === 'fr.emse.canari:' && u.host === 'chat') {
               const groupId = u.pathname.replace(/^\//, '');
+              // WP-XP-5: the user answered an incoming call from a system surface (Android
+              // CallStyle notification / iOS CallKit). Record the intent; CallService
+              // auto-accepts once the MLS invite arrives over WS (post-unlock).
+              const acceptCallId = u.searchParams.get('acceptCall');
+              if (groupId && acceptCallId) {
+                import('$lib/stores/pendingCallAccept')
+                  .then(({ setPendingCallAccept }) =>
+                    setPendingCallAccept({
+                      groupId,
+                      callId: acceptCallId,
+                      hasVideo: u.searchParams.get('video') === '1',
+                      acceptedAt: Date.now(),
+                    })
+                  )
+                  .catch(() => {});
+              }
               if (groupId) {
                 Promise.all([
                   import('$lib/stores/notifNav.svelte'),

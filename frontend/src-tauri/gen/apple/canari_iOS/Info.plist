@@ -25,6 +25,8 @@
 		<string>remote-notification</string>
 		<string>processing</string>
 		<string>fetch</string>
+		<!-- WP-XP-5: PushKit VoIP pushes (incoming-call ring via CallKit). -->
+		<string>voip</string>
 	</array>
 	<!-- BGTaskScheduler identifiers the app may submit. Must list every identifier passed to
 	     registerForTaskWithIdentifier: / submitTaskRequest: or BGTaskScheduler throws. This

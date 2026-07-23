@@ -68,6 +68,15 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(manifest).toMatch(/android:name=["']\.CanariNotificationActionReceiver["']/);
   });
 
+  it("demande USE_FULL_SCREEN_INTENT pour la sonnerie d'appel (WP-XP-5)", () => {
+    // Sans elle, la notification CallStyle ne peut pas s'afficher plein écran sur un
+    // téléphone verrouillé - l'appel entrant devient une simple bannière silencieuse.
+    expect(manifest).toContain('android.permission.USE_FULL_SCREEN_INTENT');
+    // Et le service Kotlin doit bien exposer les deux canaux WP-XP-5.
+    expect(fcmServiceKt).toMatch(/CHANNEL_CALLS\s*=\s*"canari_calls"/);
+    expect(fcmServiceKt).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions"/);
+  });
+
   it('ne réintroduit pas android:debuggable avec placeholder (casse le merge release)', () => {
     // build.gradle.kts ne définit pas manifestPlaceholders["debuggable"] → un
     // android:debuggable="${debuggable}" fait échouer processUniversalReleaseMainManifest.

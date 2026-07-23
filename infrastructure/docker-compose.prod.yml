@@ -161,6 +161,13 @@ services:
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # Direct APNs VoIP pushes for iOS CallKit rings (WP-XP-5). Optional: unset falls
+      # back to an FCM alert banner on iOS.
+      APNS_VOIP_KEY_P8: ${APNS_VOIP_KEY_P8:-}
+      APNS_VOIP_KEY_ID: ${APNS_VOIP_KEY_ID:-}
+      APNS_VOIP_TEAM_ID: ${APNS_VOIP_TEAM_ID:-}
+      APNS_VOIP_TOPIC: ${APNS_VOIP_TOPIC:-}
+      APNS_VOIP_SANDBOX: ${APNS_VOIP_SANDBOX:-}
     depends_on:
       redis:
         condition: service_healthy

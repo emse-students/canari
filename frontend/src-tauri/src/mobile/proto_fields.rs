@@ -292,6 +292,36 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         }
     }
 
+    // CallMsg (field 7, WP-XP-5): WebRTC signaling rides the same AppMessage channel.
+    // An invite (offer_sdp present) becomes a typed "call_invite" so natives can show a
+    // ringing notification (or dedupe against an already-ringing call_ring push); every
+    // other payload (answer/ICE/hangup/answered) is pure signaling -> "call_control" with
+    // `callEnded` set on hangup/answered so natives can cancel a ring instead of showing
+    // the old generic "new message" fallback.
+    if let Some(call_msg) = find_length_delimited_field(bytes, 7) {
+        let call_id = find_length_delimited_field(&call_msg, 1)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let has_video = find_varint_field(&call_msg, 6).unwrap_or(0) == 1;
+        if find_length_delimited_field(&call_msg, 2).is_some() {
+            let text = if has_video {
+                "\u{1f4f9} Appel vid\u{00e9}o entrant".to_string()
+            } else {
+                "\u{1f4de} Appel entrant".to_string()
+            };
+            let mut info = ok_message_json(text, message_id, sent_at, "call_invite");
+            info["callId"] = serde_json::json!(call_id);
+            info["hasVideo"] = serde_json::json!(has_video);
+            return info;
+        }
+        let ended = find_varint_field(&call_msg, 5).is_some() // hangup
+            || find_varint_field(&call_msg, 7).is_some(); // answered (sibling pickup)
+        let mut info = ok_message_json(String::new(), message_id, sent_at, "call_control");
+        info["callId"] = serde_json::json!(call_id);
+        info["callEnded"] = serde_json::json!(ended);
+        return info;
+    }
+
     serde_json::json!({ "ok": false })
 }
 
@@ -430,5 +460,42 @@ mod tests {
         let data = find_length_delimited_field(&system_msg, 2).unwrap();
         let data_json: serde_json::Value = serde_json::from_slice(&data).unwrap();
         assert_eq!(data_json["messageIds"], serde_json::json!(["m1", "m2"]));
+    }
+
+    #[test]
+    fn call_invite_is_typed_with_call_metadata() {
+        // CallMsg { call_id=1, offer_sdp=2 ("START" sentinel), has_video=6 } as AppMessage field 7.
+        let mut call = Vec::new();
+        write_string_field(&mut call, 1, "room-1");
+        write_string_field(&mut call, 2, "START");
+        write_tag(&mut call, 6, 0);
+        write_varint(&mut call, 1);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 7, &call);
+        write_string_field(&mut msg, 6, "mid-1");
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], true);
+        assert_eq!(info["type"], "call_invite");
+        assert_eq!(info["callId"], "room-1");
+        assert_eq!(info["hasVideo"], true);
+        assert!(info["text"].as_str().unwrap().contains("Appel"));
+    }
+
+    #[test]
+    fn call_hangup_is_suppressed_control_with_call_ended() {
+        // CallMsg { call_id=1, hangup=5 } - signaling only, must never fabricate a preview.
+        let mut call = Vec::new();
+        write_string_field(&mut call, 1, "room-1");
+        write_tag(&mut call, 5, 0);
+        write_varint(&mut call, 1);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 7, &call);
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], true);
+        assert_eq!(info["type"], "call_control");
+        assert_eq!(info["callEnded"], true);
+        assert_eq!(info["text"], "");
     }
 }

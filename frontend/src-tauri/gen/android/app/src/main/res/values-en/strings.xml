@@ -1,4 +1,8 @@
 <resources>
     <string name="notif_action_reply">Reply</string>
     <string name="notif_action_mark_read">Mark as read</string>
+    <string name="notif_incoming_call">Incoming call</string>
+    <string name="notif_incoming_video_call">Incoming video call</string>
+    <string name="notif_action_answer_call">Answer</string>
+    <string name="notif_action_decline_call">Decline</string>
 </resources>

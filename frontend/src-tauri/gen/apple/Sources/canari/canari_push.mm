@@ -2,8 +2,10 @@
 #import "canari_ios.h"
 #import "canari_rust_bridge.h"
 
+#import <CallKit/CallKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <PushKit/PushKit.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
@@ -67,6 +69,10 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, copy, nullable) NSString *mediaKey;
 @property(nonatomic, copy, nullable) NSString *mediaIv;
 @property(nonatomic, copy, nullable) NSString *mimeType;
+// Call signaling (WP-XP-5), populated only for `type == "call_invite" | "call_control"`.
+@property(nonatomic, copy, nullable) NSString *callId;
+@property(nonatomic, assign) BOOL callEnded;
+@property(nonatomic, assign) BOOL hasVideo;
 @end
 
 @implementation CanariDecryptedMessage
@@ -85,6 +91,46 @@ static void CanariPopulateMediaFields(CanariDecryptedMessage *msg, NSDictionary 
   msg.mediaIv = [mediaIv isKindOfClass:[NSString class]] ? mediaIv : nil;
   id mimeType = dict[@"mimeType"];
   msg.mimeType = [mimeType isKindOfClass:[NSString class]] ? mimeType : nil;
+}
+
+/// Parses a decrypt-result JSON string (extract_full_message_info shape) into a
+/// CanariDecryptedMessage. Shared by the direct and commit-catch-up decrypt paths (was
+/// duplicated in both). Call signaling (WP-XP-5) legitimately has an empty text
+/// ("call_control"); every other type without a preview is unrenderable -> nil.
+static CanariDecryptedMessage *_Nullable CanariParseDecryptedJson(NSString *jsonStr) {
+  if (jsonStr.length == 0) {
+    return nil;
+  }
+  NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
+  id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
+  if (![json isKindOfClass:[NSDictionary class]]) {
+    return nil;
+  }
+  NSDictionary *dict = (NSDictionary *)json;
+  if (![dict[@"ok"] boolValue]) {
+    return nil;
+  }
+  NSString *type = [dict[@"type"] isKindOfClass:[NSString class]] ? dict[@"type"] : @"text";
+  BOOL isCall = [type isEqualToString:@"call_invite"] || [type isEqualToString:@"call_control"];
+  NSString *text = [dict[@"text"] isKindOfClass:[NSString class]] ? dict[@"text"] : @"";
+  if (text.length == 0 && !isCall) {
+    return nil;
+  }
+  CanariDecryptedMessage *msg = [[CanariDecryptedMessage alloc] init];
+  if (text.length > 200) {
+    text = [text substringToIndex:200];
+  }
+  msg.text = text;
+  msg.messageId = [dict[@"messageId"] isKindOfClass:[NSString class]] ? dict[@"messageId"] : @"";
+  msg.sentAt = [dict[@"sentAt"] respondsToSelector:@selector(longLongValue)]
+                   ? [dict[@"sentAt"] longLongValue]
+                   : (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  msg.type = type;
+  msg.callId = [dict[@"callId"] isKindOfClass:[NSString class]] ? dict[@"callId"] : nil;
+  msg.callEnded = [dict[@"callEnded"] boolValue];
+  msg.hasVideo = [dict[@"hasVideo"] boolValue];
+  CanariPopulateMediaFields(msg, dict);
+  return msg;
 }
 
 @interface CanariOutboxEntry : NSObject
@@ -434,35 +480,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   }
   NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
   canari_free_string(jsonPtr);
-  if (jsonStr.length == 0) {
-    return nil;
-  }
-
-  NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
-  id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  NSDictionary *dict = (NSDictionary *)json;
-  if (![dict[@"ok"] boolValue]) {
-    return nil;
-  }
-  NSString *text = [dict[@"text"] isKindOfClass:[NSString class]] ? dict[@"text"] : @"";
-  if (text.length == 0) {
-    return nil;
-  }
-  CanariDecryptedMessage *msg = [[CanariDecryptedMessage alloc] init];
-  if (text.length > 200) {
-    text = [text substringToIndex:200];
-  }
-  msg.text = text;
-  msg.messageId = [dict[@"messageId"] isKindOfClass:[NSString class]] ? dict[@"messageId"] : @"";
-  msg.sentAt = [dict[@"sentAt"] respondsToSelector:@selector(longLongValue)]
-                   ? [dict[@"sentAt"] longLongValue]
-                   : (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-  msg.type = [dict[@"type"] isKindOfClass:[NSString class]] ? dict[@"type"] : @"text";
-  CanariPopulateMediaFields(msg, dict);
-  return msg;
+  return CanariParseDecryptedJson(jsonStr);
 }
 
 static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessageId, NSString *groupId,
@@ -521,34 +539,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
   }
   NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
   canari_free_string(jsonPtr);
-  if (jsonStr.length == 0) {
-    return nil;
-  }
-  NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
-  id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  NSDictionary *dict = (NSDictionary *)json;
-  if (![dict[@"ok"] boolValue]) {
-    return nil;
-  }
-  NSString *text = [dict[@"text"] isKindOfClass:[NSString class]] ? dict[@"text"] : @"";
-  if (text.length == 0) {
-    return nil;
-  }
-  CanariDecryptedMessage *msg = [[CanariDecryptedMessage alloc] init];
-  if (text.length > 200) {
-    text = [text substringToIndex:200];
-  }
-  msg.text = text;
-  msg.messageId = [dict[@"messageId"] isKindOfClass:[NSString class]] ? dict[@"messageId"] : @"";
-  msg.sentAt = [dict[@"sentAt"] respondsToSelector:@selector(longLongValue)]
-                   ? [dict[@"sentAt"] longLongValue]
-                   : (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-  msg.type = [dict[@"type"] isKindOfClass:[NSString class]] ? dict[@"type"] : @"text";
-  CanariPopulateMediaFields(msg, dict);
-  return msg;
+  return CanariParseDecryptedJson(jsonStr);
 }
 
 // Read-only in-memory commit catch-up for a push whose epoch is AHEAD of the persisted mls.bin (a
@@ -753,7 +744,7 @@ static void CanariUpdateAppBadge(void) {
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
                                       NSString *_Nullable attachmentPath,
-                                      NSString *_Nullable groupId) {
+                                      NSString *_Nullable groupId, BOOL timeSensitive) {
   if (canari_ios_is_in_foreground() && [threadId isEqualToString:@"canari_messages"]) {
     return;
   }
@@ -763,6 +754,13 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   content.body = body ?: @"";
   content.sound = [UNNotificationSound defaultSound];
   content.threadIdentifier = threadId;
+  // @-mention of me (WP-XP-5): break through Focus. Requires the app's Time Sensitive
+  // Notifications entitlement; silently downgraded to .active without it.
+  if (timeSensitive) {
+    if (@available(iOS 15.0, *)) {
+      content.interruptionLevel = UNNotificationInterruptionLevelTimeSensitive;
+    }
+  }
 
   NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
   if (deepLink.length > 0) {
@@ -1375,7 +1373,7 @@ static void CanariShowPendingSyncNotification(void) {
   NSString *body =
       @"Vous avez peut-etre des messages en attente, ouvrez l'application pour les envoyer.";
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
-                              kPendingSyncNotifId, nil, nil);
+                              kPendingSyncNotifId, nil, nil, NO);
   NSLog(@"[CanariPush] showPendingSyncNotification");
 }
 
@@ -1676,7 +1674,15 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   if (attachmentPath == nil && ctx != nil && senderId.length > 0) {
     attachmentPath = CanariFetchAvatar(ctx, senderId);
   }
-  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, attachmentPath, groupId);
+  // @-mention of me (WP-XP-5): the decrypted body carries inline `@[uuid]` tokens; when one
+  // targets my own userId the notification is delivered time-sensitive (Focus breakthrough).
+  BOOL mentionsMe = NO;
+  if (ctx != nil && ctx.userId.length > 0 && body.length > 0) {
+    NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
+    mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
+  }
+  CanariShowLocalNotification(title, body, deepLink, @"canari_messages", notifId, attachmentPath,
+                              groupId, mentionsMe);
 }
 
 static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret, NSString *token) {
@@ -1696,6 +1702,324 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
   [req setValue:[NSString stringWithFormat:@"PushSecret %@", secret] forHTTPHeaderField:@"Authorization"];
   req.timeoutInterval = 5.0;
   [[[NSURLSession sharedSession] dataTaskWithRequest:req] resume];
+}
+
+// --- Incoming-call ring: PushKit VoIP + CallKit (WP-XP-5) --------------------
+//
+// The ring path is CLEARTEXT and explicit: the caller's client hits POST /api/calls/ring and the
+// backend fans out a direct APNs VoIP push (FCM cannot carry `apns-push-type: voip`) with
+// {type:"call_ring", groupId, callId, callerName, groupName, hasVideo}. PushKit launches this app
+// even from a killed state and Apple REQUIRES every VoIP push to immediately report a call to
+// CallKit - the full-screen system ring UI. Answering cannot start audio directly (the MLS/WebRTC
+// stack lives in the webview behind the PIN lock), so an answer records a pending accept
+// (pending_call_accept.json, drained by the frontend after unlock via the
+// `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
+// the app becomes active - the in-app call UI takes over from there.
+
+static NSString *const kVoipTokenFileName = @"voip_token.txt";
+static NSString *const kPendingCallAcceptFileName = @"pending_call_accept.json";
+static const int64_t kCallRingTimeoutSec = 60;
+
+static CXProvider *g_callProvider = nil;
+static PKPushRegistry *g_voipRegistry = nil;
+/// callId -> CallKit UUID for calls currently ringing (or answered but not yet handed over).
+static NSMutableDictionary<NSString *, NSUUID *> *g_ringingCalls = nil;
+/// CallKit UUID string -> {groupId, callId, hasVideo} for the answer handler.
+static NSMutableDictionary<NSString *, NSDictionary *> *g_ringingCallInfo = nil;
+
+/// Ends a CallKit session for `callId` (remote hangup, answered elsewhere, timeout). No-op when
+/// the call is not currently reported.
+static void CanariEndCallKitCall(NSString *callId, CXCallEndedReason reason) {
+  if (callId.length == 0) {
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    NSUUID *uuid = g_ringingCalls[callId];
+    if (uuid == nil) {
+      return;
+    }
+    [g_ringingCalls removeObjectForKey:callId];
+    [g_ringingCallInfo removeObjectForKey:uuid.UUIDString];
+    [g_callProvider reportCallWithUUID:uuid endedAtDate:nil reason:reason];
+    NSLog(@"[CanariCallKit] call %@ ended (reason=%ld)", callId, (long)reason);
+  });
+}
+
+@interface CanariCallProviderDelegate : NSObject <CXProviderDelegate>
+@end
+
+@implementation CanariCallProviderDelegate
+
+- (void)providerDidReset:(CXProvider *)provider {
+  (void)provider;
+  [g_ringingCalls removeAllObjects];
+  [g_ringingCallInfo removeAllObjects];
+  NSLog(@"[CanariCallKit] provider reset");
+}
+
+/// User answered on the system UI. Audio cannot start here (MLS keys are behind the PIN lock in
+/// the webview), so persist the accept for the frontend and try to foreground the app; the CallKit
+/// session is closed on didBecomeActive once the in-app flow takes over.
+- (void)provider:(CXProvider *)provider performAnswerCallAction:(CXAnswerCallAction *)action {
+  (void)provider;
+  NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
+  NSString *groupId = info[@"groupId"] ?: @"";
+  NSString *callId = info[@"callId"] ?: @"";
+  BOOL hasVideo = [info[@"hasVideo"] boolValue];
+  NSLog(@"[CanariCallKit] answer call=%@ group=%@", callId, groupId);
+
+  NSString *dir = CanariTauriDataDir();
+  if (dir != nil && groupId.length > 0) {
+    NSDictionary *pending = @{
+      @"groupId" : groupId,
+      @"callId" : callId,
+      @"hasVideo" : @(hasVideo),
+      @"acceptedAt" : @((long long)([[NSDate date] timeIntervalSince1970] * 1000)),
+    };
+    NSData *json = [NSJSONSerialization dataWithJSONObject:pending options:0 error:nil];
+    [json writeToFile:[dir stringByAppendingPathComponent:kPendingCallAcceptFileName]
+           atomically:YES];
+  }
+  [action fulfill];
+
+  // Best-effort foreground: works when the app is unlocked/active contexts allow it; from the
+  // lock screen the user lands in the app via the CallKit UI's app button instead.
+  if (groupId.length > 0) {
+    NSString *link = [NSString
+        stringWithFormat:@"fr.emse.canari://chat/%@?acceptCall=%@&video=%d", groupId, callId,
+                         hasVideo ? 1 : 0];
+    NSURL *url = [NSURL URLWithString:link];
+    if (url != nil) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+      });
+    }
+  }
+}
+
+/// User declined on the system UI: local dismiss only. In a group call "decline" means "stop
+/// ringing me", never "end the call for everyone"; the caller stops via ring-end or timeout.
+- (void)provider:(CXProvider *)provider performEndCallAction:(CXEndCallAction *)action {
+  (void)provider;
+  NSDictionary *info = g_ringingCallInfo[action.callUUID.UUIDString];
+  NSString *callId = info[@"callId"] ?: @"";
+  NSLog(@"[CanariCallKit] declined/ended call=%@", callId);
+  if (callId.length > 0) {
+    [g_ringingCalls removeObjectForKey:callId];
+  }
+  [g_ringingCallInfo removeObjectForKey:action.callUUID.UUIDString];
+  [action fulfill];
+}
+
+@end
+
+static CanariCallProviderDelegate *g_callProviderDelegate = nil;
+
+/// Lazily creates the CXProvider (system call UI) shared by every ring.
+static void CanariEnsureCallProvider(void) {
+  if (g_callProvider != nil) {
+    return;
+  }
+  g_ringingCalls = [NSMutableDictionary dictionary];
+  g_ringingCallInfo = [NSMutableDictionary dictionary];
+  CXProviderConfiguration *config = [[CXProviderConfiguration alloc] init];
+  config.supportsVideo = YES;
+  config.maximumCallGroups = 1;
+  config.maximumCallsPerCallGroup = 1;
+  config.supportedHandleTypes = [NSSet setWithObject:@(CXHandleTypeGeneric)];
+  g_callProvider = [[CXProvider alloc] initWithConfiguration:config];
+  g_callProviderDelegate = [[CanariCallProviderDelegate alloc] init];
+  [g_callProvider setDelegate:g_callProviderDelegate queue:nil];
+}
+
+/// Reports an incoming call to CallKit (full-screen system ring). Deduped per callId (the VoIP
+/// push and the decrypted MLS invite may both arrive); auto-ends as unanswered after 60s.
+static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSString *callerName,
+                                     NSString *groupName, BOOL hasVideo) {
+  if (callId.length == 0) {
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    CanariEnsureCallProvider();
+    if (g_ringingCalls[callId] != nil) {
+      NSLog(@"[CanariCallKit] call %@ already ringing - dedupe", callId);
+      return;
+    }
+    NSUUID *uuid = [NSUUID UUID];
+    g_ringingCalls[callId] = uuid;
+    g_ringingCallInfo[uuid.UUIDString] = @{
+      @"groupId" : groupId ?: @"",
+      @"callId" : callId,
+      @"hasVideo" : @(hasVideo),
+    };
+
+    CXCallUpdate *update = [[CXCallUpdate alloc] init];
+    NSString *display = callerName.length > 0 ? callerName : @"Canari";
+    if (groupName.length > 0 && ![groupName isEqualToString:callerName]) {
+      display = [NSString stringWithFormat:@"%@ - %@", display, groupName];
+    }
+    update.remoteHandle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:display];
+    update.localizedCallerName = display;
+    update.hasVideo = hasVideo;
+    update.supportsHolding = NO;
+    update.supportsGrouping = NO;
+    update.supportsUngrouping = NO;
+    update.supportsDTMF = NO;
+
+    [g_callProvider reportNewIncomingCallWithUUID:uuid
+                                           update:update
+                                       completion:^(NSError *_Nullable error) {
+                                         if (error != nil) {
+                                           NSLog(@"[CanariCallKit] report failed: %@",
+                                                 error.localizedDescription);
+                                           [g_ringingCalls removeObjectForKey:callId];
+                                           [g_ringingCallInfo
+                                               removeObjectForKey:uuid.UUIDString];
+                                         } else {
+                                           NSLog(@"[CanariCallKit] ringing call=%@ video=%d",
+                                                 callId, hasVideo);
+                                         }
+                                       }];
+
+    // Local ring timeout: CallKit has no built-in one. Only fires if still ringing.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kCallRingTimeoutSec * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{
+                     if ([g_ringingCalls[callId] isEqual:uuid]) {
+                       CanariEndCallKitCall(callId, CXCallEndedReasonUnanswered);
+                     }
+                   });
+  });
+}
+
+/// Persists the PushKit VoIP token and re-registers it on the backend (voipToken column of the
+/// device's push_token row) when a push context + secret already exist. Mirror of
+/// CanariPersistFcmToken for the VoIP transport.
+static void CanariPersistVoipToken(NSString *hexToken) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil || hexToken.length == 0) {
+    return;
+  }
+  [hexToken writeToFile:[dir stringByAppendingPathComponent:kVoipTokenFileName]
+             atomically:YES
+               encoding:NSUTF8StringEncoding
+                  error:nil];
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSString *secret = CanariRetrievePushSecret();
+  if (ctx == nil || secret == nil) {
+    NSLog(@"[CanariCallKit] voip token persisted, registration deferred (no ctx/secret yet)");
+    return;
+  }
+  NSURL *url = [NSURL
+      URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/refresh-token", ctx.baseUrl]];
+  if (url == nil) {
+    return;
+  }
+  NSDictionary *payload =
+      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"voipToken" : hexToken};
+  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+  NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+  req.HTTPMethod = @"POST";
+  req.HTTPBody = body;
+  [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [req setValue:[NSString stringWithFormat:@"PushSecret %@", secret]
+      forHTTPHeaderField:@"Authorization"];
+  req.timeoutInterval = 5.0;
+  [[[NSURLSession sharedSession] dataTaskWithRequest:req] resume];
+  NSLog(@"[CanariCallKit] voip token registered on backend");
+}
+
+@interface CanariVoipPushDelegate : NSObject <PKPushRegistryDelegate>
+@end
+
+@implementation CanariVoipPushDelegate
+
+- (void)pushRegistry:(PKPushRegistry *)registry
+    didUpdatePushCredentials:(PKPushCredentials *)pushCredentials
+                     forType:(PKPushType)type {
+  (void)registry;
+  (void)type;
+  NSMutableString *hex = [NSMutableString stringWithCapacity:pushCredentials.token.length * 2];
+  const unsigned char *bytes = (const unsigned char *)pushCredentials.token.bytes;
+  for (NSUInteger i = 0; i < pushCredentials.token.length; i++) {
+    [hex appendFormat:@"%02x", bytes[i]];
+  }
+  NSLog(@"[CanariCallKit] voip credentials updated (%lu bytes)",
+        (unsigned long)pushCredentials.token.length);
+  CanariPersistVoipToken(hex);
+}
+
+- (void)pushRegistry:(PKPushRegistry *)registry
+    didInvalidatePushTokenForType:(PKPushType)type {
+  (void)registry;
+  (void)type;
+  NSString *dir = CanariTauriDataDir();
+  if (dir != nil) {
+    [[NSFileManager defaultManager]
+        removeItemAtPath:[dir stringByAppendingPathComponent:kVoipTokenFileName]
+                   error:nil];
+  }
+  NSLog(@"[CanariCallKit] voip token invalidated");
+}
+
+/// Apple contract: EVERY VoIP push must report an incoming call before `completion` runs, or the
+/// app is terminated (and eventually banned from VoIP pushes). A malformed payload therefore
+/// still reports a call, immediately ended as failed.
+- (void)pushRegistry:(PKPushRegistry *)registry
+    didReceiveIncomingPushWithPayload:(PKPushPayload *)payload
+                              forType:(PKPushType)type
+                withCompletionHandler:(void (^)(void))completion {
+  (void)registry;
+  (void)type;
+  NSDictionary *data = payload.dictionaryPayload;
+  NSString *msgType = [data[@"type"] isKindOfClass:[NSString class]] ? data[@"type"] : @"";
+  NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
+  NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
+  NSString *callerName =
+      [data[@"callerName"] isKindOfClass:[NSString class]] ? data[@"callerName"] : @"";
+  NSString *groupName =
+      [data[@"groupName"] isKindOfClass:[NSString class]] ? data[@"groupName"] : @"";
+  BOOL hasVideo = [data[@"hasVideo"] isKindOfClass:[NSString class]] &&
+                  [data[@"hasVideo"] isEqualToString:@"true"];
+  NSLog(@"[CanariCallKit] voip push type=%@ call=%@", msgType, callId);
+
+  if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
+    CanariReportIncomingCall(groupId, callId, callerName, groupName, hasVideo);
+  } else {
+    // Contract keeper: report-and-kill a placeholder call for any unexpected payload.
+    NSString *bogusId = callId.length > 0 ? callId : [[NSUUID UUID] UUIDString];
+    CanariReportIncomingCall(groupId, bogusId, callerName, groupName, NO);
+    CanariEndCallKitCall(bogusId, CXCallEndedReasonFailed);
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    completion();
+  });
+}
+
+@end
+
+static CanariVoipPushDelegate *g_voipPushDelegate = nil;
+
+/// Installs PushKit (VoIP credentials + pushes) and the app-active handover: once the app is
+/// active the in-app call UI owns the experience, so any lingering CallKit session is closed.
+static void CanariCallKitSetup(void) {
+  CanariEnsureCallProvider();
+  g_voipPushDelegate = [[CanariVoipPushDelegate alloc] init];
+  g_voipRegistry = [[PKPushRegistry alloc] initWithQueue:dispatch_get_main_queue()];
+  g_voipRegistry.delegate = g_voipPushDelegate;
+  g_voipRegistry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
+
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                // Handover: the webview (post-unlock) rings/joins via WS; a CallKit session left
+                // open would show a dangling green bar. AnsweredElsewhere keeps call history sane.
+                for (NSString *callId in [g_ringingCalls.allKeys copy]) {
+                  CanariEndCallKitCall(callId, CXCallEndedReasonAnsweredElsewhere);
+                }
+              }];
+  NSLog(@"[CanariCallKit] PushKit registry + CallKit provider installed");
 }
 
 static void CanariHandleMlsMessage(NSDictionary *data) {
@@ -1737,6 +2061,25 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     // mls.bin unchanged) to produce a real notification instead of the generic fallback.
     if (decrypted == nil && queuedMessageId.length > 0) {
       decrypted = CanariTryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto);
+    }
+
+    // Call signaling over MLS (WP-XP-5, app running in background). Invite -> CallKit ring
+    // (fallback for pre-WP-XP-5 callers that never hit POST /api/calls/ring; deduped per callId
+    // with the VoIP push). Control -> never a message notification; hangup/answered also ends an
+    // active CallKit ring.
+    if (decrypted != nil && [decrypted.type isEqualToString:@"call_invite"]) {
+      NSString *callId = decrypted.callId.length > 0
+                             ? decrypted.callId
+                             : [NSString stringWithFormat:@"mls-%@", groupId];
+      CanariReportIncomingCall(groupId, callId, senderName, groupName, decrypted.hasVideo);
+      return;
+    }
+    if (decrypted != nil && [decrypted.type isEqualToString:@"call_control"]) {
+      if (decrypted.callEnded && decrypted.callId.length > 0) {
+        CanariEndCallKitCall(decrypted.callId, CXCallEndedReasonRemoteEnded);
+      }
+      NSLog(@"[CanariPush] call_control supprime (ended=%d)", decrypted.callEnded);
+      return;
     }
 
     NSString *body = decrypted.text;
@@ -1873,6 +2216,37 @@ static void CanariHandleFcmData(NSDictionary *data) {
   NSLog(@"[CanariPush] onMessage type=%@ action=%@ groupId=%@", msgType, data[@"action"],
         data[@"groupId"]);
 
+  // Incoming-call ring signals (WP-XP-5), handled BEFORE the foreground guard: a ring-end must
+  // clear an active CallKit session even when the app is foreground (the VoIP push reports
+  // CallKit regardless of app state, per Apple's contract).
+  if ([msgType isEqualToString:@"call_ring_end"]) {
+    NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
+    NSString *reason = [data[@"reason"] isKindOfClass:[NSString class]] ? data[@"reason"] : @"";
+    CanariEndCallKitCall(callId, [reason isEqualToString:@"answered"]
+                                     ? CXCallEndedReasonAnsweredElsewhere
+                                     : CXCallEndedReasonRemoteEnded);
+    return;
+  }
+  // `call_ring` normally arrives as an APNs VoIP push (PushKit path); a legacy-registered device
+  // (no voipToken yet) receives it via FCM instead. Foreground rings in-app via WS -> skip.
+  if ([msgType isEqualToString:@"call_ring"]) {
+    if (canari_ios_is_in_foreground()) {
+      NSLog(@"[CanariPush] call_ring en foreground - overlay in-app sonne deja");
+      return;
+    }
+    NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
+    NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
+    NSString *callerName =
+        [data[@"callerName"] isKindOfClass:[NSString class]] ? data[@"callerName"] : @"";
+    NSString *groupName =
+        [data[@"groupName"] isKindOfClass:[NSString class]] ? data[@"groupName"] : @"";
+    if (callId.length > 0) {
+      CanariReportIncomingCall(groupId, callId, callerName, groupName,
+                               [data[@"hasVideo"] isEqualToString:@"true"]);
+    }
+    return;
+  }
+
   if (canari_ios_is_in_foreground() && ![msgType isEqualToString:@"social"] &&
       ![msgType isEqualToString:@"form_reminder"]) {
     NSLog(@"[CanariPush] foreground actif - skip background MLS");
@@ -1924,7 +2298,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       deepLink = [NSString stringWithFormat:@"fr.emse.canari://form/%@", formId];
     }
     NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
-    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil);
+    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO);
     return;
   }
 
@@ -2175,6 +2549,8 @@ void CanariPushSetup(void) {
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
   CanariRegisterNotificationCategories();
+  // Incoming-call ring (WP-XP-5): PushKit VoIP registry + CallKit provider + handover hook.
+  CanariCallKitSetup();
 
   [[NSNotificationCenter defaultCenter]
       addObserverForName:UIApplicationDidFinishLaunchingNotification

@@ -61,6 +61,7 @@ les recreer (Settings -> Secrets and variables -> Actions). Secrets necessaires 
 | App / front | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
 | Paiements | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | Push / appels / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
+| Appels iOS (CallKit, optionnel) | `APNS_VOIP_KEY_P8` (cle APNs .p8, PEM brut ou base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) - push VoIP directs vers APNs pour faire sonner CallKit app tuee ; sans eux, iOS retombe sur une banniere FCM |
 | API externe (Sky) | `EXTERNAL_API_KEY` (cle de `/api/external/*`, profil public ; doit etre identique a `CANARI_API_KEY` cote Sky) ; `SKY_API_KEY` (cle pour lire l arbre de parrainage Sky affiche sur les profils ; identique a `SKY_API_KEY` cote Sky) |
 
 Secret optionnel : `SERVICE_ACCOUNT_USER_ID` surcharge l id du compte de verification

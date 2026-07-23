@@ -4,6 +4,12 @@
 <dict>
 	<key>aps-environment</key>
 	<string>production</string>
+	<!-- WP-XP-5: lets @-mention and call notifications use interruptionLevel=timeSensitive
+	     (Focus breakthrough). Requires the "Time Sensitive Notifications" capability enabled on
+	     the fr.emse.canari App ID + a regenerated "Canari" provisioning profile, or codesign
+	     fails ("profile doesn't include the ... entitlement"). -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:canari-emse.fr</string>

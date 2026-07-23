@@ -86,12 +86,16 @@ class CanariApplication : Application() {
         private const val TAG = "CanariApp"
 
         /**
-         * Creates the three notification channels if they do not exist yet.
+         * Creates the notification channels if they do not exist yet.
          * Called from [CanariApplication.onCreate] and as a fallback from
          * [CanariFirebaseMessagingService.ensureNotificationChannels].
          *  - canari_messages : DMs and group messages (IMPORTANCE_HIGH, vibration, sound)
          *  - canari_social   : reactions/comments on posts (IMPORTANCE_DEFAULT, silent)
          *  - canari_forms    : form reminders (IMPORTANCE_DEFAULT, silent)
+         *  - canari_calls    : incoming call rings (WP-XP-5: IMPORTANCE_HIGH, RINGTONE sound,
+         *                      bypass-DND requested - the user can confirm it in channel settings)
+         *  - canari_mentions : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
+         *                      bypass-DND requested)
          */
         internal fun ensureChannels(manager: NotificationManager) {
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
@@ -134,6 +138,46 @@ class CanariApplication : Application() {
                         description = "Rappels avant l'ouverture des formulaires"
                         enableVibration(false)
                         setSound(null, null)
+                    }
+                )
+            }
+            if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_CALLS) == null) {
+                // Ringtone-class audio so an incoming call sounds like a call, not a message.
+                // setBypassDnd is a REQUEST: the system honors it only if the user grants the
+                // channel "override Do Not Disturb" (surfaced in the channel settings).
+                val ringAttrs = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .build()
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CanariFirebaseMessagingService.CHANNEL_CALLS,
+                        "Appels Canari",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Appels entrants (sonnerie)"
+                        enableVibration(true)
+                        vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
+                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), ringAttrs)
+                        setBypassDnd(true)
+                    }
+                )
+            }
+            if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MENTIONS) == null) {
+                val audioAttrs = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .build()
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        CanariFirebaseMessagingService.CHANNEL_MENTIONS,
+                        "Mentions Canari",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Messages qui vous mentionnent (@)"
+                        enableVibration(true)
+                        setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
+                        setBypassDnd(true)
                     }
                 )
             }

@@ -78,6 +78,43 @@ export class CallsController {
   }
 
   /**
+   * Rings the other group members about an incoming call (WP-XP-5). Triggered by the
+   * CALLER's client right after it sends the (silent) MLS call invite: the server cannot
+   * read MLS ciphertexts, so ringing killed devices needs this explicit cleartext signal.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('calls/ring')
+  @HttpCode(200)
+  async ringGroup(
+    @Body() body: { groupId: string; callId: string; hasVideo?: boolean },
+    @Headers('x-user-id') userId?: string
+  ) {
+    if (!userId) throw new BadRequestException('Missing X-User-Id header');
+    const safeGroupId = sanitizeQueryValue(body?.groupId, 'groupId');
+    const safeCallId = sanitizeQueryValue(body?.callId, 'callId');
+    return this.callsService.ringGroup(userId, safeGroupId, safeCallId, !!body?.hasVideo);
+  }
+
+  /**
+   * Stops the ring on every member device (caller cancelled, someone answered, or the
+   * call ended before pickup). Any group member may send it.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Post('calls/ring-end')
+  @HttpCode(200)
+  async endRing(
+    @Body() body: { groupId: string; callId: string; reason?: string },
+    @Headers('x-user-id') userId?: string
+  ) {
+    if (!userId) throw new BadRequestException('Missing X-User-Id header');
+    const safeGroupId = sanitizeQueryValue(body?.groupId, 'groupId');
+    const safeCallId = sanitizeQueryValue(body?.callId, 'callId');
+    const reason =
+      body?.reason === 'answered' || body?.reason === 'ended' ? body.reason : 'cancelled';
+    return this.callsService.endRing(userId, safeGroupId, safeCallId, reason);
+  }
+
+  /**
    * Reports whether this device is currently in a call (for sibling-device detection).
    */
   @UseGuards(HeaderAuthGuard)

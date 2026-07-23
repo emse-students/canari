@@ -13,6 +13,7 @@ import { LocksController } from './controllers/locks.controller';
 import { MessagingController } from './controllers/messaging.controller';
 import { MessagingService } from './services/messaging.service';
 import { CallsService } from './services/calls.service';
+import { ApnsVoipService } from './services/apns-voip.service';
 import { CallsController } from './controllers/calls.controller';
 import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
@@ -100,6 +101,6 @@ const RedisProvider: Provider = {
     InternalController,
     CallsController,
   ],
-  providers: [RedisProvider, MessagingService, CallsService],
+  providers: [RedisProvider, MessagingService, CallsService, ApnsVoipService],
 })
 export class AppModule {}

@@ -1168,6 +1168,40 @@ fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
+/// Reads {app_data_dir}/voip_token.txt (written by the native iOS PushKit callback, WP-XP-5).
+/// The frontend includes it in POST /api/mls/push/register so CallKit rings work from the very
+/// first login (the native refresh-token path only covers later launches). Always None outside
+/// iOS - Android has no PushKit.
+#[tauri::command]
+fn get_voip_token(app: tauri::AppHandle) -> Option<String> {
+    #[cfg(target_os = "ios")]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("[VOIP] app_data_dir() failed: {e}");
+                return None;
+            }
+        };
+        match std::fs::read_to_string(data_dir.join("voip_token.txt")) {
+            Ok(token) => {
+                let token = token.trim().to_string();
+                if token.is_empty() {
+                    None
+                } else {
+                    Some(token)
+                }
+            }
+            Err(_) => None,
+        }
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 // ─── Fonction JNI appelée par CanariFirebaseMessagingService ─────────────────
 
 /// Déchiffre un message MLS et retourne ses métadonnées complètes en JSON.
@@ -1542,6 +1576,36 @@ fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
         ids.len()
     );
     ids
+}
+
+/// Reads {app_data_dir}/pending_call_accept.json (written by the native iOS CallKit answer
+/// handler while the webview may be locked/not yet running), deletes it and returns the raw
+/// JSON string ({"groupId","callId","hasVideo","acceptedAt"}). The frontend polls this at
+/// resume/login to auto-accept the call the user already answered on the system UI (WP-XP-5).
+/// Returns null when there is no pending accept.
+#[tauri::command]
+fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Option<String> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[CALL_ACCEPT] app_data_dir() failed: {e}");
+            return None;
+        }
+    };
+    let path = data_dir.join("pending_call_accept.json");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            log::warn!("[CALL_ACCEPT] read failed: {e}");
+            return None;
+        }
+    };
+    if let Err(e) = std::fs::remove_file(&path) {
+        log::warn!("[CALL_ACCEPT] delete failed: {e}");
+    }
+    log::info!("[CALL_ACCEPT] pending CallKit accept found");
+    Some(content)
 }
 
 // ─── Commandes Tauri : contexte push ─────────────────────────────────────────
@@ -2118,6 +2182,8 @@ pub fn run() {
             read_and_clear_fcm_cache,
             store_outbox_mirror,
             read_and_clear_outbox_sent,
+            read_and_clear_pending_call_accept,
+            get_voip_token,
             store_channel_key
         ])
         .run(tauri::generate_context!())

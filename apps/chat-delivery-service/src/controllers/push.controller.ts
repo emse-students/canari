@@ -105,7 +105,7 @@ export class PushController {
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
   async registerPushToken(
-    @Body() body: { token: string; deviceId: string; platform?: string },
+    @Body() body: { token: string; deviceId: string; platform?: string; voipToken?: string },
     @Headers('x-user-id') userIdRaw: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
@@ -116,6 +116,12 @@ export class PushController {
     }
     const token = body.token.trim().slice(0, 500);
     const platform: 'android' | 'ios' = body.platform === 'ios' ? 'ios' : 'android';
+    // PushKit VoIP token (iOS, WP-XP-5): present when the native registry already fired at
+    // registration time; otherwise attached later via POST /mls/push/refresh-token.
+    const voipToken =
+      typeof body.voipToken === 'string' && body.voipToken.trim()
+        ? body.voipToken.trim().slice(0, 255)
+        : undefined;
 
     // Generate an opaque long-lived secret for this device.
     // Returned ONCE in the response; the client encrypts it in Android Keystore
@@ -126,7 +132,7 @@ export class PushController {
     // (e.g. app restart) both find no row then both try to INSERT, with the
     // second hitting the unique(userId, deviceId) constraint.
     await this.pushTokenRepo.upsert(
-      { userId, deviceId, token, platform, pushSecret },
+      { userId, deviceId, token, platform, pushSecret, ...(voipToken ? { voipToken } : {}) },
       { conflictPaths: ['userId', 'deviceId'] }
     );
     this.logger.log(`[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`);
@@ -307,18 +313,28 @@ export class PushController {
   @Post('mls/push/refresh-token')
   async refreshPushTokenViaSecret(
     @Headers('authorization') authHeader: string,
-    @Body() body: { userId: string; deviceId: string; token: string }
+    @Body() body: { userId: string; deviceId: string; token?: string; voipToken?: string }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    if (typeof body.token !== 'string' || !body.token.trim()) {
-      throw new BadRequestException('token is required');
+    // Either token may be refreshed independently: the FCM token by the rotation
+    // callbacks, the PushKit VoIP token (iOS, WP-XP-5) by the PKPushRegistry callback.
+    const update: { token?: string; voipToken?: string } = {};
+    if (typeof body.token === 'string' && body.token.trim()) {
+      update.token = body.token.trim().slice(0, 500);
     }
-    const token = body.token.trim().slice(0, 500);
-    await this.pushTokenRepo.update({ userId, deviceId }, { token });
-    this.logger.log(`[PUSH_REFRESH] user=${userId} device=${deviceId}`);
+    if (typeof body.voipToken === 'string' && body.voipToken.trim()) {
+      update.voipToken = body.voipToken.trim().slice(0, 255);
+    }
+    if (!update.token && !update.voipToken) {
+      throw new BadRequestException('token or voipToken is required');
+    }
+    await this.pushTokenRepo.update({ userId, deviceId }, update);
+    this.logger.log(
+      `[PUSH_REFRESH] user=${userId} device=${deviceId} fcm=${!!update.token} voip=${!!update.voipToken}`
+    );
     return { status: 'refreshed' };
   }
 

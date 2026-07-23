@@ -3,4 +3,8 @@
     <string name="main_activity_title">Canari</string>
     <string name="notif_action_reply">Répondre</string>
     <string name="notif_action_mark_read">Marquer comme lu</string>
+    <string name="notif_incoming_call">Appel entrant</string>
+    <string name="notif_incoming_video_call">Appel vidéo entrant</string>
+    <string name="notif_action_answer_call">Répondre</string>
+    <string name="notif_action_decline_call">Refuser</string>
 </resources>

@@ -118,10 +118,84 @@ class NotificationService: UNNotificationServiceExtension {
       }
     }
 
+    // Call signaling over MLS (WP-XP-5, killed-app path). Only pre-WP-XP-5 callers send these
+    // pushes non-silent (new callers ring via APNs VoIP -> CallKit instead). An invite becomes a
+    // time-sensitive ringing banner; control events (hangup/answered/ICE) must never surface as a
+    // message - the NSE cannot drop a push (no filtering entitlement), so they deliver blank and
+    // additionally clear a previously-shown ring banner for the same callId.
+    if let call = decrypted, call.type == "call_invite" {
+      applyCallInviteContent(
+        content: content, senderName: senderName, groupName: groupName,
+        groupId: groupId, callId: call.callId ?? "", hasVideo: call.hasVideo)
+      return
+    }
+    if let call = decrypted, call.type == "call_control" {
+      applyCallControlContent(content: content, callId: call.callId ?? "", ended: call.callEnded)
+      return
+    }
+
     let body = decrypted?.text ?? Self.fallbackText(senderName: senderName)
     applyMessageContent(
       content: content, senderName: senderName, groupName: groupName, body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted)
+  }
+
+  /// Ringing banner for a legacy (non-silent) MLS call invite: ringtone-class sound +
+  /// time-sensitive interruption so it breaks through Focus like a call should.
+  private func applyCallInviteContent(
+    content: UNMutableNotificationContent, senderName: String, groupName: String,
+    groupId: String, callId: String, hasVideo: Bool
+  ) {
+    content.title = senderName.isEmpty ? "Canari" : senderName
+    content.subtitle = groupName
+    content.body = hasVideo ? "\u{1f4f9} Appel vid\u{00e9}o entrant" : "\u{1f4de} Appel entrant"
+    if #available(iOS 15.2, *) {
+      content.sound = .defaultRingtone
+    } else {
+      content.sound = .default
+    }
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .timeSensitive
+    }
+    if !groupId.isEmpty {
+      content.threadIdentifier = groupId
+      content.userInfo["deepLink"] =
+        "fr.emse.canari://chat/\(groupId)?acceptCall=\(callId)&video=\(hasVideo ? 1 : 0)"
+    }
+    // Tag with the callId so a later hangup/answered control push can clear this banner.
+    if !callId.isEmpty {
+      content.userInfo["canariCallId"] = callId
+    }
+    finish()
+  }
+
+  /// Call control (hangup/answered/ICE): deliver a blank, silent content (the NSE cannot suppress
+  /// a push) and clear any ringing banner previously shown for the same callId.
+  private func applyCallControlContent(
+    content: UNMutableNotificationContent, callId: String, ended: Bool
+  ) {
+    content.title = ""
+    content.subtitle = ""
+    content.body = ""
+    content.sound = nil
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .passive
+    }
+    guard ended, !callId.isEmpty else {
+      finish()
+      return
+    }
+    let center = UNUserNotificationCenter.current()
+    center.getDeliveredNotifications { delivered in
+      let ringIds = delivered
+        .filter { ($0.request.content.userInfo["canariCallId"] as? String) == callId }
+        .map { $0.request.identifier }
+      if !ringIds.isEmpty {
+        center.removeDeliveredNotifications(withIdentifiers: ringIds)
+        NSLog("[CanariNSE] cleared \(ringIds.count) ring banner(s) for call \(callId)")
+      }
+      self.finish()
+    }
   }
 
   /// Parsed decrypt result: the preview text plus the media reference/CEK for a thumbnail (WP-XP-3).
@@ -132,6 +206,12 @@ class NotificationService: UNNotificationServiceExtension {
     let mediaKey: String?
     let mediaIv: String?
     let mimeType: String?
+    /// Message kind ("text" | "reply" | "media" | "call_invite" | "call_control" | ...), WP-XP-5.
+    let type: String
+    /// Call signaling metadata (WP-XP-5), only for `type == "call_invite" | "call_control"`.
+    let callId: String?
+    let callEnded: Bool
+    let hasVideo: Bool
     /// True for an image/GIF message that carries everything needed to fetch + decrypt a thumbnail.
     var isImageMedia: Bool {
       mediaKind == "image" && !(mediaId ?? "").isEmpty && !(mediaKey ?? "").isEmpty
@@ -228,6 +308,15 @@ class NotificationService: UNNotificationServiceExtension {
     }
     content.userInfo["deepLink"] =
       groupId.isEmpty ? "fr.emse.canari://chat" : "fr.emse.canari://chat/\(groupId)"
+
+    // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one targets
+    // my own userId, elevate to time-sensitive so it breaks through Focus (requires the app's
+    // Time Sensitive Notifications entitlement - silently downgraded to .active without it).
+    if #available(iOS 15.0, *), let uid = ctx?.userId, !uid.isEmpty,
+      body.range(of: "@[\(uid)]", options: .caseInsensitive) != nil
+    {
+      content.interruptionLevel = .timeSensitive
+    }
 
     // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows
     // only the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
@@ -527,16 +616,22 @@ class NotificationService: UNNotificationServiceExtension {
   private static func parseDecrypted(_ json: String?) -> DecryptResult? {
     guard let json = json, let data = json.data(using: .utf8),
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      (dict["ok"] as? Bool) == true,
-      var text = dict["text"] as? String, !text.isEmpty
+      (dict["ok"] as? Bool) == true
     else { return nil }
+    let type = (dict["type"] as? String) ?? "text"
+    // Call signaling (WP-XP-5) legitimately decrypts to an empty text ("call_control");
+    // any other kind without a preview is unrenderable -> nil (generic fallback).
+    let isCall = type == "call_invite" || type == "call_control"
+    guard var text = dict["text"] as? String, !text.isEmpty || isCall else { return nil }
     if text.count > maxPreviewLength {
       text = String(text.prefix(maxPreviewLength))
     }
     let nonEmpty: (String) -> String? = { (dict[$0] as? String).flatMap { $0.isEmpty ? nil : $0 } }
     return DecryptResult(
       text: text, mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
-      mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"))
+      mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"),
+      type: type, callId: nonEmpty("callId"), callEnded: (dict["callEnded"] as? Bool) ?? false,
+      hasVideo: (dict["hasVideo"] as? Bool) ?? false)
   }
 
   /// Convenience for the channel path, which needs only the preview text.

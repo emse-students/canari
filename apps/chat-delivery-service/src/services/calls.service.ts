@@ -7,11 +7,16 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
+import { PushToken } from '../entities/push-token.entity';
 import * as jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import Redis from 'ioredis';
+import { getApps } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
+import { ApnsVoipService } from './apns-voip.service';
+import { resolveUserDisplayName } from '../utils/display-name';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -75,7 +80,10 @@ export class CallsService {
   constructor(
     @InjectRepository(GroupMember)
     private readonly groupMemberRepo: Repository<GroupMember>,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis
+    @InjectRepository(PushToken)
+    private readonly pushTokenRepo: Repository<PushToken>,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly apnsVoip: ApnsVoipService
   ) {}
 
   /**
@@ -337,6 +345,201 @@ export class CallsService {
 
     this.logger.debug(`[ICE] Cloudflare returned ${iceServers.length} ICE server(s)`);
     return { iceServers };
+  }
+
+  // --- Incoming-call ring fan-out (WP-XP-5 priority notifications) ----------
+  //
+  // The server cannot read MLS ciphertexts, so it cannot tell a call invite from a
+  // regular message. The CALLER's client therefore triggers the ring explicitly with a
+  // minimal cleartext payload (callId/groupId/caller display name - the same metadata
+  // level as the senderName/groupName already present on every message push). The MLS
+  // CallMsg protos themselves are sent silent; visible ringing on killed devices comes
+  // exclusively from this fan-out.
+
+  /**
+   * Rings every OTHER member of the group about an incoming call:
+   *  - Android tokens -> high-priority FCM data push `type=call_ring` (native CallStyle
+   *    notification, instant - no MLS decrypt on the ring path).
+   *  - iOS tokens WITH a voipToken -> direct APNs VoIP push (CallKit full-screen ring).
+   *  - iOS tokens WITHOUT a voipToken (pre-WP-XP-5 builds) -> regular FCM alert push so
+   *    the callee at least sees a banner.
+   * Best-effort per device; failures never abort the fan-out.
+   */
+  async ringGroup(
+    callerId: string,
+    groupId: string,
+    callId: string,
+    hasVideo: boolean
+  ): Promise<{ rang: number }> {
+    this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
+    await this.assertMembership(callerId, groupId, 'ring');
+
+    const members = await this.groupMemberRepo.find({ where: { groupId }, select: { userId: true } });
+    const calleeIds = [...new Set(members.map((m) => m.userId))].filter((id) => id !== callerId);
+    if (calleeIds.length === 0) return { rang: 0 };
+
+    const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
+    const groupName = await this.resolveGroupName(groupId);
+    const tokens = await this.pushTokenRepo.find({ where: { userId: In(calleeIds) } });
+
+    const dataFields: Record<string, string> = {
+      type: 'call_ring',
+      groupId,
+      callId,
+      callerId,
+      // senderName/groupName aliases keep pre-WP-XP-5 Android builds showing a generic
+      // "message from X" notification instead of nothing (they ignore unknown types).
+      callerName,
+      senderName: callerName,
+      groupName,
+      hasVideo: hasVideo ? 'true' : 'false',
+    };
+
+    let rang = 0;
+    for (const pt of tokens) {
+      const delivered =
+        pt.platform === 'ios' && pt.voipToken
+          ? await this.ringIosVoip(pt, dataFields)
+          : await this.ringViaFcm(pt, dataFields, callerName, groupName);
+      if (delivered) rang++;
+    }
+    this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
+    return { rang };
+  }
+
+  /**
+   * Stops the ring on every member device (caller cancelled, someone answered, or the
+   * call ended). Sent to ALL members including the sender's own user so sibling devices
+   * stop ringing too; the device that is already in the call ignores its own callId.
+   */
+  async endRing(
+    userId: string,
+    groupId: string,
+    callId: string,
+    reason: 'cancelled' | 'answered' | 'ended'
+  ): Promise<{ notified: number }> {
+    this.logger.debug(`[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`);
+    await this.assertMembership(userId, groupId, 'ring-end');
+
+    const members = await this.groupMemberRepo.find({ where: { groupId }, select: { userId: true } });
+    const memberIds = [...new Set(members.map((m) => m.userId))];
+    if (memberIds.length === 0) return { notified: 0 };
+    const tokens = await this.pushTokenRepo.find({ where: { userId: In(memberIds) } });
+
+    const dataFields: Record<string, string> = {
+      type: 'call_ring_end',
+      groupId,
+      callId,
+      reason,
+    };
+
+    let notified = 0;
+    for (const pt of tokens) {
+      // Ring-end is a pure state signal: background/data push on both platforms. An iOS
+      // device ringing via CallKit was just launched by the VoIP push, so its running
+      // process receives this and reports the call ended; a missed delivery is covered
+      // by the local 60s ring timeout on every platform.
+      if (getApps().length === 0) break;
+      try {
+        await getMessaging().send({
+          token: pt.token,
+          data: dataFields,
+          android: { priority: 'high', ttl: 60_000 },
+          apns: {
+            payload: { aps: { 'content-available': 1 }, ...dataFields },
+            headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+          },
+        });
+        notified++;
+      } catch (e) {
+        await this.dropTokenIfGone(pt, e, 'ring-end');
+      }
+    }
+    this.logger.log(`[ring] ring-end call=${callId} notified=${notified}/${tokens.length}`);
+    return { notified };
+  }
+
+  /** Membership guard shared by the ring endpoints. */
+  private async assertMembership(userId: string, groupId: string, scope: string): Promise<void> {
+    const membership = await this.groupMemberRepo.findOne({ where: { groupId, userId } });
+    if (!membership) {
+      this.logger.warn(`[${scope}] user ${userId} is not a member of group ${groupId}`);
+      throw new ForbiddenException('Not a member of this group');
+    }
+  }
+
+  /** Group display name ('' for DMs, matching the message-push convention). */
+  private async resolveGroupName(groupId: string): Promise<string> {
+    try {
+      const rows: { name: string | null; isGroup: boolean }[] =
+        await this.groupMemberRepo.manager.query(
+          `SELECT "name", "isGroup" FROM dm_groups WHERE id = $1 LIMIT 1`,
+          [groupId]
+        );
+      return rows[0]?.isGroup ? (rows[0]?.name ?? '') : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Direct APNs VoIP push -> CallKit ring. Clears the voipToken on APNs 410. */
+  private async ringIosVoip(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
+    const result = await this.apnsVoip.sendVoipPush(pt.voipToken as string, dataFields);
+    if (result === 'gone') {
+      await this.pushTokenRepo.update({ id: pt.id }, { voipToken: null });
+      this.logger.warn(`[ring] cleared expired voipToken user=${pt.userId} device=${pt.deviceId}`);
+      return false;
+    }
+    return result;
+  }
+
+  /**
+   * FCM ring delivery: Android gets the data payload (native CallStyle notification);
+   * legacy iOS (no voipToken) gets a visible alert banner built by FCM's APNs relay.
+   */
+  private async ringViaFcm(
+    pt: PushToken,
+    dataFields: Record<string, string>,
+    callerName: string,
+    groupName: string
+  ): Promise<boolean> {
+    if (getApps().length === 0) return false;
+    try {
+      await getMessaging().send({
+        token: pt.token,
+        data: dataFields,
+        android: { priority: 'high', ttl: 60_000 },
+        apns: {
+          payload: {
+            aps: {
+              alert: {
+                title: callerName || 'Canari',
+                body: groupName ? `\u{1f4de} Appel entrant - ${groupName}` : '\u{1f4de} Appel entrant',
+              },
+              sound: 'default',
+              'mutable-content': 1,
+            },
+            ...dataFields,
+          },
+          headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
+        },
+      });
+      return true;
+    } catch (e) {
+      await this.dropTokenIfGone(pt, e, 'ring');
+      return false;
+    }
+  }
+
+  /** Deletes the push token row on terminal FCM errors (unregistered/invalid). */
+  private async dropTokenIfGone(pt: PushToken, e: unknown, scope: string): Promise<void> {
+    const msg = String(e);
+    if (msg.includes('registration-token-not-registered') || msg.includes('invalid-argument')) {
+      await this.pushTokenRepo.delete({ id: pt.id });
+      this.logger.warn(`[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId}`);
+    } else {
+      this.logger.warn(`[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${msg}`);
+    }
   }
 
   /**

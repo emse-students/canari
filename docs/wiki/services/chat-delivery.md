@@ -131,12 +131,12 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token |
+| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ optional iOS `voipToken`) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
-| POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token |
+| POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token and/or PushKit `voipToken` |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active after push-triggered add |
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock from background service |
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
@@ -323,6 +323,63 @@ token until the app is manually opened. Outbox messages queued before a reboot w
 CI guard: `src/lib/mobile/androidFcmManifest.test.ts` fails if the receiver, its actions, or the
 `RECEIVE_BOOT_COMPLETED` permission are dropped from the manifest (e.g. by `tauri android init`).
 
+#### Priority notifications - calls & @mentions (WP-XP-5)
+
+Incoming calls ring like real phone calls and @mentions break through the normal notification
+tier, on both platforms, app killed included.
+
+**Ring signal - why an explicit endpoint.** The server cannot read MLS ciphertexts, so it cannot
+tell a call invite apart from a text message. Instead the **caller's client** POSTs
+`/api/calls/ring` (JWT) right after sending the MLS `CallMsg` invite - which is now sent
+**silent**, like all call signaling (invite/answered/hangup), killing the old generic
+"Nouveau message de X" push for call traffic. The backend verifies membership and fans out
+per member token:
+
+- **Android** → high-priority FCM data `{type: "call_ring", groupId, callId, callerId,
+  callerName, senderName, groupName, hasVideo}`. `senderName` is a legacy alias so old builds
+  show a normal "message" notification instead of nothing.
+- **iOS with a `voipToken`** → **direct APNs VoIP push** (`ApnsVoipService`) - the single
+  deliberate exception to the all-FCM rule, because FCM cannot carry `apns-push-type: voip`
+  and only a VoIP push may wake CallKit from a killed state. ES256 provider JWT (cached 40 min)
+  over node:http2, topic `<bundle>.voip`, `apns-expiration` now+45 s; a 410 response clears the
+  stored `voipToken`.
+- **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
+
+`/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
+including the caller's own devices and stops the ring everywhere; both platforms also arm a
+local 60 s timeout as a safety net. Ordering gotcha: `call_ring_end` must be processed **before**
+the foreground guard on both platforms - a stale ring must clear even if the user has since
+opened the app.
+
+- **Android** (`CanariFirebaseMessagingService`): channel `canari_calls` (IMPORTANCE_HIGH,
+  ringtone audio attributes, `setBypassDnd`). `showIncomingCallNotification` builds a
+  `NotificationCompat.CallStyle.forIncomingCall` (API 31+; two-action fallback below) with
+  full-screen intent (`USE_FULL_SCREEN_INTENT`), `FLAG_INSISTENT` looping ringtone,
+  `CATEGORY_CALL`, 60 s `setTimeoutAfter`. Answer = deep link
+  `fr.emse.canari://chat/<groupId>?acceptCall=<callId>&video=<0|1>`; decline = local dismiss
+  broadcast (`ACTION_CALL_DECLINE` - group decline only means "stop ringing me").
+  `activeCallRings` dedupes the explicit `call_ring` against the MLS invite push
+  (`call_invite` typed extraction is the fallback ring for pre-WP-XP-5 callers).
+- **iOS** (`canari_push.mm`): PushKit `PKPushRegistry` delivers the VoIP push;
+  `CanariReportIncomingCall` **must** report a CallKit call immediately (Apple contract -
+  missing it terminates the app). Answer cannot start audio directly (MLS/WebRTC live in the
+  webview behind the PIN): `performAnswerCallAction` writes `pending_call_accept.json` + fires
+  the accept deep link; the TS store `pendingCallAccept` drains it
+  (`read_and_clear_pending_call_accept`) and `CallService` auto-accepts when the matching MLS
+  invite arrives over WS post-unlock. The CallKit session is ended (`AnsweredElsewhere`) on
+  `didBecomeActive` - handover to the in-app call UI. The PushKit token is persisted to
+  `voip_token.txt` and registered via `/api/mls/push/register` (`voipToken` field) and rotations
+  via `/api/mls/push/refresh-token`.
+- **@mentions**: native detection = decrypted text contains `@[<myUserId>]` (case-insensitive;
+  userId from `push_context.json`). Android posts on `canari_mentions` (IMPORTANCE_HIGH,
+  `setBypassDnd`; posted-notification channel switches require cancel-then-notify). iOS sets
+  `interruptionLevel = .timeSensitive` (app-alive path and NSE), which needs the
+  `com.apple.developer.usernotifications.time-sensitive` entitlement - without it iOS silently
+  downgrades to `.active`.
+- **NSE** (`NotificationService.swift`): `call_invite` → ringtone + time-sensitive banner with
+  the accept deep link; `call_control` with `callEnded` → blank passive content + removes any
+  delivered notification whose `userInfo["canariCallId"]` matches.
+
 ### Security / PIN
 
 | Method | Path | Description |
@@ -350,6 +407,8 @@ CI guard: `src/lib/mobile/androidFcmManifest.test.ts` fails if the receiver, its
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
+| POST | `/api/calls/ring` | Fan out an incoming-call ring to all group members (WP-XP-5) |
+| POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
 
 ### Internal / health
 
@@ -372,3 +431,9 @@ CI guard: `src/lib/mobile/androidFcmManifest.test.ts` fails if the receiver, its
 | `LIVEKIT_API_KEY` | no | LiveKit API key (calls) |
 | `LIVEKIT_API_SECRET` | no | LiveKit API secret (calls) |
 | `LIVEKIT_URL` | no | LiveKit server URL (calls) |
+| `MEDIA_SERVICE_URL` | no | media-service base URL (rich media notification proxy) |
+| `APNS_VOIP_KEY_P8` | no | APNs auth key (.p8, raw PEM or base64) for direct VoIP pushes (CallKit) |
+| `APNS_VOIP_KEY_ID` | no | Key ID of the APNs auth key |
+| `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |
+| `APNS_VOIP_TOPIC` | no | VoIP topic, default `fr.emse.canari.voip` |
+| `APNS_VOIP_SANDBOX` | no | `true` to target the APNs sandbox (dev builds) |

@@ -49,6 +49,15 @@ export class PushToken {
   @Column({ type: 'varchar', length: 64, nullable: true })
   pushSecret: string | null;
 
+  /**
+   * PushKit VoIP token (iOS only, WP-XP-5). Registered by the native PKPushRegistry
+   * callback via `POST /mls/push/refresh-token`. When present, incoming-call rings are
+   * delivered as direct APNs VoIP pushes (CallKit); when null the device falls back to
+   * a regular FCM alert push. Always null on Android.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  voipToken: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

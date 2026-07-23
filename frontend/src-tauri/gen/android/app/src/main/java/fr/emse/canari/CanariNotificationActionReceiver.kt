@@ -48,6 +48,8 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                         handleReply(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_MARK_READ ->
                         handleMarkRead(appContext, groupId)
+                    CanariFirebaseMessagingService.ACTION_CALL_DECLINE ->
+                        handleCallDecline(appContext, intent)
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {
@@ -162,5 +164,16 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.w(TAG, "readCachedMessageIdsForGroup: ${e.message}")
             emptyList()
         }
+    }
+
+    /**
+     * Declines an incoming-call ring (WP-XP-5): stops the local ring only. No MLS hangup is sent -
+     * in a group call "decline" means "stop ringing me", not "end the call for everyone"; the
+     * caller side stops on its own timeout, on ring-end, or when someone answers.
+     */
+    private fun handleCallDecline(context: Context, intent: Intent) {
+        val callId = intent.getStringExtra(CanariFirebaseMessagingService.EXTRA_CALL_ID) ?: ""
+        Log.d(TAG, "handleCallDecline: call=$callId")
+        CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId)
     }
 }

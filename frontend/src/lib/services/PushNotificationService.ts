@@ -129,6 +129,11 @@ export async function startPushService(
 
   const registerOnce = async (): Promise<boolean> => {
     return await registerPushToken(async (pushToken) => {
+      // PushKit VoIP token (iOS only, WP-XP-5): written by the native PKPushRegistry callback.
+      // Included at registration so CallKit rings work from the very first login; later
+      // rotations are pushed by the native refresh-token path.
+      const voipToken =
+        platform === 'ios' ? await invoke<string | null>('get_voip_token').catch(() => null) : null;
       const response = await fetch(`${apiBaseUrl}/api/mls/push/register`, {
         method: 'POST',
         headers: {
@@ -137,7 +142,12 @@ export async function startPushService(
           'x-user-logged-in': 'true',
           'x-user-id': userId,
         },
-        body: JSON.stringify({ token: pushToken, deviceId, platform }),
+        body: JSON.stringify({
+          token: pushToken,
+          deviceId,
+          platform,
+          ...(voipToken ? { voipToken } : {}),
+        }),
       });
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
