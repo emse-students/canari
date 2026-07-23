@@ -13,11 +13,10 @@
   "devDependencies": {
     "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
-    "oxlint-tsgolint": "^0.25.0",
+    "oxlint-tsgolint": "^7.0.2001",
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@types/base64-js": "^1.5.0",
     "base64-js": "^1.5.1"
   }
 }
