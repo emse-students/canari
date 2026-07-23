@@ -71,6 +71,7 @@ class MainActivity : TauriActivity() {
         super.onResume()
         isInForeground = true
         MlsBackgroundWorker.resetFailureFlag(this)
+        OutboxRetryWorker.resetFailureFlag(this)
         // Opening the app clears lingering message notifications (read here or on another
         // device) - the visible half of cross-device read-state sync.
         CanariFirebaseMessagingService.cancelAllMessageNotifications(this)

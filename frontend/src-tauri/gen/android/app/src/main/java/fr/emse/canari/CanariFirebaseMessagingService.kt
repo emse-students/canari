@@ -624,6 +624,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "appendOutboxSent: ${e.message}")
             }
         }
+
+        /**
+         * Static variant of [showPendingSyncNotification] callable from workers/receivers
+         * that don't have a Service context. WP-XP-8: [OutboxRetryWorker] calls this
+         * after a failed drain retry so the user sees the nudge without waiting for the
+         * 3-attempt threshold.
+         */
+        internal fun showPendingSyncNotification(context: Context) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            CanariApplication.ensureChannels(manager)
+            val tapIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context, PENDING_SYNC_NOTIF_ID, tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val body = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer."
+            val notif = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Canari")
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setContentIntent(pendingIntent)
+                .build()
+            manager.notify(PENDING_SYNC_NOTIF_ID, notif)
+            Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
+        }
     }
 
     // Returns a JSON: {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
@@ -1628,6 +1660,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (remaining <= 0) return
         if (MainActivity.isInForeground) return
         showPendingSyncNotification()
+        // WP-XP-8: schedule automatic background retry via WorkManager
+        OutboxRetryWorker.enqueueIfHealthy(this)
     }
 
     /**

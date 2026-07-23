@@ -34,6 +34,10 @@ static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
 // iOS analogue of Android's expedited MlsBackgroundWorker (WorkManager): given a background
 // window by the OS, it drains mls_pending.db via canari_native_cleanup_pending_db.
 static NSString *const kCanariBgCleanupTaskId = @"fr.emse.canari.cleanup";
+// WP-XP-8: deferred outbox retry. When the opportunistic drain (FCM / Welcome / boot) leaves
+// messages unsent, this BGProcessingTask retries with the OS's own scheduling cadence (iOS
+// analogue of Android's OutboxRetryWorker). Requires network connectivity.
+static NSString *const kCanariBgOutboxRetryTaskId = @"fr.emse.canari.outboxRetry";
 static const int kPendingSyncNotifId = 9998;
 static const NSTimeInterval kAvatarCacheMaxAgeSec = 24 * 60 * 60;
 
@@ -1086,12 +1090,62 @@ static void CanariRegisterBackgroundCleanupHandler(void) {
   NSLog(@"[CanariPush] BGTask handler enregistre (%@)", kCanariBgCleanupTaskId);
 }
 
+// Forward declarations for functions used in the outbox-retry handler but defined later.
+static int CanariDrainOutboxBackground(CanariPushContext *ctx);
+static void CanariMaybeNotifyPendingSync(int remaining);
+
+/// WP-XP-8: submits a BGProcessingTaskRequest for outbox retry. Unlike the cleanup task,
+/// this one needs network connectivity (the outbox drain POSTs ciphertexts to the backend).
+/// iOS coalesces and defers requests on its own schedule; resubmitted on every failure so a
+/// window always stays queued until the drain succeeds.
+API_AVAILABLE(ios(13.0))
+static void CanariSubmitOutboxRetryRequest(void) {
+  BGProcessingTaskRequest *request =
+      [[BGProcessingTaskRequest alloc] initWithIdentifier:kCanariBgOutboxRetryTaskId];
+  request.requiresNetworkConnectivity = YES;
+  request.requiresExternalPower = NO;
+  NSError *error = nil;
+  if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
+    NSLog(@"[CanariPush] BGTask outboxRetry submit echoue: %@", error.localizedDescription);
+  } else {
+    NSLog(@"[CanariPush] BGTask outboxRetry planifie");
+  }
+}
+
+/// WP-XP-8: BGProcessingTask launch handler for the outbox retry. Drains the outbox mirror
+/// in the background; if messages remain the next retry window is queued immediately.
+API_AVAILABLE(ios(13.0))
+static void CanariRegisterOutboxRetryHandler(void) {
+  [[BGTaskScheduler sharedScheduler]
+      registerForTaskWithIdentifier:kCanariBgOutboxRetryTaskId
+                         usingQueue:nil
+                      launchHandler:^(__kindof BGTask *task) {
+                        CanariSubmitOutboxRetryRequest();
+                        task.expirationHandler = ^{
+                          NSLog(@"[CanariPush] BGTask outboxRetry expire avant la fin du drain");
+                        };
+                        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                          CanariPushContext *ctx = CanariLoadPushContext();
+                          if (ctx != nil) {
+                            int remaining = CanariDrainOutboxBackground(ctx);
+                            if (remaining > 0) {
+                              CanariMaybeNotifyPendingSync(remaining);
+                            }
+                            NSLog(@"[CanariPush] BGTask outboxRetry: %d restant(s)", remaining);
+                          }
+                          [task setTaskCompletedWithSuccess:YES];
+                        });
+                      }];
+  NSLog(@"[CanariPush] BGTask outboxRetry handler enregistre (%@)", kCanariBgOutboxRetryTaskId);
+}
+
 #endif
 
 void CanariRegisterBackgroundTasks(void) {
 #if __has_include(<BackgroundTasks/BackgroundTasks.h>)
   if (@available(iOS 13.0, *)) {
     CanariRegisterBackgroundCleanupHandler();
+    CanariRegisterOutboxRetryHandler();
   }
 #endif
 }
@@ -1100,6 +1154,16 @@ void CanariScheduleBackgroundCleanupTask(void) {
 #if __has_include(<BackgroundTasks/BackgroundTasks.h>)
   if (@available(iOS 13.0, *)) {
     CanariSubmitBackgroundCleanupRequest();
+  }
+#endif
+}
+
+/// WP-XP-8: schedules the outbox retry BGProcessingTask. Called from
+/// [CanariMaybeNotifyPendingSync] when the opportunistic drain leaves messages unsent.
+void CanariScheduleOutboxRetryTask(void) {
+#if __has_include(<BackgroundTasks/BackgroundTasks.h>)
+  if (@available(iOS 13.0, *)) {
+    CanariSubmitOutboxRetryRequest();
   }
 #endif
 }
@@ -1397,10 +1461,14 @@ static void CanariShowPendingSyncNotification(void) {
 }
 
 static void CanariMaybeNotifyPendingSync(int remaining) {
-  if (remaining <= 0 || canari_ios_is_in_foreground()) {
+  if (remaining <= 0) {
     return;
   }
-  CanariShowPendingSyncNotification();
+  if (!canari_ios_is_in_foreground()) {
+    CanariShowPendingSyncNotification();
+  }
+  // WP-XP-8: schedule automatic background retry via BGTaskScheduler
+  CanariScheduleOutboxRetryTask();
 }
 
 static NSString *CanariAvatarCachePath(NSString *userId) {

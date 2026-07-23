@@ -22,6 +22,10 @@ void CanariRegisterBackgroundTasks(void);
 /// Planifie une fenetre de nettoyage en arriere-plan. A appeler a l'entree en arriere-plan.
 void CanariScheduleBackgroundCleanupTask(void);
 
+/// WP-XP-8 : planifie un retry automatique du drain d'outbox en arriere-plan (BGProcessingTask).
+/// Appele depuis CanariMaybeNotifyPendingSync quand le drain opportuniste echoue.
+void CanariScheduleOutboxRetryTask(void);
+
 /// Recopie les entrees de dechiffrement push (mls.bin, push_context.json, channel_keys.json,
 /// push_secret.txt) dans le conteneur App Group `group.fr.emse.canari` pour la Notification
 /// Service Extension. A appeler aux transitions premier plan/arriere-plan.

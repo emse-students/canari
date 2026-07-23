@@ -429,6 +429,28 @@ When the app opens, `CanariPushCancelMessageNotifications` now clears every deli
 notification — both the legacy flat-thread ones and the new per-conversation ones — by checking
 the `deepLink` prefix (`fr.emse.canari://chat`) in addition to the `threadIdentifier`.
 
+#### Shared deferred-retry engine (WP-XP-8)
+
+When the opportunistic outbox drain (FCM push, Welcome join, boot receiver) leaves messages unsent
+(network down, server unreachable), a shared deferred-retry engine automatically retries with
+exponential backoff on both platforms.
+
+- **Android** — `OutboxRetryWorker` (WorkManager): expedited one-shot work request with exponential
+  backoff (30s → 60s → 120s …). After 3 consecutive failures it enters a persistent failure state
+  and shows the "open the app" nudge (`showPendingSyncNotification`). The flag resets when the user
+  opens the app (`MainActivity.onResume`). A foreground guard defers retry when the TS outbox
+  flusher is active (avoids double-send).
+- **iOS** — `BGTaskScheduler` handler `fr.emse.canari.outboxRetry`: `BGProcessingTaskRequest` with
+  `requiresNetworkConnectivity = YES`. The handler drains the outbox mirror and re-submits the
+  request on failure so a window always stays queued. Unlike Android WorkManager, iOS
+  BGTaskScheduler offers no guaranteed cadence — the "open the app" nudge (`CanariShowPendingSyncNotification`)
+  remains the safety net. The existing cleanup handler (`fr.emse.canari.cleanup`) is unchanged.
+
+Both platforms trigger the retry from the same seam: `maybeNotifyPendingSync` /
+`CanariMaybeNotifyPendingSync` — when the opportunistic drain leaves `remaining > 0`, it shows the
+nudge AND schedules the next automatic retry. This closes the "Foreground/background service"
+parity row.
+
 ### Security / PIN
 
 | Method | Path | Description |

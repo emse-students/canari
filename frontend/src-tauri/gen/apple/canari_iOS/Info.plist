@@ -37,6 +37,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>fr.emse.canari.cleanup</string>
+		<string>fr.emse.canari.outboxRetry</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
