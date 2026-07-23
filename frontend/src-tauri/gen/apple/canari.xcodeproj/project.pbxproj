@@ -19,6 +19,8 @@
 		BD49C866300FAFB7000960D5 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2AB1B2DDE5693178C9DB93C9 /* Security.framework */; };
 		BD49C867300FAFC5000960D5 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
 		BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */; };
+		BD49C8A1300FAFC5000960D7 /* CallKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF03 /* CallKit.framework */; };
+		BD49C8A2300FAFC5000960D8 /* PushKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF04 /* PushKit.framework */; };
 		BD49C869300FAFFF000960D5 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = BD49C868300FAFFF000960D5 /* libapp.a */; };
 		BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */; };
 		BD75AE03300EA4C0003EBA05 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = BD75AE02300EA4C0003EBA05 /* FirebaseCore */; };
@@ -89,6 +91,8 @@
 		D20A7859E615805B7DF8C401 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
 		D4E5F6012345678ABCDEF01 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundTasks.framework; path = System/Library/Frameworks/BackgroundTasks.framework; sourceTree = SDKROOT; };
+		D4E5F6012345678ABCDEF03 /* CallKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CallKit.framework; path = System/Library/Frameworks/CallKit.framework; sourceTree = SDKROOT; };
+		D4E5F6012345678ABCDEF04 /* PushKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PushKit.framework; path = System/Library/Frameworks/PushKit.framework; sourceTree = SDKROOT; };
 		DA10CA11E0000000000000F1 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000E1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		E5F6012345678ABCDEF011 /* canari_push.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_push.h; sourceTree = "<group>"; };
@@ -111,6 +115,8 @@
 				BDCC40B92FED454500576E30 /* Security.framework in Frameworks */,
 				C3D4E5F6012345678ABCDE0 /* UserNotifications.framework in Frameworks */,
 				BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */,
+				BD49C8A1300FAFC5000960D7 /* CallKit.framework in Frameworks */,
+				BD49C8A2300FAFC5000960D8 /* PushKit.framework in Frameworks */,
 				BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
 			);
@@ -143,6 +149,8 @@
 				43EC3C6D309DFBDAB0387C31 /* WebKit.framework */,
 				D4E5F6012345678ABCDEF01 /* UserNotifications.framework */,
 				D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */,
+				D4E5F6012345678ABCDEF03 /* CallKit.framework */,
+				D4E5F6012345678ABCDEF04 /* PushKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
