@@ -1,13 +1,16 @@
 package fr.emse.canari
 
+import android.net.Uri
 import android.util.Base64
 import android.util.Log
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.webkit.WebView
+import androidx.core.view.ContentInfoCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
-import androidx.core.view.inputmethod.InputContentInfoCompat
 import org.json.JSONObject
 
 /**
@@ -15,8 +18,10 @@ import org.json.JSONObject
  *
  * Android delivers keyboard media through the focused editor's [InputConnection.commitContent].
  * A plain WebView does not advertise image MIME types, so the keyboard never offers a GIF and the
- * commit is dropped. We wrap the WebView's input connection to (1) declare the accepted MIME types
- * and (2) read the committed content URI, then hand the bytes to the frontend as a
+ * commit is dropped. We use the modern receive-content pipeline: an [ViewCompat.setOnReceiveContentListener]
+ * on the WebView plus the view-based [InputConnectionCompat.createWrapper] overload, which routes
+ * keyboard commits (with URI permissions already requested by the compat layer) to the listener.
+ * The listener reads the committed content URI and hands the bytes to the frontend as a
  * `canari-keyboard-media` DOM event so it can send them through the normal media pipeline
  * (encrypted upload for DMs/groups and channels alike).
  *
@@ -34,7 +39,7 @@ object KeyboardMediaBridge {
 
     /**
      * Wraps [ic] so the keyboard can commit rich content into [webView]. Returns [ic] unchanged when
-     * it is null (no editable focus).
+     * it is null (no editable focus). Re-registering the listener on every call is idempotent.
      */
     fun wrapInputConnection(
         webView: WebView,
@@ -43,32 +48,36 @@ object KeyboardMediaBridge {
     ): InputConnection? {
         if (ic == null) return null
         EditorInfoCompat.setContentMimeTypes(editorInfo, MIME_TYPES)
-        return InputConnectionCompat.createWrapper(ic, editorInfo) { info, flags, _ ->
-            handleCommit(webView, info, flags)
+        ViewCompat.setOnReceiveContentListener(webView, MIME_TYPES) { view, payload ->
+            handleReceive(view, payload)
         }
+        return InputConnectionCompat.createWrapper(webView, ic, editorInfo)
     }
 
     /**
-     * Reads the committed content off the UI thread and dispatches it to the web layer. Returns true
-     * so the keyboard treats the content as consumed (we never let it fall back to the editor).
+     * Receives content routed by the compat wrapper. Only keyboard commits are handled (drag & drop
+     * and other sources pass through untouched, preserving the WebView default behavior). Returns
+     * null for consumed payloads per the [androidx.core.view.OnReceiveContentListener] contract.
      */
-    private fun handleCommit(
-        webView: WebView,
-        info: InputContentInfoCompat,
-        flags: Int,
-    ): Boolean {
-        if ((flags and InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) != 0) {
-            try {
-                info.requestPermission()
-            } catch (e: Exception) {
-                Log.w(TAG, "requestPermission failed: ${e.message}")
-                return false
-            }
+    private fun handleReceive(view: View, payload: ContentInfoCompat): ContentInfoCompat? {
+        if (payload.source != ContentInfoCompat.SOURCE_INPUT_METHOD) return payload
+        val webView = view as? WebView ?: return payload
+        val clip = payload.clip
+        val mimeHint = if (clip.description.mimeTypeCount > 0) clip.description.getMimeType(0) else null
+        for (i in 0 until clip.itemCount) {
+            val uri = clip.getItemAt(i).uri ?: continue
+            readAndDispatch(webView, uri, mimeHint)
         }
+        return null
+    }
 
+    /**
+     * Reads the committed content off the UI thread and dispatches it to the web layer. URI read
+     * permission was already requested by the compat layer before the listener fired.
+     */
+    private fun readAndDispatch(webView: WebView, uri: Uri, mimeHint: String?) {
         Thread({
             try {
-                val uri = info.contentUri
                 val resolver = webView.context.contentResolver
                 val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes == null || bytes.isEmpty()) {
@@ -79,24 +88,15 @@ object KeyboardMediaBridge {
                     Log.w(TAG, "content too large (${bytes.size} bytes) - skipped")
                     return@Thread
                 }
-                val mime = resolver.getType(uri)
-                    ?: info.description.getMimeType(0)
-                    ?: "image/gif"
+                val mime = resolver.getType(uri) ?: mimeHint ?: "image/gif"
                 val name = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                     ?: "keyboard-${System.currentTimeMillis()}.${mime.substringAfterLast('/')}"
                 val dataB64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 dispatchToWeb(webView, mime, name, dataB64)
             } catch (e: Exception) {
-                Log.e(TAG, "handleCommit failed: ${e.message}")
-            } finally {
-                try {
-                    info.releasePermission()
-                } catch (_: Exception) {
-                }
+                Log.e(TAG, "readAndDispatch failed: ${e.message}")
             }
         }, "canari-keyboard-media").start()
-
-        return true
     }
 
     /** Dispatches the committed media to the frontend as a `canari-keyboard-media` DOM event. */

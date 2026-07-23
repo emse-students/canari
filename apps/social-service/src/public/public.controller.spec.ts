@@ -13,13 +13,14 @@ describe('PublicController.getCotisantStatus (WP-COT-4, inbound Cercle check)', 
   function makeController(apiKey = 'test-cercle-key') {
     process.env.CERCLE_API_KEY = apiKey;
     const associations = {} as AssociationsService;
-    const products = {
-      getCotisantStatusBySlug: jest.fn(() =>
-        Promise.resolve({ isCotisant: true, tier: null, expiresAt: null })
-      ),
-    } as unknown as ProductsService;
+    // Keep a direct handle on the jest.fn: referencing it through the ProductsService
+    // cast would be an unbound method reference (typescript/unbound-method).
+    const getCotisantStatusBySlug = jest.fn(() =>
+      Promise.resolve({ isCotisant: true, tier: null, expiresAt: null })
+    );
+    const products = { getCotisantStatusBySlug } as unknown as ProductsService;
     const controller = new PublicController(associations, products);
-    return { controller, products };
+    return { controller, getCotisantStatusBySlug };
   }
 
   it('rejects a missing x-api-key header', async () => {
@@ -54,10 +55,10 @@ describe('PublicController.getCotisantStatus (WP-COT-4, inbound Cercle check)', 
   });
 
   it('delegates to ProductsService.getCotisantStatusBySlug with a valid key and params', async () => {
-    const { controller, products } = makeController();
+    const { controller, getCotisantStatusBySlug } = makeController();
     const result = await controller.getCotisantStatus('cercle', 'user1', 'test-cercle-key');
 
-    expect(products.getCotisantStatusBySlug).toHaveBeenCalledWith('cercle', 'user1');
+    expect(getCotisantStatusBySlug).toHaveBeenCalledWith('cercle', 'user1');
     expect(result).toEqual({ isCotisant: true, tier: null, expiresAt: null });
   });
 });

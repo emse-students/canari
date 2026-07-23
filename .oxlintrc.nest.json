@@ -18,6 +18,7 @@
     "typescript/no-unsafe-call": "off",
     "typescript/no-unsafe-assignment": "off",
     "typescript/no-base-to-string": "off",
+    "typescript/no-misused-spread": "off",
     "typescript/ban-ts-comment": "off",
     "typescript/no-useless-default-assignment": "off",
     "typescript/no-unused-vars": [

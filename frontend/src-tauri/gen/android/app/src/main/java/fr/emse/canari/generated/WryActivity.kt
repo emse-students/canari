@@ -66,6 +66,10 @@ abstract class WryActivity : AppCompatActivity() {
                             this@WryActivity.mWebView.goBack()
                         } else {
                             this.isEnabled = false
+                            // CANARI CUSTOM PATCH (re-apply after regeneration): upstream
+                            // deliberately delegates to the deprecated onBackPressed() to get
+                            // the system default once the WebView cannot go back - suppressed.
+                            @Suppress("DEPRECATION")
                             this@WryActivity.onBackPressed()
                             this.isEnabled = true
                         }

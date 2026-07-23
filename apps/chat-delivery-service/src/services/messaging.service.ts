@@ -390,7 +390,7 @@ export class MessagingService {
           );
         }
         this.logger.warn(
-          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${e}`
+          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${String(e)}`
         );
       }
     }
@@ -629,7 +629,7 @@ export class MessagingService {
         await this.redis.expire(historyKey, 90 * 24 * 60 * 60);
         this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
       } catch (e) {
-        this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${e}`);
+        this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${String(e)}`);
       }
     }
 
@@ -1634,7 +1634,7 @@ export class MessagingService {
     try {
       return await this.readHistoryStreamPage(groupId, after, limit);
     } catch (e) {
-      this.logger.error(`[HISTORY] group=${groupId} error=${e}`);
+      this.logger.error(`[HISTORY] group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
     }
   }
@@ -1679,7 +1679,7 @@ export class MessagingService {
         try {
           histories[groupId] = await this.readHistoryStreamPage(groupId, after, limit);
         } catch (e) {
-          this.logger.error(`[HISTORY_BATCH] group=${groupId} error=${e}`);
+          this.logger.error(`[HISTORY_BATCH] group=${groupId} error=${String(e)}`);
           histories[groupId] = [];
         }
       })
@@ -1858,7 +1858,7 @@ export class MessagingService {
             );
           }
           this.logger.warn(
-            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${e}`
+            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${String(e)}`
           );
         }
       })
@@ -1922,7 +1922,7 @@ export class MessagingService {
           );
         }
         this.logger.warn(
-          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${e}`
+          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${String(e)}`
         );
       }
     }

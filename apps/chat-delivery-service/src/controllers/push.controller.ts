@@ -692,7 +692,7 @@ export class PushController {
           );
         }
         this.logger.warn(
-          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${e}`
+          `[PUSH_TEST][${traceId}] FAILED user=${pushToken.userId} device=${pushToken.deviceId} err=${String(e)}`
         );
       }
     }

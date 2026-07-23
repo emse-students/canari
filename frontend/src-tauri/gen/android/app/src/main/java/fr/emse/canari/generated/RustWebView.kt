@@ -25,7 +25,9 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.setGeolocationEnabled(true)
-        settings.databaseEnabled = true
+        // CANARI CUSTOM PATCH (re-apply after `tauri android` regeneration): upstream sets
+        // `settings.databaseEnabled = true` (WebSQL) here, but WebSQL was removed from
+        // Chromium (WebView 115+) so the deprecated setter is a no-op - dropped.
         settings.mediaPlaybackRequiresUserGesture = false
         settings.javaScriptCanOpenWindowsAutomatically = true
 

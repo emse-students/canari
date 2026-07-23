@@ -98,7 +98,9 @@ describe('MessagingService - notifyHistoryRequest', () => {
     redis.smembers.mockResolvedValue(['ua:da']);
     redis.exists.mockResolvedValue(1);
 
-    await expect(service.notifyHistoryRequest('attacker', body)).rejects.toThrow();
+    await expect(service.notifyHistoryRequest('attacker', body)).rejects.toThrow(
+      'requesterUserId does not match the authenticated caller'
+    );
     expect(redis.publish).not.toHaveBeenCalled();
   });
 

@@ -41,6 +41,17 @@ subprojects {
                 compileSdk = 36
             }
         }
+        // Upstream Tauri modules live read-only in the cargo registry; their Kotlin
+        // deprecations and javac source/target 8 warnings are not actionable here, so
+        // silence them for THOSE modules only (our app + local patches keep warnings).
+        if (projectDir.path.replace('\\', '/').contains("/.cargo/registry/")) {
+            tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+                compilerOptions.suppressWarnings.set(true)
+            }
+            tasks.withType<JavaCompile>().configureEach {
+                options.compilerArgs.add("-Xlint:-options")
+            }
+        }
     }
 }
 
