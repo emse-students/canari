@@ -5,10 +5,12 @@ on:
     branches: [main]
   workflow_dispatch: # Permet déclenchement manuel
   # GITHUB_TOKEN pushes from "Bump version on release" do not trigger `on: push` workflows.
+  # NO `branches:` filter here: the bump run is release-triggered so its head branch is
+  # the TAG (e.g. v0.10.4), not main - a `branches: [main]` filter silently drops it
+  # (bit every release up to v0.10.4: post-release CD never fired).
   workflow_run:
     workflows: ['Bump version on release']
     types: [completed]
-    branches: [main]
 
 env:
   REGISTRY: ghcr.io
