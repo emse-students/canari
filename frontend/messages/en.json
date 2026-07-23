@@ -2079,6 +2079,7 @@
   "chat_system_channel_invite": "Invitation to join #{channel}",
   "chat_system_call_started": "{starter} started a call",
   "chat_system_call_ended": "{starter} started a call that lasted {duration}",
+  "chat_system_call_missed": "Missed call from {caller}",
   "chat_system_call_duration_under_minute": "less than a minute",
   "chat_system_call_duration_one_minute": "1 minute",
   "chat_system_call_duration_minutes": "{count} minutes",

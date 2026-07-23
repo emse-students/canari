@@ -12,6 +12,7 @@
    */
   import { onMount, untrack } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin, isPinPersistenceEnabled, setPinPersistence } from '$lib/utils/pinVault';
@@ -33,7 +34,9 @@
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { Fingerprint } from '@lucide/svelte';
+  import { Fingerprint, Phone, PhoneOff } from '@lucide/svelte';
+  import { fly } from 'svelte/transition';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -95,6 +98,14 @@
 
   let callRemoteParticipants = $derived.by(buildRemoteCallParticipants);
 
+  /** Whether the current route is the chat page (where the full call overlay is native). */
+  let isOnChatPage = $derived(
+    typeof window !== 'undefined' && $page.url.pathname.startsWith('/chat')
+  );
+
+  /** When NOT on the chat page, show a compact incoming-call toast instead of the full hero screen. */
+  let showIncomingToast = $derived(globalSession.callState === 'incoming' && !isOnChatPage);
+
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
 
@@ -110,6 +121,7 @@
         lastIncomingRingCallId = callId;
         const callerName = getUserDisplayNameSync(callerId ?? '');
         globalNotifs.startIncomingCallRingtone();
+        globalNotifs.startBlinkingTitle();
         void globalNotifs.notifyIncomingCall(callerName, groupId);
       }
       return;
@@ -119,6 +131,7 @@
       lastIncomingRingCallId = null;
     }
     globalNotifs.stopIncomingCallRingtone();
+    globalNotifs.stopBlinkingTitle();
     // Call left the "incoming" state (answered on any device, declined, or ended):
     // dismiss the lingering incoming-call OS notification.
     void globalNotifs.dismissIncomingCall();
@@ -1020,7 +1033,52 @@
   loadingProgress={recoverProgress}
 />
 
-{#if globalSession.callService && globalSession.callState !== 'idle'}
+{#if showIncomingToast}
+  <!-- Compact incoming-call toast when user is browsing another page -->
+  {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
+  <div
+    class="fixed top-4 left-1/2 -translate-x-1/2 z-[310] max-w-sm w-[calc(100%-2rem)] bg-[#0a0d14]/95 backdrop-blur-2xl rounded-2xl shadow-2xl ring-1 ring-white/10 px-4 py-3 flex items-center gap-3 animate-[slideDown_0.3s_ease-out]"
+    transition:fly={{ y: -20, duration: 250 }}
+  >
+    <div class="relative h-10 w-10 shrink-0">
+      <span
+        class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full bg-amber-400 animate-pulse ring-2 ring-[#0a0d14]"
+      ></span>
+      <div class="h-full w-full overflow-hidden rounded-full ring-1 ring-white/20 bg-black/30">
+        <Avatar
+          userId={globalSession.callService?.incomingCallerId ?? ''}
+          fill
+          shape="circle"
+          fallbackLabel={callerName}
+        />
+      </div>
+    </div>
+    <div class="min-w-0 flex-1">
+      <p class="text-sm font-bold text-white truncate">{callerName || m.call_incoming_label()}</p>
+      <p class="text-xs text-white/55">{m.call_incoming_label()}</p>
+    </div>
+    <div class="flex items-center gap-1.5 shrink-0">
+      <button
+        class="p-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all active:scale-95"
+        onclick={() =>
+          globalSession.callService?.acceptCall(
+            globalSession.callService.currentGroupId ?? '',
+            globalSession.callService.currentCallId ?? ''
+          )}
+        aria-label={m.call_accept_label()}
+      >
+        <Phone size={18} class="fill-current" />
+      </button>
+      <button
+        class="p-2 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all active:scale-95"
+        onclick={() => globalSession.callService?.endCall()}
+        aria-label={m.call_decline_label()}
+      >
+        <PhoneOff size={18} />
+      </button>
+    </div>
+  </div>
+{:else if globalSession.callService && globalSession.callState !== 'idle'}
   <CallOverlay
     callService={globalSession.callService}
     currentUserId={globalSession.userId || currentUserId() || ''}

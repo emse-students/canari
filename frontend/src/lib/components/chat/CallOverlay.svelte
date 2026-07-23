@@ -99,16 +99,50 @@
   let hasAnyVideo = $derived(remoteHasVideo || !isVideoOff);
   /** User explicitly collapsed the call to the docked widget. */
   let userMinimized = $state(false);
+  /** Timestamp (ms) when the call connected (set on incall transition). */
+  let callStartTime = $state<number | null>(null);
+  /** Elapsed seconds since callStartTime, updated every second. */
+  let callElapsedSec = $state(0);
   /**
    * Compact, non-blocking widget mode: used for audio-only calls (so the user can
    * keep navigating the app, a la Messenger/Discord) and whenever the user minimizes.
    * Incoming rings always use the prominent expanded prompt.
    */
-  let compact = $derived(callState !== 'incoming' && (userMinimized || !hasAnyVideo));
+  let compact = $derived(
+    callState !== 'incoming' && callState !== 'calling' && (userMinimized || !hasAnyVideo)
+  );
   let primaryParticipant = $derived(participants[0]);
   let isGroupCall = $derived(participants.length > 1);
   /** Grid only for multi-party; audio+video from one peer stay on a single tile. */
   let showRemoteGrid = $derived(isGroupCall && remoteEntries.length > 1);
+
+  /** Formats elapsed seconds as mm:ss. */
+  function formatDuration(sec: number): string {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  /** Chronometer: starts when connected, resets on idle. */
+  let callDurationDisplay = $derived(formatDuration(callElapsedSec));
+
+  $effect(() => {
+    if (callState === 'incall') {
+      if (callStartTime === null) {
+        callStartTime = Date.now();
+        callElapsedSec = 0;
+      }
+      const timer = setInterval(() => {
+        if (callStartTime !== null) {
+          callElapsedSec = Math.floor((Date.now() - callStartTime) / 1000);
+        }
+      }, 250);
+      return () => clearInterval(timer);
+    } else {
+      callStartTime = null;
+      callElapsedSec = 0;
+    }
+  });
 
   let pipEl: HTMLElement | undefined = $state();
   let pipOffsetX = $state(0);
@@ -621,6 +655,9 @@
           : callState === 'incoming'
             ? m.call_incoming_label()
             : m.call_online_label()}
+        {#if callState === 'incall'}
+          <span class="text-white/70 font-mono tabular-nums ml-1">{callDurationDisplay}</span>
+        {/if}
         {#if remoteEntries.length > 1}
           <span class="text-white/60 font-normal"
             >· {m.call_participants_count({ participants: remoteEntries.length + 1 })}</span

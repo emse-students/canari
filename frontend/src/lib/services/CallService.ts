@@ -16,6 +16,7 @@ import {
 import { publishCallPresence } from '$lib/utils/callPresence';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
+import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -249,6 +250,11 @@ export class CallService {
     }
     if (groupId && callId) {
       void this.chatNotifier?.onCallEnded(groupId, callId);
+      if (wasCalling) {
+        const ctx = getCallSystemMessageContext();
+        const callerId = ctx?.userId ?? '';
+        void recordCallMissed(ctx, groupId, callId, callerId);
+      }
     }
     this.cleanup();
   }

@@ -2094,6 +2094,7 @@
   "chat_system_channel_invite": "Invitation à rejoindre #{channel}",
   "chat_system_call_started": "{starter} a démarré un appel",
   "chat_system_call_ended": "{starter} a démarré un appel qui a duré {duration}",
+  "chat_system_call_missed": "Appel manqué de {caller}",
   "chat_system_call_duration_under_minute": "moins d'une minute",
   "chat_system_call_duration_one_minute": "1 minute",
   "chat_system_call_duration_minutes": "{count} minutes",

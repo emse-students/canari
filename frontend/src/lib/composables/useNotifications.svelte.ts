@@ -30,6 +30,10 @@ export function useNotifications() {
   let incomingCallNotification: Notification | null = null;
   /** Tauri notification id of the active incoming-call notification, for cancellation. */
   let incomingCallNotifId: number | null = null;
+  /** Timer for blinking the document title on incoming call. */
+  let blinkTitleTimer: ReturnType<typeof setInterval> | null = null;
+  /** Original document title saved before blinking starts. */
+  let originalTitle: string | null = null;
 
   // ---------- Audio ----------
 
@@ -156,6 +160,30 @@ export function useNotifications() {
       } catch {
         /* ignore */
       }
+    }
+  }
+
+  /** Starts blinking the document title to attract attention on an incoming call. */
+  function startBlinkingTitle() {
+    if (typeof document === 'undefined') return;
+    stopBlinkingTitle();
+    originalTitle = document.title;
+    let blink = true;
+    blinkTitleTimer = setInterval(() => {
+      document.title = blink ? `🔔 ${originalTitle ?? 'Canari'}` : (originalTitle ?? 'Canari');
+      blink = !blink;
+    }, 800);
+  }
+
+  /** Stops the title blink and restores the original document title. */
+  function stopBlinkingTitle() {
+    if (blinkTitleTimer !== null) {
+      clearInterval(blinkTitleTimer);
+      blinkTitleTimer = null;
+    }
+    if (originalTitle !== null && typeof document !== 'undefined') {
+      document.title = originalTitle;
+      originalTitle = null;
     }
   }
 
@@ -464,6 +492,8 @@ export function useNotifications() {
     sendSystemNotification,
     startIncomingCallRingtone,
     stopIncomingCallRingtone,
+    startBlinkingTitle,
+    stopBlinkingTitle,
     notifyIncomingCall,
     dismissIncomingCall,
   };

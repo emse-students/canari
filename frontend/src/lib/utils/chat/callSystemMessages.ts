@@ -9,6 +9,7 @@ import {
 import type { ICallMsg } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import type { SvelteMap } from 'svelte/reactivity';
+import { m } from '$lib/paraglide/messages';
 
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
@@ -128,6 +129,45 @@ export async function recordCallEnded(
       )
       .catch(() => {});
   }
+}
+
+/**
+ * Inserts a "Missed call" system message when the caller hangs up before anyone answers.
+ * Idempotent per callId.
+ */
+export async function recordCallMissed(
+  ctx: CallSystemMessageContext | null,
+  groupId: string,
+  callId: string,
+  callerId: string
+): Promise<void> {
+  if (!ctx || !callId) return;
+
+  const convo = ctx.conversations.get(groupId);
+  if (!convo) return;
+
+  const messageId = callMessageId(callId);
+  // If a call-started message already exists (someone picked up remotely), skip.
+  if (convo.messages.some((m) => m.id === messageId)) return;
+
+  const getName = await resolveDisplayNames([callerId]);
+  const callerName = getName(callerId.toLowerCase());
+  const text = m.chat_system_call_missed({ caller: callerName });
+  const envelope = serializeEnvelope({
+    kind: 'system',
+    text,
+    callEvent: {
+      callId,
+      starterId: callerId.toLowerCase(),
+      startedAt: Date.now(),
+      endedAt: Date.now(),
+    },
+  });
+
+  await ctx.addMessageToChat('system', envelope, groupId, {
+    isSystem: true,
+    messageId,
+  });
 }
 
 /**
