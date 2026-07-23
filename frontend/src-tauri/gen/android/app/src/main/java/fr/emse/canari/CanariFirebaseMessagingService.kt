@@ -434,6 +434,39 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        /**
+         * Pushes the current FCM token to the backend via PushSecret (FCM2). Best-effort, never
+         * blocking. Does NOT regenerate the pushSecret (unlike foreground /register): only the
+         * token changes. Companion (not instance) so [CanariBootReceiver] can re-register the
+         * token at device boot / app update without a Service instance (WP-XP-4).
+         */
+        internal fun refreshTokenOnBackend(ctx: PushContext, secret: String, token: String) {
+            try {
+                val url = URL("${ctx.baseUrl}/api/mls/push/refresh-token")
+                val body = JSONObject().apply {
+                    put("userId", ctx.userId)
+                    put("deviceId", ctx.deviceId)
+                    put("token", token)
+                }.toString()
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout    = 5_000
+                    requestMethod  = "POST"
+                    doOutput       = true
+                    setRequestProperty("Authorization", "PushSecret $secret")
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                try {
+                    conn.outputStream.use { it.write(body.toByteArray()) }
+                    Log.d(TAG, "refreshTokenOnBackend: HTTP ${conn.responseCode}")
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "refreshTokenOnBackend: exception: ${e.message}")
+            }
+        }
+
         /** Appends the delivered messageIds to the reconciliation log read by the TS at login. */
         private fun appendOutboxSent(context: Context, ids: List<String>) {
             try {
@@ -841,37 +874,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (wl.isHeld) wl.release()
             }
         }, "canari-$name").start()
-    }
-
-    /**
-     * Pushes the current FCM token to the backend via PushSecret (FCM2). Best-effort, never blocking.
-     * Does NOT regenerate the pushSecret (unlike foreground /register): only the token changes.
-     */
-    private fun refreshTokenOnBackend(ctx: PushContext, secret: String, token: String) {
-        try {
-            val url = URL("${ctx.baseUrl}/api/mls/push/refresh-token")
-            val body = JSONObject().apply {
-                put("userId", ctx.userId)
-                put("deviceId", ctx.deviceId)
-                put("token", token)
-            }.toString()
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5_000
-                readTimeout    = 5_000
-                requestMethod  = "POST"
-                doOutput       = true
-                setRequestProperty("Authorization", "PushSecret $secret")
-                setRequestProperty("Content-Type", "application/json")
-            }
-            try {
-                conn.outputStream.use { it.write(body.toByteArray()) }
-                Log.d(TAG, "refreshTokenOnBackend: HTTP ${conn.responseCode}")
-            } finally {
-                conn.disconnect()
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "refreshTokenOnBackend: exception: ${e.message}")
-        }
     }
 
     /**

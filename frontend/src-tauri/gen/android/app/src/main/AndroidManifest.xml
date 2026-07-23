@@ -8,7 +8,9 @@
     - <application android:name=".CanariApplication">  (init channels, push secret)
     - <service .CanariFirebaseMessagingService> + intent-filter MESSAGING_EVENT
       (SANS lui, Firebase n'appelle jamais onMessageReceived → aucune notif app tuée)
-    - permissions push : POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE
+    - permissions push : POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE, RECEIVE_BOOT_COMPLETED
+    - <receiver .CanariBootReceiver> (BOOT_COMPLETED/MY_PACKAGE_REPLACED, WP-XP-4)
+    - <receiver .CanariNotificationActionReceiver> (quick actions, WP-XP-1)
     - retrait AD_ID, networkSecurityConfig, allowBackup=false (+ tools:replace)
   NE PAS remettre android:debuggable (placeholder ${debuggable} non défini dans
   build.gradle.kts → merge fail) ni fullBackupContent/dataExtractionRules (conflits merge).
@@ -36,6 +38,8 @@
     <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- WP-XP-4 : re-enregistrement du token push + drain outbox au boot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -175,5 +179,17 @@
         <receiver
             android:name=".CanariNotificationActionReceiver"
             android:exported="false" />
+
+        <!-- Boot/relaunch re-registration (WP-XP-4) : re-lit le token FCM et draine l'outbox
+             au boot / après MAJ de l'app. exported=false suffit : broadcasts protégés émis
+             par le système uniquement (même pattern que RescheduleReceiver de WorkManager). -->
+        <receiver
+            android:name=".CanariBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

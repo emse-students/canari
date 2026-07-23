@@ -296,6 +296,33 @@ blob itself:
 Gotcha: only `mediaKind == "image"` (which also covers GIF, mime `image/gif`) is rendered; the
 extension budget (~30 s) and the 2 MB cap bound the background download + decrypt.
 
+#### Boot/relaunch re-registration (WP-XP-4)
+
+An FCM token can rotate while the phone is off; `onNewToken` only fires on **change events the
+process observes**, so a rotation missed during downtime leaves the backend pushing to a dead
+token until the app is manually opened. Outbox messages queued before a reboot wait just as long.
+
+- **Android** — `CanariBootReceiver` (manifest receiver, `BOOT_COMPLETED` +
+  `MY_PACKAGE_REPLACED`, `exported="false"` — both are protected system broadcasts; requires
+  `RECEIVE_BOOT_COMPLETED`). On fire (`goAsync` + wake lock + worker thread, like
+  `CanariNotificationActionReceiver`):
+  1. Force-reads the current FCM token (`Tasks.await(FirebaseMessaging.getInstance().token)`),
+     persists it (`fcm_token.txt` + prefs) and re-registers it on the backend via the PushSecret
+     endpoint `POST /api/mls/push/refresh-token`
+     (`CanariFirebaseMessagingService.refreshTokenOnBackend`, now a companion function). The
+     backend refresh is unconditional — even an unchanged token heals a server-side entry that
+     expired while the device was off.
+  2. Drains the outbox mirror through the shared `drainOutboxBackground` path (which also warms
+     the MLS state via the JNI). Skipped silently when the device is not enrolled
+     (`push_context.json` / pushSecret absent).
+  `BOOT_COMPLETED` is delivered post-unlock, so credential-encrypted storage is available.
+- **iOS** — no OS boot hook exists. The equivalent is the **launch-time force-fetch** in
+  `canari_push.mm` `CanariPushSetup` (`tokenWithCompletion` → `CanariPersistFcmToken` → backend
+  refresh), which runs on every app launch and covers first-open-after-reboot.
+
+CI guard: `src/lib/mobile/androidFcmManifest.test.ts` fails if the receiver, its actions, or the
+`RECEIVE_BOOT_COMPLETED` permission are dropped from the manifest (e.g. by `tauri android init`).
+
 ### Security / PIN
 
 | Method | Path | Description |

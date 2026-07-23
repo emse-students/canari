@@ -53,6 +53,21 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(manifestChannel).toBe(ktChannel);
   });
 
+  it('déclare le receiver de boot (WP-XP-4) avec BOOT_COMPLETED + MY_PACKAGE_REPLACED', () => {
+    // Sans lui, un token FCM qui a tourné pendant que le téléphone était éteint reste
+    // mort côté serveur jusqu'à ouverture manuelle de l'app.
+    expect(manifest).toContain('android.permission.RECEIVE_BOOT_COMPLETED');
+    const receiverBlocks = manifest.match(/<receiver\b[\s\S]*?<\/receiver>/g) ?? [];
+    const bootReceiver = receiverBlocks.find((b) => b.includes('.CanariBootReceiver'));
+    expect(bootReceiver, 'receiver CanariBootReceiver absent du manifest').toBeDefined();
+    expect(bootReceiver).toContain('android.intent.action.BOOT_COMPLETED');
+    expect(bootReceiver).toContain('android.intent.action.MY_PACKAGE_REPLACED');
+  });
+
+  it('déclare le receiver des quick actions (WP-XP-1)', () => {
+    expect(manifest).toMatch(/android:name=["']\.CanariNotificationActionReceiver["']/);
+  });
+
   it('ne réintroduit pas android:debuggable avec placeholder (casse le merge release)', () => {
     // build.gradle.kts ne définit pas manifestPlaceholders["debuggable"] → un
     // android:debuggable="${debuggable}" fait échouer processUniversalReleaseMainManifest.
