@@ -1,34 +1,73 @@
 # Social Service
 
-Ce microservice NestJS gère les fonctionnalités "sociales" de Canari. Il regroupe trois domaines principaux : les **Publications (Posts)**, les **Formulaires (Forms)**, et les **Canaux Communautaires (Channels)**.
+NestJS microservice for Canari's community features. Runs on port **3014**.
 
-Il tourne sur le port **3014**.
+## Domains
 
-## 1. Canaux Communautaires (Channels)
-Gère les espaces de discussion asynchrones (workspaces/promos) avec une gestion avancée des rôles et des permissions (ACL).
+### Posts
 
-**Fonctionnalités :**
-- Mode permissions-first : join, leave, kick.
-- Chiffrement applicatif soft (AES-256-GCM, clé dérivée). L'historique des canaux est visible pour les nouveaux membres.
-- Les contenus des messages sont chiffrés/déchiffrés côté service (pas de pure E2EE MLS comme les DMs).
+News feed with Markdown content, media attachments, polls, and reactions.
 
-## 2. Formulaires (Forms)
-Gère la création, la validation, le paiement et l'exportation des formulaires dynamiques. Souvent rattachés à des posts.
+- Paginated feed with infinite scroll
+- Post creation with image, poll, embedded form
+- Comments with text, mentions, images, GIFs
+- Emoji reactions
+- Pin/unpin (admin)
+- Report (moderation)
 
-**Fonctionnalités :**
-- Constructeur dynamique (Texte, Choix multiples, etc.) avec modificateurs de prix.
-- Intégration Stripe pour les paiements (ex: billetteries, goodies).
-- Export des données au format Excel.
+### Channels & Workspaces
 
-## 3. Publications (Posts)
-Gère le fil d'actualité. Les posts peuvent inclure :
-- Du texte (Markdown)
-- Des médias
-- Des sondages (Polls)
-- Des événements avec formulaires attachés.
+Encrypted community spaces with role-based access control.
 
-## Lancement
+- Workspace → channels hierarchy
+- Custom roles with permission bitmasks
+- Server-assisted symmetric encryption (HKDF-derived per-channel keys from workspace master secret)
+- Key distribution tracked per device (`channel_key_distributions`)
+- Channel push notifications with per-channel level (`all`, `mentions`, `none`)
+- Full-text search (client-side decrypt + match)
+
+### Forms
+
+Dynamic form builder with payments.
+
+- Custom field types with pricing modifiers
+- Stripe Checkout, saved card, or cash payment
+- Excel export of submissions
+- Scheduled reminders via cron
+- Can grant membership tags on completion
+
+### Associations
+
+Club management platform.
+
+- Profile, logo, colors, description
+- Member roster with roles and permissions
+- Calendar events
+- Document storage
+- Boutique products (Stripe Connect)
+- Cotisations (membership dues) via time-bounded tags
+
+### Payment delegation
+
+An association without its own Stripe Connect account can delegate payments to a parent association. All online payments (shop, forms, paid posts) route to the parent's Stripe account while the child retains its own identity.
+
+## Databases
+
+| Store | Purpose |
+|---|---|
+| PostgreSQL | Channels, workspaces, memberships, key distributions, forms, submissions, associations, products, user tags |
+| MongoDB | Posts, comments, reactions (document store) |
+| Redis | `chat:channel_events` pub/sub |
+
+## Startup
+
 ```bash
 cd apps/social-service
 npm run start:dev
 ```
+
+## See also
+
+- [Wiki: social-service](../../docs/wiki/services/social-service.md) — Full API, env vars, encryption model
+- [Wiki: Cotisations](../../docs/wiki/cotisations.md) — Membership dues model
+- [Wiki: Payments module](../../docs/wiki/frontend/modules/payments.md) — Payment delegation

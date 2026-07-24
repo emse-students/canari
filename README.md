@@ -3,110 +3,87 @@
 
 # Canari
 
-**Messagerie securisee E2E pour l'EMSE · Architecture microservices**
+**End-to-end encrypted messaging & campus life platform for École des Mines de Saint-Étienne**
 
-[![Built with SvelteKit](https://img.shields.io/badge/Built%20with-SvelteKit-FF3E00?logo=svelte)](https://kit.svelte.dev/)
-[![Powered by Bun](https://img.shields.io/badge/Powered%20by-Bun-000000?logo=bun)](https://bun.sh/)
-[![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-CE422B?logo=rust)](https://www.rust-lang.org/)
+[![Built with SvelteKit](https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte)](https://kit.svelte.dev/)
+[![Powered by Bun](https://img.shields.io/badge/Bun-000000?logo=bun)](https://bun.sh/)
+[![Built with Rust](https://img.shields.io/badge/Rust-CE422B?logo=rust)](https://www.rust-lang.org/)
+[![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs)](https://nestjs.com/)
 
 [![CI](https://github.com/emse-students/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/ci.yml)
 [![CD](https://github.com/emse-students/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/cd.yml)
-[![Code Analysis](https://github.com/emse-students/canari/actions/workflows/code-analysis.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/code-analysis.yml)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
 </div>
 
 ---
 
-Canari est la plateforme de messagerie et de vie associative de l'Ecole des Mines de Saint-Etienne.
-Les conversations privees et les groupes sont chiffres de bout en bout avec le **protocole MLS**
-(RFC 9420). Les communautes (workspaces/channels) utilisent un chiffrement symetrique derive par HKDF.
+## Overview
 
----
+Canari is the messaging and campus life platform for École des Mines de Saint-Étienne.
+Private conversations and groups are **end-to-end encrypted** with the [MLS protocol](docs/wiki/protocols/mls-protocol.md)
+(RFC 9420). Communities (workspaces/channels) use HKDF-derived symmetric encryption.
+
+Key features:
+- **E2E encrypted messaging** — Direct messages, group chats, media sharing (AES-256-GCM + MLS)
+- **Voice & video calls** — WebRTC with SFU relay, CallKit integration on iOS
+- **Communities** — Role-based workspaces and channels with server-assisted encryption
+- **Associations** — Club management, membership dues (cotisations), boutique shop (Stripe Connect)
+- **Forms & payments** — Dynamic form builder with Stripe Checkout, cash payments, Excel export
+- **News feed** — Markdown posts, polls, reactions, comments
+- **Cross-platform** — Web (SvelteKit), Android & iOS (Tauri 2), Linux desktop (AppImage)
 
 ## Architecture
 
 ```
-Navigateur / Tauri
-    | (HTTPS + WS)
+Browser / Tauri (Native App)
+    | (HTTPS + WSS)
     v
- Nginx  --auth_request--> core-service:3012
+ Nginx  ──auth_request──> core-service:3012
     |
-    |-> chat-gateway:3000      (Rust/Axum)  WebSocket temps reel, presence
-    |-> chat-delivery:3010     (NestJS)     API MLS, messages offline, historique
-    |-> media-service:3011     (NestJS)     Blobs chiffres (MinIO)
-    |-> core-service:3012      (NestJS)     Auth OIDC, utilisateurs, paiements
-    `-> social-service:3014    (NestJS)     Posts, formulaires, channels/communautes
+    |-> chat-gateway:3000      (Rust/Axum)  WebSocket, presence, Redis pub/sub
+    |-> call-service:3004      (Rust/Axum)  WebRTC SFU relay
+    |-> chat-delivery:3010     (NestJS)     MLS API, offline queue, push, sync
+    |-> media-service:3011     (NestJS)     Encrypted blob storage (MinIO)
+    |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, Stripe
+    `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
 
-Infrastructure : PostgreSQL . MongoDB . Redis . Kafka . MinIO
+Infrastructure: PostgreSQL · MongoDB · Redis · Kafka · MinIO
 ```
 
-> En production, Cloudflare Tunnel termine le TLS et pointe sur `http://localhost:8080 -> Nginx`.
+> In production, Cloudflare Tunnel terminates TLS and forwards to `localhost:8080` → Nginx.
 
----
+## Quick start
 
-## Documentation
-
-La documentation technique est dans [`docs/wiki/`](docs/wiki/index.md) (en anglais, par feature/module).
-
-| Page wiki | Contenu |
-|---|---|
-| [Architecture](docs/wiki/architecture.md) | Topologie, routage Nginx, flux auth, schemas DB |
-| [API surface](docs/wiki/api-surface.md) | Tous les endpoints de tous les services |
-| [MLS protocol](docs/wiki/mls-protocol.md) | RFC 9420, epochs, forward secrecy, sync devices |
-| [chat-gateway](docs/wiki/services/chat-gateway.md) | Gateway Rust, WebSocket, Redis pub/sub |
-| [chat-delivery](docs/wiki/services/chat-delivery.md) | API MLS, messages, push, locks |
-| [core-service](docs/wiki/services/core-service.md) | Auth OIDC, utilisateurs, Stripe |
-| [media-service](docs/wiki/services/media-service.md) | Blobs chiffres, CEK, MinIO |
-| [social-service](docs/wiki/services/social-service.md) | Posts, channels, formulaires, associations |
-| [Frontend](docs/wiki/frontend/architecture.md) | SvelteKit 5, Svelte 5 runes, Paraglide i18n |
-| [MLS WASM](docs/wiki/frontend/mls-wasm.md) | openmls compile en WASM, gestion cles, sync |
-| [Infrastructure](docs/wiki/infrastructure/docker.md) | Docker Compose, bases de donnees, Kafka |
-
-Docs de reference (vivantes, garder) :
-
-- [`docs/MLS-REAUDIT-2026-07.md`](docs/MLS-REAUDIT-2026-07.md) - re-architecture MLS (plan + avancement, Phases 0-4 terminees)
-- [`docs/MLS_DESYNC_PREVENTION.md`](docs/MLS_DESYNC_PREVENTION.md) - prevention des desync MLS
-- [`docs/MLS_RECOVERY_LADDER.md`](docs/MLS_RECOVERY_LADDER.md) - procedure de recovery MLS
-- [`docs/AUDIT-MLS-2026-06.md`](docs/AUDIT-MLS-2026-06.md) - audit securite MLS (2026-06, historique - a l'origine du chantier)
-- [`docs/TESTS-DEVICE-PENDING.md`](docs/TESTS-DEVICE-PENDING.md) - tests appareil en attente
-
----
-
-## Demarrage rapide (dev local)
-
-### Prerequis
+### Prerequisites
 
 - Docker + Docker Compose
-- Node.js 24+, [Bun](https://bun.sh/), [Rust >= 1.93](https://rustup.rs/) (`rust-toolchain.toml`), [oxvelte](https://github.com/tolgaouz/oxvelte) (`make install-oxvelte`), `cargo install wasm-pack`
+- Node.js 24+, [Bun](https://bun.sh/), [Rust ≥ 1.93](https://rustup.rs/), `cargo install wasm-pack`
 - `make`
 
-### Lancer l'environnement
+### Setup
 
 ```bash
 git clone https://github.com/emse-students/canari.git
 cd canari
 
-# Genere infrastructure/.env et frontend/.env avec des secrets aleatoires
+# Generate environment files with random secrets
 ./scripts/setup-env.sh
 
-# Installe les dependances (Node + Rust + hooks)
+# Install all dependencies
 make install
 
-# Demarre tous les services Docker (DB, Kafka, Redis, gateway, services)
+# Start all Docker services
 make run-services
 
-# Dans un autre terminal : frontend avec HMR
+# In another terminal: start the frontend with HMR
 cd frontend && bun run dev
-# -> http://localhost:1420
+# → http://localhost:1420
 ```
 
-> **Windows** : executer `scripts/windows/setup_environment.ps1` pour installer les prerequis,
-> puis utiliser les memes commandes `make`.
+### Local URLs
 
-### URLs locales
-
-| Service | Adresse |
+| Service | URL |
 |---|---|
 | Frontend (dev) | http://localhost:1420 |
 | Chat Gateway (WS) | ws://localhost:3000 |
@@ -116,117 +93,120 @@ cd frontend && bun run dev
 | Social Service | http://localhost:3014 |
 | MinIO Console | http://localhost:9001 |
 
----
-
-## Commandes utiles
+## Commands
 
 ```bash
-# Tests
-make test                 # Tous les tests (Rust + NestJS + Vitest)
-make test-gateway         # Uniquement le chat-gateway Rust
-make test-frontend        # Frontend (Vitest)
-make run-ci               # Pipeline CI complet
+# Testing
+make test              # All tests (Rust + NestJS + Vitest)
+make test-gateway      # chat-gateway only
+make test-frontend     # Frontend (Vitest)
+make run-ci            # Full CI pipeline locally
 
 # Build
-make build-frontend       # Compile WASM + bundle SvelteKit
+make build-frontend    # WASM + SvelteKit bundle
 
 # Services
-make run-services         # Demarre les conteneurs locaux
-make reload-services      # Redemarre
-make reset-services       # Redemarre + vide les bases de donnees
+make run-services      # Start Docker containers
+make reload-services   # Restart
+make reset-services    # Restart + wipe databases
 
-# Qualite de code (frontend)
+# Code quality (frontend)
 cd frontend
-bun run check             # paraglide:compile + svelte-kit sync + svelte-check (0 erreur requis)
-npm run lint:fix          # Corrige les erreurs ESLint
-npm run format            # Formate avec Prettier
+bun run check          # svelte-check (0 errors required)
+npm run lint:fix       # ESLint auto-fix
+npm run format         # Prettier
 
-# Rust (depuis n'importe quel service)
+# Rust (from any crate)
 cargo clippy
 cargo test
 ```
 
----
+## Documentation
 
-## Stack technique
+All technical documentation lives in [`docs/wiki/`](docs/wiki/index.md) — English, LLM-oriented, organized by feature and module.
 
-| Couche | Technologies |
+| Page | Contents |
 |---|---|
-| **Frontend** | SvelteKit 5 . Svelte 5 (runes) . TailwindCSS 4 . Tauri 2 . Paraglide i18n |
-| **MLS client** | Rust (openmls) compile en WASM . ChaCha20-Poly1305 . Argon2 |
-| **Gateway** | Rust . Axum . Tokio . Redis pub/sub |
-| **Services** | NestJS 10 . TypeORM . Node.js 24 . Bun |
-| **Infrastructure** | PostgreSQL . MongoDB . Redis . Kafka . MinIO |
-| **Auth** | Authentik (OIDC) . JWT HS256 . cookies HttpOnly |
-| **DevOps** | Docker . GitHub Actions . Nginx . Cloudflare Tunnel |
+| [Architecture](docs/wiki/architecture.md) | Service topology, Nginx routing, auth flow |
+| [Glossary](docs/wiki/glossary.md) | Acronyms and terminology |
+| [MLS protocol](docs/wiki/protocols/mls-protocol.md) | RFC 9420, epochs, forward secrecy |
+| [API surface](docs/wiki/protocols/api-surface.md) | Full endpoint inventory |
+| [WebSocket protocol](docs/wiki/protocols/websocket-protocol.md) | Protobuf wire format |
+| [Development](docs/wiki/development.md) | Local setup, Makefile, pre-commit hooks |
+| [CI/CD](docs/wiki/cicd.md) | GitHub Actions, mobile builds, releases |
 
----
+## Tech stack
 
-## Structure du monorepo
+| Layer | Technologies |
+|---|---|
+| **Frontend** | SvelteKit 5 · Svelte 5 (runes) · TailwindCSS 4 · Tauri 2 · Paraglide i18n |
+| **MLS client** | Rust (OpenMLS) → WASM · ChaCha20-Poly1305 · Argon2 |
+| **Gateway** | Rust · Axum · Tokio · Redis pub/sub |
+| **SFU** | Rust · webrtc-rs · Axum · Cloudflare TURN |
+| **Backend services** | NestJS 10 · TypeORM · Node.js 24 |
+| **Data stores** | PostgreSQL · MongoDB · Redis · MinIO |
+| **Auth** | Authentik (OIDC) · JWT HS256 · HttpOnly cookies |
+| **DevOps** | Docker · GitHub Actions · Nginx · Cloudflare Tunnel |
+
+## Repository structure
 
 ```
 canari/
-|-- apps/
-|   |-- chat-gateway/          # WebSocket gateway (Rust/Axum, port 3000)
-|   |-- chat-delivery-service/ # API MLS + messages (NestJS, port 3010)
-|   |-- media-service/         # Blobs chiffres (NestJS, port 3011)
-|   |-- core-service/          # Auth + users + paiements (NestJS, port 3012)
-|   `-- social-service/        # Posts + channels + formulaires (NestJS, port 3014)
-|-- frontend/
-|   |-- src/                   # Application SvelteKit
-|   |-- mls-core/              # Librairie MLS (Rust pur)
-|   |-- mls-wasm/              # Bindings WASM (wasm-bindgen)
-|   `-- src-tauri/             # Application desktop Tauri
-|-- libs/
-|   |-- proto/                 # Definitions Protobuf
-|   |-- event-contracts/       # Schemas Kafka (JSON Schema)
-|   |-- shared-rust/           # Utilitaires Rust partages
-|   `-- shared-ts/             # Types TypeScript partages
-|-- infrastructure/
-|   |-- local/                 # Docker Compose + Dockerfiles (dev)
-|   |-- docker-compose.prod.yml
-|   `-- docker-compose.dev.yml
-|-- scripts/                   # Setup, deploiement, utilitaires
-|-- docs/                      # Documentation (wiki dans docs/wiki/)
-`-- Makefile
+├── apps/
+│   ├── chat-gateway/          # WebSocket gateway (Rust, port 3000)
+│   ├── call-service/          # WebRTC SFU (Rust, port 3004)
+│   ├── chat-delivery-service/ # MLS API + push (NestJS, port 3010)
+│   ├── media-service/         # Encrypted blobs (NestJS, port 3011)
+│   ├── core-service/          # Auth + users + payments (NestJS, port 3012)
+│   └── social-service/        # Posts + channels + forms (NestJS, port 3014)
+├── frontend/
+│   ├── src/                   # SvelteKit app
+│   ├── mls-core/              # Shared Rust MLS logic
+│   ├── mls-wasm/              # WASM bindings (wasm-bindgen)
+│   └── src-tauri/             # Tauri 2 native app
+├── libs/
+│   ├── proto/                 # Protobuf schema (canari.proto)
+│   ├── shared-rust/           # Shared Rust types (Kafka events)
+│   └── shared-ts/             # Shared TypeScript types
+├── infrastructure/
+│   ├── local/                 # Docker Compose & Dockerfiles (dev)
+│   ├── docker-compose.prod.yml
+│   ├── docker-compose.dev.yml
+│   ├── backup/                # Backup scripts & systemd units
+│   └── authentik/             # Authentik OIDC stack
+├── scripts/                   # Setup, deployment, utilities
+├── docs/
+│   └── wiki/                  # Technical documentation
+└── Makefile
 ```
-
----
 
 ## CI/CD
 
-Chaque push sur `main` declenche automatiquement :
+Every push to `main` triggers:
 
-1. **CI** - `cargo clippy`, `cargo test`, `oxlint`, `oxvelte`, `svelte-check`, `vitest`
-2. **Build** - WASM + SvelteKit + 6 images Docker -> `ghcr.io/emse-students/canari/*`
-3. **Deploiement** - Pull des images sur le serveur via runner self-hosted, restart Docker Compose
+1. **CI** — `cargo clippy`, `cargo test`, `oxlint`, `oxvelte`, `svelte-check`, `vitest`
+2. **Build** — WASM + SvelteKit + 6 Docker images → `ghcr.io/emse-students/canari/*`
+3. **Deploy** — Pull images on production server via self-hosted runner, restart Docker Compose
 
-Pour configurer un nouveau serveur, voir [`infrastructure/MIGRATION.md`](infrastructure/MIGRATION.md)
-(source de verite du bootstrap serveur).
+For server bootstrap, see [`infrastructure/MIGRATION.md`](infrastructure/MIGRATION.md).
 
----
-
-## Contribuer
+## Contributing
 
 ```bash
-# Travailler directement sur main (pas de branches de features)
-# Hooks Husky : oxlint + oxvelte + oxfmt au commit, svelte-check + cargo clippy au push
+# Work directly on main (no feature branches)
+# Pre-commit hooks: oxlint + oxvelte + oxfmt on commit
 git commit -m "feat: description"   # conventional commits
 git push
 ```
 
----
+## License
 
-## Licence
+Canari is distributed under the [**PolyForm Noncommercial License 1.0.0**](LICENSE).
 
-Canari est distribue sous la [**PolyForm Noncommercial License 1.0.0**](LICENSE).
+- **Non-commercial use**: freely use, copy, modify, and redistribute for non-commercial purposes
+  (education, research, associative projects, personal use, educational institutions).
+- **Attribution required**: any copy or redistribution must retain the `Required Notice` from
+  the [`LICENSE`](LICENSE) file (author + repository link).
+- **Commercial use**: prohibited without a separate license agreement with the authors.
 
-- **Usage non-commercial** : vous pouvez utiliser, copier, modifier et redistribuer
-  le logiciel librement pour tout usage non commercial (etude, recherche, projets
-  associatifs, usage personnel, institutions educatives comme l'EMSE, etc.).
-- **Citation obligatoire** : toute copie ou redistribution doit conserver la mention
-  `Required Notice:` du fichier [`LICENSE`](LICENSE) (auteur + lien vers le depot).
-- **Usage commercial** : interdit sans un accord de licence separe avec les auteurs.
-
-Ce n'est donc pas une licence "open source" au sens de l'OSI (qui interdit toute
-restriction sur l'usage commercial), mais une licence source-available.
+This is a source-available license, not an OSI-approved open-source license.

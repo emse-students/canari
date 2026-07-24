@@ -3,9 +3,8 @@
 Canari implements end-to-end encryption using **MLS (Messaging Layer Security, RFC 9420)**. All encryption and decryption happens inside a **Rust/OpenMLS** WASM module (browser) or a Tauri native binary (desktop/mobile). The server stores and routes only ciphertext — it never sees plaintext.
 
 **Living docs** (do not archive, actively updated):
-- `docs/AUDIT-MLS-2026-06.md` — ongoing audit pass, bugs tracked by ID
-- `docs/MLS_DESYNC_PREVENTION.md` — desync root causes and countermeasures
-- `docs/MLS_RECOVERY_LADDER.md` — step-by-step recovery ladder (rung-1 commit replay -> rung-2 external join -> welcome_request fallback)
+- [`protocols/mls-desync-prevention.md`](protocols/mls-desync-prevention.md) — desync root causes and countermeasures
+- [`protocols/mls-recovery-ladder.md`](protocols/mls-recovery-ladder.md) — step-by-step recovery ladder (rung-1 commit replay → rung-2 external join → welcome_request fallback)
 
 ## Key properties
 

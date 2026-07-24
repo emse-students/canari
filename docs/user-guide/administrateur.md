@@ -144,6 +144,5 @@ Voir `docs/wiki/infrastructure/backup.md` pour la procedure complete.
 |---|---|
 | [`docs/wiki/architecture.md`](../wiki/architecture.md) | Topologie complete, Nginx, auth |
 | [`docs/wiki/api-surface.md`](../wiki/api-surface.md) | Tous les endpoints |
-| [`docs/AUDIT-MLS-2026-06.md`](../AUDIT-MLS-2026-06.md) | Audit securite MLS en cours |
 | [`docs/MLS_RECOVERY_LADDER.md`](../MLS_RECOVERY_LADDER.md) | Procedure de recovery MLS |
 | [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) | Bootstrap serveur |

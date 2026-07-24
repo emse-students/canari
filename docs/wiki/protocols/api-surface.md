@@ -161,6 +161,17 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 
 ---
 
+## call-service (port 3004)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/calls/ws` | yes (JWT cookie) | WebRTC SFU WebSocket upgrade |
+| GET | `/api/health` | no | Liveness probe |
+
+Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `Offer`, `Answer`, `IceCandidate`. See [`services/call-service.md`](../services/call-service.md) for the protocol.
+
+---
+
 ## media-service (port 3011)
 
 | Method | Path | Auth | Description |

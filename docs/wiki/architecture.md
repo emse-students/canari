@@ -10,6 +10,7 @@ In production, Cloudflare Tunnel exposes `http://localhost:8080`, which forwards
 |---|---|---|---|---|
 | **frontend** (Nginx) | Nginx + SvelteKit static | 80 | - | Single HTTP entry point, reverse proxy |
 | **chat-gateway** | Rust / Axum / Tokio | 3000 | Redis | Real-time WebSocket, MLS routing, presence |
+| **call-service** | Rust / Axum / webrtc-rs | 3004 | - | WebRTC SFU, Cloudflare TURN relay, keyframe recovery |
 | **chat-delivery-service** | NestJS | 3010 | PostgreSQL + Redis | MLS API, offline queue, Redis Stream history |
 | **media-service** | NestJS | 3011 | MinIO | E2EE encrypted blob storage |
 | **core-service** | NestJS | 3012 | PostgreSQL | OIDC auth (Authentik), users, Stripe payments |
@@ -42,6 +43,7 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |
 | `/api/users/*` | `core-service:3012` | yes | User profiles, search |
 | `/api/payments/*` | `core-service:3012` | yes | Stripe (checkout, webhooks) |
+| `/api/calls/ws` | `call-service:3004` | yes | WebRTC SFU WebSocket (call media relay) |
 
 ## Auth flow
 
@@ -199,6 +201,7 @@ Internet
        -> Cloudflare Tunnel -> http://localhost:8080
             -> Nginx:80 (frontend container)
                  |- /api/ws         -> chat-gateway:3000
+                 |- /api/calls/ws   -> call-service:3004
                  |- /api/mls/*      -> chat-delivery-service:3010
                  |- /api/media/*    -> media-service:3011
                  |- /api/auth/*     -> core-service:3012

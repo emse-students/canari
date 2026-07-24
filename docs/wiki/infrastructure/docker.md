@@ -14,11 +14,11 @@
 ```
 frontend (Nginx:80)
   |-- chat-gateway:3000         <- depends on redis, kafka
+  |-- call-service:3004          <- depends on Cloudflare TURN (no internal deps)
   |-- chat-delivery-service:3010 <- depends on postgres, redis, kafka, mongo
   |-- media-service:3011         <- depends on minio
   |-- core-service:3012          <- depends on postgres
   |-- social-service:3014        <- depends on postgres, core-service, media-service
-  |-- call-service:3004          <- independent (Cloudflare TURN)
 
 Infrastructure:
   postgres:5432    <- auth_db (core, chat-delivery, social)

@@ -55,7 +55,7 @@ connection.ts handler:
   - unknown group -> buffer until Welcome arrives
 ```
 
-See `docs/wiki/mls-protocol.md` for full flow details.
+See [`protocols/mls-protocol.md`](../protocols/mls-protocol.md) for full flow details.
 
 ## Message envelope
 
