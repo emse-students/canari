@@ -2,6 +2,9 @@ use log::{Level, Metadata, Record};
 use mls_core::MlsManager;
 use wasm_bindgen::prelude::*;
 
+mod pin_crypto;
+pub use pin_crypto::*;
+
 // --- Custom Logger that calls JS function `window.wasm_bindings_log(level, msg)` ---
 
 #[wasm_bindgen]
@@ -82,11 +85,16 @@ impl WasmMlsClient {
             device_id
         );
 
-        let manager = if let (Some(blob), Some(p)) = (state_bytes.clone(), pin) {
+        let manager = if let (Some(blob), Some(p)) = (state_bytes.clone(), pin.clone()) {
             log::info!("Loading encrypted state");
             MlsManager::load_encrypted(user_id, device_id, Some(blob), &p)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?
         } else {
+            if state_bytes.is_none() && pin.is_some() {
+                log::warn!(
+                    "PIN provided but no encrypted state — PIN ignored, creating fresh state"
+                );
+            }
             log::info!("Loading/Creating clean state");
             MlsManager::load_or_create(user_id, device_id, state_bytes)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?
@@ -544,41 +552,4 @@ impl WasmMlsClient {
         array.push(&js_sys::Uint8Array::from(&commit[..]));
         Ok(array)
     }
-}
-
-// Security Utilities (Encryption at Rest)
-// Uses the same logic as MLS Core (Argon2 + ChaCha20Poly1305)
-
-#[wasm_bindgen]
-pub fn encrypt_with_pin(pin: &str, data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut salt = [0u8; 16];
-    getrandom::getrandom(&mut salt).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let key =
-        mls_core::security::derive_key_from_pin(pin, &salt).map_err(|e| JsValue::from_str(&e))?;
-
-    let nonce_ciphertext =
-        mls_core::security::encrypt_blob(&key, data).map_err(|e| JsValue::from_str(&e))?;
-
-    let mut result = Vec::new();
-    result.extend_from_slice(&salt);
-    result.extend_from_slice(&nonce_ciphertext);
-    Ok(result)
-}
-
-#[wasm_bindgen]
-pub fn decrypt_with_pin(pin: &str, encrypted_data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    if encrypted_data.len() < 16 + 12 {
-        return Err(JsValue::from_str("Invalid encrypted data length"));
-    }
-
-    let (salt, rest) = encrypted_data.split_at(16);
-
-    let key =
-        mls_core::security::derive_key_from_pin(pin, salt).map_err(|e| JsValue::from_str(&e))?;
-
-    let plaintext =
-        mls_core::security::decrypt_blob(&key, rest).map_err(|e| JsValue::from_str(&e))?;
-
-    Ok(plaintext)
 }

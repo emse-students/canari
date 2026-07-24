@@ -5,6 +5,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { HealthController } from './health.controller';
 import { User } from './users/entities/user.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PaymentModule } from './payment/payment.module';
@@ -37,7 +38,7 @@ import { SkyModule } from './sky/sky.module';
     ExternalModule,
     SkyModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule {}

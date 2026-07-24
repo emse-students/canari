@@ -191,10 +191,25 @@ pub async fn ws_handler(
             // Use the device_id provided by the client to keep the same routing key
             // across reconnections (otherwise group:members becomes stale).
             // Security relies on the JWT: only the userId from the token can access messages.
+            fn is_valid_device_id(id: &str) -> bool {
+                !id.is_empty()
+                    && id.len() <= 256
+                    && id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            }
             let device_id = params
                 .device_id
                 .as_deref()
-                .filter(|id| !id.is_empty() && id.len() <= 256)
+                .filter(|id| {
+                    let valid = is_valid_device_id(id);
+                    if !valid && !id.is_empty() {
+                        tracing::warn!(
+                            "[ws] device_id contains invalid characters, generating UUID instead"
+                        );
+                    }
+                    valid
+                })
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
