@@ -16,7 +16,7 @@ pub(crate) async fn initialiser_mls(
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let manager = MlsManager::load_encrypted(&user_id, &device_id, encrypted_state, &pin)
+        let manager = MlsManager::load_encrypted_owned(&user_id, &device_id, encrypted_state, pin)
             .map_err(|e| e.to_string())?;
 
         let mut lock = manager_state
@@ -42,7 +42,9 @@ pub(crate) async fn sauvegarder_mls(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        let encrypted = manager.save_encrypted(&pin).map_err(|e| e.to_string())?;
+        let encrypted = manager
+            .save_encrypted_owned(pin)
+            .map_err(|e| e.to_string())?;
         Ok::<Vec<u8>, String>(encrypted)
     })
     .await
@@ -63,7 +65,9 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        let encrypted = manager.save_encrypted(&pin).map_err(|e| e.to_string())?;
+        let encrypted = manager
+            .save_encrypted_owned(pin)
+            .map_err(|e| e.to_string())?;
         write_mls_state_blob(&app, &encrypted)?;
         Ok::<Vec<u8>, String>(encrypted)
     })
@@ -173,7 +177,9 @@ pub(crate) async fn generer_key_packages_et_persister(
         } else {
             Vec::new()
         };
-        let encrypted_state = manager.save_encrypted(&pin).map_err(|e| e.to_string())?;
+        let encrypted_state = manager
+            .save_encrypted_owned(pin)
+            .map_err(|e| e.to_string())?;
         write_mls_state_blob(&app, &encrypted_state)?;
         log::debug!(
             "generer_key_packages_et_persister done count={} state_bytes={}",

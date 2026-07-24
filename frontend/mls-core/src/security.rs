@@ -6,8 +6,10 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
     aead::{Aead, KeyInit},
 };
+use zeroize::Zeroize;
 
 /// Derives a 32-byte key from a PIN and salt via Argon2id (default params).
+#[deprecated(note = "Use `derive_key_from_pin_owned` to zeroize the PIN after use")]
 pub fn derive_key_from_pin(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     let mut output_key = [0u8; 32];
     Argon2::default()
@@ -15,6 +17,15 @@ pub fn derive_key_from_pin(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
         .map_err(|e| e.to_string())?;
 
     Ok(output_key)
+}
+
+/// Owned variant of [`derive_key_from_pin`] that takes ownership of the PIN [`String`]
+/// and zeroizes it after key derivation, preventing the PIN from lingering in memory.
+#[allow(deprecated)]
+pub fn derive_key_from_pin_owned(mut pin: String, salt: &[u8]) -> Result<[u8; 32], String> {
+    let key = derive_key_from_pin(&pin, salt);
+    pin.zeroize();
+    key
 }
 
 pub fn encrypt_blob(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
@@ -42,6 +53,8 @@ pub fn decrypt_blob(key: &[u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, St
 
 /// Encrypts a plain MLS CBOR snapshot with Argon2id + ChaCha20-Poly1305.
 /// Wire format: `[salt (16)] [nonce (12) || ciphertext]`.
+#[deprecated(note = "Use `encrypt_state_with_pin_owned` to zeroize the PIN after use")]
+#[allow(deprecated)]
 pub fn encrypt_state_with_pin(pin: &str, plain_state: &[u8]) -> Result<Vec<u8>, String> {
     let mut salt = [0u8; 16];
     OsRng.fill_bytes(&mut salt);
@@ -53,4 +66,16 @@ pub fn encrypt_state_with_pin(pin: &str, plain_state: &[u8]) -> Result<Vec<u8>, 
     result.extend_from_slice(&salt);
     result.extend_from_slice(&ciphertext);
     Ok(result)
+}
+
+/// Owned variant of [`encrypt_state_with_pin`] that takes ownership of the PIN [`String`]
+/// and zeroizes it after encryption, preventing the PIN from lingering in memory.
+#[allow(deprecated)]
+pub fn encrypt_state_with_pin_owned(
+    mut pin: String,
+    plain_state: &[u8],
+) -> Result<Vec<u8>, String> {
+    let result = encrypt_state_with_pin(&pin, plain_state);
+    pin.zeroize();
+    result
 }
