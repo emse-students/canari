@@ -356,8 +356,7 @@ export class DevicesController {
     const activeDevices = registeredDevices.filter((d) => !revokedSet.has(d.deviceId));
 
     // Resolve display name once for the user (all devices share the same owner).
-    const displayName =
-      (await resolveUserDisplayName(this.dataSource.manager, userId)) || null;
+    const displayName = (await resolveUserDisplayName(this.dataSource.manager, userId)) || null;
 
     const results = await Promise.all(
       activeDevices.map(async (device) => {

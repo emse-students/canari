@@ -282,7 +282,9 @@ export class SecurityController {
       const MAX_REDIRECTS = 3;
 
       while (redirectsCount <= MAX_REDIRECTS) {
-        response = await fetch(currentUrl.toString(), {
+        // Security: mitigates CodeQL alert #2464 — re-validate URL immediately before fetch
+        await assertSafeExternalUrl(currentUrl.href);
+        response = await fetch(currentUrl.href, {
           method: 'GET',
           redirect: 'manual', // prevent automatic redirects
           signal: abortController.signal,

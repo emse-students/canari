@@ -54,8 +54,8 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: auth_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -228,8 +228,8 @@ services:
       AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USERNAME: admin
-      DB_PASSWORD: password
+      DB_USERNAME: ${POSTGRES_USER:-admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
@@ -259,8 +259,8 @@ services:
       PORT: "3014"
       DB_HOST: postgres
       DB_PORT: "5433"
-      DB_USERNAME: admin
-      DB_PASSWORD: password
+      DB_USERNAME: ${POSTGRES_USER:-admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: "${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - see .env.example}"
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}

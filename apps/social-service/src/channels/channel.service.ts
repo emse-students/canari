@@ -1753,6 +1753,10 @@ export class ChannelService {
       if (!meta.votesByUser || Object.getPrototypeOf(meta.votesByUser) !== null) {
         meta.votesByUser = Object.assign(Object.create(null), meta.votesByUser);
       }
+      // Security: mitigates CodeQL alerts #2477/#2476 — reject dangerous property keys
+      if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
+        throw new BadRequestException('Invalid user identifier');
+      }
       if (selected.length === 0) {
         delete meta.votesByUser[userId];
       } else {

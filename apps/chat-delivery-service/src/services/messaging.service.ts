@@ -1534,15 +1534,14 @@ export class MessagingService {
     if (entries.length === 0) return entries;
     const senderIds = [
       ...new Set(
-        entries.map((e) => e['sender_id']).filter((id): id is string => typeof id === 'string' && id.length > 0)
+        entries
+          .map((e) => e['sender_id'])
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
       ),
     ];
     if (senderIds.length === 0) return entries;
     try {
-      const nameMap = await resolveUserDisplayNamesBatch(
-        this.groupRepo.manager,
-        senderIds
-      );
+      const nameMap = await resolveUserDisplayNamesBatch(this.groupRepo.manager, senderIds);
       for (const entry of entries) {
         const sid = typeof entry['sender_id'] === 'string' ? entry['sender_id'] : '';
         entry['sender_display_name'] = nameMap.get(sid) ?? null;

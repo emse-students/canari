@@ -10,11 +10,7 @@ interface UserNameRow {
 
 /** Builds a human-readable display name from the user row fields. */
 function formatDisplayName(row: UserNameRow): string {
-  return (
-    row.displayName?.trim() ||
-    [row.firstName, row.lastName].filter(Boolean).join(' ') ||
-    ''
-  );
+  return row.displayName?.trim() || [row.firstName, row.lastName].filter(Boolean).join(' ') || '';
 }
 
 /**

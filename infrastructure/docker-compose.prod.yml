@@ -26,15 +26,11 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:29092"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      # Un broker recree recharge tout l historique __consumer_offsets et peut
-      # mettre plusieurs minutes a repondre. Sans start_period, ces echecs de
-      # demarrage marquent kafka "unhealthy" et font echouer le deploiement
-      # (chat-gateway/chat-delivery dependent de kafka: condition service_healthy).
-      start_period: 180s
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   redis:
     image: redis:alpine
@@ -43,9 +39,10 @@ services:
       - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   mongo:
     image: mongo:latest
@@ -56,6 +53,12 @@ services:
       MONGO_INITDB_DATABASE: chat_db
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   postgres:
     image: postgres:15-alpine
@@ -73,7 +76,7 @@ services:
     image: adminer:latest
     restart: unless-stopped
     ports:
-      - "8888:8080"
+      - "127.0.0.1:8888:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     depends_on:
@@ -99,6 +102,12 @@ services:
       KAFKA_BROKERS: kafka:29092
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
       ALLOW_ORIGIN: "*"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     depends_on:
       redis:
         condition: service_healthy
@@ -124,6 +133,12 @@ services:
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # ─────────────────────────────────────────────────────
   # NODE.JS SERVICES (3010-3029 range)
@@ -176,17 +191,11 @@ services:
       mongo:
         condition: service_started
     healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "fetch('http://127.0.0.1:'+(process.env.PORT||3010)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 50s
+      test: ["CMD", "curl", "-f", "http://localhost:3010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # ─────────────────────────────────────────────────────
   # MinIO - S3-compatible object storage for encrypted media blobs
@@ -196,18 +205,19 @@ services:
     restart: always
     command: server /data --console-address ":9001"
     ports:
-      - "${MINIO_API_HOST_PORT:-19000}:9000"   # S3 API (host configurable)
-      - "${MINIO_CONSOLE_HOST_PORT:-19001}:9001"   # Web console (host configurable)
+      - "127.0.0.1:${MINIO_API_HOST_PORT:-19000}:9000"   # S3 API (host configurable)
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-19001}:9001"   # Web console (host configurable)
     environment:
       MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required - see .env.example}"
       MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required - see .env.example}"
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: ["CMD", "curl", "-f", "http://localhost:19000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Media Service (NestJS) - New port 3011
   # Stores only opaque encrypted blobs; never sees decryption keys.
@@ -236,6 +246,12 @@ services:
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     depends_on:
       minio:
         condition: service_healthy
@@ -278,6 +294,12 @@ services:
       SKY_API_KEY: ${SKY_API_KEY:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3012/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     depends_on:
       postgres:
         condition: service_started
@@ -317,6 +339,12 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
       CERCLE_API_KEY: ${CERCLE_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3014/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     depends_on:
       postgres:
         condition: service_started

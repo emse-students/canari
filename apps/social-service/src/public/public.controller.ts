@@ -142,6 +142,13 @@ export class PublicController {
     @Headers('x-api-key') apiKey: string
   ) {
     this.assertCercleApiKey(apiKey);
+    // Security: mitigates CodeQL alert #2478 — query params may arrive as arrays, bypassing sanitization
+    if (Array.isArray(assoSlug)) {
+      assoSlug = assoSlug[0];
+    }
+    if (Array.isArray(sub)) {
+      sub = sub[0];
+    }
     if (!assoSlug || !sub) {
       throw new BadRequestException('assoSlug and sub are required');
     }

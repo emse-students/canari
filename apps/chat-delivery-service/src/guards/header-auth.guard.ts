@@ -40,6 +40,14 @@ export class HeaderAuthGuard implements CanActivate {
     // When INTERNAL_SHARED_SECRET is configured, verify the per-minute HMAC token
     // to ensure the request came through nginx and not from a compromised container.
     const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
+
+    // Security: fail closed in production — INTERNAL_SHARED_SECRET is required
+    if (!internalSecret && process.env.NODE_ENV === 'production') {
+      throw new UnauthorizedException(
+        'INTERNAL_SHARED_SECRET is not configured — service cannot verify internal requests'
+      );
+    }
+
     if (internalSecret) {
       const userId =
         (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase() ?? '';
