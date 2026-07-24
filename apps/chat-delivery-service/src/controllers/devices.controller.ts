@@ -33,6 +33,7 @@ import {
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
+import { resolveUserDisplayName } from '../utils/display-name';
 
 /** Device registration, key packages, device metadata, and device deletion. */
 @Controller()
@@ -354,6 +355,10 @@ export class DevicesController {
     const revokedSet = new Set(revokedRows.map((r) => r.deviceId));
     const activeDevices = registeredDevices.filter((d) => !revokedSet.has(d.deviceId));
 
+    // Resolve display name once for the user (all devices share the same owner).
+    const displayName =
+      (await resolveUserDisplayName(this.dataSource.manager, userId)) || null;
+
     const results = await Promise.all(
       activeDevices.map(async (device) => {
         const keyPackage = await this.resolveKeyPackagePayloadForDevice(
@@ -361,7 +366,7 @@ export class DevicesController {
           device.deviceId
         );
         if (!keyPackage) return null;
-        return { ...device, keyPackage };
+        return { ...device, keyPackage, displayName };
       })
     );
 

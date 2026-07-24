@@ -1,4 +1,3 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { markdownStructureKey } from '$lib/utils/markdown/inlinePreview';
 import {
   composerMarkdownPreviewEnabled,

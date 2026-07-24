@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
 import { ChannelService, type ChannelMessageRow } from './ChannelService';
 
 /** Builds a minimal channel message row with a given id and createdAt (ISO). */

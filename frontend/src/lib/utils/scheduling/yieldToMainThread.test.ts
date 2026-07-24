@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { yieldToMainThread } from './yieldToMainThread';
 
 describe('yieldToMainThread', () => {

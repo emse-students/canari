@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { handleAppLinkClick } from './openExternal';
 
 vi.mock('$lib/utils/appLinkNavigation', () => ({

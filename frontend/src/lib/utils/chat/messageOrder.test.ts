@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { compareMessageOrder, mergeMessagesInInputOrder } from './messageOrder';
 import type { ChatMessage } from '$lib/types';
 

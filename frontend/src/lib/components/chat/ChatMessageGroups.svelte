@@ -10,6 +10,7 @@
   } from '$lib/utils/messageGrouping';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Loader2 } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** Slice of message groups currently rendered in the DOM. */
@@ -243,7 +244,7 @@
                   class="hover:text-text-main transition-colors"
                   onclick={(e) => e.stopPropagation()}
                 >
-                  {firstNameOnly(resolvedSenderNames[msg.senderId] || msg.senderId)}
+                  {firstNameOnly(resolvedSenderNames[msg.senderId] || m.user_unknown_label())}
                 </a>
               </div>
             {/if}

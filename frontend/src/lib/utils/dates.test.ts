@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { formatTime24, isToday, isYesterday, readStoredTimestampMs, toValidDate } from './dates';
 
 describe('readStoredTimestampMs', () => {

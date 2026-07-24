@@ -12,6 +12,7 @@
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
     asso: Association;
@@ -62,7 +63,7 @@
     if (purchase.firstName || purchase.lastName) {
       return `${purchase.firstName ?? ''} ${purchase.lastName ?? ''}`.trim();
     }
-    return purchase.userId.slice(0, 8) + '…';
+    return getUserDisplayNameSync(purchase.userId);
   }
 
   /** Maps a payment method identifier to its display label. */

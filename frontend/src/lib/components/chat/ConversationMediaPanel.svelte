@@ -69,7 +69,7 @@
   }
 
   function senderName(userId: string): string {
-    return getUserDisplayNameSync(userId, userId);
+    return getUserDisplayNameSync(userId);
   }
 
   function hostOf(url: string): string {

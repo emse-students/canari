@@ -409,7 +409,7 @@
           >
             <span class="truncate"
               >{m.chat_reply_to_message({
-                replySenderDisplayName: replySenderDisplayName || replyingTo.senderId,
+                replySenderDisplayName: replySenderDisplayName || m.user_unknown_label(),
               })}</span
             >
           </div>

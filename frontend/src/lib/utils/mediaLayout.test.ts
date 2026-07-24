@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { DEFAULT_MEDIA_ASPECT, mediaAspectStyle, normalizedAspectRatio } from './mediaLayout';
 
 describe('mediaLayout', () => {

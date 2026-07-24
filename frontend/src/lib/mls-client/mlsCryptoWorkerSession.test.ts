@@ -1,7 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-
 // The module statically imports the worker asset; stub it so Vite never resolves the real worker.
-vi.mock('../workers/mlsCrypto.worker?worker', () => ({ default: class {} }));
+vi.mock('$lib/workers/mlsCrypto.worker?worker', () => ({ default: class {} }));
 
 import { createMlsCryptoWorkerSession } from './mlsCryptoWorkerSession';
 

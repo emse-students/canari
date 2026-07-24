@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
 import { createSequentialDecryptSession } from './mlsDecryptSession';
 
 describe('createSequentialDecryptSession', () => {

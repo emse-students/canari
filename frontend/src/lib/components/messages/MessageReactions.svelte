@@ -34,7 +34,7 @@
     for (const uid of unique) {
       if (!resolvedNames[uid]) {
         const sync = getUserDisplayNameSync(uid);
-        resolvedNames[uid] = firstNameOnly(sync || uid);
+        resolvedNames[uid] = firstNameOnly(sync || m.user_unknown_label());
         // Async refresh
         resolveUserDisplayName(uid).then((name) => {
           if (name) resolvedNames = { ...resolvedNames, [uid]: firstNameOnly(name) };
@@ -44,7 +44,7 @@
   });
 
   function resolveNames(userIds: string[]): string {
-    return userIds.map((id) => resolvedNames[id] || firstNameOnly(id)).join(', ');
+    return userIds.map((id) => resolvedNames[id] || m.user_unknown_label()).join(', ');
   }
 </script>
 

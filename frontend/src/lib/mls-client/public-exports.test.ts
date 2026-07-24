@@ -1,4 +1,3 @@
-import { describe, it, expect } from 'vitest';
 import type { IMlsService } from '$lib/mls-client';
 import {
   loadAndInitWasm,

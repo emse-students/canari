@@ -5,6 +5,7 @@
   import { Clock } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   /** Props for the PostHeader component. */
   interface Props {
@@ -23,7 +24,7 @@
     if (first) return first;
     if (last) return last;
     if (post.authorDisplayName?.trim()) return post.authorDisplayName.trim();
-    return post.authorId ?? '';
+    return getUserDisplayNameSync(post.authorId);
   }
 
   const associationHref = $derived(

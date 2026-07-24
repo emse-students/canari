@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { encodeAppMessage, decodeAppMessage, mkText } from '$lib/proto/codec';
 import {
   appMessageSentAtMs,

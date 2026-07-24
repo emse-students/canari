@@ -59,7 +59,7 @@
   });
 
   let readByLabels = $derived(
-    readBy.map((userId) => firstNameOnly(resolvedReadByNames[userId] || userId))
+    readBy.map((userId) => firstNameOnly(resolvedReadByNames[userId] || m.user_unknown_label()))
   );
 </script>
 

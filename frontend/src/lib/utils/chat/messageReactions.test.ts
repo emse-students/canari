@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   canAddDistinctReactionEmoji,

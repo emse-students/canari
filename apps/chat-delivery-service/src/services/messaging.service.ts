@@ -21,7 +21,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
-import { resolveUserDisplayName } from '../utils/display-name';
+import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import {
   buildPushDataFields,
   buildApnsRequest,
@@ -1523,6 +1523,40 @@ export class MessagingService {
   }
 
   /**
+   * Enriches history entries with `sender_display_name` resolved from the `users` table.
+   * Collects all unique `sender_id` values, batch-resolves their display names, and adds
+   * `sender_display_name: string | null` to each entry. Best-effort: entries keep their
+   * current shape on failure.
+   */
+  private async enrichHistoryWithDisplayNames(
+    entries: Record<string, unknown>[]
+  ): Promise<Record<string, unknown>[]> {
+    if (entries.length === 0) return entries;
+    const senderIds = [
+      ...new Set(
+        entries.map((e) => e['sender_id']).filter((id): id is string => typeof id === 'string' && id.length > 0)
+      ),
+    ];
+    if (senderIds.length === 0) return entries;
+    try {
+      const nameMap = await resolveUserDisplayNamesBatch(
+        this.groupRepo.manager,
+        senderIds
+      );
+      for (const entry of entries) {
+        const sid = typeof entry['sender_id'] === 'string' ? entry['sender_id'] : '';
+        entry['sender_display_name'] = nameMap.get(sid) ?? null;
+      }
+    } catch (e) {
+      this.logger.warn(`[HISTORY] display name resolution failed: ${String(e)}`);
+      for (const entry of entries) {
+        entry['sender_display_name'] = null;
+      }
+    }
+    return entries;
+  }
+
+  /**
    * Reads one page from `history:{groupId}` (no auth — caller must gate access).
    * `after` is an exclusive Redis stream ID (`(${after}` in XRANGE).
    */
@@ -1617,7 +1651,8 @@ export class MessagingService {
     }
 
     try {
-      return await this.readHistoryStreamPage(groupId, after, limit);
+      const entries = await this.readHistoryStreamPage(groupId, after, limit);
+      return this.enrichHistoryWithDisplayNames(entries);
     } catch (e) {
       this.logger.error(`[HISTORY] group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
@@ -1669,6 +1704,10 @@ export class MessagingService {
         }
       })
     );
+
+    // Batch-resolve sender display names across all groups in a single SQL round-trip.
+    const allEntries = Object.values(histories).flat();
+    await this.enrichHistoryWithDisplayNames(allEntries);
 
     this.logger.log(`[HISTORY_BATCH] groups=${normalized.length} authorized=${authorized.size}`);
     return { histories };

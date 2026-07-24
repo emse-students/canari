@@ -1,0 +1,34 @@
+# Code owners for automatic review requests
+# These owners will be requested for review when someone opens a pull request.
+
+# Global owners (fallback)
+* @jolanb
+
+# Frontend
+frontend/ @jolanb
+frontend/mls-core/ @jolanb
+frontend/mls-wasm/ @jolanb
+
+# Rust services
+apps/chat-gateway/ @jolanb
+apps/call-service/ @jolanb
+libs/shared-rust/ @jolanb
+
+# NestJS services
+apps/chat-delivery-service/ @jolanb
+apps/core-service/ @jolanb
+apps/media-service/ @jolanb
+apps/social-service/ @jolanb
+
+# Infrastructure
+infrastructure/ @jolanb
+
+# Documentation
+docs/ @jolanb
+README.md @jolanb
+CONTRIBUTING.md @jolanb
+CHANGELOG.md @jolanb
+SECURITY.md @jolanb
+
+# CI/CD
+.github/ @jolanb

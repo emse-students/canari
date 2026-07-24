@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { normalizePostLineBreaks, preprocessPostMarkdown } from './postMarkdown';
 
 import { EXAMPLE_MENTION_USER_ID } from '../mentions';

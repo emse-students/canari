@@ -1,151 +1,151 @@
-# Migration / clonage de Canari sur un nouveau serveur
+# Server migration / cloning Canari to a new host
 
-Procedure complete pour remonter Canari sur une machine vierge. La quasi-totalite
-est automatisee par la CD ; ce document couvre le bootstrap manuel qui ne peut pas
-vivre dans la CD elle-meme (poule et oeuf : la CD a besoin d un serveur deja
-joignable).
+Complete procedure to bring up Canari on a fresh machine. Most of it is
+automated by the CD pipeline; this document covers the manual bootstrap that
+cannot live in the CD itself (chicken-and-egg: the CD needs a server that is
+already reachable).
 
-Vue d ensemble :
+Overview:
 
 ```
-Bootstrap manuel (cette doc)        CD (automatique)            Donnees
+Manual bootstrap (this doc)        CD (automatic)               Data
 ─────────────────────────────       ─────────────────────       ──────────────────
-Docker + runner + clone repo   ->    genere les .env       ->    restore.sh
-SSH canari -> mitv (backups)         deploie Canari              (depuis mitv)
-secrets GitHub presents              deploie Authentik
+Docker + runner + clone repo   ->   generates .env files    ->   restore.sh
+SSH canari -> mitv (backups)        deploys Canari               (from mitv)
+GitHub secrets present              deploys Authentik
 ```
 
-## 0. Pre-requis machine
+## 0. Machine prerequisites
 
-- Debian/Ubuntu a jour, acces root/sudo, DNS du domaine pointant vers le serveur.
-- Docker Engine + plugin `docker compose` :
+- Up-to-date Debian/Ubuntu, root/sudo access, domain DNS pointing to the server.
+- Docker Engine + `docker compose` plugin:
   ```bash
   curl -fsSL https://get.docker.com | sh
-  sudo usermod -aG docker "$USER"   # se reconnecter ensuite
+  sudo usermod -aG docker "$USER"   # re-login afterwards
   ```
-- Un utilisateur applicatif `canari` (le deploiement vit dans `/home/canari`).
+- An application user `canari` (the deployment lives in `/home/canari`).
 
-## 1. Runner GitHub Actions self-hosted
+## 1. Self-hosted GitHub Actions runner
 
-Le job `deploy-to-server` tourne sur un runner self-hosted (label `self-hosted`).
+The `deploy-to-server` job runs on a self-hosted runner (label `self-hosted`).
 
-1. GitHub -> repo -> Settings -> Actions -> Runners -> New self-hosted runner.
-2. Suivre les commandes fournies (download + `config.sh` avec le token).
-3. Installer en service pour qu il survive aux reboots :
+1. GitHub → repo → Settings → Actions → Runners → New self-hosted runner.
+2. Follow the provided commands (download + `config.sh` with the token).
+3. Install as a service so it survives reboots:
    ```bash
    sudo ./svc.sh install canari
    sudo ./svc.sh start
    ```
 
-## 2. Cloner le depot
+## 2. Clone the repository
 
 ```bash
 sudo -u canari git clone https://github.com/emse-students/canari.git /home/canari/canari
 ```
 
-La CD fait ensuite `git reset --hard origin/main` a chaque deploiement ; le clone
-initial suffit.
+The CD then runs `git reset --hard origin/main` on each deployment; the initial
+clone is sufficient.
 
-## 3. Secrets GitHub
+## 3. GitHub Secrets
 
-La CD genere tous les `.env` a partir des secrets du repo. Sur un nouveau repo/fork,
-les recreer (Settings -> Secrets and variables -> Actions). Secrets necessaires au
-**deploiement serveur** :
+The CD generates all `.env` files from the repo secrets. On a new repo/fork,
+recreate them (Settings → Secrets and variables → Actions). Secrets required
+for **server deployment**:
 
-| Categorie | Secrets |
-| --- | --- |
-| Coeur | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET` |
-| Base de donnees | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
-| Stockage media (MinIO) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` |
+| Category | Secrets |
+|---|---|
+| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET` |
+| Database | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
+| Media storage (MinIO) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` |
 | Auth (Authentik) | `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `MICONNECT_PG_PASS`, `MICONNECT_AUTHENTIK_SECRET_KEY` |
-| App / front | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
-| Paiements | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
-| Push / appels / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
-| Appels iOS (CallKit, optionnel) | `APNS_VOIP_KEY_P8` (cle APNs .p8, PEM brut ou base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) - push VoIP directs vers APNs pour faire sonner CallKit app tuee ; sans eux, iOS retombe sur une banniere FCM |
-| API externe (Sky) | `EXTERNAL_API_KEY` (cle de `/api/external/*`, profil public ; doit etre identique a `CANARI_API_KEY` cote Sky) ; `SKY_API_KEY` (cle pour lire l arbre de parrainage Sky affiche sur les profils ; identique a `SKY_API_KEY` cote Sky) |
+| App / frontend | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
+| Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
+| Push / calls / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
+| iOS calls (CallKit, optional) | `APNS_VOIP_KEY_P8` (APNs .p8 key, raw PEM or base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) — direct VoIP push to APNs to ring CallKit when the app is killed; without these, iOS falls back to an FCM banner |
+| External API (Sky) | `EXTERNAL_API_KEY` (key for `/api/external/*`, public profile; must match `CANARI_API_KEY` on Sky's side); `SKY_API_KEY` (key for reading the Sky sponsorship tree displayed on profiles; must match `SKY_API_KEY` on Sky's side) |
 
-Secret optionnel : `SERVICE_ACCOUNT_USER_ID` surcharge l id du compte de verification
-Google/Apple (masque des non-admins dans la recherche, l annuaire et le feed ; ne voit
-lui-meme que les admins). Non defini => valeur par defaut de `.env.example`. Ce n est pas
-un secret sensible, juste un id utilisateur, mais l exposer en secret permet de le changer
-sans commit.
+Optional secret: `SERVICE_ACCOUNT_USER_ID` overrides the Google/Apple verification
+account ID (hides it from non-admins in search, directory, and feed; only sees
+admins itself). If not defined, falls back to the default value in `.env.example`.
+This is not a sensitive secret (just a user ID), but exposing it as a secret allows
+changing it without a commit.
 
-Generation de valeurs fortes : `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
+Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
 (`MICONNECT_AUTHENTIK_SECRET_KEY`).
 
-## 4. Acces SSH pour la sauvegarde offsite (mitv)
+## 4. SSH access for offsite backup (mitv)
 
-Les backups poussent vers `mitv` via SSH. Sur le nouveau serveur :
+Backups push to `mitv` via SSH. On the new server:
 
 ```bash
-# Cle du serveur (si absente)
+# Server key (if missing)
 sudo -u canari ssh-keygen -t ed25519 -N "" -f /home/canari/.ssh/id_ed25519
 
-# Faire confiance a mitv
+# Trust mitv
 sudo -u canari ssh-keyscan -H 10.0.0.4 >> /home/canari/.ssh/known_hosts
 ```
 
-Sur `mitv` (une seule fois), autoriser la cle publique du serveur pour l utilisateur
-dedie `canaribackup` (membre du groupe `_ssh`, store `/srv/canari-backups`) :
+On `mitv` (once only), authorize the server's public key for the dedicated
+`canaribackup` user (member of `_ssh` group, store `/srv/canari-backups`):
 
 ```bash
 useradd -m -s /bin/bash canaribackup 2>/dev/null
 usermod -aG _ssh canaribackup
 install -d -m 700 -o canaribackup -g canaribackup /srv/canari-backups /home/canaribackup/.ssh
-echo "<contenu de /home/canari/.ssh/id_ed25519.pub>" >> /home/canaribackup/.ssh/authorized_keys
+echo "<contents of /home/canari/.ssh/id_ed25519.pub>" >> /home/canaribackup/.ssh/authorized_keys
 chown canaribackup:canaribackup /home/canaribackup/.ssh/authorized_keys
 chmod 600 /home/canaribackup/.ssh/authorized_keys
 ```
 
-Test : `sudo -u canari ssh canaribackup@10.0.0.4 'echo ok'`.
+Test: `sudo -u canari ssh canaribackup@10.0.0.4 'echo ok'`.
 
-## 5. Premier deploiement
+## 5. First deployment
 
-Declencher la CD (push sur `main`, ou Actions -> CD -> Run workflow). Elle :
+Trigger the CD (push to `main`, or Actions → CD → Run workflow). It will:
 
-1. genere `infrastructure/.env` depuis les secrets (regenere depuis le template) ;
-2. deploie la stack Canari (`docker compose -f infrastructure/docker-compose.prod.yml up -d`) ;
-3. deploie la stack Authentik `miconnect` (cf [authentik/](authentik/)) ;
-4. applique les migrations SQL et verifie la sante des services.
+1. generate `infrastructure/.env` from secrets (regenerated from the template);
+2. deploy the Canari stack (`docker compose -f infrastructure/docker-compose.prod.yml up -d`);
+3. deploy the Authentik `miconnect` stack (see [authentik/](authentik/));
+4. apply SQL migrations and verify service health.
 
-## 6. Restauration des donnees
+## 6. Data restore
 
-Depuis la derniere sauvegarde offsite :
+From the latest offsite backup:
 
 ```bash
 cd /home/canari/canari
 ./infrastructure/backup/restore.sh --latest-from-mitv --yes
 ```
 
-Restaure PostgreSQL (`auth_db`), MinIO (medias), media_meta et la base Authentik.
-Voir [backup/README.md](backup/README.md).
+Restores PostgreSQL (`auth_db`), MinIO (media), media_meta, and the Authentik database.
+See [backup/README.md](backup/README.md).
 
-## 7. Activer les sauvegardes recurrentes
+## 7. Enable recurring backups
 
 ```bash
 sudo -u canari crontab -e
-# Ajouter :
+# Add:
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
 ```
 
-(Alternative root : timer systemd, cf [backup/README.md](backup/README.md).)
+(Alternative via root: systemd timer, see [backup/README.md](backup/README.md).)
 
-## 8. Reseau / reverse proxy
+## 8. Network / reverse proxy
 
-Le conteneur `frontend` embarque Nginx et publie le port hote `FRONTEND_HOST_PORT`
-(8080 par defaut). Mettre un reverse proxy / TLS (Caddy, Traefik, Nginx hote, ou
-Cloudflare) devant, pointant le domaine vers ce port. Les routes API sont resolues
-en interne par le Nginx du conteneur (cf `infrastructure/local/Dockerfile.frontend`).
+The `frontend` container embeds Nginx and publishes the host port `FRONTEND_HOST_PORT`
+(8080 by default). Place a reverse proxy / TLS (Caddy, Traefik, host Nginx, or
+Cloudflare) in front, pointing the domain to this port. API routes are resolved
+internally by the container's Nginx (see `infrastructure/local/Dockerfile.frontend`).
 
-## Checklist rapide
+## Quick checklist
 
-- [ ] Docker + compose installes
-- [ ] Runner self-hosted enregistre et actif
-- [ ] Depot clone dans `/home/canari/canari`
-- [ ] Secrets GitHub crees
-- [ ] SSH canari -> mitv fonctionnel
-- [ ] CD passee au vert (Canari + Authentik)
-- [ ] Donnees restaurees depuis mitv
-- [ ] Cron de sauvegarde installe
-- [ ] Reverse proxy / DNS / TLS en place
+- [ ] Docker + compose installed
+- [ ] Self-hosted runner registered and active
+- [ ] Repository cloned at `/home/canari/canari`
+- [ ] GitHub secrets created
+- [ ] SSH canari → mitv working
+- [ ] CD passed green (Canari + Authentik)
+- [ ] Data restored from mitv
+- [ ] Backup cron installed
+- [ ] Reverse proxy / DNS / TLS in place

@@ -1,5 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
-
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
   saveMlsStateEncrypted: vi.fn().mockResolvedValue(undefined),

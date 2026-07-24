@@ -1,6 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-vi.mock('./tabLeader', () => ({
+vi.mock('$lib/mls-client/tabLeader', () => ({
   getIsTabLeader: () => true,
 }));
 
@@ -8,7 +6,7 @@ import { syncConnectionAfterWsOpen } from './initializeConnection';
 
 describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
   });
 
   afterEach(() => {

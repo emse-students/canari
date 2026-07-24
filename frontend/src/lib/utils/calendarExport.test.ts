@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { eventBgCss, splitLogoWatermark } from './calendarExport';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 

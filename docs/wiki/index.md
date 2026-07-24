@@ -61,6 +61,7 @@
 
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
 - [CI/CD pipeline](cicd.md) — GitHub Actions, mobile builds, releases, self-hosted runner
+- [Server migration & bootstrap](../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup
 
 ---
 

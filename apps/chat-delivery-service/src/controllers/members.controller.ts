@@ -27,6 +27,7 @@ import {
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
+import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 
 /** Group membership management: add/remove members, list members, list user groups. */
 @Controller()
@@ -319,8 +320,13 @@ export class MembersController {
       where: { groupId: safeGroupId },
       select: { userId: true },
     });
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const nameMap = await resolveUserDisplayNamesBatch(this.dataSource.manager, userIds);
     this.logger.log(`[GET_USER_MEMBERS] group=${safeGroupId} count=${rows.length}`);
-    return rows.map((r) => ({ userId: r.userId }));
+    return rows.map((r) => ({
+      userId: r.userId,
+      displayName: nameMap.get(r.userId) ?? null,
+    }));
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -349,8 +355,14 @@ export class MembersController {
       where: { groupId: safeGroupId, status: 'active' as const },
       select: { userId: true, deviceId: true },
     });
+    const userIds = [...new Set(rows.map((r) => r.userId))];
+    const nameMap = await resolveUserDisplayNamesBatch(this.dataSource.manager, userIds);
     this.logger.log(`[GET_MEMBERS] group=${safeGroupId} count=${rows.length}`);
-    return rows;
+    return rows.map((r) => ({
+      userId: r.userId,
+      deviceId: r.deviceId,
+      displayName: nameMap.get(r.userId) ?? null,
+    }));
   }
 
   @UseGuards(HeaderAuthGuard)

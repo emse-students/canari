@@ -1,5 +1,3 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (userId: string) => userId,
   resolveUserDisplayName: vi.fn().mockResolvedValue(null),

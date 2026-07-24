@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { logMlsMetric } from './mlsRecoveryMetrics';
 
 describe('mlsRecoveryMetrics', () => {

@@ -123,6 +123,8 @@ cargo test
 
 ## Documentation
 
+### Technical
+
 All technical documentation lives in [`docs/wiki/`](docs/wiki/index.md) — English, LLM-oriented, organized by feature and module.
 
 | Page | Contents |
@@ -134,6 +136,16 @@ All technical documentation lives in [`docs/wiki/`](docs/wiki/index.md) — Engl
 | [WebSocket protocol](docs/wiki/protocols/websocket-protocol.md) | Protobuf wire format |
 | [Development](docs/wiki/development.md) | Local setup, Makefile, pre-commit hooks |
 | [CI/CD](docs/wiki/cicd.md) | GitHub Actions, mobile builds, releases |
+
+### User guide
+
+French-language user documentation is in [`docs/user-guide/`](docs/user-guide/index.md):
+
+| Page | Audience |
+|---|---|
+| [Member](docs/user-guide/membre.md) | Students and staff using Canari |
+| [Association manager](docs/user-guide/responsable-association.md) | Club secretaries, treasurers, presidents |
+| [Administrator](docs/user-guide/administrateur.md) | Platform administrators |
 
 ## Tech stack
 
@@ -176,7 +188,12 @@ canari/
 │   └── authentik/             # Authentik OIDC stack
 ├── scripts/                   # Setup, deployment, utilities
 ├── docs/
-│   └── wiki/                  # Technical documentation
+│   ├── wiki/                  # Technical documentation (English)
+│   ├── user-guide/            # User-facing documentation (French)
+│   └── diagrams/              # UML sequence diagrams
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── SECURITY.md
 └── Makefile
 ```
 
@@ -192,12 +209,18 @@ For server bootstrap, see [`infrastructure/MIGRATION.md`](infrastructure/MIGRATI
 
 ## Contributing
 
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide: workflow, coding standards, pre-commit hooks, testing, and architecture constraints.
+
+Quick reference:
+
 ```bash
 # Work directly on main (no feature branches)
 # Pre-commit hooks: oxlint + oxvelte + oxfmt on commit
 git commit -m "feat: description"   # conventional commits
 git push
 ```
+
+Release history is in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 

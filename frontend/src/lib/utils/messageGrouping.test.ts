@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '$lib/types';
 import { groupMessages } from './messageGrouping';
 

@@ -1,4 +1,3 @@
-import { describe, it, expect } from 'vitest';
 import { aggregateSharedContent, type AggregatableMessage } from './sharedContent';
 import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';

@@ -1,5 +1,3 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
 const wasmInitFn = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const WasmMlsClient = vi.hoisted(() =>
   vi.fn().mockImplementation(function WasmMlsClientMock(this: { tag: string }) {

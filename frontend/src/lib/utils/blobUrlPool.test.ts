@@ -1,4 +1,3 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { BlobUrlPool, BLOB_URL_EVICT_DELAY_MS } from './blobUrlPool';
 
 describe('BlobUrlPool', () => {

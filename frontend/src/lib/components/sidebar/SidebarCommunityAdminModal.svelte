@@ -467,7 +467,8 @@
                     <div class="flex items-center gap-2.5 min-w-0">
                       <Avatar userId={member.userId} size="sm" />
                       <span class="font-medium text-text-main truncate">
-                        {resolvedMemberNames[member.userId] ?? member.userId}
+                        {resolvedMemberNames[member.userId] ??
+                          getUserDisplayNameSync(member.userId)}
                       </span>
                     </div>
                     <span

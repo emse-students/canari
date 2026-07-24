@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { resolveDirectPeerId, canonicalDirectName } from './conversations';
 
 const ME = 'd82cd226d82cd226d82cd226d82cd226d82cd226d82cd226d82cd226d82cd226';

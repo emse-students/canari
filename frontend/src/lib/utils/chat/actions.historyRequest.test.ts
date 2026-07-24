@@ -1,4 +1,3 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Conversation } from '$lib/types';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 

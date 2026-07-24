@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { buildCallAudioConstraints } from './callAudio';
 
 describe('buildCallAudioConstraints', () => {

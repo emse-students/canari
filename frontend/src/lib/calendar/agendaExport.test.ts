@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { buildIcsCalendar, icsEscapeText, formatIcsUtc } from './agendaExport';
 
 describe('icsEscapeText', () => {

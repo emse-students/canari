@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { highlightCode, resolveHighlightLanguage } from './codeHighlight';
 
 describe('resolveHighlightLanguage', () => {

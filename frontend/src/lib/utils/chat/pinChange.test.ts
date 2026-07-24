@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
 import type { EncryptedMessageRow, IStorage, StoredMessage } from '$lib/db';
 import { encryptData } from '$lib/encryption';
 import { reencryptLocalMessages } from './pinChange';

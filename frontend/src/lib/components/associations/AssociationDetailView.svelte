@@ -367,7 +367,7 @@
               {member}
               displayName={resolvedMemberNames[member.userId] ??
                 member.displayName ??
-                member.userId}
+                getUserDisplayNameSync(member.userId)}
             />
           {/each}
         </div>

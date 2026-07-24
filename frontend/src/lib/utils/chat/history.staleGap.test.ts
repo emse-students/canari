@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { nextHistoryRetryDecision, shouldFlagStaleEpochGap } from './history';
 
 describe('shouldFlagStaleEpochGap', () => {

@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { mkCallAnswered, mkCallInvite } from '$lib/proto/codec';
 
 describe('call multi-device codec', () => {

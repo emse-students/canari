@@ -172,7 +172,9 @@
         <div class="flex-1 min-w-0">
           <AssociationMemberRow
             {member}
-            displayName={resolvedMemberNames[member.userId] ?? member.displayName ?? member.userId}
+            displayName={resolvedMemberNames[member.userId] ??
+              member.displayName ??
+              getUserDisplayNameSync(member.userId)}
             manage={true}
             onRoleChange={handleChangeRole}
             onRemove={handleRemoveMember}

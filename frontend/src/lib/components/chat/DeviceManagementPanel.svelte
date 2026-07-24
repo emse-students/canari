@@ -209,7 +209,7 @@
         </div>
 
         <div class="space-y-4">
-          {#each devices as device (device.deviceId)}
+          {#each devices as device, idx (device.deviceId)}
             {@const isCurrentDevice = device.deviceId === myDeviceId}
             {@const deviceMemberships = memberships.get(device.deviceId) ?? []}
             {@const stats = getMembershipStats(deviceMemberships)}
@@ -282,7 +282,7 @@
                         class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate flex-1"
                         title={device.deviceId}
                       >
-                        {m.chat_device_id_label({ device: device.deviceId.slice(0, 24) })}
+                        Appareil {idx + 1}
                         {#if isMobileOs(device) && device.deviceAppVersion}
                           <span class="ml-2 font-semibold"
                             >{m.chat_device_version_label({

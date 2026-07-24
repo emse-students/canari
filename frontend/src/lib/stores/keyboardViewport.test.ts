@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { computeSnapshot, type ViewportMeasurement } from './keyboardViewport.svelte';
 
 const IOS_THRESHOLD = 100;

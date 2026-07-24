@@ -27,6 +27,7 @@
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   let copiedId = $state<string | null>(null);
 
@@ -107,7 +108,8 @@
   }
 
   async function handleDeleteSubmission(formId: string, sub: Submission) {
-    const name = [sub.firstName, sub.lastName].filter(Boolean).join(' ') || sub.userId.slice(0, 8);
+    const name =
+      [sub.firstName, sub.lastName].filter(Boolean).join(' ') || getUserDisplayNameSync(sub.userId);
     if (
       !(await showConfirm(m.form_list_delete_submission_confirm({ name }), {
         danger: true,
@@ -313,7 +315,7 @@
                               {[sub.firstName, sub.lastName].filter(Boolean).join(' ')}
                             {:else}
                               <span class="text-text-muted/60 text-xs font-mono"
-                                >{sub.userId.slice(0, 8)}…</span
+                                >{getUserDisplayNameSync(sub.userId)}</span
                               >
                             {/if}
                           </td>

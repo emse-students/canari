@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
 import { attemptCommitReplay } from './commitReplay';
 
 function makeMls(overrides: Record<string, unknown>) {

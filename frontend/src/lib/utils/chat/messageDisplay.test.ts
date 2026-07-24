@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { extractFirstUrl, isAngleBracketAutolink, splitTextWithLinks } from './messageDisplay';
 
 describe('isAngleBracketAutolink', () => {

@@ -1,5 +1,3 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
 // Resolve names offline: identity function so the handler runs without the user store / network.
 vi.mock('$lib/utils/users/displayName', () => ({
   resolveDisplayNames: vi.fn(async () => (id: string) => id),

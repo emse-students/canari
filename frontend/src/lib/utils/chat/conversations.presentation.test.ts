@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { resolveConversationListPresentation } from './conversations';
 
 const ME = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';

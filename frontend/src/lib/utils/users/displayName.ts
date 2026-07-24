@@ -43,7 +43,7 @@ function formatProfileDisplayName(profile: {
     return display;
   }
 
-  return profile.id;
+  return m.user_unknown_label();
 }
 
 /**
@@ -73,7 +73,7 @@ export function getUserDisplayNameSync(userId: string, fallback?: string): strin
   // so the UI doesn't flicker between the raw ID and the async-resolved label.
   if (shouldSkipRetry(normalized)) return m.user_unknown_label();
 
-  return fallback?.trim() || userId;
+  return fallback?.trim() || m.user_unknown_label();
 }
 
 export async function resolveUserDisplayName(userId: string): Promise<string | null> {
@@ -158,6 +158,6 @@ export function getUserInitials(
     return last;
   }
 
-  const display = (p.displayName?.trim() || p.id || userId).charAt(0).toUpperCase();
+  const display = (p.displayName?.trim() || '?').charAt(0).toUpperCase();
   return display;
 }

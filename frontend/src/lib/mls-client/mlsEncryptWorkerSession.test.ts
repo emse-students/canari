@@ -1,24 +1,34 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { disposeMlsEncryptWorker, encryptMlsStateOffThread } from './mlsEncryptWorkerSession';
+// Stub global fetch early to prevent WASM fetches via happy-dom when Worker modules are loaded.
+globalThis.fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array()));
 
-vi.mock('./mlsWasmLoader', () => ({
-  encryptMlsStateOnMainThread: vi.fn().mockResolvedValue(new Uint8Array([9, 9, 9])),
+// Stub Worker to prevent real Worker instantiation in tests.
+globalThis.Worker = vi.fn() as any;
+
+const encryptMlsStateOnMainThreadMock = vi.fn().mockResolvedValue(new Uint8Array([9, 9, 9]));
+
+vi.mock('$lib/mls-client/mlsWasmLoader', () => ({
+  encryptMlsStateOnMainThread: (...args: any[]) => encryptMlsStateOnMainThreadMock(...args),
   loadMlsWasmModule: vi.fn(),
 }));
 
-import { encryptMlsStateOnMainThread } from './mlsWasmLoader';
+// Prevent the real Worker import from triggering WASM fetches.
+vi.mock('$lib/workers/mlsEncrypt.worker?worker', () => ({
+  default: class MockWorker {},
+}));
+
+import { disposeMlsEncryptWorker, encryptMlsStateOffThread } from './mlsEncryptWorkerSession';
 
 describe('encryptMlsStateOffThread', () => {
   afterEach(() => {
     disposeMlsEncryptWorker();
-    vi.mocked(encryptMlsStateOnMainThread).mockClear();
+    vi.clearAllMocks();
   });
 
   it('falls back to main-thread WASM when workers are disabled', async () => {
     const plain = new Uint8Array([1, 2, 3]);
     const out = await encryptMlsStateOffThread(plain, '1234', { enabled: false });
     expect(out).toEqual(new Uint8Array([9, 9, 9]));
-    expect(encryptMlsStateOnMainThread).toHaveBeenCalledWith(plain, '1234');
+    expect(encryptMlsStateOnMainThreadMock).toHaveBeenCalledWith(plain, '1234');
   });
 
   it('encrypts via worker when enabled', async () => {
@@ -50,6 +60,6 @@ describe('encryptMlsStateOffThread', () => {
     });
     expect(out).toEqual(new Uint8Array([7, 8]));
     expect(workerFactory).toHaveBeenCalledTimes(1);
-    expect(encryptMlsStateOnMainThread).not.toHaveBeenCalled();
+    expect(encryptMlsStateOnMainThreadMock).not.toHaveBeenCalled();
   });
 });

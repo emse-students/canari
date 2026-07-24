@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
 import { toMirrorEntry } from './outboxMirror';

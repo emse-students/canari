@@ -1,4 +1,3 @@
-import { describe, expect, it } from 'vitest';
 import { bureauCrownOffset } from './layout';
 import { buildPosterModel } from './generator';
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';

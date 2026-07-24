@@ -1,4 +1,3 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { themeStore } from './themeStore.svelte';
 
 /** OS dark-mode flag piloté par le test, lu par le stub matchMedia. */

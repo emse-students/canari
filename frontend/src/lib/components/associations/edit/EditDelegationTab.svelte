@@ -27,6 +27,7 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { SvelteSet } from 'svelte/reactivity';
 
   interface Props {
@@ -173,7 +174,7 @@
 
   function buyerName(p: AssociationPurchase): string {
     if (p.firstName || p.lastName) return `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim();
-    return p.userId.slice(0, 8) + '…';
+    return getUserDisplayNameSync(p.userId);
   }
 
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {

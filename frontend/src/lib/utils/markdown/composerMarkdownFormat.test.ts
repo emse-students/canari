@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { applyComposerMarkdownFormat } from './composerMarkdownFormat';
 
 function mockComposer(selection: { start: number; end: number }) {

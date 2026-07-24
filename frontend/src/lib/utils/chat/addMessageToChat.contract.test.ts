@@ -12,7 +12,6 @@
  *  3. TypeScript catches a regression back to positional args (svelte-check).
  */
 
-import { describe, it, expect } from 'vitest';
 import type { AddMessageToChatOptions } from '$lib/types';
 import type { MessageHandlerDeps } from '$lib/utils/chat/connection';
 import type { ConversationContext } from '$lib/composables/useConversations.svelte';

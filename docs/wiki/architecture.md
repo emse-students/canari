@@ -211,6 +211,22 @@ Internet
 
 Backend services use `expose:` (not `ports:`) in production — only accessible within the Docker internal network.
 
+## Sequence diagrams
+
+UML sequence diagrams for key flows are in [`docs/diagrams/`](../diagrams/):
+
+| Diagram | File | Description |
+|---|---|---|
+| App startup | `ouverture_app.png` | App bootstrap, MLS client init, WebSocket connect |
+| Login | `connexion.png` / `connexion.uml` | OIDC flow: redirect, callback, JWT, cookie |
+| Login (alt) | `connexion2.png` | Alternative login path |
+| Message send | `message_send.png` | MLS encrypt → WebSocket → gateway → recipient |
+| Message receive | `message.png` / `message.uml` | WS frame → MLS decrypt → UI render |
+| Group create | `group_create.png` | Create group, add members, commit + welcome |
+| Member add | `groupe_add.png` | Add member to existing group, welcome forward |
+
+> Source `.uml` files are PlantUML and can be edited with any PlantUML-compatible tool.
+
 ## Key design decisions
 
 - **Single Nginx entry point**: all services are private; only Nginx is exposed. This centralises auth and simplifies firewall rules.

@@ -1,4 +1,3 @@
-import { describe, it, expect, vi } from 'vitest';
 import { handleSystemEvent } from './systemMessageHandler';
 
 /** Construit un contexte minimal pour exercer le chemin read_receipt. */

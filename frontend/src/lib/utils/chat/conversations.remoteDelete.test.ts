@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { findConversationKeyByGroupId, markConversationDeletedRemotely } from './conversations';

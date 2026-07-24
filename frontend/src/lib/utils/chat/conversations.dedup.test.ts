@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { mergeDirectConversationDuplicates } from './conversations';
 import type { ConversationMeta } from '$lib/db/types';
 import type { IStorage } from '$lib/db/types';

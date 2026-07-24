@@ -26,6 +26,7 @@
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   const mentionRenderers = {
     link: PostMentionLink,
@@ -300,7 +301,7 @@
     if (first) return first;
     if (last) return last;
     if (comment.displayName?.trim()) return comment.displayName.trim();
-    return comment.userId;
+    return getUserDisplayNameSync(comment.userId);
   }
 
   const sortedTopLevel = $derived.by(() => {

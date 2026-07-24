@@ -28,6 +28,7 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
     asso: Association;
@@ -112,7 +113,7 @@
 
   function cotisantName(item: CotisantRosterItem): string {
     const name = `${item.firstName ?? ''} ${item.lastName ?? ''}`.trim();
-    return name || item.userId.slice(0, 8) + '…';
+    return name || getUserDisplayNameSync(item.userId);
   }
 
   onDestroy(() => {
