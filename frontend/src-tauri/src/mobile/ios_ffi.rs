@@ -6,6 +6,8 @@ use std::slice;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
+use crate::concurrency::mark_foreground_active;
+
 use super::background::{
     background_group_epoch, cleanup_pending_db, create_welcome_background, decode_commits_b64_json,
     decrypt_channel_message, decrypt_push_message, decrypt_push_message_with_commits,
@@ -449,7 +451,7 @@ pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_ch
 /// Rafraichit la garde foreground (appele depuis `canari_ios` au resume).
 #[no_mangle]
 pub extern "C" fn canari_ios_on_resume() {
-    crate::mark_foreground_active();
+    mark_foreground_active();
     log::debug!("[iOS] canari_ios_on_resume: garde foreground rafraichie");
 }
 

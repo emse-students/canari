@@ -38,6 +38,12 @@ import { requestReAdd } from '$lib/utils/chat/recovery';
 import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
+  mapStoredMessagesToChatMessages,
+  readHistoryStreamCursor,
+  replayConversationHistory,
+  retroactivelyResolveHexIds,
+} from '$lib/utils/chat/history';
+import {
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
   abandonHistoryOverlay,
@@ -217,12 +223,6 @@ export function useConversations() {
       return;
     }
 
-    const {
-      replayConversationHistory,
-      mapStoredMessagesToChatMessages,
-      retroactivelyResolveHexIds,
-      readHistoryStreamCursor,
-    } = await import('$lib/utils/chat/history');
     const isSelected = selectedContact === contactName;
     if (isSelected) isLoadingHistory = true;
     try {
@@ -512,8 +512,6 @@ export function useConversations() {
     );
     if (older.length === 0) return false;
 
-    const { mapStoredMessagesToChatMessages, retroactivelyResolveHexIds } =
-      await import('$lib/utils/chat/history');
     const mapped = await retroactivelyResolveHexIds(
       mapStoredMessagesToChatMessages(older, ctx.userId),
       ctx.storage ?? null,

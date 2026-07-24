@@ -6,6 +6,13 @@ import { SvelteMap } from 'svelte/reactivity';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import {
+  isPermissionGranted,
+  sendNotification,
+  requestPermission,
+  removeActive,
+  onAction,
+} from '@tauri-apps/plugin-notification';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -215,8 +222,6 @@ export function useNotifications() {
 
     if (isTauriRuntime()) {
       try {
-        const { isPermissionGranted, sendNotification } =
-          await import('@tauri-apps/plugin-notification');
         if (await isPermissionGranted()) {
           await sendNotification({ title, body, id: notifId });
           incomingCallNotifId = notifId;
@@ -269,7 +274,6 @@ export function useNotifications() {
       const id = incomingCallNotifId;
       incomingCallNotifId = null;
       try {
-        const { removeActive } = await import('@tauri-apps/plugin-notification');
         await removeActive([{ id }]);
       } catch {
         /* plugin/API unavailable - ignore */
@@ -360,8 +364,6 @@ export function useNotifications() {
         return;
       }
       try {
-        const { isPermissionGranted, requestPermission } =
-          await import('@tauri-apps/plugin-notification');
         let granted = await isPermissionGranted();
         if (!granted) {
           const result = await requestPermission();
@@ -406,8 +408,6 @@ export function useNotifications() {
 
     if (isTauriRuntime()) {
       try {
-        const { isPermissionGranted, sendNotification } =
-          await import('@tauri-apps/plugin-notification');
         if (await isPermissionGranted()) {
           await sendNotification({
             title,
@@ -419,10 +419,9 @@ export function useNotifications() {
           // onAction is only available on some Tauri notification plugin versions.
           if (conversationId) {
             try {
-              const notifPlugin = await import('@tauri-apps/plugin-notification');
-              if ('onAction' in notifPlugin && typeof notifPlugin.onAction === 'function') {
+              if (typeof onAction === 'function') {
                 (
-                  notifPlugin.onAction as unknown as (
+                  onAction as unknown as (
                     cb: (action: { notification: { id?: number } }) => void
                   ) => Promise<unknown>
                 )(async (action) => {
