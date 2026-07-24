@@ -9,6 +9,9 @@ pub enum Error {
   #[cfg(mobile)]
   #[error(transparent)]
   PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+  #[cfg(desktop)]
+  #[error(transparent)]
+  Keyring(#[from] keyring::Error),
 }
 
 impl Serialize for Error {

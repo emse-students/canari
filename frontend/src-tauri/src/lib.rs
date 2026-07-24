@@ -2,6 +2,7 @@
 
 mod commands;
 mod concurrency;
+mod keystore_bridge;
 mod state;
 
 #[cfg(any(target_os = "android", target_os = "ios"))]

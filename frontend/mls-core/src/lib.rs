@@ -2,6 +2,7 @@ pub mod security;
 
 pub mod crypto;
 pub mod group;
+pub mod keystore;
 pub mod members;
 pub mod messaging;
 pub mod state;
@@ -10,6 +11,10 @@ pub mod welcome;
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
 pub use state::MlsManager;
 pub use state::PersistedState;
+
+// Re-export keystore types for convenience.
+pub use keystore::DeviceKeyStore;
+pub use keystore::NoopDeviceKeyStore;
 
 use thiserror::Error;
 

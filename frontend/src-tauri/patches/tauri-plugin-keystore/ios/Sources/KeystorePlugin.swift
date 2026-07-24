@@ -124,6 +124,127 @@ class KeystorePlugin: Plugin {
   }
 }
 
+  // MARK: - Key-bytes commands (MLS device key storage)
+
+  /// Request to store a raw 32-byte key in the Keychain.
+  class StoreKeyBytesRequest: Decodable {
+    let alias: String
+    let keyBytes: String  // base64-encoded
+  }
+
+  /// Request to retrieve a raw key by alias.
+  class GetKeyBytesRequest: Decodable {
+    let alias: String
+  }
+
+  /// Request to delete a raw key by alias.
+  class DeleteKeyBytesRequest: Decodable {
+    let alias: String
+  }
+
+  /// Stores a raw 32-byte key (base64-encoded) in the iOS Keychain under
+  /// the given alias. The key is protected by `.userPresence` access control
+  /// (Face ID / Touch ID or device passcode fallback).
+  @objc public func storeKeyBytes(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(StoreKeyBytesRequest.self)
+
+    guard let keyData = Data(base64Encoded: args.keyBytes) else {
+      throw NSError(
+        domain: "KeyStoreError", code: -1,
+        userInfo: [NSLocalizedDescriptionKey: "Invalid base64 key bytes"])
+    }
+
+    var error: Unmanaged<CFError>?
+    guard
+      let accessControl = SecAccessControlCreateWithFlags(
+        nil,
+        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        .userPresence,
+        &error
+      )
+    else {
+      throw error!.takeRetainedValue() as Error
+    }
+
+    // Delete any existing entry for this alias.
+    let deleteQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_key_\(args.alias)",
+    ]
+    SecItemDelete(deleteQuery as CFDictionary)
+
+    // Add the new entry.
+    var addQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_key_\(args.alias)",
+      kSecValueData as String: keyData,
+      kSecAttrAccessControl as String: accessControl,
+    ]
+
+    let status = SecItemAdd(addQuery as CFDictionary, nil)
+    guard status == errSecSuccess else {
+      throw NSError(
+        domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+    }
+    invoke.resolve()
+  }
+
+  /// Retrieves a raw key by alias. Triggers a Face ID / Touch ID prompt.
+  /// Returns `{"keyBytes": "<base64>"}` on success, or
+  /// `{"keyBytes": null}` if the key is not found.
+  @objc public func getKeyBytes(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(GetKeyBytesRequest.self)
+
+    let context = LAContext()
+    context.localizedReason = kBiometricReason
+    context.interactionNotAllowed = false
+
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_key_\(args.alias)",
+      kSecReturnData as String: true,
+      kSecUseAuthenticationContext as String: context,
+      kSecUseOperationPrompt as String: kBiometricReason,
+    ]
+
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+
+    guard status == errSecSuccess,
+      let data = item as? Data
+    else {
+      // Key not found or user cancelled — return null, don't error.
+      invoke.resolve(["keyBytes": NSNull()])
+      return
+    }
+
+    invoke.resolve(["keyBytes": data.base64EncodedString()])
+  }
+
+  /// Deletes a raw key by alias. Treats "not found" as success so the
+  /// operation is idempotent.
+  @objc public func deleteKeyBytes(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(DeleteKeyBytesRequest.self)
+
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_key_\(args.alias)",
+    ]
+
+    let status = SecItemDelete(query as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      throw NSError(
+        domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+    }
+
+    invoke.resolve()
+  }
+}
+
 @_cdecl("init_plugin_keystore")
 func initPlugin() -> Plugin {
   return KeystorePlugin()

@@ -36,4 +36,33 @@ impl<R: Runtime> Keystore<R> {
         entry.delete_credential().unwrap();
         Ok(())
     }
+
+    /// Store a raw key (base64-encoded) in the OS keyring under a namespaced alias.
+    pub fn store_key_bytes(&self, payload: StoreKeyBytesRequest) -> crate::Result<()> {
+        let entry = keyring::Entry::new("fr.emse.canari", &format!("mls_key_{}", payload.alias))?;
+        entry.set_password(&payload.key_bytes)?;
+        Ok(())
+    }
+
+    /// Retrieve a raw key from the OS keyring. Returns `None` if not found.
+    pub fn get_key_bytes(
+        &self,
+        payload: GetKeyBytesRequest,
+    ) -> crate::Result<GetKeyBytesResponse> {
+        let entry = keyring::Entry::new("fr.emse.canari", &format!("mls_key_{}", payload.alias))?;
+        match entry.get_password() {
+            Ok(key_bytes) => Ok(GetKeyBytesResponse {
+                key_bytes: Some(key_bytes),
+            }),
+            Err(keyring::Error::NoEntry) => Ok(GetKeyBytesResponse { key_bytes: None }),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Delete a raw key from the OS keyring. Does not error if the entry doesn't exist.
+    pub fn delete_key_bytes(&self, payload: DeleteKeyBytesRequest) -> crate::Result<()> {
+        let entry = keyring::Entry::new("fr.emse.canari", &format!("mls_key_{}", payload.alias))?;
+        let _ = entry.delete_credential();
+        Ok(())
+    }
 }

@@ -1,6 +1,7 @@
 //! Commandes Tauri MLS : initialisation, groupes, chiffrement, dechiffrement.
 
 use crate::concurrency::write_mls_state_blob;
+use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, KeyPackageBatchResult, PendingDb,
 };
@@ -8,6 +9,7 @@ use mls_core::{DecryptErrorKind, MlsManager};
 
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
+    app: tauri::AppHandle,
     user_id: String,
     device_id: String,
     pin: String,
@@ -15,9 +17,16 @@ pub(crate) async fn initialiser_mls(
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
+    let keystore = PluginDeviceKeyStore::new(app);
     tauri::async_runtime::spawn_blocking(move || {
-        let manager = MlsManager::load_encrypted_owned(&user_id, &device_id, encrypted_state, pin)
-            .map_err(|e| e.to_string())?;
+        let manager = MlsManager::load_encrypted_with_keystore(
+            &user_id,
+            &device_id,
+            encrypted_state,
+            Some(pin),
+            &keystore,
+        )
+        .map_err(|e| e.to_string())?;
 
         let mut lock = manager_state
             .lock()

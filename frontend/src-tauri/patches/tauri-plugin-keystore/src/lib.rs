@@ -38,7 +38,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             commands::remove,
             commands::retrieve,
-            commands::store
+            commands::store,
+            commands::store_key_bytes,
+            commands::get_key_bytes,
+            commands::delete_key_bytes,
         ])
         .setup(|app, api| {
             #[cfg(mobile)]

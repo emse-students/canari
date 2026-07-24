@@ -35,16 +35,37 @@ impl<R: Runtime> Keystore<R> {
         self.0
             .run_mobile_plugin("retrieve", payload)
             .map_err(Into::into)
-        // let entry = keyring::Entry::new(&payload.service, &payload.user).unwrap();
-        // let password = entry.get_password().unwrap();
-        // Ok(RetrieveResponse {
-        //     password: Some(password),
-        // })
     }
 
     pub fn remove(&self, payload: RemoveRequest) -> crate::Result<()> {
         self.0
             .run_mobile_plugin("remove", payload)
+            .map_err(Into::into)
+    }
+
+    /// Store a raw 32-byte key (base64-encoded) in the platform keystore.
+    /// Triggers biometric authentication on mobile before writing.
+    pub fn store_key_bytes(&self, payload: StoreKeyBytesRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("storeKeyBytes", payload)
+            .map_err(Into::into)
+    }
+
+    /// Retrieve a raw 32-byte key by alias. Returns `None` if not found.
+    /// Triggers biometric authentication on mobile before returning.
+    pub fn get_key_bytes(
+        &self,
+        payload: GetKeyBytesRequest,
+    ) -> crate::Result<GetKeyBytesResponse> {
+        self.0
+            .run_mobile_plugin("getKeyBytes", payload)
+            .map_err(Into::into)
+    }
+
+    /// Delete a raw key by alias from the platform keystore.
+    pub fn delete_key_bytes(&self, payload: DeleteKeyBytesRequest) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("deleteKeyBytes", payload)
             .map_err(Into::into)
     }
 }

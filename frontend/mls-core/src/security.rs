@@ -79,3 +79,21 @@ pub fn encrypt_state_with_pin_owned(
     pin.zeroize();
     result
 }
+
+// --- Keystore integration ---
+
+/// Derives a 32-byte key from a PIN and stores it in the platform keystore.
+///
+/// The PIN is zeroized after derivation. The derived key is stored under the
+/// given alias for future retrieval without PIN re-entry.
+pub fn derive_and_store_device_key(
+    pin: String,
+    salt: &[u8],
+    alias: &str,
+    keystore: &dyn crate::keystore::DeviceKeyStore,
+) -> Result<[u8; 32], String> {
+    let key = derive_key_from_pin_owned(pin, salt)?;
+    // PIN has been zeroized by derive_key_from_pin_owned
+    keystore.store_device_key(&key, alias)?;
+    Ok(key)
+}
