@@ -17,12 +17,7 @@ vi.mock('$lib/stores/user', () => ({
   fetchUserProfile: vi.fn(),
 }));
 
-import {
-  seedUserDisplayName,
-  getUserDisplayNameSync,
-  resolveUserDisplayName,
-  getUserInitials,
-} from './displayName';
+import { seedUserDisplayName, getUserDisplayNameSync, getUserInitials } from './displayName';
 
 // Convenience: the mocked label
 const UNKNOWN_LABEL = 'Utilisateur inconnu';

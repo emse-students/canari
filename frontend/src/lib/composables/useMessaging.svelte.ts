@@ -108,7 +108,7 @@ export function useMessaging() {
   /** Buffer de messages orphelins arrivés avant que leur conversation ne soit dans la map.
    *  Taille maximale par conversation pour éviter les fuites mémoire. */
   const MAX_ORPHAN_MESSAGES_PER_CONVERSATION = 50;
-  const orphanBuffer = new Map<
+  const orphanBuffer = new SvelteMap<
     string,
     Array<{
       senderId: string;
