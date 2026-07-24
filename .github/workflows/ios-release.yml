@@ -275,7 +275,7 @@ jobs:
             -project src-tauri/gen/apple/canari.xcodeproj \
             -scheme canari_iOS \
             -archivePath "$ARCHIVE_PATH" \
-            -configuration Release \
+            -configuration release \
             -sdk iphoneos \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY}" \
