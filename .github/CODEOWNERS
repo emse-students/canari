@@ -2,33 +2,33 @@
 # These owners will be requested for review when someone opens a pull request.
 
 # Global owners (fallback)
-* @jolanb
+* @DeMASKe @Unaty498
 
 # Frontend
-frontend/ @jolanb
-frontend/mls-core/ @jolanb
-frontend/mls-wasm/ @jolanb
+frontend/ @DeMASKe @Unaty498
+frontend/mls-core/ @DeMASKe @Unaty498
+frontend/mls-wasm/ @DeMASKe @Unaty498
 
 # Rust services
-apps/chat-gateway/ @jolanb
-apps/call-service/ @jolanb
-libs/shared-rust/ @jolanb
+apps/chat-gateway/ @DeMASKe @Unaty498
+apps/call-service/ @DeMASKe @Unaty498
+libs/shared-rust/ @DeMASKe @Unaty498
 
 # NestJS services
-apps/chat-delivery-service/ @jolanb
-apps/core-service/ @jolanb
-apps/media-service/ @jolanb
-apps/social-service/ @jolanb
+apps/chat-delivery-service/ @DeMASKe @Unaty498
+apps/core-service/ @DeMASKe @Unaty498
+apps/media-service/ @DeMASKe @Unaty498
+apps/social-service/ @DeMASKe @Unaty498
 
 # Infrastructure
-infrastructure/ @jolanb
+infrastructure/ @DeMASKe @Unaty498
 
 # Documentation
-docs/ @jolanb
-README.md @jolanb
-CONTRIBUTING.md @jolanb
-CHANGELOG.md @jolanb
-SECURITY.md @jolanb
+docs/ @DeMASKe @Unaty498
+README.md @DeMASKe @Unaty498
+CONTRIBUTING.md @DeMASKe @Unaty498
+CHANGELOG.md @DeMASKe @Unaty498
+SECURITY.md @DeMASKe @Unaty498
 
 # CI/CD
-.github/ @jolanb
+.github/ @DeMASKe @Unaty498

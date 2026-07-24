@@ -24,7 +24,7 @@
     if (first) return first;
     if (last) return last;
     if (post.authorDisplayName?.trim()) return post.authorDisplayName.trim();
-    return getUserDisplayNameSync(post.authorId);
+    return getUserDisplayNameSync(post.authorId ?? '');
   }
 
   const associationHref = $derived(
