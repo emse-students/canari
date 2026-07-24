@@ -254,32 +254,39 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          # Tauri archives the app + embedded NSE with the manual profiles from the
-          # pbxproj (PROVISIONING_PROFILE_SPECIFIER = Canari / CanariNotifications), which
-          # succeeds. Its OWN -exportArchive then fails ("requires a provisioning profile
-          # with the App Groups... features") because the ExportOptions.plist Tauri
-          # generates can't express a two-target (app + appex) manual-signing profile map,
-          # so xcodebuild falls back to automatic signing on export. We tolerate that
-          # failure here and export the archive ourselves in the next step.
-          # Capture output so we can inspect the real error if the archive is missing.
-          TAURI_LOG=$(mktemp)
-          set +e
-          bun tauri ios build --export-method app-store-connect -v > "$TAURI_LOG" 2>&1
-          TAURI_EXIT=$?
-          set -e
+          # Run the Vite build first (Tauri's beforeBuildCommand normally handles this, but
+          # we bypass `tauri ios build` to avoid its broken export step).
+          # TAURI_TARGET must be set so the Vite mlsWasmStub plugin activates and excludes
+          # WASM modules from the Tauri build (MLS is handled by native Rust code on iOS).
+          TAURI_TARGET=aarch64-apple-ios bun run build
 
-          ARCHIVE=$(find build -name '*.xcarchive' -type d | head -1)
-          if [ -z "$ARCHIVE" ]; then
-            echo "::error::bun tauri ios build failed to produce an .xcarchive (exit code: $TAURI_EXIT)"
-            echo "--- Tauri build log ---"
-            cat "$TAURI_LOG"
+          # Archive directly with xcodebuild, bypassing Tauri's export step which fails
+          # with "requires a provisioning profile with the App Groups feature" because
+          # Tauri's generated ExportOptions.plist cannot express a two-target
+          # (app + appex) manual-signing profile map.
+          ARCHIVE_DIR="src-tauri/gen/apple/build"
+          ARCHIVE_NAME="canari_iOS.xcarchive"
+          ARCHIVE_PATH="${ARCHIVE_DIR}/${ARCHIVE_NAME}"
+
+          # Clean any stale archive so xcodebuild does not append.
+          rm -rf "$ARCHIVE_PATH"
+
+          xcodebuild archive \
+            -project src-tauri/gen/apple/canari.xcodeproj \
+            -scheme canari_iOS \
+            -archivePath "$ARCHIVE_PATH" \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY}" \
+            DEVELOPMENT_TEAM="${APPLE_TEAM_ID}"
+
+          if [ ! -d "$ARCHIVE_PATH" ]; then
+            echo "::error::xcodebuild archive failed to produce ${ARCHIVE_PATH}"
             exit 1
           fi
 
-          echo "Archive produced: $ARCHIVE"
-          if [ "$TAURI_EXIT" -ne 0 ]; then
-            echo "::warning::tauri export failed (expected with two manual profiles); will export archive manually"
-          fi
+          echo "Archive produced: ${ARCHIVE_PATH}"
 
       - name: Export signed IPA
         id: outputs
@@ -287,15 +294,14 @@ jobs:
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # Re-export the archive Tauri produced with an ExportOptions.plist that pins
-          # manual signing and maps EACH bundle id to its named distribution profile, the
-          # part Tauri's generated options omit. Both profiles are already installed in the
-          # runner store (by name) and carry the required entitlements (App Groups,
-          # Associated Domains, aps-environment).
-          ARCHIVE=$(find build -name '*.xcarchive' -type d | head -1)
-          if [ -z "$ARCHIVE" ]; then
-            echo "::error::No .xcarchive produced by the iOS archive step"
-            find build -maxdepth 3 -type d || true
+          # Re-export the archive produced by the previous step with an ExportOptions.plist
+          # that pins manual signing and maps EACH bundle id to its named distribution
+          # profile. Both profiles are already installed in the runner store (by name) and
+          # carry the required entitlements (App Groups, Associated Domains, aps-environment).
+          ARCHIVE="build/canari_iOS.xcarchive"
+          if [ ! -d "$ARCHIVE" ]; then
+            echo "::error::Archive not found at ${ARCHIVE}"
+            find build -maxdepth 3 -type d 2>/dev/null || true
             exit 1
           fi
           echo "Archive: $ARCHIVE"
