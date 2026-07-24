@@ -28,6 +28,10 @@ jobs:
     with:
       git_ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
 
+  run-code-analysis:
+    name: Run Code Analysis
+    uses: ./.github/workflows/code-analysis.yml
+
   detect-changed-services:
     name: Detect Changed Services
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
