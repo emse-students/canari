@@ -106,21 +106,44 @@ export async function importRawAesKey(hexKey: string): Promise<CryptoKey> {
 
 /**
  * Parses the metadata markers stored in a document's `description` field.
- * Format: `[s:<cekSalt>]` optionally followed by `[pw:<pwSaltHex>]` for
- * password-protected documents.
+ *
+ * Current format: `(s:<cekSalt>)` optionally followed by `(pw:<pwSaltHex>)`
+ * for password-protected documents.  The legacy bracket syntax (using square
+ * brackets instead of parentheses) is still accepted for backward compatibility.
  */
 export function parseVaultMarkers(description: string | null | undefined): {
   cekSalt: string | null;
   pwSalt: string | null;
 } {
-  const cekSalt = description?.match(/^\[s:([^\]]+)\]/)?.[1] ?? null;
-  const pwSalt = description?.match(/\[pw:([0-9a-f]+)\]/)?.[1] ?? null;
+  const cekSalt =
+    description?.match(/^\(s:([^)]+)\)/)?.[1] ??
+    description?.match(_rx('^', 's', '[^\\]]+'))?.[1] ??
+    null;
+  const pwSalt =
+    description?.match(/\(pw:([0-9a-f]+)\)/)?.[1] ??
+    description?.match(_rx('', 'pw', '[0-9a-f]+'))?.[1] ??
+    null;
   return { cekSalt, pwSalt };
 }
 
-/** Builds the `description` marker string from a CEK salt and optional password salt. */
+/**
+ * Builds a RegExp matching a legacy bracket marker without writing its literal
+ * pattern in source.  This avoids Tailwind's JIT scanner picking up the bracket
+ * syntax as an arbitrary CSS property class.
+ */
+function _rx(prefix: string, tag: string, capture: string): RegExp {
+  return new RegExp(`${prefix}\\[${tag}:(${capture})\\]`);
+}
+
+/**
+ * Builds the `description` marker string from a CEK salt and optional password salt.
+ *
+ * Uses parentheses (e.g. `(s:<cekSalt>)`) instead of square brackets so that
+ * Tailwind's JIT scanner does not interpret the markers as arbitrary CSS
+ * property classes in the generated CSS.
+ */
 export function buildVaultMarkers(cekSalt: string, pwSalt?: string | null): string {
-  return `[s:${cekSalt}]${pwSalt ? `[pw:${pwSalt}]` : ''}`;
+  return `(s:${cekSalt})${pwSalt ? `(pw:${pwSalt})` : ''}`;
 }
 
 /**

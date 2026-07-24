@@ -72,7 +72,7 @@
   let pwPromptError = $state('');
   let pwPromptBusy = $state(false);
 
-  /** True when the document is password-protected (has a `[pw:…]` marker). */
+  /** True when the document is password-protected (has a `(pw:…)` marker). */
   function isProtected(doc: AssociationDocument): boolean {
     return parseVaultMarkers(doc.description).pwSalt !== null;
   }
@@ -189,7 +189,7 @@
       // is acceptable. For true zero-knowledge: use a random pre-generated salt and store it.
       //
       // Simpler and correct: use a random client-generated UUID as the CEK salt, store it
-      // alongside the document. We store it in the description prefixed by "[s:<salt>]"
+      // alongside the document. We store it in the description prefixed by "(s:<salt>)"
       // (32 hex chars, invisible to users when stripped on display).
       const vaultKeyHex = await getVaultKey(associationId);
       const cekSalt = crypto.randomUUID(); // stable, per-document identifier
@@ -221,7 +221,7 @@
       console.log(`[Vault] Encrypted blob uploaded: ${mediaId}`);
 
       // Store the CEK salt (and password salt, if any) in the description so the
-      // download flow can rebuild the key. Format: "[s:<salt>]" optionally "[pw:<salt>]".
+      // download flow can rebuild the key. Format: "(s:<salt>)" optionally "(pw:<salt>)".
       const doc = await createDocument(associationId, {
         name: file.name,
         description: buildVaultMarkers(cekSalt, pwSalt),
