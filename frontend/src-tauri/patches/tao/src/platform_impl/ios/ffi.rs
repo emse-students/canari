@@ -408,8 +408,10 @@ pub trait NSStringRust: Sized {
   }
 
   unsafe fn initWithUTF8String_(self, c_string: *const c_char) -> id;
+  #[allow(dead_code)]
   unsafe fn stringByAppendingString_(self, other: id) -> id;
   unsafe fn init_str(self, string: &str) -> Self;
+  #[allow(dead_code)]
   unsafe fn UTF8String(self) -> *const c_char;
 }
 

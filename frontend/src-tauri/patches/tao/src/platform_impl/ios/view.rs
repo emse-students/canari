@@ -2,6 +2,8 @@
 // Copyright 2021-2023 Tauri Programme within The Commons Conservancy
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(static_mut_refs)]
+
 use std::{
   collections::HashMap,
   ffi::{c_char, CStr, CString},
@@ -545,7 +547,7 @@ pub unsafe fn create_window(
     } else if !app_supports_multiple_scenes() {
       // if there's no unitialized scene and the app does not support multiple scenes
       // we need to move this window to the main scene, otherwise it won't be visible
-      let scene = unsafe {
+      let scene = {
         let mtm = MainThreadMarker::new().unwrap();
         let application = UIApplication::sharedApplication(mtm);
         application.connectedScenes().iter().next()

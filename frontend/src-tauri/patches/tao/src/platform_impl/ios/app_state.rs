@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![deny(unused_results)]
+#![allow(static_mut_refs)]
 
 use std::{
   cell::{RefCell, RefMut},

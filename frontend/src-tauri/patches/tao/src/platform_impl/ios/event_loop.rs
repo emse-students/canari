@@ -96,6 +96,7 @@ impl<T: 'static> EventLoopWindowTarget<T> {
   }
 
   /// Sets badge count on iOS launcher. 0 hides the count
+  #[allow(dead_code)]
   pub fn set_badge_count(&self, count: i32) {
     set_badge_count(count);
   }
