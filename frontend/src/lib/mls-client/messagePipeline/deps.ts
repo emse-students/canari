@@ -77,5 +77,10 @@ export interface MessageHandlerDeps {
    * - `'keystore_lost'` : Keystore Android perdu (TEE reset) → reconnexion recommandée.
    */
   onMlsFatalError?: (kind: 'oom' | 'private_mode' | 'keystore_lost') => void;
+  /**
+   * Rejoue les messages orphelins bufferisés pour une conversation qui vient
+   * d'être ajoutée à la map. Appelé après un Welcome MLS réussi (FIX 3-4).
+   */
+  drainOrphanMessages?: (convoKey: string) => void;
   log: (msg: string) => void;
 }

@@ -105,6 +105,19 @@ export function useMessaging() {
     Array<{ senderId: string; content: string } & AddMessageToChatOptions>
   >();
 
+  /** Buffer de messages orphelins arrivés avant que leur conversation ne soit dans la map.
+   *  Taille maximale par conversation pour éviter les fuites mémoire. */
+  const MAX_ORPHAN_MESSAGES_PER_CONVERSATION = 50;
+  const orphanBuffer = new Map<
+    string,
+    Array<{
+      senderId: string;
+      content: string;
+      contactName: string;
+      options: AddMessageToChatOptions & { skipDbSave?: boolean };
+    }>
+  >();
+
   const mediaService = new MediaService();
   const mediaMaxSizeMb = Number.parseInt(import.meta.env.VITE_MEDIA_MAX_SIZE_MB ?? '100', 10);
   const mediaMaxSizeBytes = mediaMaxSizeMb * 1024 * 1024;
@@ -203,7 +216,14 @@ export function useMessaging() {
     if (bulkIngestActive) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
-        console.warn(`[ADD_MSG] conversation "${normalized}" introuvable (bulk)…`);
+        console.warn(
+          `[ADD_MSG] conversation "${normalized}" introuvable (bulk) — bufferisation orpheline`
+        );
+        const buffer = orphanBuffer.get(normalized) ?? [];
+        if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
+          buffer.push({ senderId, content, contactName, options });
+          orphanBuffer.set(normalized, buffer);
+        }
         return;
       }
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
@@ -224,7 +244,12 @@ export function useMessaging() {
 
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
-      console.warn(`[ADD_MSG] conversation "${normalized}" introuvable…`);
+      console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
+      const buffer = orphanBuffer.get(normalized) ?? [];
+      if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
+        buffer.push({ senderId, content, contactName, options });
+        orphanBuffer.set(normalized, buffer);
+      }
       return;
     }
 
@@ -989,6 +1014,21 @@ export function useMessaging() {
     endBulkMessageIngest,
     /** Resets overlay + bulk buffer (e.g. after a desynced catch-up on mobile). */
     resetMessageCatchupState,
+    /**
+     * Rejoue les messages orphelins bufferisés pour une conversation qui vient
+     * d'être ajoutée à la map (ex: après traitement d'un Welcome MLS).
+     * Appelé via MessageHandlerDeps.drainOrphanMessages.
+     */
+    drainOrphanMessages: (convoKey: string, ctx: MessagingContext) => {
+      const normalized = convoKey.toLowerCase();
+      const messages = orphanBuffer.get(normalized);
+      if (!messages || messages.length === 0) return;
+      orphanBuffer.delete(normalized);
+      console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
+      for (const msg of messages) {
+        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options);
+      }
+    },
     /** Appends multiple messages in one reactive update and one batch DB write. */
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */

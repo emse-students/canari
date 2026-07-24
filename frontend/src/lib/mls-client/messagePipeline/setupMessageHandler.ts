@@ -265,6 +265,32 @@ async function handleWelcome({
       const joinedGroupId =
         (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
 
+      // FIX 1 — Ajout anticipé de la conversation dans la map pour éviter la condition de course
+      // entre le Welcome (qui ajoute le groupe dans WASM) et l'arrivée de messages système
+      // (channel_key_distribution) qui nécessitent que handleKnownGroup trouve la conversation.
+      if (!deps.conversations.has(joinedGroupId)) {
+        const isDirectByPattern = joinedGroupId.includes('::');
+        const directPeerId = isDirectByPattern
+          ? (parseDirectPeerFromName(joinedGroupId, userId) ?? '')
+          : '';
+        const displayName = directPeerId || 'Groupe';
+        deps.conversations.set(joinedGroupId, {
+          id: joinedGroupId,
+          contactName: displayName,
+          name: displayName,
+          messages: [],
+          lifecycle: 'pending',
+          mlsStateHex: null,
+          conversationType: isDirectByPattern ? 'direct' : 'group',
+          ...(isDirectByPattern && directPeerId ? { directPeerId } : {}),
+        });
+        saveConversation(joinedGroupId).catch(() => {});
+      }
+
+      // FIX 4 — Drainer les messages orphelins arrivés avant que la conversation
+      // ne soit dans la map (condition de course channel_key_distribution / Welcome).
+      deps.drainOrphanMessages?.(joinedGroupId);
+
       // Drop the pending buffer for this group; cancel any recovery bookkeeping (cooldown + timer).
       const buf = pendingBuffer.get(joinedGroupId);
       if (buf) pendingBuffer.delete(joinedGroupId);
@@ -318,6 +344,26 @@ async function handleWelcome({
                       joinedGroupId,
                       envelope.options
                     );
+                  }
+                } else if (appMsg.system) {
+                  // FIX 2 — Replay des messages système bufferisés avant le Welcome
+                  const event = appMsg.system.event ?? '';
+                  let data: any = {};
+                  try {
+                    data = appMsg.system.data ? JSON.parse(appMsg.system.data) : {};
+                  } catch {
+                    /* noop */
+                  }
+                  const convo = deps.conversations.get(joinedGroupId);
+                  if (convo) {
+                    await handleSystemEvent(event, data, {
+                      ...deps,
+                      convo,
+                      convoKey: joinedGroupId,
+                      senderNorm: msg.sender,
+                      persistMlsStateNow: () => statePersister.persistNow(),
+                      deliveryMeta: undefined,
+                    });
                   }
                 }
               }

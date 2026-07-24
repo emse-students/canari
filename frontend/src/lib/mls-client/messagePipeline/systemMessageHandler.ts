@@ -87,6 +87,9 @@ export async function handleSystemEvent(
     const keysToImport = epochKeys.length > 0 ? epochKeys : fallbackCurrent;
 
     if (!channelId || !distributionId || keysToImport.length === 0) {
+      log(
+        `[CHANNEL-KEY] Distribution rejetée - channelId=${channelId || '∅'} distributionId=${distributionId || '∅'} keysToImport=${keysToImport.length}`
+      );
       return true;
     }
 

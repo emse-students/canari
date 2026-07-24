@@ -556,6 +556,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       deleteConversation: ctx.getStorage()
         ? (id) => ctx.getStorage()!.deleteConversation(id)
         : undefined,
+      drainOrphanMessages: cb.drainOrphanMessages,
       addMessageToChat: cb.addMessageToChat,
       batchAddMessages: cb.batchAddMessages,
       loadHistoryForConversation: cb.onLoadHistoryForConversation,

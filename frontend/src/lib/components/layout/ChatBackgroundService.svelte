@@ -428,6 +428,8 @@
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
+      drainOrphanMessages: (convoKey: string) =>
+        globalMessaging.drainOrphanMessages(convoKey, msgCtx()),
       beginBulkMessageIngest: (phase: BulkIngestPhase) =>
         globalMessaging.beginBulkMessageIngest(phase),
       endBulkMessageIngest: (phase: BulkIngestPhase) =>
