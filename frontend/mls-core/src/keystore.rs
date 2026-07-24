@@ -81,6 +81,12 @@ pub mod testing {
         entries: Mutex<Vec<(String, [u8; 32])>>,
     }
 
+    impl Default for MemoryDeviceKeyStore {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl MemoryDeviceKeyStore {
         pub fn new() -> Self {
             Self {
