@@ -7,6 +7,9 @@ name: "Canari CodeQL config"
 # - proto/canari.js is emitted by `pbjs` from libs/proto/canari.proto (npm run
 #   proto:gen); its unused-local-variable notes are inherent to the generator.
 #   The hand-written proto/codec.ts stays in scope.
+# - gen/ directories contain Tauri-generated platform glue (Android, iOS, macOS)
+#   that is regenerated on every build and should not be hand-audited.
 paths-ignore:
   - frontend/src/lib/paraglide
   - frontend/src/lib/proto/canari.js
+  - frontend/src-tauri/gen

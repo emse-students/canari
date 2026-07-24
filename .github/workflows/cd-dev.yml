@@ -300,7 +300,7 @@ jobs:
       contents: read
       packages: write
     strategy:
-      matrix: ${{ fromJson(needs.detect-changed-services.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.detect-changed-services.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -340,10 +340,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
+          cache-from: type=gha,ignore-error=true
+          cache-to: type=gha,mode=min,ignore-error=true
 
   deploy-to-server:
     name: Deploy to Development Server

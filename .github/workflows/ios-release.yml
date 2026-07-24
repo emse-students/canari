@@ -260,11 +260,26 @@ jobs:
           # with the App Groups... features") because the ExportOptions.plist Tauri
           # generates can't express a two-target (app + appex) manual-signing profile map,
           # so xcodebuild falls back to automatic signing on export. We tolerate that
-          # failure here and export the archive ourselves in the next step. The archive is
-          # already produced and correctly signed before export runs, so this loses
-          # nothing; a genuine archive failure is caught by the "no .xcarchive" guard.
-          bun tauri ios build --export-method app-store-connect -v || \
-            echo "::warning::tauri export failed (expected with two manual profiles); exporting archive manually"
+          # failure here and export the archive ourselves in the next step.
+          # Capture output so we can inspect the real error if the archive is missing.
+          TAURI_LOG=$(mktemp)
+          set +e
+          bun tauri ios build --export-method app-store-connect -v > "$TAURI_LOG" 2>&1
+          TAURI_EXIT=$?
+          set -e
+
+          ARCHIVE=$(find build -name '*.xcarchive' -type d | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "::error::bun tauri ios build failed to produce an .xcarchive (exit code: $TAURI_EXIT)"
+            echo "--- Tauri build log ---"
+            cat "$TAURI_LOG"
+            exit 1
+          fi
+
+          echo "Archive produced: $ARCHIVE"
+          if [ "$TAURI_EXIT" -ne 0 ]; then
+            echo "::warning::tauri export failed (expected with two manual profiles); will export archive manually"
+          fi
 
       - name: Export signed IPA
         id: outputs
@@ -382,3 +397,4 @@ jobs:
             exit 1
           fi
           echo "✅ Uploaded to TestFlight"
+
