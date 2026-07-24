@@ -260,6 +260,13 @@ jobs:
           # WASM modules from the Tauri build (MLS is handled by native Rust code on iOS).
           TAURI_TARGET=aarch64-apple-ios bun run build
 
+          # Tauri normally copies frontendDist (../build) into the Xcode assets folder
+          # before archiving. Since we bypass `tauri ios build`, we must do this manually.
+          # Use `build/.` (not `build/*`) so dotfiles like .well-known/ are included.
+          rm -rf src-tauri/gen/apple/assets
+          mkdir -p src-tauri/gen/apple/assets
+          cp -r build/. src-tauri/gen/apple/assets/
+
           # Archive directly with xcodebuild, bypassing Tauri's export step which fails
           # with "requires a provisioning profile with the App Groups feature" because
           # Tauri's generated ExportOptions.plist cannot express a two-target
