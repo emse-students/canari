@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> _No unreleased changes yet._
+### Changed
+- Biometric enrollment no longer throws when no fingerprint/Face ID is configured; falls back to PIN with a user-facing toast (fr/en)
+- Replaced all `unwrap()` calls with `?` in tauri-plugin-keystore `desktop.rs`
+
+### Security
+- Added `SECURITY.md` with vulnerability disclosure policy
 
 ## [v0.10.9]
 

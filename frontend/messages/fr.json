@@ -85,6 +85,7 @@
   "auth_biometric_enable_btn": "Activer",
   "auth_biometric_failed_fallback": "L'empreinte digitale a échoué. Entrez votre PIN.",
   "auth_biometric_no_fingerprint_android": "Aucune empreinte n'est configurée. Ajoutez-en une dans les paramètres Android.",
+  "auth_biometric_no_biometric_enrolled": "Aucune empreinte ni Face ID n'est configuré sur cet appareil. Ajoutez-en un dans les paramètres de votre appareil, ou continuez avec votre PIN.",
   "auth_pin_stay_signed_in": "Rester connecté sur cet appareil",
   "auth_pin_stay_signed_in_desc": "Votre PIN sera conservé après la fermeture du navigateur. À n'activer que sur un appareil personnel.",
   "auth_pin_step_verifying": "Vérification du PIN…",

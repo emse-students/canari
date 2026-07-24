@@ -6,6 +6,8 @@ import { BiometricService } from '$lib/services/biometric';
 import { clearPinAndKey, savePin } from '$lib/utils/pinVault';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 import type { SessionContext } from './sessionTypes';
 
 const BIOMETRIC_DISMISSED_KEY = 'canari_biometric_prompt_dismissed';
@@ -60,7 +62,15 @@ export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<v
 export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
   appendLog('[BIOMETRIC] Biometric enrollment in progress…');
   try {
-    await BiometricService.enableBiometric(ctx.getPin());
+    const result = await BiometricService.enableBiometric(ctx.getPin());
+    if (!result.enrolled) {
+      // No fingerprint / Face ID enrolled on this device.
+      // Biometric enrollment is a convenience, not a prerequisite — let the user
+      // continue with their PIN.
+      appendLog('[BIOMETRIC] No biometric enrolled on device — falling back to PIN.');
+      showToast(m.auth_biometric_no_biometric_enrolled(), 'info');
+      return;
+    }
     // PIN is now protected by the hardware keystore - wipe the session cache
     clearPinAndKey();
     ctx.setShowBiometricEnrollPrompt(false);

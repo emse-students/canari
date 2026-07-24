@@ -14,26 +14,23 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct Keystore<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> Keystore<R> {
-    // TODO: remove unwrap() calls
     pub fn store(&self, payload: StoreRequest) -> crate::Result<()> {
-        let entry = keyring::Entry::new("com.impierce.identity-wallet", "tester").unwrap();
-        entry.set_password(&payload.value).unwrap();
+        let entry = keyring::Entry::new("com.impierce.identity-wallet", "tester")?;
+        entry.set_password(&payload.value)?;
         Ok(())
     }
 
-    // TODO: remove unwrap() calls
     pub fn retrieve(&self, payload: RetrieveRequest) -> crate::Result<RetrieveResponse> {
-        let entry = keyring::Entry::new(&payload.service, &payload.user).unwrap();
-        let password = entry.get_password().unwrap();
+        let entry = keyring::Entry::new(&payload.service, &payload.user)?;
+        let password = entry.get_password()?;
         Ok(RetrieveResponse {
             value: Some(password),
         })
     }
 
-    // TODO: remove unwrap() calls
     pub fn remove(&self, payload: RemoveRequest) -> crate::Result<()> {
-        let entry = keyring::Entry::new(&payload.service, &payload.user).unwrap();
-        entry.delete_credential().unwrap();
+        let entry = keyring::Entry::new(&payload.service, &payload.user)?;
+        entry.delete_credential()?;
         Ok(())
     }
 

@@ -15,6 +15,17 @@ const KEYSTORE_USER = 'canari_biometric_user';
 const CONFIG_FLAG_KEY = 'canari_biometric_configured';
 const NATIVE_FLAG_KEY = 'biometricConfigured';
 
+/**
+ * Result of a biometric enrollment attempt.
+ *
+ * - `enrolled: true` means the secret was successfully stored behind
+ *   hardware-backed biometric protection.
+ * - `enrolled: false, noBiometric: true` means the device has biometric
+ *   hardware but no fingerprint/Face ID is enrolled in the OS settings.
+ *   The caller should inform the user and let them fall back to the PIN.
+ */
+export type BiometricEnrollResult = { enrolled: true } | { enrolled: false; noBiometric: true };
+
 export class BiometricService {
   /**
    * Enrolls biometric protection for the given secret.
@@ -26,24 +37,31 @@ export class BiometricService {
    *
    * Note: tauri-plugin-keystore is alpha; its store() JS promise resolves
    * immediately while biometric auth completes asynchronously on-device.
+   *
+   * @returns A {@link BiometricEnrollResult} describing the outcome. When
+   *          `enrolled` is `false` the caller should notify the user and let them
+   *          continue with their PIN — biometric enrollment is a convenience, not
+   *          a hard requirement.
    */
-  static async enableBiometric(secret: string): Promise<void> {
+  static async enableBiometric(secret: string): Promise<BiometricEnrollResult> {
     try {
-      // Si aucune empreinte n'est configurée sur le téléphone, ceci va throw
+      // If no fingerprint / Face ID is enrolled on the device, this will throw.
       await keystoreStore(secret);
       localStorage.setItem(CONFIG_FLAG_KEY, 'true');
       if (isTauri()) {
         await invoke('set_native_flag', { key: NATIVE_FLAG_KEY, value: true }).catch(() => {});
       }
+      return { enrolled: true };
     } catch (e) {
       const errorMsg = String(e);
       if (errorMsg.includes('At least one biometric must be enrolled')) {
         console.warn(
-          "Matériel biométrique présent, mais aucune empreinte configurée par l'utilisateur."
+          'Hardware biometric present, but no fingerprint or Face ID is enrolled on this device.'
         );
-        // TODO: Gérer le fallback ici (ex: forcer l'utilisation du PIN, ou afficher
-        // un message demandant à l'utilisateur d'aller enroler une empreinte / Face ID
-        // dans les réglages de l'OS - Android comme iOS).
+        // Return a fallback result instead of throwing.
+        // The caller should prompt the user to enroll a biometric in the OS
+        // settings and allow them to continue with the PIN.
+        return { enrolled: false, noBiometric: true };
       } else {
         console.error('Failed to enable biometrics:', e);
       }

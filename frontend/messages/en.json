@@ -85,6 +85,7 @@
   "auth_biometric_enable_btn": "Enable",
   "auth_biometric_failed_fallback": "Biometric failed. Enter your PIN.",
   "auth_biometric_no_fingerprint_android": "No fingerprint enrolled. Add one in Android settings.",
+  "auth_biometric_no_biometric_enrolled": "No fingerprint or Face ID is enrolled on this device. Add one in your device settings, or continue with your PIN.",
   "auth_pin_stay_signed_in": "Stay signed in on this device",
   "auth_pin_stay_signed_in_desc": "Your PIN is kept after the browser closes. Only enable this on a personal device.",
   "auth_pin_step_verifying": "Verifying PIN…",
