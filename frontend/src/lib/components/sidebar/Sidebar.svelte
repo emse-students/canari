@@ -185,11 +185,17 @@
   // not be clobbered by the prop re-rendering with the pre-drag server order, and unrelated
   // updates (unread counts, renamed channels) must still refresh the item data in place.
   let orderedWorkspaces = $state<ChannelWorkspace[]>([]);
+  let _diagEffectRunCount = 0;
   $effect(() => {
+    _diagEffectRunCount++;
     const incomingIds = new Set(channelWorkspaces.map((w) => w.id));
     const currentIds = new Set(orderedWorkspaces.map((w) => w.id));
     const sameMembership =
       incomingIds.size === currentIds.size && [...incomingIds].every((id) => currentIds.has(id));
+
+    console.debug(
+      `[Sidebar:diag] effect run #${_diagEffectRunCount} | channelWorkspaces=${channelWorkspaces.length} orderedWorkspaces=${orderedWorkspaces.length} sameMembership=${sameMembership}`
+    );
 
     orderedWorkspaces = sameMembership
       ? orderedWorkspaces.map((w) => channelWorkspaces.find((iw) => iw.id === w.id) ?? w)
