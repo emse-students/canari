@@ -122,7 +122,6 @@ class KeystorePlugin: Plugin {
 
     invoke.resolve()
   }
-}
 
   // MARK: - Key-bytes commands (MLS device key storage)
 

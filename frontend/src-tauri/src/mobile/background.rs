@@ -6,6 +6,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
+use crate::concurrency::background_write_mls_bin;
 
 /// Dechiffre un message MLS recu en push background et retourne les metadonnees JSON.
 pub fn decrypt_push_message(
@@ -243,7 +244,7 @@ pub fn create_welcome_background(
 
     let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
-    crate::background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
         "[BG_WELCOME] mls.bin mis a jour ({} octets) pour group={group_id}",
         enc.len()
@@ -293,7 +294,7 @@ pub fn process_welcome_background(
 
     let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
-    crate::background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
         "[BG_JOIN] groupe rejoint via Welcome: {group_id} (mls.bin {} octets)",
         enc.len()
@@ -325,7 +326,7 @@ pub fn send_message_background(
 
     let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
-    crate::background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
+    background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
         "[BG_SEND] message chiffre group={group_id} (ciphertext {} octets, mls.bin {} octets)",
         ciphertext.len(),
