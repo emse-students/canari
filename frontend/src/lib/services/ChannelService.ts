@@ -113,6 +113,9 @@ export interface SendChannelMessageDto {
 /** Per-channel push notification level a member can set for themselves. */
 export type ChannelNotificationLevel = 'all' | 'mentions' | 'none';
 
+/** Who may post in a channel: everyone, admins + moderators, or admins only. */
+export type ChannelWritePolicy = 'everyone' | 'admins_moderators' | 'admins';
+
 /** Server-visible poll state (no labels) carried on a channel message. */
 export interface ChannelPollMeta {
   optionIds: string[];
@@ -634,8 +637,7 @@ export class ChannelService {
     channelId: string;
     isPrivate: boolean;
     allowedUsers: string[];
-    allowedRoles?: string[];
-    usePermissionOverrides?: boolean;
+    writePolicy: ChannelWritePolicy;
   }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`);
@@ -647,12 +649,12 @@ export class ChannelService {
     channelId: string,
     isPrivate: boolean,
     allowedUserIds: string[],
-    usePermissionOverrides?: boolean
-  ): Promise<{ ok: boolean; usePermissionOverrides?: boolean }> {
+    writePolicy?: ChannelWritePolicy
+  ): Promise<{ ok: boolean; writePolicy?: ChannelWritePolicy }> {
     const cid = this.normalizeChannelId(channelId);
     const body: Record<string, unknown> = { isPrivate, allowedUserIds };
-    if (typeof usePermissionOverrides === 'boolean') {
-      body.usePermissionOverrides = usePermissionOverrides;
+    if (writePolicy) {
+      body.writePolicy = writePolicy;
     }
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`, {
       method: 'PATCH',
@@ -662,68 +664,18 @@ export class ChannelService {
     return res.json();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // PERMISSION OVERRIDES
-  // ═══════════════════════════════════════════════════════════════
-
-  async getPermissionOverrides(channelId: string): Promise<{
-    channelId: string;
-    usePermissionOverrides: boolean;
-    roles: Array<{ id: string; name: string; priority: number }>;
-    overrides: Array<{
-      roleId: string;
-      roleName: string;
-      permission: string;
-      value: 'allow' | 'deny';
-    }>;
-  }> {
-    const cid = this.normalizeChannelId(channelId);
+  /** Sets a workspace member's role (workspace-level; requires MANAGE_WORKSPACE or MANAGE_ROLES). */
+  async updateWorkspaceMemberRole(
+    workspaceId: string,
+    userId: string,
+    roleName: string
+  ): Promise<{ success: boolean }> {
     const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/permissions/overrides`
-    );
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async setPermissionOverride(
-    channelId: string,
-    roleId: string,
-    permissionKey: string,
-    value: 'allow' | 'deny' | 'neutral'
-  ): Promise<{ ok: boolean }> {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/permissions/overrides`,
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}/role`,
       {
-        method: 'PUT',
-        body: JSON.stringify({ roleId, permissionKey, value }),
+        method: 'PATCH',
+        body: JSON.stringify({ roleName }),
       }
-    );
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async deletePermissionOverride(
-    channelId: string,
-    roleId: string,
-    permissionKey: string
-  ): Promise<{ ok: boolean }> {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/permissions/overrides/${encodeURIComponent(roleId)}/${encodeURIComponent(permissionKey)}`,
-      { method: 'DELETE' }
-    );
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async getEffectivePermissions(channelId: string): Promise<{
-    channelId: string;
-    permissions: string[];
-  }> {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/permissions/effective`
     );
     await this.handleError(res);
     return res.json();

@@ -20,7 +20,8 @@ News feed with Markdown content, media attachments, polls, and reactions.
 Encrypted community spaces with role-based access control.
 
 - Workspace → channels hierarchy
-- Custom roles with permission bitmasks
+- Two-level access: workspace roles (Admin/Moderator/Member, editable base permissions) + channel visibility (public = all members, private = explicit `allowedUsers`, admins always)
+- Per-channel `writePolicy` (`everyone` / `admins_moderators` / `admins`) for announcement channels
 - Server-assisted symmetric encryption (HKDF-derived per-channel keys from workspace master secret)
 - Key distribution tracked per device (`channel_key_distributions`)
 - Channel push notifications with per-channel level (`all`, `mentions`, `none`)

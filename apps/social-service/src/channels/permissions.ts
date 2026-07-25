@@ -2,43 +2,25 @@
 
 export const CHANNEL_PERMISSIONS = {
   // ── Accès au canal ──
-  VIEW_CHANNEL: 'channel.view',
-  READ_MESSAGES: 'channel.read',
-  SEND_MESSAGES: 'channel.send',
-  UPLOAD_FILES: 'channel.upload',
+  VIEW_CHANNEL: "channel.view",
+  READ_MESSAGES: "channel.read",
+  SEND_MESSAGES: "channel.send",
+  UPLOAD_FILES: "channel.upload",
 
   // ── Gestion du canal ──
-  MANAGE_CHANNEL: 'channel.manage',
-  MANAGE_MESSAGES: 'channel.moderate',
+  MANAGE_CHANNEL: "channel.manage",
+  MANAGE_MESSAGES: "channel.moderate",
 
   // ── Membres ──
-  INVITE_MEMBERS: 'member.invite',
-  KICK_MEMBERS: 'member.kick',
+  INVITE_MEMBERS: "member.invite",
+  KICK_MEMBERS: "member.kick",
 
   // ── Rôles (workspace uniquement, pas overridable par canal) ──
-  MANAGE_ROLES: 'role.manage',
-  MANAGE_WORKSPACE: 'workspace.manage',
+  MANAGE_ROLES: "role.manage",
+  MANAGE_WORKSPACE: "workspace.manage",
 } as const;
 
 export type ChannelPermission = (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNEL_PERMISSIONS];
-
-/** Permissions qui NE PEUVENT PAS être surchargées au niveau du canal (réservées au workspace). */
-export const WORKSPACE_ONLY_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.MANAGE_ROLES,
-  CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
-];
-
-/** Permissions surchargeables au niveau du canal. */
-export const CHANNEL_OVERRIDABLE_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
-  CHANNEL_PERMISSIONS.READ_MESSAGES,
-  CHANNEL_PERMISSIONS.SEND_MESSAGES,
-  CHANNEL_PERMISSIONS.UPLOAD_FILES,
-  CHANNEL_PERMISSIONS.MANAGE_CHANNEL,
-  CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
-  CHANNEL_PERMISSIONS.INVITE_MEMBERS,
-  CHANNEL_PERMISSIONS.KICK_MEMBERS,
-];
 
 /** Permissions du rôle Administrateur (priority 100) — toutes les permissions. */
 export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
@@ -75,40 +57,36 @@ export const DEFAULT_MEMBER_PERMISSIONS: ChannelPermission[] = [
 
 /** Permission keys displayed as overridable cells in the PermissionGrid. */
 export const PERMISSION_LABELS: Record<string, string> = {
-  [CHANNEL_PERMISSIONS.VIEW_CHANNEL]: 'Voir le canal',
-  [CHANNEL_PERMISSIONS.READ_MESSAGES]: 'Lire les messages',
-  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: 'Envoyer des messages',
-  [CHANNEL_PERMISSIONS.UPLOAD_FILES]: 'Envoyer des fichiers',
-  [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]: 'Gérer le canal',
-  [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]: 'Modérer les messages',
-  [CHANNEL_PERMISSIONS.INVITE_MEMBERS]: 'Inviter des membres',
-  [CHANNEL_PERMISSIONS.KICK_MEMBERS]: 'Expulser des membres',
-  [CHANNEL_PERMISSIONS.MANAGE_ROLES]: 'Gérer les rôles',
-  [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]: 'Gérer la communauté',
+  [CHANNEL_PERMISSIONS.VIEW_CHANNEL]: "Voir le canal",
+  [CHANNEL_PERMISSIONS.READ_MESSAGES]: "Lire les messages",
+  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: "Envoyer des messages",
+  [CHANNEL_PERMISSIONS.UPLOAD_FILES]: "Envoyer des fichiers",
+  [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]: "Gérer le canal",
+  [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]: "Modérer les messages",
+  [CHANNEL_PERMISSIONS.INVITE_MEMBERS]: "Inviter des membres",
+  [CHANNEL_PERMISSIONS.KICK_MEMBERS]: "Expulser des membres",
+  [CHANNEL_PERMISSIONS.MANAGE_ROLES]: "Gérer les rôles",
+  [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]: "Gérer la communauté",
 };
 
 /** Detailed tooltip descriptions for each permission. */
 export const PERMISSION_TOOLTIPS: Record<string, string> = {
   [CHANNEL_PERMISSIONS.VIEW_CHANNEL]:
-    'Permet de voir le canal dans la liste des canaux de la communauté.',
-  [CHANNEL_PERMISSIONS.READ_MESSAGES]:
-    'Permet de lire les messages publiés dans ce canal.',
-  [CHANNEL_PERMISSIONS.SEND_MESSAGES]:
-    'Permet d\'envoyer des messages dans ce canal.',
+    "Permet de voir le canal dans la liste des canaux de la communauté.",
+  [CHANNEL_PERMISSIONS.READ_MESSAGES]: "Permet de lire les messages publiés dans ce canal.",
+  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: "Permet d'envoyer des messages dans ce canal.",
   [CHANNEL_PERMISSIONS.UPLOAD_FILES]:
-    'Permet d\'envoyer des pièces jointes (images, fichiers) dans ce canal.',
+    "Permet d'envoyer des pièces jointes (images, fichiers) dans ce canal.",
   [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]:
-    'Permet de renommer, archiver ou modifier les paramètres de ce canal.',
+    "Permet de renommer, archiver ou modifier les paramètres de ce canal.",
   [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]:
-    'Permet d\'épingler ou de supprimer les messages des autres membres.',
-  [CHANNEL_PERMISSIONS.INVITE_MEMBERS]:
-    'Permet d\'inviter de nouveaux membres dans ce canal.',
-  [CHANNEL_PERMISSIONS.KICK_MEMBERS]:
-    'Permet d\'expulser un membre de ce canal spécifique.',
+    "Permet d'épingler ou de supprimer les messages des autres membres.",
+  [CHANNEL_PERMISSIONS.INVITE_MEMBERS]: "Permet d'inviter de nouveaux membres dans ce canal.",
+  [CHANNEL_PERMISSIONS.KICK_MEMBERS]: "Permet d'expulser un membre de ce canal spécifique.",
   [CHANNEL_PERMISSIONS.MANAGE_ROLES]:
-    'Permet de créer, modifier ou supprimer les rôles de la communauté.',
+    "Permet de créer, modifier ou supprimer les rôles de la communauté.",
   [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]:
-    'Donne tous les droits. Un administrateur a TOUJOURS toutes les permissions.',
+    "Donne tous les droits. Un administrateur a TOUJOURS toutes les permissions.",
 };
 
 /** Mapping: old permission key (channel-role.entity) → new unified permission key. */

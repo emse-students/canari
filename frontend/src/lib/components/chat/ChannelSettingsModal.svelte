@@ -17,7 +17,11 @@
   import Avatar from '../shared/Avatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
-  import { channelService, type ChannelNotificationLevel } from '$lib/services/ChannelService';
+  import {
+    channelService,
+    type ChannelNotificationLevel,
+    type ChannelWritePolicy,
+  } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
   interface ChannelSidebarItem {
@@ -54,7 +58,7 @@
       channelId: string,
       isPrivate: boolean,
       allowedUserIds: string[],
-      whoCanWrite?: string
+      writePolicy?: ChannelWritePolicy
     ) => void;
   }
 
@@ -97,7 +101,7 @@
   let accessAllowedUserIds = $state<string[]>([]);
   let accessLoaded = $state(false);
   let addingUserId = $state('');
-  let whoCanWrite = $state<'everyone' | 'admins_moderators' | 'admins'>('everyone');
+  let writePolicy = $state<ChannelWritePolicy>('everyone');
 
   // ── Member access list (for removing users from private channel) ───────
   let membersLoading = $state(false);
@@ -119,7 +123,7 @@
       accessIsPrivate = false;
       accessAllowedUserIds = [];
       addingUserId = '';
-      whoCanWrite = 'everyone';
+      writePolicy = 'everyone';
       channelMembers = [];
       membersError = '';
       memberRemoving = {};
@@ -136,6 +140,7 @@
       const data = await channelService.getChannelAccess(selectedChannelId);
       accessIsPrivate = data.isPrivate;
       accessAllowedUserIds = data.allowedUsers ?? [];
+      writePolicy = data.writePolicy ?? 'everyone';
       // Always load the member list so the user autocomplete is scoped to workspace members.
       await loadMembers();
       accessLoaded = true;
@@ -152,7 +157,7 @@
     try {
       channelMembers = await channelService.listMembers(selectedChannelId);
     } catch (e) {
-      membersError = e instanceof Error ? e.message : 'Erreur lors du chargement des membres.';
+      membersError = e instanceof Error ? e.message : m.chat_channel_load_members_error();
     } finally {
       membersLoading = false;
     }
@@ -166,13 +171,14 @@
       await channelService.updateChannelAccess(
         selectedChannelId,
         accessIsPrivate,
-        accessAllowedUserIds
+        accessAllowedUserIds,
+        writePolicy
       );
       onUpdateChannelAccess?.(
         selectedChannelId,
         accessIsPrivate,
         accessAllowedUserIds,
-        whoCanWrite
+        writePolicy
       );
       accessSaved = true;
       setTimeout(() => {
@@ -198,10 +204,10 @@
   }
 
   async function handleRemoveMemberFromChannel(userId: string) {
-    const confirmed = await showConfirm(
-      `Retirer cet utilisateur de l'accès au canal ? Il pourra être ré-invité ultérieurement.`,
-      { danger: true, confirmLabel: 'Retirer' }
-    );
+    const confirmed = await showConfirm(m.chat_channel_remove_access_confirm(), {
+      danger: true,
+      confirmLabel: m.common_remove_label(),
+    });
     if (!confirmed) return;
     memberRemoving = { ...memberRemoving, [userId]: true };
     try {
@@ -536,20 +542,18 @@
                 <div class="flex items-center gap-2">
                   <MessageSquareText size={16} class="text-amber-500" strokeWidth={2.5} />
                   <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-                    Qui peut écrire ?
+                    {m.chat_channel_who_can_write()}
                   </p>
                 </div>
                 <select
                   class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all text-sm font-semibold appearance-none"
-                  bind:value={whoCanWrite}
+                  bind:value={writePolicy}
                 >
-                  <option value="everyone"> Tout le monde </option>
-                  <option value="admins_moderators"> Admins et modérateurs uniquement </option>
-                  <option value="admins"> Admins uniquement </option>
+                  <option value="everyone">{m.chat_channel_write_everyone()}</option>
+                  <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
+                  <option value="admins">{m.chat_channel_write_admins()}</option>
                 </select>
-                <p class="text-xs text-text-muted">
-                  Les administrateurs ont toujours accès à tous les canaux, même privés.
-                </p>
+                <p class="text-xs text-text-muted">{m.chat_channel_admins_access_all_hint()}</p>
               </div>
 
               <!-- ═══ Member allowlist (only when private) ═══ -->
@@ -585,7 +589,7 @@
                             onclick={() => handleRemoveMemberFromChannel(uid)}
                             disabled={memberRemoving[uid]}
                             class="text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors flex-shrink-0"
-                            title="Retirer l'accès"
+                            title={m.chat_channel_remove_access_title()}
                           >
                             {#if memberRemoving[uid]}
                               <Loader size={14} class="animate-spin" />
@@ -603,7 +607,7 @@
                     <p
                       class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                     >
-                      Ajouter un utilisateur
+                      {m.chat_channel_add_user_label()}
                     </p>
                     <div class="flex gap-2 items-start">
                       <div class="flex-1">

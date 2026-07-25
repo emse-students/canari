@@ -64,11 +64,37 @@ Channels use server-assisted symmetric encryption (not MLS):
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
 | POST | `/api/channels/:channelId/members/leave` | Leave channel |
+| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
+| PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
+| GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
+| GET \| PUT | `/api/channels/roles/:roleId/permissions` | Get/set a workspace role's base permissions (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
 | PATCH | `/api/channels/:channelId/notification-level` | Set push level (`all` \| `mentions` \| `none`) |
+
+#### Roles, membership and channel access
+
+Communities use a deliberately simple, two-level model (no per-channel permission overrides):
+
+- **Workspace roles.** Every workspace seeds three roles - `Administrateur` (priority 100, all
+  permissions incl. `workspace.manage`), `Modérateur` (50), `Membre` (10) - stored in
+  `channel_roles.permissions` (unified keys, e.g. `channel.send`, `role.manage`). Admins/roles are
+  managed from the community settings modal: invite + assign a role, change a member's role
+  (`PATCH .../members/:userId/role`, replaces all held roles), remove a member
+  (`DELETE .../members/:userId`), and edit each role's base permissions
+  (`PUT roles/:roleId/permissions`). `workspace.manage` implicitly grants every permission.
+- **Channel access.** `canAccessChannel`: a **public** channel is readable by every workspace
+  member; a **private** channel is readable only by users listed in `channels.allowedUsers` **plus**
+  any admin (`workspace.manage`) - admins reach every channel without being explicitly added.
+- **Write policy.** Independent of read access, `channels.writePolicy` (migration 031) gates
+  posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
+  `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
+  `canWriteToChannel`; used for announcement-style channels. Set from the channel settings "Accès" tab.
+
+The legacy per-channel/per-role override system (`channel_permission_overrides`,
+`channels.usePermissionOverrides`) was removed in migration 032.
 
 #### Channel history and full-text search
 

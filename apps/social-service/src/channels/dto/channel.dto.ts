@@ -19,12 +19,39 @@ export interface CreateRoleDto {
 export interface CreateChannelDto {
   workspaceId: string;
   name: string;
-  visibility?: 'public' | 'private';
+  visibility?: "public" | "private";
   actorUserId: string;
 }
 
 export interface RenameChannelDto {
   name: string;
+}
+
+/**
+ * Who may post in a channel:
+ * - `everyone`: any member with access (default).
+ * - `admins_moderators`: only roles carrying channel.moderate or workspace.manage.
+ * - `admins`: only roles carrying workspace.manage.
+ */
+export type ChannelWritePolicy = "everyone" | "admins_moderators" | "admins";
+
+/** The three valid write policies, for runtime validation. */
+export const CHANNEL_WRITE_POLICIES: ChannelWritePolicy[] = [
+  "everyone",
+  "admins_moderators",
+  "admins",
+];
+
+/** Body of the update-channel-access endpoint (the actor is taken from the auth header). */
+export interface UpdateChannelAccessDto {
+  isPrivate: boolean;
+  allowedUserIds: string[];
+  writePolicy?: ChannelWritePolicy;
+}
+
+/** Body of the update-workspace-member-role endpoint (the actor is taken from the auth header). */
+export interface UpdateWorkspaceMemberRoleDto {
+  roleName: string;
 }
 
 export interface ChannelJoinDto {
@@ -44,7 +71,7 @@ export interface ChannelInviteDto {
 }
 
 export interface ChannelKeyDistributionPayloadDto {
-  type: 'channel_key_distribution';
+  type: "channel_key_distribution";
   channelId: string;
   channelName?: string;
   keyVersion: number;
@@ -121,10 +148,10 @@ export interface ChannelPollMeta {
  * - `mentions`: notify only when the member is in a message's `mentionedUserIds`.
  * - `none`: never notify.
  */
-export type ChannelNotificationLevel = 'all' | 'mentions' | 'none';
+export type ChannelNotificationLevel = "all" | "mentions" | "none";
 
 /** The three valid notification levels, for runtime validation. */
-export const CHANNEL_NOTIFICATION_LEVELS: ChannelNotificationLevel[] = ['all', 'mentions', 'none'];
+export const CHANNEL_NOTIFICATION_LEVELS: ChannelNotificationLevel[] = ["all", "mentions", "none"];
 
 /** Body of the set-notification-level endpoint (the user is taken from the auth header). */
 export interface SetChannelNotificationLevelDto {

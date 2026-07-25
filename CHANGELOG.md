@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Community settings: admins can now manage members and roles - change a member's role, remove a member, and edit each role's base permissions - plus a shareable invite link (fr/en)
+- Per-channel write policy (`everyone` / `admins_moderators` / `admins`) for announcement-style channels, enforced server-side on send (migration 031)
+
 ### Changed
+- Simplified community access model to public/private + admin-always-access; admins now reach every private channel without being explicitly added
 - Biometric enrollment no longer throws when no fingerprint/Face ID is configured; falls back to PIN with a user-facing toast (fr/en)
 - Replaced all `unwrap()` calls with `?` in tauri-plugin-keystore `desktop.rs`
+
+### Removed
+- Per-channel/per-role permission-override system (`channel_permission_overrides`, `usePermissionOverrides`) in favour of the simple model (migration 032)
 
 ### Security
 - Added `SECURITY.md` with vulnerability disclosure policy
