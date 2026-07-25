@@ -1,5 +1,5 @@
 /**
- * Discord-style inline markdown preview segments for composer contenteditable.
+ * Inline markdown preview segments for composer contenteditable.
  * Delimiters are shown muted; closed spans render formatted. `\` escapes the next character.
  *
  * Text styles (italic, bold, underline, strike) combine. Inline code does not combine with

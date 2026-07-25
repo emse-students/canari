@@ -1,4 +1,4 @@
-// ─── Répertoire unifié des permissions (Discord-like) ───
+// ─── Répertoire unifié des permissions ───
 
 export const CHANNEL_PERMISSIONS = {
   // ── Accès au canal ──

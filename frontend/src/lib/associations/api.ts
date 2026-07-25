@@ -4,7 +4,7 @@ import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
 import { setAssociationSuperAdmin } from '$lib/stores/userState.svelte';
 
 /**
- * Discord-style permission flags for association members (mirrors the backend enum).
+ * Permission flags for association members (mirrors the backend enum).
  * Combine flags with bitwise OR; test with `(permissions & flag) !== 0`.
  */
 export enum AssociationPermissionFlag {

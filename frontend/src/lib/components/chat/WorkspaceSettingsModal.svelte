@@ -1,16 +1,5 @@
 <script lang="ts">
-  import {
-    Shield,
-    Settings,
-    Users,
-    Trash2,
-    LogOut,
-    Check,
-    Minus,
-    UserPlus,
-    Loader,
-    Globe,
-  } from '@lucide/svelte';
+  import { Shield, Settings, Users, Trash2, LogOut, Check, UserPlus, Loader } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '../shared/Avatar.svelte';
@@ -303,17 +292,20 @@
   }
 
   async function handleRemoveMember(userId: string) {
-    const confirmed = await showConfirm('Retirer ce membre de la communauté ?', {
-      danger: true,
-      confirmLabel: 'Retirer',
-    });
+    const confirmed = await showConfirm(
+      'Retirer ce membre de la communauté ? Il sera retiré de tous les canaux.',
+      {
+        danger: true,
+        confirmLabel: 'Retirer',
+      }
+    );
     if (!confirmed) return;
     memberRemoving = { ...memberRemoving, [userId]: true };
     try {
-      // Removal is handled by parent
+      await channelService.kickFromWorkspace(workspaceId, userId);
       await loadMembers();
     } catch (e) {
-      membersError = e instanceof Error ? e.message : 'Erreur lors de la suppression.';
+      membersError = e instanceof Error ? e.message : 'Erreur lors du retrait.';
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];
@@ -572,48 +564,45 @@
                     </div>
 
                     <div class="flex items-center gap-1.5 shrink-0">
-                      <select
-                        class="w-28 bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-violet-500/50 appearance-none"
-                        value={memberRoleSelections[member.userId] ?? member.role}
-                        onchange={(e) => {
-                          const val = (e.target as HTMLSelectElement).value;
-                          if (val === 'member' || val === 'moderator' || val === 'admin') {
-                            memberRoleSelections = {
-                              ...memberRoleSelections,
-                              [member.userId]: val,
-                            };
-                          }
-                        }}
-                      >
-                        <option value="member">Membre</option>
-                        <option value="moderator">Modérateur</option>
-                        <option value="admin">Administrateur</option>
-                      </select>
-
-                      <button
-                        type="button"
-                        onclick={() => handleMemberRoleUpdate(member.userId)}
-                        disabled={memberRoleSaving[member.userId] ||
-                          (memberRoleSelections[member.userId] ?? member.role) === member.role}
-                        class="rounded-lg border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-2 py-1.5 text-xs font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
-                      >
+                      <div class="relative">
+                        <select
+                          class="w-32 bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-violet-500/50 appearance-none disabled:opacity-50"
+                          value={memberRoleSelections[member.userId] ?? member.role}
+                          disabled={memberRoleSaving[member.userId]}
+                          onchange={async (e) => {
+                            const val = (e.target as HTMLSelectElement).value;
+                            if (val === 'member' || val === 'moderator' || val === 'admin') {
+                              memberRoleSelections = {
+                                ...memberRoleSelections,
+                                [member.userId]: val,
+                              };
+                              // Auto-save on change
+                              await handleMemberRoleUpdate(member.userId);
+                            }
+                          }}
+                        >
+                          <option value="member">Membre</option>
+                          <option value="moderator">Modérateur</option>
+                          <option value="admin">Administrateur</option>
+                        </select>
                         {#if memberRoleSaving[member.userId]}
-                          <Loader size={12} class="animate-spin" />
-                        {:else}
-                          <Check size={12} strokeWidth={3} />
+                          <span class="absolute right-1.5 top-1/2 -translate-y-1/2">
+                            <Loader size={12} class="animate-spin text-violet-500" />
+                          </span>
                         {/if}
-                      </button>
+                      </div>
 
                       <button
                         type="button"
                         onclick={() => handleRemoveMember(member.userId)}
                         disabled={memberRemoving[member.userId]}
                         class="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                        title="Retirer de la communauté"
                       >
                         {#if memberRemoving[member.userId]}
                           <Loader size={12} class="animate-spin" />
                         {:else}
-                          <Minus size={12} strokeWidth={3} />
+                          <Trash2 size={12} strokeWidth={2.5} />
                         {/if}
                       </button>
                     </div>

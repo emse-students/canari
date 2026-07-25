@@ -1,32 +1,22 @@
 <script lang="ts">
   import {
-    Shield,
     Settings,
-    Users,
     Trash2,
     LogOut,
     Check,
-    Minus,
-    UserPlus,
     Loader,
     Lock,
     Globe,
     Bell,
     AtSign,
     BellOff,
-    ToggleLeft,
-    ToggleRight,
+    MessageSquareText,
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
-  import PermissionGrid, {
-    type PermissionGridRole,
-    type PermissionGridOverride,
-    type PermissionGridPermission,
-  } from '../shared/PermissionGrid.svelte';
   import { channelService, type ChannelNotificationLevel } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
@@ -51,18 +41,6 @@
     selectedChannelId: string;
     /** List of workspaces and their channels, used to resolve the channel name. */
     channelWorkspaces: ChannelSidebarWorkspace[];
-    /** Callback to invite a user to the channel with a given role. Rejects on key-distribution failure. */
-    onInviteMember: (
-      channelId: string,
-      memberId: string,
-      role: 'member' | 'moderator' | 'admin'
-    ) => Promise<void>;
-    /** Callback to update the role of an existing channel member. */
-    onUpdateMemberRole: (
-      channelId: string,
-      memberId: string,
-      role: 'member' | 'moderator' | 'admin'
-    ) => void;
     /** Callback to rename the channel. */
     onRenameChannel?: (channelId: string, newName: string) => void;
     /** Callback to permanently delete the channel. */
@@ -76,7 +54,7 @@
       channelId: string,
       isPrivate: boolean,
       allowedUserIds: string[],
-      usePermissionOverrides?: boolean
+      whoCanWrite?: string
     ) => void;
   }
 
@@ -84,8 +62,6 @@
     open,
     selectedChannelId,
     channelWorkspaces,
-    onInviteMember,
-    onUpdateMemberRole,
     onRenameChannel,
     onDeleteChannel,
     onLeaveChannel,
@@ -93,7 +69,7 @@
     onUpdateChannelAccess,
   }: Props = $props();
 
-  let activeTab = $state<'overview' | 'permissions' | 'invites'>('overview');
+  let activeTab = $state<'general' | 'access'>('general');
 
   let selectedWorkspace = $derived(
     channelWorkspaces.find((w) => w.channels.some((c) => c.id === selectedChannelId))
@@ -105,153 +81,14 @@
 
   let channelNameInput = $state('');
 
-  // S'assurer que l'input se met a jour quand on change de canal
+  // S'assurer que l'input se met à jour quand on change de canal
   $effect(() => {
     if (open && selectedChannel) {
       channelNameInput = selectedChannel.name;
     }
   });
 
-  let permissionMembersId = $state('');
-  let permissionRole = $state<'member' | 'moderator' | 'admin'>('member');
-  let inviteLoading = $state(false);
-  let inviteError = $state('');
-
-  // ── Members list state ─────────────────────────────────────────────────
-  let channelMembers = $state<
-    Array<{ id: string; userId: string; role: string; joinedAt: string }>
-  >([]);
-  let membersLoading = $state(false);
-  let membersError = $state('');
-  let memberRoleSelections = $state<Record<string, 'member' | 'moderator' | 'admin'>>({});
-  let memberRoleSaving = $state<Record<string, boolean>>({});
-  let memberRemoving = $state<Record<string, boolean>>({});
-
-  // ── Shareable community invite link ────────────────────────────────────────
-  let shareLink = $state('');
-  let shareLoading = $state(false);
-  let shareError = $state('');
-  let shareCopied = $state(false);
-
-  /** Generates a shareable community invite link and copies it to the clipboard. */
-  async function generateShareLink() {
-    const wsId = selectedWorkspace?.workspaceDbId;
-    if (!wsId) {
-      shareError = m.chat_channel_community_not_found_error();
-      return;
-    }
-    shareLoading = true;
-    shareError = '';
-    shareCopied = false;
-    try {
-      const { channelService } = await import('$lib/services/ChannelService');
-      const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
-      const { token } = await channelService.createWorkspaceInvite(wsId);
-      shareLink = publicAppUrl(`/c/join/${token}`);
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        shareCopied = true;
-      } catch {
-        // Clipboard may be blocked; the link is shown for manual copy.
-      }
-    } catch (e) {
-      shareError = e instanceof Error ? e.message : m.chat_channel_invite_link_error();
-    } finally {
-      shareLoading = false;
-    }
-  }
-
-  async function handleInviteAction() {
-    const id = permissionMembersId.trim();
-    if (!id) return;
-    inviteLoading = true;
-    inviteError = '';
-    const savedId = permissionMembersId;
-    const savedRole = permissionRole;
-    permissionMembersId = '';
-    permissionRole = 'member';
-    try {
-      await onInviteMember(selectedChannelId, savedId, savedRole);
-    } catch (e) {
-      inviteError = e instanceof Error ? e.message : m.chat_channel_invite_key_error();
-      permissionMembersId = savedId;
-      permissionRole = savedRole;
-    } finally {
-      inviteLoading = false;
-    }
-  }
-
-  function handleUpdateRoleAction() {
-    if (permissionMembersId.trim()) {
-      onUpdateMemberRole(selectedChannelId, permissionMembersId, permissionRole);
-      permissionMembersId = '';
-      permissionRole = 'member';
-    }
-  }
-
-  // ── Members list management ──────────────────────────────────────────────
-
-  async function loadMembers() {
-    membersLoading = true;
-    membersError = '';
-    try {
-      channelMembers = await channelService.listMembers(selectedChannelId);
-      // Initialize role selections from current roles
-      const selections: Record<string, 'member' | 'moderator' | 'admin'> = {};
-      for (const m of channelMembers) {
-        const role = m.role as string;
-        if (role === 'admin' || role === 'moderator' || role === 'member') {
-          selections[m.userId] = role;
-        } else {
-          selections[m.userId] = 'member';
-        }
-      }
-      memberRoleSelections = selections;
-    } catch (e) {
-      membersError = e instanceof Error ? e.message : 'Failed to load members';
-    } finally {
-      membersLoading = false;
-    }
-  }
-
-  async function handleMemberRoleUpdate(userId: string) {
-    const newRole = memberRoleSelections[userId];
-    if (!newRole) return;
-    memberRoleSaving = { ...memberRoleSaving, [userId]: true };
-    try {
-      await onUpdateMemberRole(selectedChannelId, userId, newRole);
-      // Refresh the list to get updated role
-      await loadMembers();
-    } catch {
-      // Error handled by parent
-    } finally {
-      const updated = { ...memberRoleSaving };
-      delete updated[userId];
-      memberRoleSaving = updated;
-    }
-  }
-
-  async function handleRemoveMember(userId: string) {
-    const confirmed = await showConfirm(
-      `Retirer ce membre du canal ? Il pourra être ré-invité ultérieurement.`,
-      { danger: true, confirmLabel: 'Retirer' }
-    );
-    if (!confirmed) return;
-    memberRemoving = { ...memberRemoving, [userId]: true };
-    try {
-      await channelService.removeMemberFromChannel(selectedChannelId, userId);
-      // Refresh the list
-      await loadMembers();
-    } catch (e) {
-      membersError = e instanceof Error ? e.message : 'Failed to remove member';
-    } finally {
-      const updated = { ...memberRemoving };
-      delete updated[userId];
-      memberRemoving = updated;
-    }
-  }
-
-  // Access control state (loaded lazily when permissions tab opens)
+  // ── Access control state ─────────────────────────────────────────────────
   let accessLoading = $state(false);
   let accessError = $state('');
   let accessSaving = $state(false);
@@ -260,89 +97,32 @@
   let accessAllowedUserIds = $state<string[]>([]);
   let accessLoaded = $state(false);
   let addingUserId = $state('');
+  let whoCanWrite = $state<'everyone' | 'admins_moderators' | 'admins'>('everyone');
 
-  // ── Permission overrides state ─────────────────────────────────────────
-  let usePermissionOverrides = $state(false);
-  let overridesLoaded = $state(false);
-  let overridesLoading = $state(false);
-  let overridesSaving = $state(false);
-  let overridesError = $state('');
-  let permissionRoles: PermissionGridRole[] = $state([]);
-  let permissionOverrides: PermissionGridOverride[] = $state([]);
-
-  /** Permission definitions for the grid. */
-  const gridPermissions: PermissionGridPermission[] = [
-    {
-      key: 'channel.view',
-      label: 'Voir le canal',
-      tooltip: 'Permet de voir le canal dans la liste des canaux.',
-    },
-    {
-      key: 'channel.read',
-      label: 'Lire les messages',
-      tooltip: 'Permet de lire les messages publiés dans ce canal.',
-    },
-    {
-      key: 'channel.send',
-      label: 'Envoyer des messages',
-      tooltip: "Permet d'écrire des messages dans ce canal.",
-    },
-    {
-      key: 'channel.upload',
-      label: 'Envoyer des fichiers',
-      tooltip: "Permet d'envoyer des pièces jointes dans ce canal.",
-    },
-    {
-      key: 'channel.manage',
-      label: 'Gérer le canal',
-      tooltip: 'Permet de renommer, archiver ou modifier les paramètres du canal.',
-    },
-    {
-      key: 'channel.moderate',
-      label: 'Modérer les messages',
-      tooltip: "Permet d'épingler ou de supprimer les messages des autres.",
-    },
-    {
-      key: 'member.invite',
-      label: 'Inviter des membres',
-      tooltip: "Permet d'inviter de nouveaux membres dans ce canal.",
-    },
-    {
-      key: 'member.kick',
-      label: 'Expulser des membres',
-      tooltip: "Permet d'expulser un membre de ce canal spécifique.",
-    },
-  ];
+  // ── Member access list (for removing users from private channel) ───────
+  let membersLoading = $state(false);
+  let membersError = $state('');
+  let channelMembers = $state<
+    Array<{ id: string; userId: string; role: string; joinedAt: string }>
+  >([]);
+  let memberRemoving = $state<Record<string, boolean>>({});
 
   $effect(() => {
-    if (open && activeTab === 'permissions' && selectedChannelId && !accessLoaded) {
+    if (open && activeTab === 'access' && selectedChannelId && !accessLoaded) {
       void loadChannelAccess();
     }
-    if (open && activeTab === 'invites' && selectedChannelId) {
-      void loadMembers();
-    }
     if (!open) {
-      activeTab = 'overview';
+      activeTab = 'general';
       accessLoaded = false;
       accessSaved = false;
       accessError = '';
       accessIsPrivate = false;
       accessAllowedUserIds = [];
       addingUserId = '';
-      permissionMembersId = '';
-      permissionRole = 'member';
-      inviteError = '';
-      inviteLoading = false;
+      whoCanWrite = 'everyone';
       channelMembers = [];
       membersError = '';
-      memberRoleSelections = {};
-      memberRoleSaving = {};
       memberRemoving = {};
-      usePermissionOverrides = false;
-      overridesLoaded = false;
-      permissionRoles = [];
-      permissionOverrides = [];
-      overridesError = '';
     }
   });
 
@@ -353,12 +133,11 @@
       const data = await channelService.getChannelAccess(selectedChannelId);
       accessIsPrivate = data.isPrivate;
       accessAllowedUserIds = data.allowedUsers ?? [];
-      usePermissionOverrides = data.usePermissionOverrides ?? false;
-      accessLoaded = true;
-      // If overrides are enabled, load them
-      if (usePermissionOverrides) {
-        await loadPermissionOverrides();
+      // If channel is private, also load the member list (for removal)
+      if (data.isPrivate) {
+        await loadMembers();
       }
+      accessLoaded = true;
     } catch (e) {
       accessError = e instanceof Error ? e.message : m.chat_channel_access_load_error();
     } finally {
@@ -366,54 +145,15 @@
     }
   }
 
-  async function loadPermissionOverrides() {
-    overridesLoading = true;
-    overridesError = '';
+  async function loadMembers() {
+    membersLoading = true;
+    membersError = '';
     try {
-      const data = await channelService.getPermissionOverrides(selectedChannelId);
-      permissionRoles = data.roles ?? [];
-      permissionOverrides = data.overrides ?? [];
-      overridesLoaded = true;
+      channelMembers = await channelService.listMembers(selectedChannelId);
     } catch (e) {
-      overridesError =
-        e instanceof Error ? e.message : 'Erreur lors du chargement des permissions.';
+      membersError = e instanceof Error ? e.message : 'Erreur lors du chargement des membres.';
     } finally {
-      overridesLoading = false;
-    }
-  }
-
-  async function handleOverrideToggle(
-    roleId: string,
-    permissionKey: string,
-    value: 'allow' | 'deny' | 'neutral'
-  ) {
-    overridesSaving = true;
-    try {
-      await channelService.setPermissionOverride(selectedChannelId, roleId, permissionKey, value);
-      // Update local state optimistically
-      if (value === 'neutral') {
-        permissionOverrides = permissionOverrides.filter(
-          (o) => !(o.roleId === roleId && o.permission === permissionKey)
-        );
-      } else {
-        const existing = permissionOverrides.findIndex(
-          (o) => o.roleId === roleId && o.permission === permissionKey
-        );
-        if (existing >= 0) {
-          permissionOverrides[existing] = { ...permissionOverrides[existing], value };
-          permissionOverrides = [...permissionOverrides];
-        } else {
-          permissionOverrides = [
-            ...permissionOverrides,
-            { roleId, permission: permissionKey, value },
-          ];
-        }
-      }
-    } catch (e) {
-      overridesError =
-        e instanceof Error ? e.message : 'Erreur lors de la mise à jour de la permission.';
-    } finally {
-      overridesSaving = false;
+      membersLoading = false;
     }
   }
 
@@ -425,20 +165,15 @@
       await channelService.updateChannelAccess(
         selectedChannelId,
         accessIsPrivate,
-        accessAllowedUserIds,
-        usePermissionOverrides
+        accessAllowedUserIds
       );
       onUpdateChannelAccess?.(
         selectedChannelId,
         accessIsPrivate,
         accessAllowedUserIds,
-        usePermissionOverrides
+        whoCanWrite
       );
       accessSaved = true;
-      // If overrides were just enabled, load them
-      if (usePermissionOverrides && !overridesLoaded) {
-        await loadPermissionOverrides();
-      }
       setTimeout(() => {
         accessSaved = false;
       }, 2500);
@@ -459,6 +194,27 @@
 
   function removeAllowedUser(userId: string) {
     accessAllowedUserIds = accessAllowedUserIds.filter((u) => u !== userId);
+  }
+
+  async function handleRemoveMemberFromChannel(userId: string) {
+    const confirmed = await showConfirm(
+      `Retirer cet utilisateur de l'accès au canal ? Il pourra être ré-invité ultérieurement.`,
+      { danger: true, confirmLabel: 'Retirer' }
+    );
+    if (!confirmed) return;
+    memberRemoving = { ...memberRemoving, [userId]: true };
+    try {
+      await channelService.removeMemberFromChannel(selectedChannelId, userId);
+      accessAllowedUserIds = accessAllowedUserIds.filter((u) => u !== userId);
+      // Also remove from displayed member list
+      channelMembers = channelMembers.filter((m) => m.userId !== userId);
+    } catch (e) {
+      membersError = e instanceof Error ? e.message : 'Erreur lors du retrait.';
+    } finally {
+      const updated = { ...memberRemoving };
+      delete updated[userId];
+      memberRemoving = updated;
+    }
   }
 
   // Personal per-channel push notification level (all | mentions | none).
@@ -536,7 +292,7 @@
 
 <Modal {open} {onClose} title={m.chat_channel_settings_title()} maxWidth="max-w-4xl">
   <div class="-mx-6 -my-4 flex flex-col md:flex-row h-full md:h-[65vh] max-h-[800px]">
-    <!-- Barre de menu laterale (Onglets sur mobile) -->
+    <!-- Barre de menu latérale (Onglets sur mobile) -->
     <div
       class="w-full md:w-64 shrink-0 bg-white/40 dark:bg-black/20 border-b md:border-b-0 md:border-r border-black/5 dark:border-white/10 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-3 md:p-5 gap-2 md:gap-1 custom-scrollbar"
     >
@@ -550,9 +306,9 @@
       </h3>
 
       <button
-        onclick={() => (activeTab = 'overview')}
+        onclick={() => (activeTab = 'general')}
         class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-        'overview'
+        'general'
           ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shadow-sm'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
@@ -561,28 +317,17 @@
       </button>
 
       <button
-        onclick={() => (activeTab = 'permissions')}
+        onclick={() => (activeTab = 'access')}
         class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-        'permissions'
+        'access'
           ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shadow-sm'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
-        <Shield size={18} strokeWidth={2.5} />
-        {m.chat_channel_permissions_tab()}
+        <Lock size={18} strokeWidth={2.5} />
+        Accès
       </button>
 
-      <button
-        onclick={() => (activeTab = 'invites')}
-        class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
-        'invites'
-          ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shadow-sm'
-          : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
-      >
-        <Users size={18} strokeWidth={2.5} />
-        {m.chat_channel_invitations_roles_tab()}
-      </button>
-
-      <!-- Boutons de danger (Desktop uniquement, places en bas) -->
+      <!-- Boutons de danger (Desktop uniquement, placés en bas) -->
       <div class="hidden md:flex md:flex-col mt-auto pt-6 gap-2">
         <button
           type="button"
@@ -605,8 +350,8 @@
 
     <!-- Contenu Principal -->
     <div class="flex-1 bg-transparent p-5 md:p-8 overflow-y-auto custom-scrollbar">
-      <!-- ================= ONGLET : VUE D'ENSEMBLE ================= -->
-      {#if activeTab === 'overview'}
+      <!-- ================= ONGLET : GÉNÉRAL ================= -->
+      {#if activeTab === 'general'}
         <div class="space-y-6 max-w-2xl">
           <h2 class="text-xl font-bold text-text-main">{m.chat_channel_overview_tab()}</h2>
           <div class="space-y-4">
@@ -709,9 +454,9 @@
         </div>
       {/if}
 
-      <!-- ================= ONGLET : PERMISSIONS ================= -->
-      {#if activeTab === 'permissions'}
-        <div class="space-y-6 max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <!-- ================= ONGLET : ACCÈS ================= -->
+      {#if activeTab === 'access'}
+        <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div>
             <h2 class="text-xl font-extrabold text-text-main mb-1">
               {m.chat_channel_access_title()}
@@ -733,202 +478,153 @@
               {accessError}
             </div>
           {:else}
-            <!-- ═══ Toggle : Système d'overrides avancé ═══ -->
             <div
               class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 space-y-5 shadow-sm"
             >
+              <!-- ═══ Visibility toggle ═══ -->
               <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
-                  <div class="p-2 rounded-xl bg-violet-500/10 text-violet-600">
-                    <Shield size={18} strokeWidth={2.5} />
-                  </div>
-                  <div>
-                    <p class="font-bold text-text-main text-sm">Permissions avancées par rôle</p>
-                    <p class="text-xs text-text-muted">
-                      Activez pour définir des permissions granulaires par rôle (Discord-like).
-                    </p>
-                  </div>
+                  {#if accessIsPrivate}
+                    <div class="p-2 rounded-xl bg-amber-500/10 text-amber-600">
+                      <Lock size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <p class="font-bold text-text-main text-sm">
+                        {m.chat_channel_private_label()}
+                      </p>
+                      <p class="text-xs text-text-muted">
+                        {m.chat_channel_private_description()}
+                      </p>
+                    </div>
+                  {:else}
+                    <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+                      <Globe size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <p class="font-bold text-text-main text-sm">
+                        {m.chat_channel_public_label()}
+                      </p>
+                      <p class="text-xs text-text-muted">
+                        {m.chat_channel_public_description()}
+                      </p>
+                    </div>
+                  {/if}
                 </div>
                 <button
                   type="button"
                   onclick={() => {
-                    usePermissionOverrides = !usePermissionOverrides;
-                    accessSaved = false;
+                    accessIsPrivate = !accessIsPrivate;
                   }}
-                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {usePermissionOverrides
-                    ? 'bg-violet-500'
+                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate
+                    ? 'bg-amber-500'
                     : 'bg-black/10 dark:bg-white/20'}"
                   role="switch"
-                  aria-checked={usePermissionOverrides}
+                  aria-checked={accessIsPrivate}
                 >
-                  <span class="sr-only">Activer les permissions avancées</span>
+                  <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
                   <span
-                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {usePermissionOverrides
+                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
                       ? 'translate-x-6'
                       : 'translate-x-1'}"
                   ></span>
                 </button>
               </div>
 
-              <!-- ═══ Permission Grid (when overrides enabled) ═══ -->
-              {#if usePermissionOverrides}
-                <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-3">
-                  {#if overridesLoading}
-                    <div class="flex items-center gap-2 text-sm text-text-muted py-4">
-                      <Loader size={14} class="animate-spin" />
-                      Chargement des permissions...
-                    </div>
-                  {:else if overridesError}
-                    <div
-                      class="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 text-sm border border-red-200 dark:border-red-800"
-                    >
-                      {overridesError}
-                    </div>
-                  {:else if permissionRoles.length > 0}
-                    <PermissionGrid
-                      roles={permissionRoles}
-                      permissions={gridPermissions}
-                      overrides={permissionOverrides}
-                      onToggle={handleOverrideToggle}
-                    />
-                    {#if overridesSaving}
-                      <div class="flex items-center gap-2 text-xs text-text-muted pt-1">
-                        <Loader size={10} class="animate-spin" />
-                        Sauvegarde...
-                      </div>
-                    {/if}
-                  {/if}
+              <!-- ═══ Qui peut écrire ? ═══ -->
+              <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-2">
+                <div class="flex items-center gap-2">
+                  <MessageSquareText size={16} class="text-amber-500" strokeWidth={2.5} />
+                  <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+                    Qui peut écrire ?
+                  </p>
                 </div>
-              {/if}
-
-              <!-- ═══ Legacy : public/privé + allowlist (toujours visible) ═══ -->
-              <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-4">
-                <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-                  {usePermissionOverrides
-                    ? 'Paramètres legacy (secondaires)'
-                    : 'Visibilité du canal'}
+                <select
+                  class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all text-sm font-semibold appearance-none"
+                  bind:value={whoCanWrite}
+                >
+                  <option value="everyone"> Tout le monde </option>
+                  <option value="admins_moderators"> Admins et modérateurs uniquement </option>
+                  <option value="admins"> Admins uniquement </option>
+                </select>
+                <p class="text-xs text-text-muted">
+                  Les administrateurs ont toujours accès à tous les canaux, même privés.
                 </p>
+              </div>
 
-                <!-- Visibility toggle -->
-                <div class="flex items-center justify-between gap-4">
-                  <div class="flex items-center gap-3">
-                    {#if accessIsPrivate}
-                      <div class="p-2 rounded-xl bg-amber-500/10 text-amber-600">
-                        <Lock size={18} strokeWidth={2.5} />
-                      </div>
-                      <div>
-                        <p class="font-bold text-text-main text-sm">
-                          {m.chat_channel_private_label()}
-                        </p>
-                        <p class="text-xs text-text-muted">
-                          {m.chat_channel_private_description()}
-                        </p>
-                      </div>
-                    {:else}
-                      <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
-                        <Globe size={18} strokeWidth={2.5} />
-                      </div>
-                      <div>
-                        <p class="font-bold text-text-main text-sm">
-                          {m.chat_channel_public_label()}
-                        </p>
-                        <p class="text-xs text-text-muted">
-                          {m.chat_channel_public_description()}
-                        </p>
-                      </div>
-                    {/if}
-                  </div>
-                  <button
-                    type="button"
-                    onclick={() => {
-                      accessIsPrivate = !accessIsPrivate;
-                    }}
-                    class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate
-                      ? 'bg-amber-500'
-                      : 'bg-black/10 dark:bg-white/20'}"
-                    role="switch"
-                    aria-checked={accessIsPrivate}
+              <!-- ═══ Member allowlist (only when private) ═══ -->
+              {#if accessIsPrivate}
+                <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-3">
+                  <p
+                    class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                   >
-                    <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
-                    <span
-                      class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
-                        ? 'translate-x-6'
-                        : 'translate-x-1'}"
-                    ></span>
-                  </button>
-                </div>
+                    <Lock size={13} />
+                    {m.chat_allowed_members_label()}
+                  </p>
 
-                <!-- Member allowlist (only when private) -->
-                {#if accessIsPrivate}
-                  <div class="space-y-3">
+                  <!-- Existing allowed users -->
+                  {#if accessAllowedUserIds.length === 0}
+                    <p class="text-sm text-text-muted italic">
+                      {m.chat_no_allowed_members_warning()}
+                    </p>
+                  {:else}
+                    <ul class="space-y-1.5">
+                      {#each accessAllowedUserIds as uid (uid)}
+                        <li
+                          class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
+                        >
+                          <div class="flex items-center gap-2 min-w-0">
+                            <Avatar userId={uid} size="sm" />
+                            <UserName
+                              userId={uid}
+                              class="text-sm font-medium text-text-main truncate"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onclick={() => handleRemoveMemberFromChannel(uid)}
+                            disabled={memberRemoving[uid]}
+                            class="text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors flex-shrink-0"
+                            title="Retirer l'accès"
+                          >
+                            {#if memberRemoving[uid]}
+                              <Loader size={14} class="animate-spin" />
+                            {:else}
+                              <Trash2 size={14} strokeWidth={2.5} />
+                            {/if}
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+
+                  <!-- Add a user -->
+                  <div class="space-y-2 pt-1">
                     <p
                       class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                     >
-                      <Users size={13} />
-                      {m.chat_allowed_members_label()}
+                      Ajouter un utilisateur
                     </p>
-
-                    <!-- Existing allowed users -->
-                    {#if accessAllowedUserIds.length === 0}
-                      <p class="text-sm text-text-muted italic">
-                        {m.chat_no_allowed_members_warning()}
-                      </p>
-                    {:else}
-                      <ul class="space-y-1.5">
-                        {#each accessAllowedUserIds as uid (uid)}
-                          <li
-                            class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
-                          >
-                            <div class="flex items-center gap-2 min-w-0">
-                              <Avatar userId={uid} size="sm" />
-                              <UserName
-                                userId={uid}
-                                class="text-sm font-medium text-text-main truncate"
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              onclick={() => removeAllowedUser(uid)}
-                              class="text-red-500 hover:text-red-700 transition-colors flex-shrink-0"
-                              title={m.common_remove_label()}
-                            >
-                              <Minus size={14} strokeWidth={3} />
-                            </button>
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
-
-                    <!-- Add a user -->
-                    <div class="space-y-2 pt-1">
-                      <p
-                        class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                      >
-                        <UserPlus size={13} />
-                        {m.chat_add_member_label()}
-                      </p>
-                      <div class="flex gap-2 items-start">
-                        <div class="flex-1">
-                          <UserAutocomplete
-                            value={addingUserId}
-                            onValueChange={(v) => (addingUserId = v)}
-                            placeholder={m.chat_search_user_placeholder()}
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onclick={addAllowedUser}
-                          disabled={!addingUserId.trim()}
-                          class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
-                        >
-                          <Check size={14} strokeWidth={3} />
-                          {m.common_add_button()}
-                        </button>
+                    <div class="flex gap-2 items-start">
+                      <div class="flex-1">
+                        <UserAutocomplete
+                          value={addingUserId}
+                          onValueChange={(v) => (addingUserId = v)}
+                          placeholder={m.chat_search_user_placeholder()}
+                        />
                       </div>
+                      <button
+                        type="button"
+                        onclick={addAllowedUser}
+                        disabled={!addingUserId.trim()}
+                        class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
+                      >
+                        <Check size={14} strokeWidth={3} />
+                        {m.common_add_button()}
+                      </button>
                     </div>
                   </div>
-                {/if}
-              </div>
+                </div>
+              {/if}
 
               <!-- Save -->
               <div
@@ -957,256 +653,12 @@
           {/if}
         </div>
       {/if}
-
-      <!-- ================= ONGLET : INVITATIONS & ROLES ================= -->
-      {#if activeTab === 'invites'}
-        <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">
-              {m.chat_channel_invitations_roles_title()}
-            </h2>
-            <p class="text-sm font-medium text-text-muted leading-relaxed">
-              {m.chat_channel_invitations_description()}
-            </p>
-          </div>
-
-          <!-- Liste des membres actuels du canal -->
-          <div
-            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-4 shadow-sm backdrop-blur-md"
-          >
-            <p
-              class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-            >
-              <Users size={14} />
-              {m.chat_channel_members_title()}
-            </p>
-
-            {#if membersLoading}
-              <div class="flex items-center gap-2 text-sm text-text-muted">
-                <Loader size={14} class="animate-spin" />
-                {m.chat_community_loading_members()}
-              </div>
-            {:else if membersError}
-              <p class="text-xs font-medium text-red-600 dark:text-red-400">{membersError}</p>
-            {:else if channelMembers.length === 0}
-              <p class="text-sm text-text-muted italic">{m.chat_community_no_members()}</p>
-            {:else}
-              <ul class="space-y-2">
-                {#each channelMembers as member (member.userId)}
-                  <li
-                    class="flex items-center justify-between gap-3 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2.5"
-                  >
-                    <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                      <Avatar userId={member.userId} size="sm" />
-                      <UserName
-                        userId={member.userId}
-                        class="text-sm font-medium text-text-main truncate"
-                      />
-                      <span
-                        class="shrink-0 text-[0.65rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full {member.role ===
-                        'admin'
-                          ? 'bg-red-500/10 text-red-600 dark:text-red-400'
-                          : member.role === 'moderator'
-                            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                            : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}"
-                      >
-                        {member.role === 'admin'
-                          ? m.chat_role_admin()
-                          : member.role === 'moderator'
-                            ? m.chat_role_moderator()
-                            : m.chat_role_member()}
-                      </span>
-                    </div>
-
-                    <div class="flex items-center gap-1.5 shrink-0">
-                      <!-- Role selector -->
-                      <select
-                        class="w-28 bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-amber-500/50 appearance-none"
-                        value={memberRoleSelections[member.userId] ?? member.role}
-                        onchange={(e) => {
-                          const val = (e.target as HTMLSelectElement).value;
-                          if (val === 'member' || val === 'moderator' || val === 'admin') {
-                            memberRoleSelections = {
-                              ...memberRoleSelections,
-                              [member.userId]: val,
-                            };
-                          }
-                        }}
-                      >
-                        <option value="member" class="bg-white dark:bg-zinc-900"
-                          >{m.chat_role_member_description()}</option
-                        >
-                        <option value="moderator" class="bg-white dark:bg-zinc-900"
-                          >{m.chat_role_moderator_description()}</option
-                        >
-                        <option value="admin" class="bg-white dark:bg-zinc-900"
-                          >{m.chat_role_admin_description()}</option
-                        >
-                      </select>
-
-                      <!-- Update role button -->
-                      <button
-                        type="button"
-                        onclick={() => handleMemberRoleUpdate(member.userId)}
-                        disabled={memberRoleSaving[member.userId] ||
-                          (memberRoleSelections[member.userId] ?? member.role) === member.role}
-                        class="rounded-lg border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-2 py-1.5 text-xs font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
-                        title={m.common_update_button()}
-                      >
-                        {#if memberRoleSaving[member.userId]}
-                          <Loader size={12} class="animate-spin" />
-                        {:else}
-                          <Check size={12} strokeWidth={3} />
-                        {/if}
-                      </button>
-
-                      <!-- Remove member button -->
-                      <button
-                        type="button"
-                        onclick={() => handleRemoveMember(member.userId)}
-                        disabled={memberRemoving[member.userId]}
-                        class="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
-                        title={m.common_remove_label()}
-                      >
-                        {#if memberRemoving[member.userId]}
-                          <Loader size={12} class="animate-spin" />
-                        {:else}
-                          <Minus size={12} strokeWidth={3} />
-                        {/if}
-                      </button>
-                    </div>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-
-          <!-- Lien d'invitation partageable (communaute entiere) -->
-          <div
-            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-3 shadow-sm backdrop-blur-md"
-          >
-            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-              {m.chat_community_invite_link_label()}
-            </p>
-            <p class="text-sm text-text-muted leading-relaxed">
-              {m.chat_community_invite_link_description()}
-            </p>
-            {#if shareLink}
-              <div class="flex items-center gap-2">
-                <input
-                  type="text"
-                  readonly
-                  value={shareLink}
-                  class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
-                />
-                <button
-                  type="button"
-                  onclick={generateShareLink}
-                  class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
-                >
-                  {m.chat_regenerate_link_button()}
-                </button>
-              </div>
-              {#if shareCopied}
-                <p class="text-xs font-semibold text-emerald-600">{m.chat_link_copied_success()}</p>
-              {/if}
-            {:else}
-              <button
-                type="button"
-                onclick={generateShareLink}
-                disabled={shareLoading}
-                class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
-              >
-                {shareLoading ? m.common_generating_label() : m.chat_generate_invite_link_button()}
-              </button>
-            {/if}
-            {#if shareError}
-              <p class="text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
-            {/if}
-          </div>
-
-          <div
-            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-5 shadow-sm backdrop-blur-md"
-          >
-            <!-- Recherche utilisateur -->
-            <div class="space-y-2">
-              <label
-                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                for="invite-autocomplete"
-              >
-                <Users size={14} />
-                {m.chat_search_user_label()}
-              </label>
-              <UserAutocomplete
-                value={permissionMembersId}
-                onValueChange={(v) => (permissionMembersId = v)}
-                placeholder={m.chat_search_user_name_or_id_placeholder()}
-                inputId="invite-autocomplete"
-              />
-            </div>
-
-            <!-- Select Role -->
-            <div class="space-y-2">
-              <label
-                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                for="role-select"
-              >
-                <Shield size={14} />
-                {m.chat_assign_role_label()}
-              </label>
-              <select
-                id="role-select"
-                class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all text-sm font-semibold appearance-none"
-                bind:value={permissionRole}
-              >
-                <option value="member" class="bg-white dark:bg-zinc-900 font-medium"
-                  >{m.chat_role_member_description()}</option
-                >
-                <option value="moderator" class="bg-white dark:bg-zinc-900 font-medium"
-                  >{m.chat_role_moderator_description()}</option
-                >
-                <option value="admin" class="bg-white dark:bg-zinc-900 font-medium"
-                  >{m.chat_role_admin_description()}</option
-                >
-              </select>
-            </div>
-
-            <!-- Actions -->
-            <div
-              class="flex flex-col sm:flex-row gap-3 pt-4 border-t border-black/5 dark:border-white/10"
-            >
-              <button
-                type="button"
-                onclick={handleInviteAction}
-                disabled={!permissionMembersId.trim() || inviteLoading}
-                class="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 disabled:shadow-none"
-              >
-                <UserPlus size={18} strokeWidth={2.5} />
-                {inviteLoading ? m.common_sending_label() : m.chat_send_invitation_button()}
-              </button>
-
-              <button
-                type="button"
-                onclick={handleUpdateRoleAction}
-                disabled={!permissionMembersId.trim()}
-                class="flex-1 rounded-xl border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                <Shield size={18} strokeWidth={2.5} />
-                {m.common_update_button()}
-              </button>
-            </div>
-            {#if inviteError}
-              <p class="mt-2 text-xs font-medium text-red-600 dark:text-red-400">{inviteError}</p>
-            {/if}
-          </div>
-        </div>
-      {/if}
     </div>
   </div>
 </Modal>
 
 <style>
-  /* Scrollbar discrete pour le menu et le contenu */
+  /* Scrollbar discrète pour le menu et le contenu */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;

@@ -2,8 +2,8 @@
 
 > **Statut** : Proposition  
 > **Auteur** : Zoo (Architecte)  
-> **Date** : 2026-07-25  
-> **Inspiration** : Modèle de permissions Discord (RBAC + overrides par canal)
+> **Date** : 2026-07-25
+> **Inspiration** : Modèle de permissions RBAC + overrides par canal
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 1. Résumé exécutif
 
-Le système de permissions actuel est binaire (`public`/`private`) et ignore complètement les 6 permissions granulaires définies dans [`permissions.ts`](../../apps/social-service/src/channels/permissions.ts). Cette refonte introduit un modèle Discord-like où :
+Le système de permissions actuel est binaire (`public`/`private`) et ignore complètement les 6 permissions granulaires définies dans [`permissions.ts`](../../apps/social-service/src/channels/permissions.ts). Cette refonte introduit un modèle RBAC où :
 
 - Chaque rôle de workspace possède des **permissions de base** (niveau workspace)
 - Chaque canal peut **surcharger** ces permissions par rôle (ALLOW / DENY / NEUTRAL)
@@ -110,7 +110,7 @@ L'UI actuelle a 3 onglets :
 
 ### 3.1 Principe fondamental
 
-On adopte le modèle Discord : **permissions de base au niveau du rôle workspace + overrides par canal**.
+On adopte le modèle RBAC : **permissions de base au niveau du rôle workspace + overrides par canal**.
 
 Chaque permission possède 3 états possibles au niveau du canal :
 - **ALLOW** (✅) : la permission est explicitement accordée
@@ -334,7 +334,7 @@ effectivePermissions(channelId, memberId) → Set<ChannelPermission>
 
 **Règle de hiérarchie stricte :**
 - Un rôle de priorité supérieure ne peut **jamais** être restreint par un override ciblant un rôle de priorité inférieure
-- `MANAGE_WORKSPACE` est l'équivalent du « Administrator » Discord : il outrepasse tout
+- `MANAGE_WORKSPACE` est la permission administrateur ultime : elle outrepasse tout
 - Un modérateur (priority 50) ne peut pas modifier les overrides qui ciblent le rôle Admin (priority 100)
 
 ### 4.2 Signature des fonctions principales
@@ -860,9 +860,9 @@ frontend/src/lib/
 | _(implicite)_ | `channel.upload` | ✅ Oui |
 | _(implicite)_ | `member.kick` | ✅ Oui |
 
-## Annexe B : Comparaison avec Discord
+## Annexe B : Comparaison avec d'autres plateformes
 
-| Concept | Discord | Canari (après refonte) |
+| Concept | Autres plateformes | Canari (après refonte) |
 |---|---|---|
 | Rôles serveur | Server Roles | `channel_roles` (workspace) |
 | Permissions de base | Role permissions | `ChannelRole.permissions[]` |

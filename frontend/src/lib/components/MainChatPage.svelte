@@ -907,10 +907,6 @@
         onClose={() => (convs.isChannelSettingsModalOpen = false)}
         selectedChannelId={channels.selectedChannelConversationId}
         channelWorkspaces={channels.channelWorkspaces}
-        onInviteMember={(channelId, memberId, roleName) =>
-          channels.inviteMemberToChannel(channelId, memberId, roleName, channelsCtx())}
-        onUpdateMemberRole={(channelId, memberId, roleName) =>
-          channels.updateChannelMemberRole(channelId, memberId, roleName, channelsCtx())}
         onRenameChannel={(channelId, newName) =>
           channels.renameCurrentChannel(channelId, newName, channelsCtx())}
         onDeleteChannel={(channelId) => {

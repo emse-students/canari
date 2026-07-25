@@ -110,7 +110,7 @@
   let callElapsedSec = $state(0);
   /**
    * Compact, non-blocking widget mode: used for audio-only calls (so the user can
-   * keep navigating the app, a la Messenger/Discord) and whenever the user minimizes.
+   * keep navigating the app) and whenever the user minimizes.
    * Incoming rings and the calling state always use the prominent expanded prompt.
    * Ended state also shows expanded briefly for the summary.
    */

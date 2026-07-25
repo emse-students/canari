@@ -1,7 +1,7 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index, Unique } from 'typeorm';
 
 /**
- * Discord-style permission flags for association members.
+ * Permission flags for association members.
  * Each flag is an independent capability - combine with bitwise OR.
  */
 export enum AssociationPermissionFlag {

@@ -282,6 +282,17 @@ export class ChannelsController {
     return this.service.leaveWorkspace(workspaceId, xUserId.trim().toLowerCase());
   }
 
+  /** Kicks a member from a workspace (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
+  @UseGuards(NginxAuthGuard)
+  @Delete('workspaces/:workspaceId/members/:userId')
+  kickFromWorkspace(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.service.kickFromWorkspace(workspaceId, userId.trim().toLowerCase(), xUserId.trim().toLowerCase());
+  }
+
   /** Updates the cover image of a workspace. */
   @UseGuards(NginxAuthGuard)
   @Patch('workspaces/:workspaceId/image')

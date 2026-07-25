@@ -20,7 +20,7 @@
     placeholder?: string;
     disabled?: boolean;
     singleLine?: boolean;
-    /** Discord-style live markdown (* / _ italic_, __underline__, **bold**, escapes, muted delimiters). */
+    /** Live markdown preview (* / _ italic_, __underline__, **bold**, escapes, muted delimiters). */
     markdownPreview?: boolean;
     maxlength?: number;
     minHeight?: string;

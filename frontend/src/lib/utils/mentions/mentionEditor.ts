@@ -337,7 +337,7 @@ export function needsMentionChipRender(root: HTMLElement, plainText: string): bo
   return root.querySelectorAll(MENTION_CHIP_SELECTOR).length < expected;
 }
 
-/** Renders plain text (mentions + optional Discord-style markdown preview) into the editor. */
+/** Renders plain text (mentions + optional markdown preview) into the editor. */
 export function renderPlainTextToMentionEditor(
   root: HTMLElement,
   text: string,

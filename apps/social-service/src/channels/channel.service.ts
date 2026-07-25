@@ -437,7 +437,7 @@ export class ChannelService {
   /** Creates a workspace with default Administrateur/Modérateur/Membre roles, adds the creator as admin, and creates a public #general channel. */
   /**
    * Returns a workspace slug guaranteed free of collisions with existing communities.
-   * Communities may share a display name (Discord-style), but `channel_workspaces.slug`
+   * Communities may share a display name, but `channel_workspaces.slug`
    * has a unique constraint and is used for URL lookups, so a numeric suffix (`-2`, `-3`, …)
    * is appended when the requested slug is already taken.
    */
@@ -632,7 +632,7 @@ export class ChannelService {
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     const channelName = (input.name ?? '').trim().toLowerCase();
     if (!channelName) throw new BadRequestException('Channel name cannot be empty');
@@ -737,7 +737,7 @@ export class ChannelService {
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     const trimmedName = newName.trim().toLowerCase();
     if (!trimmedName) throw new BadRequestException('Channel name cannot be empty');
@@ -1403,18 +1403,20 @@ export class ChannelService {
     const adminMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
     });
-    if (!adminMember) throw new ForbiddenException('Not an admin');
+    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (adminMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
       );
     }
 
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
     await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
 
@@ -1460,6 +1462,53 @@ export class ChannelService {
       workspaceMemberIds
     );
 
+    return { success: true };
+  }
+
+  /** Kicks a member from the workspace entirely (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
+  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
+
+    // Verify the target user is a member
+    const targetMember = await this.memberRepo.findOne({
+      where: { workspaceId, userId: targetUserId },
+    });
+    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
+
+    await this.memberRepo.delete({ workspaceId, userId: targetUserId });
+
+    // Notify the kicked user and remaining workspace members
+    const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
+    const notifyIds = [...new Set([...remainingMemberIds, targetUserId])];
+    await this.redis.publishChannelEvent(
+      'channel.member.kicked',
+      {
+        workspaceId,
+        kickedUserId: targetUserId,
+        kickedBy: actorUserId,
+      },
+      notifyIds
+    );
+
+    this.logger.log(`[WORKSPACE] kick workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`);
     return { success: true };
   }
 
@@ -1515,18 +1564,20 @@ export class ChannelService {
     const adminMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!adminMember) throw new ForbiddenException('Not an admin');
+    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (adminMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
       );
     }
 
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
     // Verify the target user is a workspace member
     const targetMember = await this.memberRepo.findOne({
