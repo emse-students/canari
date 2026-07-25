@@ -29,6 +29,9 @@ export class Channel {
   @Column('simple-array', { default: '' })
   allowedUsers: string[];
 
+  @Column({ default: false })
+  usePermissionOverrides: boolean;
+
   @Column({ default: 1 })
   keyVersion: number;
 

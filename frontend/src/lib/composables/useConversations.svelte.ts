@@ -837,7 +837,11 @@ export function useConversations() {
   }
 
   /** Opens or creates a direct 1-to-1 conversation with the given user. */
-  async function startNewConversation(contactNameRaw: string, ctx: ConversationContext) {
+  async function startNewConversation(
+    contactNameRaw: string,
+    ctx: ConversationContext,
+    opts?: { silent?: boolean }
+  ) {
     await startConversation(contactNameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
@@ -848,6 +852,7 @@ export function useConversations() {
       selectConversation: (name) => selectConversationWithCtx(name, ctx),
       saveConversation: (name) => saveConversation(name, ctx),
       log: ctx.log,
+      silent: opts?.silent,
     });
   }
 

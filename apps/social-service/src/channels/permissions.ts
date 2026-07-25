@@ -1,46 +1,122 @@
-/** Exhaustive map of all channel permission string literals. */
+// ─── Répertoire unifié des permissions (Discord-like) ───
+
 export const CHANNEL_PERMISSIONS = {
-  CHANNEL_READ: 'channel.read',
-  CHANNEL_WRITE: 'channel.write',
-  CHANNEL_MANAGE: 'channel.manage',
-  MEMBER_INVITE: 'member.invite',
-  MEMBER_KICK: 'member.kick',
-  ROLE_MANAGE: 'role.manage',
+  // ── Accès au canal ──
+  VIEW_CHANNEL: 'channel.view',
+  READ_MESSAGES: 'channel.read',
+  SEND_MESSAGES: 'channel.send',
+  UPLOAD_FILES: 'channel.upload',
+
+  // ── Gestion du canal ──
+  MANAGE_CHANNEL: 'channel.manage',
+  MANAGE_MESSAGES: 'channel.moderate',
+
+  // ── Membres ──
+  INVITE_MEMBERS: 'member.invite',
+  KICK_MEMBERS: 'member.kick',
+
+  // ── Rôles (workspace uniquement, pas overridable par canal) ──
+  MANAGE_ROLES: 'role.manage',
+  MANAGE_WORKSPACE: 'workspace.manage',
 } as const;
 
-/** Union type of all valid channel permission strings. */
 export type ChannelPermission = (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNEL_PERMISSIONS];
 
-/** Full permission set granted to channel/workspace owners. */
-export const DEFAULT_OWNER_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.CHANNEL_READ,
-  CHANNEL_PERMISSIONS.CHANNEL_WRITE,
-  CHANNEL_PERMISSIONS.CHANNEL_MANAGE,
-  CHANNEL_PERMISSIONS.MEMBER_INVITE,
-  CHANNEL_PERMISSIONS.MEMBER_KICK,
-  CHANNEL_PERMISSIONS.ROLE_MANAGE,
+/** Permissions qui NE PEUVENT PAS être surchargées au niveau du canal (réservées au workspace). */
+export const WORKSPACE_ONLY_PERMISSIONS: ChannelPermission[] = [
+  CHANNEL_PERMISSIONS.MANAGE_ROLES,
+  CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
 ];
 
-/** Permission set granted to channel admins (same as owner by default). */
+/** Permissions surchargeables au niveau du canal. */
+export const CHANNEL_OVERRIDABLE_PERMISSIONS: ChannelPermission[] = [
+  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
+  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.SEND_MESSAGES,
+  CHANNEL_PERMISSIONS.UPLOAD_FILES,
+  CHANNEL_PERMISSIONS.MANAGE_CHANNEL,
+  CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
+  CHANNEL_PERMISSIONS.INVITE_MEMBERS,
+  CHANNEL_PERMISSIONS.KICK_MEMBERS,
+];
+
+/** Permissions du rôle Administrateur (priority 100) — toutes les permissions. */
 export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.CHANNEL_READ,
-  CHANNEL_PERMISSIONS.CHANNEL_WRITE,
-  CHANNEL_PERMISSIONS.CHANNEL_MANAGE,
-  CHANNEL_PERMISSIONS.MEMBER_INVITE,
-  CHANNEL_PERMISSIONS.MEMBER_KICK,
-  CHANNEL_PERMISSIONS.ROLE_MANAGE,
+  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
+  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.SEND_MESSAGES,
+  CHANNEL_PERMISSIONS.UPLOAD_FILES,
+  CHANNEL_PERMISSIONS.MANAGE_CHANNEL,
+  CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
+  CHANNEL_PERMISSIONS.INVITE_MEMBERS,
+  CHANNEL_PERMISSIONS.KICK_MEMBERS,
+  CHANNEL_PERMISSIONS.MANAGE_ROLES,
+  CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
 ];
 
-/** Permission set granted to moderators - excludes role management. */
+/** Permissions du rôle Modérateur (priority 50). */
 export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.CHANNEL_READ,
-  CHANNEL_PERMISSIONS.CHANNEL_WRITE,
-  CHANNEL_PERMISSIONS.CHANNEL_MANAGE,
-  CHANNEL_PERMISSIONS.MEMBER_INVITE,
-  CHANNEL_PERMISSIONS.MEMBER_KICK,
+  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
+  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.SEND_MESSAGES,
+  CHANNEL_PERMISSIONS.UPLOAD_FILES,
+  CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
+  CHANNEL_PERMISSIONS.INVITE_MEMBERS,
+  CHANNEL_PERMISSIONS.KICK_MEMBERS,
 ];
 
+/** Permissions du rôle Membre (priority 10). */
 export const DEFAULT_MEMBER_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.CHANNEL_READ,
-  CHANNEL_PERMISSIONS.CHANNEL_WRITE,
+  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
+  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.SEND_MESSAGES,
+  CHANNEL_PERMISSIONS.UPLOAD_FILES,
 ];
+
+/** Permission keys displayed as overridable cells in the PermissionGrid. */
+export const PERMISSION_LABELS: Record<string, string> = {
+  [CHANNEL_PERMISSIONS.VIEW_CHANNEL]: 'Voir le canal',
+  [CHANNEL_PERMISSIONS.READ_MESSAGES]: 'Lire les messages',
+  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: 'Envoyer des messages',
+  [CHANNEL_PERMISSIONS.UPLOAD_FILES]: 'Envoyer des fichiers',
+  [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]: 'Gérer le canal',
+  [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]: 'Modérer les messages',
+  [CHANNEL_PERMISSIONS.INVITE_MEMBERS]: 'Inviter des membres',
+  [CHANNEL_PERMISSIONS.KICK_MEMBERS]: 'Expulser des membres',
+  [CHANNEL_PERMISSIONS.MANAGE_ROLES]: 'Gérer les rôles',
+  [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]: 'Gérer la communauté',
+};
+
+/** Detailed tooltip descriptions for each permission. */
+export const PERMISSION_TOOLTIPS: Record<string, string> = {
+  [CHANNEL_PERMISSIONS.VIEW_CHANNEL]:
+    'Permet de voir le canal dans la liste des canaux de la communauté.',
+  [CHANNEL_PERMISSIONS.READ_MESSAGES]:
+    'Permet de lire les messages publiés dans ce canal.',
+  [CHANNEL_PERMISSIONS.SEND_MESSAGES]:
+    'Permet d\'envoyer des messages dans ce canal.',
+  [CHANNEL_PERMISSIONS.UPLOAD_FILES]:
+    'Permet d\'envoyer des pièces jointes (images, fichiers) dans ce canal.',
+  [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]:
+    'Permet de renommer, archiver ou modifier les paramètres de ce canal.',
+  [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]:
+    'Permet d\'épingler ou de supprimer les messages des autres membres.',
+  [CHANNEL_PERMISSIONS.INVITE_MEMBERS]:
+    'Permet d\'inviter de nouveaux membres dans ce canal.',
+  [CHANNEL_PERMISSIONS.KICK_MEMBERS]:
+    'Permet d\'expulser un membre de ce canal spécifique.',
+  [CHANNEL_PERMISSIONS.MANAGE_ROLES]:
+    'Permet de créer, modifier ou supprimer les rôles de la communauté.',
+  [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]:
+    'Donne tous les droits. Un administrateur a TOUJOURS toutes les permissions.',
+};
+
+/** Mapping: old permission key (channel-role.entity) → new unified permission key. */
+export const LEGACY_PERMISSION_MAPPING: Record<string, ChannelPermission> = {
+  MANAGE_WORKSPACE: CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
+  MANAGE_CHANNELS: CHANNEL_PERMISSIONS.MANAGE_CHANNEL,
+  MANAGE_ROLES: CHANNEL_PERMISSIONS.MANAGE_ROLES,
+  SEND_MESSAGES: CHANNEL_PERMISSIONS.SEND_MESSAGES,
+  MODERATE_MESSAGES: CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
+  INVITE_USERS: CHANNEL_PERMISSIONS.INVITE_MEMBERS,
+};

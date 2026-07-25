@@ -7,6 +7,7 @@ import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { hydrateChannelBootstrap, isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
+import { resolveDisplayNames } from '$lib/utils/users/displayName';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -50,8 +51,8 @@ export interface ChannelWorkspaceContext {
   selectConversation: (id: string) => void;
   /** Returns (or lazily initialises) the MLS service instance - required for key distribution. */
   ensureMls?: () => IMlsService | Promise<IMlsService>;
-  /** Opens (or creates) a direct MLS conversation with the given user. */
-  startDirectConversation?: (targetUserId: string) => Promise<void>;
+  /** Opens (or creates) a direct MLS conversation with the given user. Pass { silent: true } to skip UI selection (e.g. background key distribution). */
+  startDirectConversation?: (targetUserId: string, opts?: { silent?: boolean }) => Promise<void>;
   /** Returns the conversation ID currently visible in the chat panel. */
   getSelectedConversationId?: () => string | null;
   /** Refetch channel messages from the server (in-memory only). */
@@ -518,7 +519,7 @@ export function useChannelWorkspaces() {
       if (inviteResult.keyDistribution && ctx.ensureMls && ctx.startDirectConversation) {
         const previousSelection = ctx.getSelectedConversationId?.() ?? null;
         try {
-          await ctx.startDirectConversation(memberId);
+          await ctx.startDirectConversation(memberId, { silent: true });
           const directConvo = Array.from(ctx.conversations.entries()).find(([, convo]) => {
             if ((convo.conversationType ?? 'group') !== 'direct') return false;
             return (convo.directPeerId ?? convo.contactName).toLowerCase() === memberId;
@@ -550,7 +551,9 @@ export function useChannelWorkspaces() {
         }
       }
 
-      ctx.log(`Member invited to channel (${roleName}): ${memberId}`);
+      const getName = await resolveDisplayNames([memberId]);
+      const displayName = getName(memberId);
+      ctx.log(`Member invited to channel (${roleName}): ${displayName}`);
     } catch (error) {
       // Suppress the toast: the invite modal re-surfaces this error inline via inviteStatus.
       const msg = toUiActionError(m.channel_action_channel_invite(), error, false);

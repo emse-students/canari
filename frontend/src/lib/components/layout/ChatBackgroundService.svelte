@@ -27,6 +27,9 @@
     globalNotifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
+  import { resolveDisplayNames } from '$lib/utils/users/displayName';
+  import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
+  import type { ChatMessage } from '$lib/types';
   import PinModal from '$lib/components/auth/PinModal.svelte';
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import BiometricBottomSheet from '$lib/components/auth/BiometricBottomSheet.svelte';
@@ -392,8 +395,8 @@
         globalSession.storage?.deleteConversation(name) ?? Promise.resolve(),
       selectConversation: globalConvs.selectConversation,
       ensureMls: globalSession.ensureMls,
-      startDirectConversation: (targetUserId: string) =>
-        globalConvs.startNewConversation(targetUserId, convCtx()),
+      startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>
+        globalConvs.startNewConversation(targetUserId, convCtx(), opts),
       getSelectedConversationId: () => globalConvs.selectedContact,
       reloadChannelHistory: (channelConversationId: string) =>
         globalConvs.loadHistoryForConversation(
@@ -465,6 +468,45 @@
         // the full workspace hydration (fixes: freshly-added channel unusable in-session on mobile).
         void globalChannels.hydrateJoinedChannelKey(event.channelId);
         appendLog(`Joined channel #${event.channelName || event.channelId}`);
+
+        // Add a system message to the channel so the inviter (and other members) see who joined.
+        if (event.invitedBy && event.joinedBy) {
+          void (async () => {
+            try {
+              const getName = await resolveDisplayNames([event.invitedBy, event.joinedBy]);
+              const inviterName = getName(event.invitedBy);
+              const joinedName = getName(event.joinedBy);
+
+              // The invitee already receives mkChannelInviteEnvelope via the key distribution DM.
+              const currentUserIdLower = globalSession.userId?.toLowerCase();
+              if (event.joinedBy.toLowerCase() === currentUserIdLower) return;
+
+              const systemText = m.chat_system_member_added({
+                sender: inviterName,
+                members: joinedName,
+              });
+
+              const convo = globalConvs.conversations.get(channelConversationId);
+              if (!convo) return;
+
+              const newMsg: ChatMessage = {
+                id: crypto.randomUUID(),
+                senderId: 'system',
+                content: serializeEnvelope(mkSystemEnvelope(systemText as string)),
+                timestamp: new Date(),
+                isOwn: false,
+                isSystem: true,
+              };
+              globalConvs.conversations.set(channelConversationId, {
+                ...convo,
+                messages: [...convo.messages, newMsg],
+                lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
+              });
+            } catch {
+              // Non-blocking: system message is best-effort.
+            }
+          })();
+        }
       },
       onChannelMemberKicked: (event: any) => {
         if (!event.channelId) return;

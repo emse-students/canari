@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   HttpException,
   HttpStatus,
@@ -32,6 +33,7 @@ import {
   type UpdateChannelImageDto,
   CHANNEL_NOTIFICATION_LEVELS,
 } from './dto/channel.dto';
+import { type SetChannelPermissionOverrideDto, type SetRolePermissionsDto } from './dto/channel-permission.dto';
 
 /** Manages workspace and channel resources including membership, keys, and messages. */
 @Controller('channels')
@@ -216,6 +218,17 @@ export class ChannelsController {
     });
   }
 
+  /** Removes a member from a specific channel (not the workspace). Requires MANAGE_WORKSPACE or MANAGE_CHANNELS permission. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':channelId/members/:userId')
+  removeMemberFromChannel(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.service.removeMemberFromChannel(channelId, userId.trim().toLowerCase(), xUserId.trim().toLowerCase());
+  }
+
   /** Returns all members of a channel visible to the calling user. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/members')
@@ -301,26 +314,27 @@ export class ChannelsController {
     );
   }
 
-  /** Returns the channel's access settings (isPrivate, allowedRoles) and the workspace role list. */
+  /** Returns the channel's access settings (isPrivate, allowedRoles, usePermissionOverrides) and the workspace role list. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/access')
   getChannelAccess(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
     return this.service.getChannelAccess(channelId, xUserId.trim().toLowerCase());
   }
 
-  /** Updates the channel's isPrivate flag and allowedUsers list. */
+  /** Updates the channel's isPrivate flag, allowedUsers list, and optionally usePermissionOverrides. */
   @UseGuards(NginxAuthGuard)
   @Patch(':channelId/access')
   updateChannelAccess(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Body() body: { isPrivate: boolean; allowedUserIds: string[] }
+    @Body() body: { isPrivate: boolean; allowedUserIds: string[]; usePermissionOverrides?: boolean }
   ) {
     return this.service.updateChannelAccess(
       channelId,
       xUserId.trim().toLowerCase(),
       body.isPrivate,
-      body.allowedUserIds ?? []
+      body.allowedUserIds ?? [],
+      body.usePermissionOverrides
     );
   }
 
@@ -483,5 +497,95 @@ export class ChannelsController {
     const before =
       typeof query.before === 'string' && query.before.trim() ? query.before.trim() : undefined;
     return this.service.listMessages(channelId, xUserId.trim().toLowerCase(), limit, before);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // PERMISSION OVERRIDES — Nouveaux endpoints (Phase C)
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** Récupère tous les overrides de permissions d'un canal. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/permissions/overrides')
+  getPermissionOverrides(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.getPermissionOverrides(channelId, xUserId.trim().toLowerCase());
+  }
+
+  /** Définit ou met à jour un override de permission pour un rôle sur un canal. */
+  @UseGuards(NginxAuthGuard)
+  @Put(':channelId/permissions/overrides')
+  setPermissionOverride(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: SetChannelPermissionOverrideDto
+  ) {
+    return this.service.setPermissionOverride(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      body.roleId,
+      body.permissionKey,
+      body.value
+    );
+  }
+
+  /** Supprime un override de permission spécifique. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':channelId/permissions/overrides/:roleId/:permissionKey')
+  deletePermissionOverride(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('roleId') roleId: string,
+    @Param('permissionKey') permissionKey: string
+  ) {
+    return this.service.deletePermissionOverride(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      roleId,
+      permissionKey
+    );
+  }
+
+  /** Récupère les permissions effectives du demandeur pour ce canal. */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/permissions/effective')
+  async getEffectivePermissions(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    const perms = await this.service.getEffectivePermissions(
+      channelId,
+      xUserId.trim().toLowerCase()
+    );
+    return {
+      channelId,
+      permissions: [...perms],
+    };
+  }
+
+  /** Récupère les permissions de base d'un rôle au niveau workspace. */
+  @UseGuards(NginxAuthGuard)
+  @Get('roles/:roleId/permissions')
+  getRolePermissions(
+    @Headers('x-user-id') xUserId: string,
+    @Param('roleId') roleId: string
+  ) {
+    return this.service.getRoleBasePermissions(roleId, xUserId.trim().toLowerCase());
+  }
+
+  /** Met à jour les permissions de base d'un rôle (MANAGE_ROLES requis). */
+  @UseGuards(NginxAuthGuard)
+  @Put('roles/:roleId/permissions')
+  setRolePermissions(
+    @Headers('x-user-id') xUserId: string,
+    @Param('roleId') roleId: string,
+    @Body() body: SetRolePermissionsDto
+  ) {
+    return this.service.setRoleBasePermissions(
+      roleId,
+      xUserId.trim().toLowerCase(),
+      body.permissions ?? []
+    );
   }
 }

@@ -27,6 +27,8 @@ interface GroupCreationDeps {
   /** Callback to persist a conversation to the local DB. */
   saveConversation: (contactName: string) => Promise<void>;
   log: (msg: string) => void;
+  /** When true, skip UI selection (e.g. background key distribution via DM). */
+  silent?: boolean;
 }
 
 /**
@@ -439,6 +441,10 @@ export async function startNewConversation(
   deps: GroupCreationDeps
 ): Promise<void> {
   const { mlsService, userId, conversations, selectConversation, saveConversation, log } = deps;
+  const silent = deps.silent ?? false;
+  const maybeSelect = (id: string) => {
+    if (!silent) selectConversation(id);
+  };
 
   const contact = contactName.trim().toLowerCase();
   if (!contact || contact === userId) return;
@@ -452,7 +458,7 @@ export async function startNewConversation(
   if (existingDirect) {
     const [existingKey, existingConvo] = existingDirect;
     if (existingConvo.lifecycle === 'active') {
-      selectConversation(existingKey);
+      maybeSelect(existingKey);
       return;
     }
     // Conversation exists locally but MLS state is missing (e.g. backup on another device).
@@ -501,7 +507,7 @@ export async function startNewConversation(
       // If local MLS state exists for this group, just ensure the conversation is ready.
       if (mlsService.getLocalGroups().includes(key)) {
         await ensureDirectConvo(key, true);
-        selectConversation(key);
+        maybeSelect(key);
         return;
       }
 
@@ -517,13 +523,13 @@ export async function startNewConversation(
           conversations,
           getSelectedContact: () => key,
           setSelectedContact: (id: string | null) => {
-            if (id) selectConversation(id);
+            if (id) maybeSelect(id);
           },
           saveConversation,
           log,
         });
       } catch {
-        if (conversations.has(key)) selectConversation(key);
+        if (conversations.has(key)) maybeSelect(key);
       }
       return;
     }
@@ -561,7 +567,7 @@ export async function startNewConversation(
       conversationType: 'direct',
       directPeerId: contact,
     });
-    selectConversation(conversationKey);
+    maybeSelect(conversationKey);
 
     await mlsService.createGroup(groupId);
     log(`[DM] Local MLS group created: ${groupId}`);

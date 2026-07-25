@@ -14,12 +14,19 @@
     Bell,
     AtSign,
     BellOff,
+    ToggleLeft,
+    ToggleRight,
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
+  import PermissionGrid, {
+    type PermissionGridRole,
+    type PermissionGridOverride,
+    type PermissionGridPermission,
+  } from '../shared/PermissionGrid.svelte';
   import { channelService, type ChannelNotificationLevel } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
 
@@ -68,7 +75,8 @@
     onUpdateChannelAccess?: (
       channelId: string,
       isPrivate: boolean,
-      allowedUserIds: string[]
+      allowedUserIds: string[],
+      usePermissionOverrides?: boolean
     ) => void;
   }
 
@@ -108,6 +116,16 @@
   let permissionRole = $state<'member' | 'moderator' | 'admin'>('member');
   let inviteLoading = $state(false);
   let inviteError = $state('');
+
+  // ── Members list state ─────────────────────────────────────────────────
+  let channelMembers = $state<
+    Array<{ id: string; userId: string; role: string; joinedAt: string }>
+  >([]);
+  let membersLoading = $state(false);
+  let membersError = $state('');
+  let memberRoleSelections = $state<Record<string, 'member' | 'moderator' | 'admin'>>({});
+  let memberRoleSaving = $state<Record<string, boolean>>({});
+  let memberRemoving = $state<Record<string, boolean>>({});
 
   // ── Shareable community invite link ────────────────────────────────────────
   let shareLink = $state('');
@@ -171,6 +189,68 @@
     }
   }
 
+  // ── Members list management ──────────────────────────────────────────────
+
+  async function loadMembers() {
+    membersLoading = true;
+    membersError = '';
+    try {
+      channelMembers = await channelService.listMembers(selectedChannelId);
+      // Initialize role selections from current roles
+      const selections: Record<string, 'member' | 'moderator' | 'admin'> = {};
+      for (const m of channelMembers) {
+        const role = m.role as string;
+        if (role === 'admin' || role === 'moderator' || role === 'member') {
+          selections[m.userId] = role;
+        } else {
+          selections[m.userId] = 'member';
+        }
+      }
+      memberRoleSelections = selections;
+    } catch (e) {
+      membersError = e instanceof Error ? e.message : 'Failed to load members';
+    } finally {
+      membersLoading = false;
+    }
+  }
+
+  async function handleMemberRoleUpdate(userId: string) {
+    const newRole = memberRoleSelections[userId];
+    if (!newRole) return;
+    memberRoleSaving = { ...memberRoleSaving, [userId]: true };
+    try {
+      await onUpdateMemberRole(selectedChannelId, userId, newRole);
+      // Refresh the list to get updated role
+      await loadMembers();
+    } catch {
+      // Error handled by parent
+    } finally {
+      const updated = { ...memberRoleSaving };
+      delete updated[userId];
+      memberRoleSaving = updated;
+    }
+  }
+
+  async function handleRemoveMember(userId: string) {
+    const confirmed = await showConfirm(
+      `Retirer ce membre du canal ? Il pourra être ré-invité ultérieurement.`,
+      { danger: true, confirmLabel: 'Retirer' }
+    );
+    if (!confirmed) return;
+    memberRemoving = { ...memberRemoving, [userId]: true };
+    try {
+      await channelService.removeMemberFromChannel(selectedChannelId, userId);
+      // Refresh the list
+      await loadMembers();
+    } catch (e) {
+      membersError = e instanceof Error ? e.message : 'Failed to remove member';
+    } finally {
+      const updated = { ...memberRemoving };
+      delete updated[userId];
+      memberRemoving = updated;
+    }
+  }
+
   // Access control state (loaded lazily when permissions tab opens)
   let accessLoading = $state(false);
   let accessError = $state('');
@@ -181,9 +261,65 @@
   let accessLoaded = $state(false);
   let addingUserId = $state('');
 
+  // ── Permission overrides state ─────────────────────────────────────────
+  let usePermissionOverrides = $state(false);
+  let overridesLoaded = $state(false);
+  let overridesLoading = $state(false);
+  let overridesSaving = $state(false);
+  let overridesError = $state('');
+  let permissionRoles: PermissionGridRole[] = $state([]);
+  let permissionOverrides: PermissionGridOverride[] = $state([]);
+
+  /** Permission definitions for the grid. */
+  const gridPermissions: PermissionGridPermission[] = [
+    {
+      key: 'channel.view',
+      label: 'Voir le canal',
+      tooltip: 'Permet de voir le canal dans la liste des canaux.',
+    },
+    {
+      key: 'channel.read',
+      label: 'Lire les messages',
+      tooltip: 'Permet de lire les messages publiés dans ce canal.',
+    },
+    {
+      key: 'channel.send',
+      label: 'Envoyer des messages',
+      tooltip: "Permet d'écrire des messages dans ce canal.",
+    },
+    {
+      key: 'channel.upload',
+      label: 'Envoyer des fichiers',
+      tooltip: "Permet d'envoyer des pièces jointes dans ce canal.",
+    },
+    {
+      key: 'channel.manage',
+      label: 'Gérer le canal',
+      tooltip: 'Permet de renommer, archiver ou modifier les paramètres du canal.',
+    },
+    {
+      key: 'channel.moderate',
+      label: 'Modérer les messages',
+      tooltip: "Permet d'épingler ou de supprimer les messages des autres.",
+    },
+    {
+      key: 'member.invite',
+      label: 'Inviter des membres',
+      tooltip: "Permet d'inviter de nouveaux membres dans ce canal.",
+    },
+    {
+      key: 'member.kick',
+      label: 'Expulser des membres',
+      tooltip: "Permet d'expulser un membre de ce canal spécifique.",
+    },
+  ];
+
   $effect(() => {
     if (open && activeTab === 'permissions' && selectedChannelId && !accessLoaded) {
       void loadChannelAccess();
+    }
+    if (open && activeTab === 'invites' && selectedChannelId) {
+      void loadMembers();
     }
     if (!open) {
       activeTab = 'overview';
@@ -197,6 +333,16 @@
       permissionRole = 'member';
       inviteError = '';
       inviteLoading = false;
+      channelMembers = [];
+      membersError = '';
+      memberRoleSelections = {};
+      memberRoleSaving = {};
+      memberRemoving = {};
+      usePermissionOverrides = false;
+      overridesLoaded = false;
+      permissionRoles = [];
+      permissionOverrides = [];
+      overridesError = '';
     }
   });
 
@@ -207,11 +353,67 @@
       const data = await channelService.getChannelAccess(selectedChannelId);
       accessIsPrivate = data.isPrivate;
       accessAllowedUserIds = data.allowedUsers ?? [];
+      usePermissionOverrides = data.usePermissionOverrides ?? false;
       accessLoaded = true;
+      // If overrides are enabled, load them
+      if (usePermissionOverrides) {
+        await loadPermissionOverrides();
+      }
     } catch (e) {
       accessError = e instanceof Error ? e.message : m.chat_channel_access_load_error();
     } finally {
       accessLoading = false;
+    }
+  }
+
+  async function loadPermissionOverrides() {
+    overridesLoading = true;
+    overridesError = '';
+    try {
+      const data = await channelService.getPermissionOverrides(selectedChannelId);
+      permissionRoles = data.roles ?? [];
+      permissionOverrides = data.overrides ?? [];
+      overridesLoaded = true;
+    } catch (e) {
+      overridesError =
+        e instanceof Error ? e.message : 'Erreur lors du chargement des permissions.';
+    } finally {
+      overridesLoading = false;
+    }
+  }
+
+  async function handleOverrideToggle(
+    roleId: string,
+    permissionKey: string,
+    value: 'allow' | 'deny' | 'neutral'
+  ) {
+    overridesSaving = true;
+    try {
+      await channelService.setPermissionOverride(selectedChannelId, roleId, permissionKey, value);
+      // Update local state optimistically
+      if (value === 'neutral') {
+        permissionOverrides = permissionOverrides.filter(
+          (o) => !(o.roleId === roleId && o.permission === permissionKey)
+        );
+      } else {
+        const existing = permissionOverrides.findIndex(
+          (o) => o.roleId === roleId && o.permission === permissionKey
+        );
+        if (existing >= 0) {
+          permissionOverrides[existing] = { ...permissionOverrides[existing], value };
+          permissionOverrides = [...permissionOverrides];
+        } else {
+          permissionOverrides = [
+            ...permissionOverrides,
+            { roleId, permission: permissionKey, value },
+          ];
+        }
+      }
+    } catch (e) {
+      overridesError =
+        e instanceof Error ? e.message : 'Erreur lors de la mise à jour de la permission.';
+    } finally {
+      overridesSaving = false;
     }
   }
 
@@ -223,10 +425,20 @@
       await channelService.updateChannelAccess(
         selectedChannelId,
         accessIsPrivate,
-        accessAllowedUserIds
+        accessAllowedUserIds,
+        usePermissionOverrides
       );
-      onUpdateChannelAccess?.(selectedChannelId, accessIsPrivate, accessAllowedUserIds);
+      onUpdateChannelAccess?.(
+        selectedChannelId,
+        accessIsPrivate,
+        accessAllowedUserIds,
+        usePermissionOverrides
+      );
       accessSaved = true;
+      // If overrides were just enabled, load them
+      if (usePermissionOverrides && !overridesLoaded) {
+        await loadPermissionOverrides();
+      }
       setTimeout(() => {
         accessSaved = false;
       }, 2500);
@@ -499,7 +711,7 @@
 
       <!-- ================= ONGLET : PERMISSIONS ================= -->
       {#if activeTab === 'permissions'}
-        <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div class="space-y-6 max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div>
             <h2 class="text-xl font-extrabold text-text-main mb-1">
               {m.chat_channel_access_title()}
@@ -521,128 +733,202 @@
               {accessError}
             </div>
           {:else}
+            <!-- ═══ Toggle : Système d'overrides avancé ═══ -->
             <div
               class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 space-y-5 shadow-sm"
             >
-              <!-- Visibility toggle -->
               <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
-                  {#if accessIsPrivate}
-                    <div class="p-2 rounded-xl bg-amber-500/10 text-amber-600">
-                      <Lock size={18} strokeWidth={2.5} />
-                    </div>
-                    <div>
-                      <p class="font-bold text-text-main text-sm">
-                        {m.chat_channel_private_label()}
-                      </p>
-                      <p class="text-xs text-text-muted">
-                        {m.chat_channel_private_description()}
-                      </p>
-                    </div>
-                  {:else}
-                    <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
-                      <Globe size={18} strokeWidth={2.5} />
-                    </div>
-                    <div>
-                      <p class="font-bold text-text-main text-sm">
-                        {m.chat_channel_public_label()}
-                      </p>
-                      <p class="text-xs text-text-muted">
-                        {m.chat_channel_public_description()}
-                      </p>
-                    </div>
-                  {/if}
+                  <div class="p-2 rounded-xl bg-violet-500/10 text-violet-600">
+                    <Shield size={18} strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <p class="font-bold text-text-main text-sm">Permissions avancées par rôle</p>
+                    <p class="text-xs text-text-muted">
+                      Activez pour définir des permissions granulaires par rôle (Discord-like).
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
                   onclick={() => {
-                    accessIsPrivate = !accessIsPrivate;
+                    usePermissionOverrides = !usePermissionOverrides;
+                    accessSaved = false;
                   }}
-                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate
-                    ? 'bg-amber-500'
+                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {usePermissionOverrides
+                    ? 'bg-violet-500'
                     : 'bg-black/10 dark:bg-white/20'}"
                   role="switch"
-                  aria-checked={accessIsPrivate}
+                  aria-checked={usePermissionOverrides}
                 >
-                  <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
+                  <span class="sr-only">Activer les permissions avancées</span>
                   <span
-                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
+                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {usePermissionOverrides
                       ? 'translate-x-6'
                       : 'translate-x-1'}"
                   ></span>
                 </button>
               </div>
 
-              <!-- Member allowlist (only when private) -->
-              {#if accessIsPrivate}
+              <!-- ═══ Permission Grid (when overrides enabled) ═══ -->
+              {#if usePermissionOverrides}
                 <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-3">
-                  <p
-                    class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                  >
-                    <Users size={13} />
-                    {m.chat_allowed_members_label()}
-                  </p>
-
-                  <!-- Existing allowed users -->
-                  {#if accessAllowedUserIds.length === 0}
-                    <p class="text-sm text-text-muted italic">
-                      {m.chat_no_allowed_members_warning()}
-                    </p>
-                  {:else}
-                    <ul class="space-y-1.5">
-                      {#each accessAllowedUserIds as uid (uid)}
-                        <li
-                          class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
-                        >
-                          <div class="flex items-center gap-2 min-w-0">
-                            <Avatar userId={uid} size="sm" />
-                            <UserName
-                              userId={uid}
-                              class="text-sm font-medium text-text-main truncate"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            onclick={() => removeAllowedUser(uid)}
-                            class="text-red-500 hover:text-red-700 transition-colors flex-shrink-0"
-                            title={m.common_remove_label()}
-                          >
-                            <Minus size={14} strokeWidth={3} />
-                          </button>
-                        </li>
-                      {/each}
-                    </ul>
+                  {#if overridesLoading}
+                    <div class="flex items-center gap-2 text-sm text-text-muted py-4">
+                      <Loader size={14} class="animate-spin" />
+                      Chargement des permissions...
+                    </div>
+                  {:else if overridesError}
+                    <div
+                      class="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 text-sm border border-red-200 dark:border-red-800"
+                    >
+                      {overridesError}
+                    </div>
+                  {:else if permissionRoles.length > 0}
+                    <PermissionGrid
+                      roles={permissionRoles}
+                      permissions={gridPermissions}
+                      overrides={permissionOverrides}
+                      onToggle={handleOverrideToggle}
+                    />
+                    {#if overridesSaving}
+                      <div class="flex items-center gap-2 text-xs text-text-muted pt-1">
+                        <Loader size={10} class="animate-spin" />
+                        Sauvegarde...
+                      </div>
+                    {/if}
                   {/if}
+                </div>
+              {/if}
 
-                  <!-- Add a user -->
-                  <div class="space-y-2 pt-1">
+              <!-- ═══ Legacy : public/privé + allowlist (toujours visible) ═══ -->
+              <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-4">
+                <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+                  {usePermissionOverrides
+                    ? 'Paramètres legacy (secondaires)'
+                    : 'Visibilité du canal'}
+                </p>
+
+                <!-- Visibility toggle -->
+                <div class="flex items-center justify-between gap-4">
+                  <div class="flex items-center gap-3">
+                    {#if accessIsPrivate}
+                      <div class="p-2 rounded-xl bg-amber-500/10 text-amber-600">
+                        <Lock size={18} strokeWidth={2.5} />
+                      </div>
+                      <div>
+                        <p class="font-bold text-text-main text-sm">
+                          {m.chat_channel_private_label()}
+                        </p>
+                        <p class="text-xs text-text-muted">
+                          {m.chat_channel_private_description()}
+                        </p>
+                      </div>
+                    {:else}
+                      <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+                        <Globe size={18} strokeWidth={2.5} />
+                      </div>
+                      <div>
+                        <p class="font-bold text-text-main text-sm">
+                          {m.chat_channel_public_label()}
+                        </p>
+                        <p class="text-xs text-text-muted">
+                          {m.chat_channel_public_description()}
+                        </p>
+                      </div>
+                    {/if}
+                  </div>
+                  <button
+                    type="button"
+                    onclick={() => {
+                      accessIsPrivate = !accessIsPrivate;
+                    }}
+                    class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors {accessIsPrivate
+                      ? 'bg-amber-500'
+                      : 'bg-black/10 dark:bg-white/20'}"
+                    role="switch"
+                    aria-checked={accessIsPrivate}
+                  >
+                    <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
+                    <span
+                      class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
+                        ? 'translate-x-6'
+                        : 'translate-x-1'}"
+                    ></span>
+                  </button>
+                </div>
+
+                <!-- Member allowlist (only when private) -->
+                {#if accessIsPrivate}
+                  <div class="space-y-3">
                     <p
                       class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                     >
-                      <UserPlus size={13} />
-                      {m.chat_add_member_label()}
+                      <Users size={13} />
+                      {m.chat_allowed_members_label()}
                     </p>
-                    <div class="flex gap-2 items-start">
-                      <div class="flex-1">
-                        <UserAutocomplete
-                          value={addingUserId}
-                          onValueChange={(v) => (addingUserId = v)}
-                          placeholder={m.chat_search_user_placeholder()}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onclick={addAllowedUser}
-                        disabled={!addingUserId.trim()}
-                        class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
+
+                    <!-- Existing allowed users -->
+                    {#if accessAllowedUserIds.length === 0}
+                      <p class="text-sm text-text-muted italic">
+                        {m.chat_no_allowed_members_warning()}
+                      </p>
+                    {:else}
+                      <ul class="space-y-1.5">
+                        {#each accessAllowedUserIds as uid (uid)}
+                          <li
+                            class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
+                          >
+                            <div class="flex items-center gap-2 min-w-0">
+                              <Avatar userId={uid} size="sm" />
+                              <UserName
+                                userId={uid}
+                                class="text-sm font-medium text-text-main truncate"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onclick={() => removeAllowedUser(uid)}
+                              class="text-red-500 hover:text-red-700 transition-colors flex-shrink-0"
+                              title={m.common_remove_label()}
+                            >
+                              <Minus size={14} strokeWidth={3} />
+                            </button>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+
+                    <!-- Add a user -->
+                    <div class="space-y-2 pt-1">
+                      <p
+                        class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
                       >
-                        <Check size={14} strokeWidth={3} />
-                        {m.common_add_button()}
-                      </button>
+                        <UserPlus size={13} />
+                        {m.chat_add_member_label()}
+                      </p>
+                      <div class="flex gap-2 items-start">
+                        <div class="flex-1">
+                          <UserAutocomplete
+                            value={addingUserId}
+                            onValueChange={(v) => (addingUserId = v)}
+                            placeholder={m.chat_search_user_placeholder()}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onclick={addAllowedUser}
+                          disabled={!addingUserId.trim()}
+                          class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
+                        >
+                          <Check size={14} strokeWidth={3} />
+                          {m.common_add_button()}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              {/if}
+                {/if}
+              </div>
 
               <!-- Save -->
               <div
@@ -682,6 +968,117 @@
             <p class="text-sm font-medium text-text-muted leading-relaxed">
               {m.chat_channel_invitations_description()}
             </p>
+          </div>
+
+          <!-- Liste des membres actuels du canal -->
+          <div
+            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-4 shadow-sm backdrop-blur-md"
+          >
+            <p
+              class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+            >
+              <Users size={14} />
+              {m.chat_channel_members_title()}
+            </p>
+
+            {#if membersLoading}
+              <div class="flex items-center gap-2 text-sm text-text-muted">
+                <Loader size={14} class="animate-spin" />
+                {m.chat_community_loading_members()}
+              </div>
+            {:else if membersError}
+              <p class="text-xs font-medium text-red-600 dark:text-red-400">{membersError}</p>
+            {:else if channelMembers.length === 0}
+              <p class="text-sm text-text-muted italic">{m.chat_community_no_members()}</p>
+            {:else}
+              <ul class="space-y-2">
+                {#each channelMembers as member (member.userId)}
+                  <li
+                    class="flex items-center justify-between gap-3 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2.5"
+                  >
+                    <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                      <Avatar userId={member.userId} size="sm" />
+                      <UserName
+                        userId={member.userId}
+                        class="text-sm font-medium text-text-main truncate"
+                      />
+                      <span
+                        class="shrink-0 text-[0.65rem] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full {member.role ===
+                        'admin'
+                          ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+                          : member.role === 'moderator'
+                            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                            : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}"
+                      >
+                        {member.role === 'admin'
+                          ? m.chat_role_admin()
+                          : member.role === 'moderator'
+                            ? m.chat_role_moderator()
+                            : m.chat_role_member()}
+                      </span>
+                    </div>
+
+                    <div class="flex items-center gap-1.5 shrink-0">
+                      <!-- Role selector -->
+                      <select
+                        class="w-28 bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-amber-500/50 appearance-none"
+                        value={memberRoleSelections[member.userId] ?? member.role}
+                        onchange={(e) => {
+                          const val = (e.target as HTMLSelectElement).value;
+                          if (val === 'member' || val === 'moderator' || val === 'admin') {
+                            memberRoleSelections = {
+                              ...memberRoleSelections,
+                              [member.userId]: val,
+                            };
+                          }
+                        }}
+                      >
+                        <option value="member" class="bg-white dark:bg-zinc-900"
+                          >{m.chat_role_member_description()}</option
+                        >
+                        <option value="moderator" class="bg-white dark:bg-zinc-900"
+                          >{m.chat_role_moderator_description()}</option
+                        >
+                        <option value="admin" class="bg-white dark:bg-zinc-900"
+                          >{m.chat_role_admin_description()}</option
+                        >
+                      </select>
+
+                      <!-- Update role button -->
+                      <button
+                        type="button"
+                        onclick={() => handleMemberRoleUpdate(member.userId)}
+                        disabled={memberRoleSaving[member.userId] ||
+                          (memberRoleSelections[member.userId] ?? member.role) === member.role}
+                        class="rounded-lg border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 px-2 py-1.5 text-xs font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                        title={m.common_update_button()}
+                      >
+                        {#if memberRoleSaving[member.userId]}
+                          <Loader size={12} class="animate-spin" />
+                        {:else}
+                          <Check size={12} strokeWidth={3} />
+                        {/if}
+                      </button>
+
+                      <!-- Remove member button -->
+                      <button
+                        type="button"
+                        onclick={() => handleRemoveMember(member.userId)}
+                        disabled={memberRemoving[member.userId]}
+                        class="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                        title={m.common_remove_label()}
+                      >
+                        {#if memberRemoving[member.userId]}
+                          <Loader size={12} class="animate-spin" />
+                        {:else}
+                          <Minus size={12} strokeWidth={3} />
+                        {/if}
+                      </button>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           </div>
 
           <!-- Lien d'invitation partageable (communaute entiere) -->

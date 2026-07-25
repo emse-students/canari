@@ -7,6 +7,7 @@ import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
+import { ChannelPermissionOverride } from './entities/channel-permission-override.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 
@@ -24,6 +25,8 @@ describe('ChannelService security hardening', () => {
     };
     const roleRepo = {
       find: jest.fn(),
+      findOne: jest.fn(),
+      save: jest.fn(),
     };
     const memberRepo = {
       findOne: jest.fn(),
@@ -45,6 +48,13 @@ describe('ChannelService security hardening', () => {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       create: jest.fn((x: unknown) => x),
     };
+    const overrideRepo = {
+      find: jest.fn(() => Promise.resolve([])),
+      findOne: jest.fn(() => Promise.resolve(null)),
+      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      create: jest.fn((x: unknown) => x),
+      delete: jest.fn(() => Promise.resolve()),
+    };
     const inviteRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
@@ -63,6 +73,7 @@ describe('ChannelService security hardening', () => {
       memberRepo as unknown as Repository<ChannelMember>,
       messageRepo as unknown as Repository<ChannelMessage>,
       keyDistributionRepo as unknown as Repository<ChannelKeyDistribution>,
+      overrideRepo as unknown as Repository<ChannelPermissionOverride>,
       inviteRepo as unknown as Repository<WorkspaceInvite>,
       redis as unknown as RedisService
     );
@@ -75,6 +86,7 @@ describe('ChannelService security hardening', () => {
       memberRepo,
       messageRepo,
       keyDistributionRepo,
+      overrideRepo,
       redis,
     };
   }

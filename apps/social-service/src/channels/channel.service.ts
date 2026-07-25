@@ -17,8 +17,19 @@ import {
   ChannelKeyDistribution,
   type ChannelKeyDistributionStatus,
 } from './entities/channel-key-distribution.entity';
+import { ChannelPermissionOverride } from './entities/channel-permission-override.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+
+import {
+  CHANNEL_PERMISSIONS,
+  CHANNEL_OVERRIDABLE_PERMISSIONS,
+  WORKSPACE_ONLY_PERMISSIONS,
+  DEFAULT_ADMIN_PERMISSIONS,
+  DEFAULT_MODERATOR_PERMISSIONS,
+  DEFAULT_MEMBER_PERMISSIONS,
+  type ChannelPermission,
+} from './permissions';
 
 import {
   CreateChannelDto,
@@ -88,10 +99,8 @@ export class ChannelService {
     return name?.trim() || 'Membre';
   }
 
-  /** Returns true if the user can access a private channel.
-   * When allowedUsers is set, the check is user-based only (role fallthrough is not allowed
-   * because it would bypass the allowlist when userId is absent). Public channels always return true. */
-  private canAccessChannel(channel: Channel, member: ChannelMember, userId?: string): boolean {
+  /** Legacy access check preserved for channels with `usePermissionOverrides = false`. */
+  private canAccessChannelLegacy(channel: Channel, member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
     const allowedUsers = channel.allowedUsers || [];
     if (allowedUsers.length > 0) {
@@ -101,6 +110,145 @@ export class ChannelService {
     const allowed = channel.allowedRoles || [];
     if (allowed.length === 0) return true;
     return allowed.some((roleId) => roleIds.includes(roleId));
+  }
+
+  /**
+   * Returns true if the calling user holds a specific workspace-level permission
+   * (derived from their role memberships).
+   */
+  private async memberHasWorkspacePermission(
+    workspaceId: string,
+    userId: string,
+    permission: string
+  ): Promise<boolean> {
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
+    if (!member?.roleIds?.length) return false;
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return roles.some((r) => r.permissions.includes(permission));
+  }
+
+  /**
+   * Gets the highest-priority role of a member. Used to enforce hierarchy:
+   * a lower-priority role cannot override a higher-priority role's permissions.
+   */
+  private async getMemberHighestPriority(
+    workspaceId: string,
+    userId: string
+  ): Promise<number> {
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
+    if (!member?.roleIds?.length) return 0;
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return Math.max(...roles.map((r) => r.priority), 0);
+  }
+
+  /**
+   * Calcule l'ensemble des permissions effectives d'un membre pour un canal donné.
+   * Combine les permissions de base des rôles + les overrides du canal.
+   */
+  async getEffectivePermissions(
+    channelId: string,
+    userId: string
+  ): Promise<Set<ChannelPermission>> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member) return new Set();
+
+    // 1. Récupérer les rôles du membre
+    const roles = member.roleIds?.length
+      ? await this.roleRepo.find({ where: { id: In(member.roleIds) } })
+      : [];
+    if (roles.length === 0) return new Set();
+
+    // 2. Union des permissions de base de tous les rôles
+    const basePermissions = new Set<ChannelPermission>();
+    for (const role of roles) {
+      for (const perm of role.permissions) {
+        basePermissions.add(perm as ChannelPermission);
+      }
+    }
+
+    // 3. Si MANAGE_WORKSPACE → retourner TOUTES les permissions
+    if (basePermissions.has(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) {
+      return new Set(Object.values(CHANNEL_PERMISSIONS) as ChannelPermission[]);
+    }
+
+    // 4. Si le canal n'utilise pas les overrides → retourner les permissions de base
+    if (!channel.usePermissionOverrides) {
+      return basePermissions;
+    }
+
+    // 5. Récupérer les overrides du canal
+    const overrides = await this.overrideRepo.find({ where: { channelId } });
+
+    // 6. Trier les rôles par priorité décroissante
+    const rolePriorityMap = new Map(roles.map((r) => [r.id, r.priority]));
+    roles.sort((a, b) => b.priority - a.priority);
+
+    // 7. Pour chaque permission surchargeable, appliquer les overrides
+    for (const perm of CHANNEL_OVERRIDABLE_PERMISSIONS) {
+      // Regrouper les overrides pour cette permission, triés par priorité décroissante
+      const permOverrides = overrides
+        .filter((o) => o.permission === perm)
+        .sort((a, b) => {
+          const prioA = a.roleId ? (rolePriorityMap.get(a.roleId) ?? 0) : 0;
+          const prioB = b.roleId ? (rolePriorityMap.get(b.roleId) ?? 0) : 0;
+          return prioB - prioA;
+        });
+
+      for (const override of permOverrides) {
+        // Vérifier si le membre possède ce rôle
+        if (override.roleId && !member.roleIds?.includes(override.roleId)) continue;
+        // null roleId = @everyone, appliqué à tous
+
+        if (override.value === 'deny') {
+          basePermissions.delete(perm);
+          break; // DENY du rôle le plus prioritaire l'emporte
+        }
+        if (override.value === 'allow') {
+          basePermissions.add(perm);
+          break; // ALLOW du rôle le plus prioritaire l'emporte
+        }
+      }
+    }
+
+    return basePermissions;
+  }
+
+  /**
+   * Retourne true si le membre a une permission spécifique dans le canal.
+   */
+  async hasChannelPermission(
+    channelId: string,
+    userId: string,
+    permission: ChannelPermission
+  ): Promise<boolean> {
+    const perms = await this.getEffectivePermissions(channelId, userId);
+    return perms.has(permission);
+  }
+
+  /**
+   * Nouvelle version de canAccessChannel.
+   * Pour les canaux legacy → utilise l'ancienne logique.
+   * Pour les canaux avec overrides → vérifie VIEW_CHANNEL via le nouveau système.
+   */
+  private async canAccessChannel(
+    channel: Channel,
+    member: ChannelMember,
+    userId?: string
+  ): Promise<boolean> {
+    if (!channel.usePermissionOverrides) {
+      return this.canAccessChannelLegacy(channel, member, userId);
+    }
+    if (!userId) return false;
+    // MANAGE_WORKSPACE → accès garanti
+    if (await this.memberHasWorkspacePermission(channel.workspaceId, userId, CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) {
+      return true;
+    }
+    return this.hasChannelPermission(channel.id, userId, CHANNEL_PERMISSIONS.VIEW_CHANNEL);
   }
 
   /**
@@ -142,6 +290,8 @@ export class ChannelService {
     @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
     @InjectRepository(ChannelKeyDistribution)
     private readonly keyDistributionRepo: Repository<ChannelKeyDistribution>,
+    @InjectRepository(ChannelPermissionOverride)
+    private readonly overrideRepo: Repository<ChannelPermissionOverride>,
     @InjectRepository(WorkspaceInvite)
     private readonly inviteRepo: Repository<WorkspaceInvite>,
     private readonly redis: RedisService
@@ -319,14 +469,7 @@ export class ChannelService {
       workspaceId: savedWs.id,
       name: 'Administrateur',
       priority: 100,
-      permissions: [
-        'MANAGE_WORKSPACE',
-        'MANAGE_CHANNELS',
-        'MANAGE_ROLES',
-        'SEND_MESSAGES',
-        'MODERATE_MESSAGES',
-        'INVITE_USERS',
-      ],
+      permissions: DEFAULT_ADMIN_PERMISSIONS as string[],
     });
     const savedAdminRole = await this.roleRepo.save(adminRole);
 
@@ -334,7 +477,7 @@ export class ChannelService {
       workspaceId: savedWs.id,
       name: 'Modérateur',
       priority: 50,
-      permissions: ['MANAGE_CHANNELS', 'MODERATE_MESSAGES', 'INVITE_USERS', 'SEND_MESSAGES'],
+      permissions: DEFAULT_MODERATOR_PERMISSIONS as string[],
     });
     await this.roleRepo.save(moderatorRole);
 
@@ -342,7 +485,7 @@ export class ChannelService {
       workspaceId: savedWs.id,
       name: 'Membre',
       priority: 10,
-      permissions: ['SEND_MESSAGES', 'INVITE_USERS'],
+      permissions: DEFAULT_MEMBER_PERMISSIONS as string[],
     });
     await this.roleRepo.save(memberRole);
 
@@ -628,15 +771,18 @@ export class ChannelService {
       channelId,
       isPrivate: channel.isPrivate,
       allowedUsers: channel.allowedUsers || [],
+      allowedRoles: channel.allowedRoles || [],
+      usePermissionOverrides: channel.usePermissionOverrides,
     };
   }
 
-  /** Updates the channel's visibility and allowed-user list. Requires MANAGE_CHANNELS permission. */
+  /** Updates the channel's visibility, allowed-user list, and permission override toggle. Requires MANAGE_CHANNELS permission. */
   async updateChannelAccess(
     channelId: string,
     actorUserId: string,
     isPrivate: boolean,
-    allowedUserIds: string[]
+    allowedUserIds: string[],
+    usePermissionOverrides?: boolean
   ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -658,6 +804,9 @@ export class ChannelService {
 
     channel.isPrivate = isPrivate;
     channel.allowedUsers = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
+    if (typeof usePermissionOverrides === 'boolean') {
+      channel.usePermissionOverrides = usePermissionOverrides;
+    }
     await this.channelRepo.save(channel);
 
     return {
@@ -665,6 +814,7 @@ export class ChannelService {
       channelId,
       isPrivate: channel.isPrivate,
       allowedUsers: channel.allowedUsers,
+      usePermissionOverrides: channel.usePermissionOverrides,
     };
   }
 
@@ -840,8 +990,13 @@ export class ChannelService {
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
-    return channels
-      .filter((ch) => this.canAccessChannel(ch, member, userId))
+    const accessible: typeof channels = [];
+    for (const ch of channels) {
+      if (await this.canAccessChannel(ch, member, userId)) {
+        accessible.push(ch);
+      }
+    }
+    return accessible
       .map((channel) => ({
         id: channel.id,
         workspaceId: channel.workspaceId,
@@ -861,7 +1016,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member, userId)) {
+    if (!(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -880,7 +1035,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member, userId)) {
+    if (!(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -993,7 +1148,7 @@ export class ChannelService {
       }),
       this.channelRepo.findOne({ where: { id: distribution.channelId } }),
     ]);
-    if (!member || !channel || !this.canAccessChannel(channel, member, actorUserId)) {
+    if (!member || !channel || !(await this.canAccessChannel(channel, member, actorUserId))) {
       throw new ForbiddenException('Target user no longer authorized for this channel');
     }
     return { distribution, member, channel };
@@ -1308,7 +1463,7 @@ export class ChannelService {
     return { success: true };
   }
 
-  /** Adds a new role to a workspace member's roleIds (does not remove existing roles). Requires MANAGE_WORKSPACE or MANAGE_ROLES permission. */
+  /** Replaces a workspace member's roleIds with the specified role only (removes all existing roles). Requires MANAGE_WORKSPACE or MANAGE_ROLES permission. */
   async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -1340,11 +1495,85 @@ export class ChannelService {
       },
     });
     if (!role) throw new NotFoundException('Role not found');
-    const roleIds = [...new Set([...(targetMember.roleIds || []), role.id])];
 
-    targetMember.roleIds = roleIds;
+    // Replace all existing roles with the single specified role
+    targetMember.roleIds = [role.id];
 
     await this.memberRepo.save(targetMember);
+    return { success: true };
+  }
+
+  /** Removes a user from a specific channel without removing them from the workspace.
+   *  For private channels, removes them from allowedUsers and rotates the key.
+   *  For public channels, only rotates the key so the removed user's cached epoch key
+   *  is invalidated (the user is still a workspace member and can re-join if invited again).
+   *  Requires MANAGE_WORKSPACE or MANAGE_CHANNELS permission. */
+  async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const adminMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!adminMember) throw new ForbiddenException('Not an admin');
+
+    let hasPerm = false;
+    if (adminMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+      );
+    }
+
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+
+    // Verify the target user is a workspace member
+    const targetMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: targetUserId },
+    });
+    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
+
+    // Remove from private channel's allowedUsers list
+    if (channel.isPrivate) {
+      const normalized = targetUserId.trim().toLowerCase();
+      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
+      await this.channelRepo.save(channel);
+    }
+
+    // Notify the removed user and workspace members
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    const notifyIds = [...new Set([...workspaceMemberIds, targetUserId])];
+    await this.redis.publishChannelEvent(
+      'channel.member.removed',
+      {
+        channelId,
+        channelName: channel.name,
+        workspaceId: channel.workspaceId,
+        removedUserId: targetUserId,
+        removedBy: actorUserId,
+      },
+      notifyIds
+    );
+
+    // Rotate the channel key so the removed user can no longer decrypt new messages
+    if (!channel.masterSecret) {
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
+    }
+    channel.keyVersion += 1;
+    await this.channelRepo.save(channel);
+
+    const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
+    await this.redis.publishChannelEvent(
+      'channel.key.rotated',
+      {
+        channelId,
+        newEpochBaseKey: newEpochKey.toString('base64'),
+        keyVersion: channel.keyVersion,
+      },
+      workspaceMemberIds
+    );
+
     return { success: true };
   }
 
@@ -1414,7 +1643,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member, input.senderId)) {
+    if (!(await this.canAccessChannel(channel, member, input.senderId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
     if (input.keyVersion === undefined || input.keyVersion === null) {
@@ -1510,14 +1739,15 @@ export class ChannelService {
     // otherwise the device fetches the message by id (Phase 2). nonce stays inline (small).
     const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : '';
 
-    const recipients = members.filter((member) => {
-      if (member.userId === input.senderId) return false;
-      if (!this.canAccessChannel(channel, member, member.userId)) return false;
+    const recipients: ChannelMember[] = [];
+    for (const member of members) {
+      if (member.userId === input.senderId) continue;
+      if (!(await this.canAccessChannel(channel, member, member.userId))) continue;
       const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
-      if (level === 'none') return false;
-      if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) return false;
-      return true;
-    });
+      if (level === 'none') continue;
+      if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) continue;
+      recipients.push(member);
+    }
 
     if (recipients.length === 0) return;
     this.logger.log(
@@ -1559,7 +1789,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
     if (!this.internalSecret) return;
@@ -1617,7 +1847,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!this.canAccessChannel(channel, member, userId)) {
+    if (!(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1658,7 +1888,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1683,7 +1913,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1720,7 +1950,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1795,7 +2025,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1864,7 +2094,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1890,7 +2120,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1937,5 +2167,201 @@ export class ChannelService {
       // Poll state (label-free) so the client can render results on load.
       poll: (m.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null,
     }));
+  }
+  // ================= PERMISSION OVERRIDES =================
+
+  /** Récupère tous les overrides de permissions d'un canal. */
+  async getPermissionOverrides(channelId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    // Vérifier que l'acteur peut voir le canal
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+    if (!(await this.canAccessChannel(channel, member, actorUserId))) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const overrides = await this.overrideRepo.find({ where: { channelId } });
+    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
+
+    return {
+      channelId,
+      usePermissionOverrides: channel.usePermissionOverrides,
+      roles: roles.map((r) => ({ id: r.id, name: r.name, priority: r.priority })),
+      overrides: overrides.map((o) => {
+        const role = roles.find((r) => r.id === o.roleId);
+        return {
+          roleId: o.roleId,
+          roleName: role?.name ?? 'Inconnu',
+          permission: o.permission,
+          value: o.value,
+        };
+      }),
+    };
+  }
+
+  /** Définit ou met à jour un override de permission pour un rôle sur un canal. */
+  async setPermissionOverride(
+    channelId: string,
+    actorUserId: string,
+    roleId: string,
+    permissionKey: string,
+    value: 'allow' | 'deny' | 'neutral'
+  ) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    // Vérifier que l'acteur a MANAGE_CHANNEL ou MANAGE_WORKSPACE
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some(
+        (r) =>
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
+
+    // Empêcher de modifier les overrides d'un rôle plus prioritaire que le sien
+    const actorPriority = await this.getMemberHighestPriority(channel.workspaceId, actorUserId);
+    const targetRole = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (targetRole && targetRole.priority > actorPriority) {
+      throw new ForbiddenException('Cannot override permissions of a higher-priority role');
+    }
+
+    // Vérifier que la permission est surchargeable
+    if (WORKSPACE_ONLY_PERMISSIONS.includes(permissionKey as ChannelPermission)) {
+      throw new BadRequestException('This permission cannot be overridden at channel level');
+    }
+
+    if (value === 'neutral') {
+      // Supprimer l'override existant
+      await this.overrideRepo.delete({ channelId, roleId, permission: permissionKey });
+    } else {
+      // Upsert
+      const existing = await this.overrideRepo.findOne({
+        where: { channelId, roleId, permission: permissionKey },
+      });
+      if (existing) {
+        existing.value = value;
+        await this.overrideRepo.save(existing);
+      } else {
+        await this.overrideRepo.save(
+          this.overrideRepo.create({
+            channelId,
+            roleId,
+            permission: permissionKey,
+            value,
+          })
+        );
+      }
+    }
+
+    // Publier un événement pour informer les clients
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.permissions.updated',
+      { channelId, workspaceId: channel.workspaceId },
+      workspaceMemberIds
+    );
+
+    return { ok: true };
+  }
+
+  /** Supprime un override de permission spécifique. */
+  async deletePermissionOverride(
+    channelId: string,
+    actorUserId: string,
+    roleId: string,
+    permissionKey: string
+  ) {
+    return this.setPermissionOverride(channelId, actorUserId, roleId, permissionKey, 'neutral');
+  }
+
+  // ================= ROLE BASE PERMISSIONS =================
+
+  /** Récupère les permissions de base d'un rôle au niveau workspace. */
+  async getRoleBasePermissions(roleId: string, actorUserId: string) {
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+
+    // Vérifier que l'acteur a MANAGE_ROLES ou MANAGE_WORKSPACE
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: role.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = actorRoles.some(
+        (r) =>
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+
+    return {
+      roleId: role.id,
+      roleName: role.name,
+      permissions: role.permissions,
+    };
+  }
+
+  /** Met à jour les permissions de base d'un rôle au niveau workspace. */
+  async setRoleBasePermissions(
+    roleId: string,
+    actorUserId: string,
+    permissions: string[]
+  ) {
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+
+    // Vérifier que l'acteur a MANAGE_ROLES ou MANAGE_WORKSPACE
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId: role.workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = actorRoles.some(
+        (r) =>
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
+      );
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+
+    // Valider que les permissions sont valides
+    const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
+    const invalid = permissions.filter((p) => !validPermissions.includes(p));
+    if (invalid.length > 0) {
+      throw new BadRequestException(`Invalid permissions: ${invalid.join(', ')}`);
+    }
+
+    role.permissions = permissions;
+    await this.roleRepo.save(role);
+
+    this.logger.log(
+      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${permissions.length}`
+    );
+
+    return {
+      roleId: role.id,
+      roleName: role.name,
+      permissions: role.permissions,
+    };
   }
 }

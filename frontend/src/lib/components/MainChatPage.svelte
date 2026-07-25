@@ -142,8 +142,8 @@
         session.storage?.deleteConversation(name) ?? Promise.resolve(),
       selectConversation: convs.selectConversation,
       ensureMls: async () => session.ensureMls(),
-      startDirectConversation: (targetUserId: string) =>
-        convs.startNewConversation(targetUserId, convCtx()),
+      startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>
+        convs.startNewConversation(targetUserId, convCtx(), opts),
       getSelectedConversationId: () => convs.selectedContact,
       reloadChannelHistory: (channelConversationId: string) =>
         convs.loadHistoryForConversation(channelConversationId, channelConversationId, convCtx()),

@@ -8,6 +8,7 @@ import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
+import { ChannelPermissionOverride } from './entities/channel-permission-override.entity';
 import { Workspace } from './entities/workspace.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 
@@ -20,6 +21,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
       ChannelMember,
       ChannelMessage,
       ChannelKeyDistribution,
+      ChannelPermissionOverride,
       WorkspaceInvite,
     ]),
     HttpModule,

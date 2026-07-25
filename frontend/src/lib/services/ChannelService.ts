@@ -426,6 +426,18 @@ export class ChannelService {
     return res.json();
   }
 
+  async removeMemberFromChannel(channelId: string, userId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/members/${encodeURIComponent(userId)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
   async updateMemberRole(channelId: string, dto: ChannelUpdateRoleDto) {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/role`, {
@@ -613,6 +625,8 @@ export class ChannelService {
     channelId: string;
     isPrivate: boolean;
     allowedUsers: string[];
+    allowedRoles?: string[];
+    usePermissionOverrides?: boolean;
   }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`);
@@ -623,13 +637,116 @@ export class ChannelService {
   async updateChannelAccess(
     channelId: string,
     isPrivate: boolean,
-    allowedUserIds: string[]
-  ): Promise<{ ok: boolean }> {
+    allowedUserIds: string[],
+    usePermissionOverrides?: boolean
+  ): Promise<{ ok: boolean; usePermissionOverrides?: boolean }> {
     const cid = this.normalizeChannelId(channelId);
+    const body: Record<string, unknown> = { isPrivate, allowedUserIds };
+    if (typeof usePermissionOverrides === 'boolean') {
+      body.usePermissionOverrides = usePermissionOverrides;
+    }
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`, {
       method: 'PATCH',
-      body: JSON.stringify({ isPrivate, allowedUserIds }),
+      body: JSON.stringify(body),
     });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // PERMISSION OVERRIDES
+  // ═══════════════════════════════════════════════════════════════
+
+  async getPermissionOverrides(channelId: string): Promise<{
+    channelId: string;
+    usePermissionOverrides: boolean;
+    roles: Array<{ id: string; name: string; priority: number }>;
+    overrides: Array<{
+      roleId: string;
+      roleName: string;
+      permission: string;
+      value: 'allow' | 'deny';
+    }>;
+  }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/permissions/overrides`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async setPermissionOverride(
+    channelId: string,
+    roleId: string,
+    permissionKey: string,
+    value: 'allow' | 'deny' | 'neutral'
+  ): Promise<{ ok: boolean }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/permissions/overrides`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ roleId, permissionKey, value }),
+      }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async deletePermissionOverride(
+    channelId: string,
+    roleId: string,
+    permissionKey: string
+  ): Promise<{ ok: boolean }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/permissions/overrides/${encodeURIComponent(roleId)}/${encodeURIComponent(permissionKey)}`,
+      { method: 'DELETE' }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async getEffectivePermissions(channelId: string): Promise<{
+    channelId: string;
+    permissions: string[];
+  }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/permissions/effective`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async getRolePermissions(roleId: string): Promise<{
+    roleId: string;
+    roleName: string;
+    permissions: string[];
+  }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/roles/${encodeURIComponent(roleId)}/permissions`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  async setRolePermissions(
+    roleId: string,
+    permissions: string[]
+  ): Promise<{
+    roleId: string;
+    roleName: string;
+    permissions: string[];
+  }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/roles/${encodeURIComponent(roleId)}/permissions`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ permissions }),
+      }
+    );
     await this.handleError(res);
     return res.json();
   }
