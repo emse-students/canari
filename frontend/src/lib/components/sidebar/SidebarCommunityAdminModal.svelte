@@ -24,6 +24,7 @@
   import { getToken } from '$lib/stores/auth';
   import { channelService } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
 
   interface ChannelItem {
     id: string;
@@ -120,24 +121,14 @@
   /** All workspace-level permissions, editable per role in the grid. */
   const roleGridPermissions: PermissionGridPermission[] = [
     {
-      key: 'channel.view',
-      label: m.chat_permission_view_channel_label(),
-      tooltip: m.chat_permission_view_channel_tooltip(),
-    },
-    {
-      key: 'channel.read',
-      label: m.chat_permission_read_messages_label(),
-      tooltip: m.chat_permission_read_messages_tooltip(),
+      key: 'channel.access',
+      label: m.chat_permission_access_channel_label(),
+      tooltip: m.chat_permission_access_channel_tooltip(),
     },
     {
       key: 'channel.send',
       label: m.chat_permission_send_messages_label(),
       tooltip: m.chat_permission_send_messages_tooltip(),
-    },
-    {
-      key: 'channel.upload',
-      label: m.chat_permission_upload_files_label(),
-      tooltip: m.chat_permission_upload_files_tooltip(),
     },
     {
       key: 'channel.manage',
@@ -264,15 +255,21 @@
     }
   }
 
+  /**
+   * Handles a workspace role permission toggle from the PermissionGrid.
+   * With `disableDeny`, only `allow` and `neutral` are ever emitted; `deny` is kept
+   * in the signature for type compatibility with the grid's callback type.
+   */
   async function handleRolePermissionToggle(
     roleId: string,
     permissionKey: string,
     value: 'allow' | 'deny' | 'neutral'
   ) {
+    Log.d('handleRolePermissionToggle', { roleId, permissionKey, value });
     roleSaving = { ...roleSaving, [roleId]: true };
     try {
       const current = roleBasePermissions[roleId] ?? [];
-      // A base permission is either granted or not: only `allow` adds it; deny/neutral remove it.
+      // A base permission is either granted or not: only `allow` adds it; neutral removes it.
       const next =
         value === 'allow'
           ? [...new Set([...current, permissionKey])]
@@ -595,6 +592,7 @@
                 overrides={roleOverrides}
                 onToggle={handleRolePermissionToggle}
                 lockAdmin={false}
+                disableDeny={true}
               />
             </div>
           {/if}

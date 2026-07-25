@@ -7,9 +7,6 @@ BEGIN;
 -- channels: nullable masterSecret added 2026-04-05 (HKDF key distribution)
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS "masterSecret" TEXT;
 
--- channels: nullable imageMediaId added 2026-04-11 (workspace/channel avatars)
-ALTER TABLE channels ADD COLUMN IF NOT EXISTS "imageMediaId" VARCHAR(255);
-
 -- channels: allowedUsers simple-array added 2026-05-15 (member-based private channel access)
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS "allowedUsers" TEXT NOT NULL DEFAULT '';
 

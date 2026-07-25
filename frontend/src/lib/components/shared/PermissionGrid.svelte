@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Circle, Check, X, Minus } from '@lucide/svelte';
+  import { Log } from '$lib/utils/Log';
 
   /** A workspace role row (id, name, priority). */
   export interface PermissionGridRole {
@@ -33,6 +34,11 @@
     onToggle: (roleId: string, permissionKey: string, value: 'allow' | 'deny' | 'neutral') => void;
     /** When true, admin (highest priority) cells are read-only. */
     lockAdmin?: boolean;
+    /**
+     * When true, the cell toggle only cycles between neutral and allow (2 states).
+     * Deny is reserved for channel-level overrides; workspace-level roles use 2-state toggle.
+     */
+    disableDeny?: boolean;
   }
 
   let {
@@ -41,6 +47,7 @@
     overrides = [],
     onToggle,
     lockAdmin = true,
+    disableDeny = false,
   }: Props = $props();
 
   // Sort roles by priority DESC so admin appears first.
@@ -53,10 +60,19 @@
     return ov?.value ?? 'neutral';
   }
 
-  /** Cycle: neutral → allow → deny → neutral. */
+  /**
+   * Cycle cell state. When {@link disableDeny} is true, only neutral ↔ allow.
+   * Otherwise: neutral → allow → deny → neutral.
+   */
   function cycleCell(roleId: string, permissionKey: string) {
+    Log.d('PermissionGrid.cycleCell', { roleId, permissionKey, disableDeny });
     const current = getCellState(roleId, permissionKey);
-    const next = current === 'neutral' ? 'allow' : current === 'allow' ? 'deny' : 'neutral';
+    let next: 'allow' | 'deny' | 'neutral';
+    if (disableDeny) {
+      next = current === 'neutral' ? 'allow' : 'neutral';
+    } else {
+      next = current === 'neutral' ? 'allow' : current === 'allow' ? 'deny' : 'neutral';
+    }
     onToggle(roleId, permissionKey, next);
   }
 </script>
@@ -114,7 +130,9 @@
                   disabled={isAdmin}
                   title={isAdmin
                     ? 'Les administrateurs ont toutes les permissions (non modifiable)'
-                    : `${perm.label} — ${state === 'allow' ? 'Autorisé' : state === 'deny' ? 'Refusé' : 'Neutre (hérité)'} (cliquer pour changer)`}
+                    : disableDeny
+                      ? `${perm.label} — ${state === 'allow' ? 'Oui' : 'Non'} (cliquer pour changer)`
+                      : `${perm.label} — ${state === 'allow' ? 'Autorisé' : state === 'deny' ? 'Refusé' : 'Neutre (hérité)'} (cliquer pour changer)`}
                   class="inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {isAdmin
                     ? 'cursor-not-allowed opacity-40'
                     : 'cursor-pointer hover:scale-110 active:scale-95'} {state === 'allow'
@@ -144,13 +162,17 @@
   <!-- Légende -->
   <div class="flex flex-wrap items-center gap-4 pt-3 text-[0.65rem] font-medium text-text-muted">
     <span class="inline-flex items-center gap-1.5">
-      <Check size={12} strokeWidth={3} class="text-emerald-500" /> Autorisé
+      <Check size={12} strokeWidth={3} class="text-emerald-500" />
+      {disableDeny ? 'Oui' : 'Autorisé'}
     </span>
+    {#if !disableDeny}
+      <span class="inline-flex items-center gap-1.5">
+        <X size={12} strokeWidth={3} class="text-red-500" /> Refusé
+      </span>
+    {/if}
     <span class="inline-flex items-center gap-1.5">
-      <X size={12} strokeWidth={3} class="text-red-500" /> Refusé
-    </span>
-    <span class="inline-flex items-center gap-1.5">
-      <Minus size={12} strokeWidth={2.5} class="text-text-muted/50" /> Neutre (hérité)
+      <Minus size={12} strokeWidth={2.5} class="text-text-muted/50" />
+      {disableDeny ? 'Non' : 'Neutre (hérité)'}
     </span>
   </div>
 {/if}

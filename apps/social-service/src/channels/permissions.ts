@@ -2,10 +2,8 @@
 
 export const CHANNEL_PERMISSIONS = {
   // ── Accès au canal ──
-  VIEW_CHANNEL: "channel.view",
-  READ_MESSAGES: "channel.read",
+  ACCESS_CHANNEL: "channel.access",
   SEND_MESSAGES: "channel.send",
-  UPLOAD_FILES: "channel.upload",
 
   // ── Gestion du canal ──
   MANAGE_CHANNEL: "channel.manage",
@@ -24,10 +22,8 @@ export type ChannelPermission = (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNE
 
 /** Permissions du rôle Administrateur (priority 100) — toutes les permissions. */
 export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
-  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.ACCESS_CHANNEL,
   CHANNEL_PERMISSIONS.SEND_MESSAGES,
-  CHANNEL_PERMISSIONS.UPLOAD_FILES,
   CHANNEL_PERMISSIONS.MANAGE_CHANNEL,
   CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
   CHANNEL_PERMISSIONS.INVITE_MEMBERS,
@@ -38,10 +34,8 @@ export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
 
 /** Permissions du rôle Modérateur (priority 50). */
 export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
-  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.ACCESS_CHANNEL,
   CHANNEL_PERMISSIONS.SEND_MESSAGES,
-  CHANNEL_PERMISSIONS.UPLOAD_FILES,
   CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
   CHANNEL_PERMISSIONS.INVITE_MEMBERS,
   CHANNEL_PERMISSIONS.KICK_MEMBERS,
@@ -49,18 +43,15 @@ export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
 
 /** Permissions du rôle Membre (priority 10). */
 export const DEFAULT_MEMBER_PERMISSIONS: ChannelPermission[] = [
-  CHANNEL_PERMISSIONS.VIEW_CHANNEL,
-  CHANNEL_PERMISSIONS.READ_MESSAGES,
+  CHANNEL_PERMISSIONS.ACCESS_CHANNEL,
   CHANNEL_PERMISSIONS.SEND_MESSAGES,
-  CHANNEL_PERMISSIONS.UPLOAD_FILES,
 ];
 
 /** Permission keys displayed as overridable cells in the PermissionGrid. */
 export const PERMISSION_LABELS: Record<string, string> = {
-  [CHANNEL_PERMISSIONS.VIEW_CHANNEL]: "Voir le canal",
-  [CHANNEL_PERMISSIONS.READ_MESSAGES]: "Lire les messages",
-  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: "Envoyer des messages",
-  [CHANNEL_PERMISSIONS.UPLOAD_FILES]: "Envoyer des fichiers",
+  [CHANNEL_PERMISSIONS.ACCESS_CHANNEL]:
+    "Voir et lire le canal",
+  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: "Envoyer messages et fichiers",
   [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]: "Gérer le canal",
   [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]: "Modérer les messages",
   [CHANNEL_PERMISSIONS.INVITE_MEMBERS]: "Inviter des membres",
@@ -71,12 +62,10 @@ export const PERMISSION_LABELS: Record<string, string> = {
 
 /** Detailed tooltip descriptions for each permission. */
 export const PERMISSION_TOOLTIPS: Record<string, string> = {
-  [CHANNEL_PERMISSIONS.VIEW_CHANNEL]:
-    "Permet de voir le canal dans la liste des canaux de la communauté.",
-  [CHANNEL_PERMISSIONS.READ_MESSAGES]: "Permet de lire les messages publiés dans ce canal.",
-  [CHANNEL_PERMISSIONS.SEND_MESSAGES]: "Permet d'envoyer des messages dans ce canal.",
-  [CHANNEL_PERMISSIONS.UPLOAD_FILES]:
-    "Permet d'envoyer des pièces jointes (images, fichiers) dans ce canal.",
+  [CHANNEL_PERMISSIONS.ACCESS_CHANNEL]:
+    "Allows viewing the channel in the list and reading its messages.",
+  [CHANNEL_PERMISSIONS.SEND_MESSAGES]:
+    "Allows sending messages and files in this channel.",
   [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]:
     "Permet de renommer, archiver ou modifier les paramètres de ce canal.",
   [CHANNEL_PERMISSIONS.MANAGE_MESSAGES]:
