@@ -127,26 +127,43 @@
   let shareError = $state('');
   let shareCopied = $state(false);
 
+  // ── Permission / channel context ───────────────────────────────────────
+  /** Server-authoritative: true when the current user holds MANAGE_WORKSPACE. */
+  let viewerCanManage = $state(false);
+  /** First accessible channel ID in the workspace, used as context for invite / role-update API calls. */
+  let workspaceChannelId = $state('');
+
+  function resetState() {
+    activeTab = 'overview';
+    workspaceRoles = [];
+    roleBasePermissions = {};
+    roleOverrides = [];
+    workspaceMembers = [];
+    memberRoleSelections = {};
+    inviteUserId = '';
+    inviteRole = 'member';
+    inviteError = '';
+    shareLink = '';
+    shareCopied = false;
+    viewerCanManage = false;
+    workspaceChannelId = '';
+    rolesError = '';
+    membersError = '';
+  }
+
   $effect(() => {
+    // Reactively load data when the relevant tab becomes active.
     if (open && activeTab === 'roles' && workspaceRoles.length === 0) {
       void loadRolesAndPermissions();
     }
     if (open && activeTab === 'members' && workspaceMembers.length === 0) {
       void loadMembers();
     }
-    if (!open) {
-      activeTab = 'overview';
-      workspaceRoles = [];
-      roleBasePermissions = {};
-      roleOverrides = [];
-      workspaceMembers = [];
-      memberRoleSelections = {};
-      inviteUserId = '';
-      inviteRole = 'member';
-      inviteError = '';
-      shareLink = '';
-      shareCopied = false;
-    }
+  });
+
+  // Reset all local state when the modal closes so it starts fresh on the next open.
+  $effect(() => {
+    if (!open) resetState();
   });
 
   async function loadRolesAndPermissions() {
@@ -236,6 +253,12 @@
     membersError = '';
     try {
       const wsData = (await channelService.getWorkspaceBySlug(workspaceSlug)) as any;
+
+      // Extract server-authoritative management flag and the first channel id for API context.
+      viewerCanManage = wsData?.workspace?.viewerCanManage ?? false;
+      const channels: Array<{ id: string }> = wsData?.channels ?? [];
+      workspaceChannelId = channels[0]?.id ?? '';
+
       const members: Array<{ id: string; userId: string; role: string; joinedAt: string }> = [];
       if (wsData?.members) {
         for (const m of wsData.members) {
@@ -275,15 +298,30 @@
     }
   }
 
+  /** Maps a canonical role to a workspace role name understood by the backend. */
+  function roleToBackendName(role: 'member' | 'moderator' | 'admin'): string {
+    if (role === 'admin') return 'Administrateur';
+    if (role === 'moderator') return 'Modérateur';
+    return 'Membre';
+  }
+
   async function handleMemberRoleUpdate(userId: string) {
     const newRole = memberRoleSelections[userId];
     if (!newRole) return;
     memberRoleSaving = { ...memberRoleSaving, [userId]: true };
     try {
-      onUpdateMemberRole?.(userId, newRole);
+      if (onUpdateMemberRole) {
+        onUpdateMemberRole(userId, newRole);
+      } else if (workspaceChannelId) {
+        // Fallback: update the member's workspace role via the channel-scoped endpoint.
+        await channelService.updateMemberRole(workspaceChannelId, {
+          targetUserId: userId,
+          roleName: roleToBackendName(newRole),
+        });
+      }
       await loadMembers();
     } catch {
-      // handled by parent
+      // handled by parent or already surfaced via membersError in loadMembers
     } finally {
       const updated = { ...memberRoleSaving };
       delete updated[userId];
@@ -316,6 +354,13 @@
   async function handleInviteAction() {
     const id = inviteUserId.trim();
     if (!id) return;
+
+    if (!onInviteMember) {
+      inviteError =
+        "L'invitation directe n'est pas disponible. Utilisez le lien d'invitation ci-dessous.";
+      return;
+    }
+
     inviteLoading = true;
     inviteError = '';
     const savedId = inviteUserId;
@@ -323,7 +368,7 @@
     inviteUserId = '';
     inviteRole = 'member';
     try {
-      await onInviteMember?.(savedId, savedRole);
+      await onInviteMember(savedId, savedRole);
     } catch (e) {
       inviteError = e instanceof Error ? e.message : "Erreur lors de l'invitation.";
       inviteUserId = savedId;
@@ -563,156 +608,160 @@
                       </span>
                     </div>
 
-                    <div class="flex items-center gap-1.5 shrink-0">
-                      <div class="relative">
-                        <select
-                          class="w-32 bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-violet-500/50 appearance-none disabled:opacity-50"
-                          value={memberRoleSelections[member.userId] ?? member.role}
-                          disabled={memberRoleSaving[member.userId]}
-                          onchange={async (e) => {
-                            const val = (e.target as HTMLSelectElement).value;
-                            if (val === 'member' || val === 'moderator' || val === 'admin') {
-                              memberRoleSelections = {
-                                ...memberRoleSelections,
-                                [member.userId]: val,
-                              };
-                              // Auto-save on change
-                              await handleMemberRoleUpdate(member.userId);
-                            }
-                          }}
-                        >
-                          <option value="member">Membre</option>
-                          <option value="moderator">Modérateur</option>
-                          <option value="admin">Administrateur</option>
-                        </select>
-                        {#if memberRoleSaving[member.userId]}
-                          <span class="absolute right-1.5 top-1/2 -translate-y-1/2">
-                            <Loader size={12} class="animate-spin text-violet-500" />
-                          </span>
-                        {/if}
-                      </div>
+                    {#if viewerCanManage}
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <div class="relative">
+                          <select
+                            class="w-32 bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-violet-500/50 appearance-none disabled:opacity-50"
+                            value={memberRoleSelections[member.userId] ?? member.role}
+                            disabled={memberRoleSaving[member.userId]}
+                            onchange={async (e) => {
+                              const val = (e.target as HTMLSelectElement).value;
+                              if (val === 'member' || val === 'moderator' || val === 'admin') {
+                                memberRoleSelections = {
+                                  ...memberRoleSelections,
+                                  [member.userId]: val,
+                                };
+                                // Auto-save on change
+                                await handleMemberRoleUpdate(member.userId);
+                              }
+                            }}
+                          >
+                            <option value="member">Membre</option>
+                            <option value="moderator">Modérateur</option>
+                            <option value="admin">Administrateur</option>
+                          </select>
+                          {#if memberRoleSaving[member.userId]}
+                            <span class="absolute right-1.5 top-1/2 -translate-y-1/2">
+                              <Loader size={12} class="animate-spin text-violet-500" />
+                            </span>
+                          {/if}
+                        </div>
 
-                      <button
-                        type="button"
-                        onclick={() => handleRemoveMember(member.userId)}
-                        disabled={memberRemoving[member.userId]}
-                        class="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
-                        title="Retirer de la communauté"
-                      >
-                        {#if memberRemoving[member.userId]}
-                          <Loader size={12} class="animate-spin" />
-                        {:else}
-                          <Trash2 size={12} strokeWidth={2.5} />
-                        {/if}
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          onclick={() => handleRemoveMember(member.userId)}
+                          disabled={memberRemoving[member.userId]}
+                          class="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                          title="Retirer de la communauté"
+                        >
+                          {#if memberRemoving[member.userId]}
+                            <Loader size={12} class="animate-spin" />
+                          {:else}
+                            <Trash2 size={12} strokeWidth={2.5} />
+                          {/if}
+                        </button>
+                      </div>
+                    {/if}
                   </li>
                 {/each}
               </ul>
             {/if}
           </div>
 
-          <!-- Invitation -->
-          <div
-            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-5 shadow-sm"
-          >
-            <div class="space-y-2">
-              <label
-                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                for="ws-invite-autocomplete"
-              >
-                <Users size={14} />
-                Inviter un membre
-              </label>
-              <UserAutocomplete
-                value={inviteUserId}
-                onValueChange={(v) => (inviteUserId = v)}
-                placeholder="Rechercher un utilisateur..."
-                inputId="ws-invite-autocomplete"
-              />
-            </div>
-
-            <div class="space-y-2">
-              <label
-                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
-                for="ws-role-select"
-              >
-                <Shield size={14} />
-                Rôle
-              </label>
-              <select
-                id="ws-role-select"
-                class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-violet-500/50 shadow-inner transition-all text-sm font-semibold appearance-none"
-                bind:value={inviteRole}
-              >
-                <option value="member">Membre</option>
-                <option value="moderator">Modérateur</option>
-                <option value="admin">Administrateur</option>
-              </select>
-            </div>
-
+          {#if viewerCanManage}
+            <!-- Invitation -->
             <div
-              class="flex flex-col sm:flex-row gap-3 pt-4 border-t border-black/5 dark:border-white/10"
+              class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-5 shadow-sm"
             >
-              <button
-                type="button"
-                onclick={handleInviteAction}
-                disabled={!inviteUserId.trim() || inviteLoading}
-                class="flex-1 rounded-xl bg-violet-500 px-4 py-3 text-sm font-bold text-white hover:bg-violet-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-violet-500/20 disabled:shadow-none"
-              >
-                <UserPlus size={18} strokeWidth={2.5} />
-                {inviteLoading ? 'Envoi...' : 'Inviter'}
-              </button>
-            </div>
-            {#if inviteError}
-              <p class="mt-2 text-xs font-medium text-red-600 dark:text-red-400">{inviteError}</p>
-            {/if}
-          </div>
-
-          <!-- Lien d'invitation -->
-          <div
-            class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-3 shadow-sm"
-          >
-            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
-              Lien d'invitation
-            </p>
-            <p class="text-sm text-text-muted leading-relaxed">
-              Générez un lien partageable pour inviter de nouveaux membres à rejoindre la
-              communauté.
-            </p>
-            {#if shareLink}
-              <div class="flex items-center gap-2">
-                <input
-                  type="text"
-                  readonly
-                  value={shareLink}
-                  class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              <div class="space-y-2">
+                <label
+                  class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                  for="ws-invite-autocomplete"
+                >
+                  <Users size={14} />
+                  Inviter un membre
+                </label>
+                <UserAutocomplete
+                  value={inviteUserId}
+                  onValueChange={(v) => (inviteUserId = v)}
+                  placeholder="Rechercher un utilisateur..."
+                  inputId="ws-invite-autocomplete"
                 />
+              </div>
+
+              <div class="space-y-2">
+                <label
+                  class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                  for="ws-role-select"
+                >
+                  <Shield size={14} />
+                  Rôle
+                </label>
+                <select
+                  id="ws-role-select"
+                  class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-violet-500/50 shadow-inner transition-all text-sm font-semibold appearance-none"
+                  bind:value={inviteRole}
+                >
+                  <option value="member">Membre</option>
+                  <option value="moderator">Modérateur</option>
+                  <option value="admin">Administrateur</option>
+                </select>
+              </div>
+
+              <div
+                class="flex flex-col sm:flex-row gap-3 pt-4 border-t border-black/5 dark:border-white/10"
+              >
+                <button
+                  type="button"
+                  onclick={handleInviteAction}
+                  disabled={!inviteUserId.trim() || inviteLoading}
+                  class="flex-1 rounded-xl bg-violet-500 px-4 py-3 text-sm font-bold text-white hover:bg-violet-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-violet-500/20 disabled:shadow-none"
+                >
+                  <UserPlus size={18} strokeWidth={2.5} />
+                  {inviteLoading ? 'Envoi...' : 'Inviter'}
+                </button>
+              </div>
+              {#if inviteError}
+                <p class="mt-2 text-xs font-medium text-red-600 dark:text-red-400">{inviteError}</p>
+              {/if}
+            </div>
+
+            <!-- Lien d'invitation -->
+            <div
+              class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 md:p-6 space-y-3 shadow-sm"
+            >
+              <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+                Lien d'invitation
+              </p>
+              <p class="text-sm text-text-muted leading-relaxed">
+                Générez un lien partageable pour inviter de nouveaux membres à rejoindre la
+                communauté.
+              </p>
+              {#if shareLink}
+                <div class="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readonly
+                    value={shareLink}
+                    class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+                  />
+                  <button
+                    type="button"
+                    onclick={generateShareLink}
+                    class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+                  >
+                    Régénérer
+                  </button>
+                </div>
+                {#if shareCopied}
+                  <p class="text-xs font-semibold text-emerald-600">Lien copié !</p>
+                {/if}
+              {:else}
                 <button
                   type="button"
                   onclick={generateShareLink}
-                  class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+                  disabled={shareLoading}
+                  class="rounded-xl bg-violet-500 px-4 py-2 text-sm font-bold text-white hover:bg-violet-400 disabled:opacity-50"
                 >
-                  Régénérer
+                  {shareLoading ? 'Génération...' : "Générer un lien d'invitation"}
                 </button>
-              </div>
-              {#if shareCopied}
-                <p class="text-xs font-semibold text-emerald-600">Lien copié !</p>
               {/if}
-            {:else}
-              <button
-                type="button"
-                onclick={generateShareLink}
-                disabled={shareLoading}
-                class="rounded-xl bg-violet-500 px-4 py-2 text-sm font-bold text-white hover:bg-violet-400 disabled:opacity-50"
-              >
-                {shareLoading ? 'Génération...' : "Générer un lien d'invitation"}
-              </button>
-            {/if}
-            {#if shareError}
-              <p class="text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
-            {/if}
-          </div>
+              {#if shareError}
+                <p class="text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
