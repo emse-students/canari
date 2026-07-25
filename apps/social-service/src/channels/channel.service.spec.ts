@@ -275,7 +275,7 @@ describe('ChannelService security hardening', () => {
     const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
     arrangePollAccess(channelRepo, memberRepo);
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
-    roleRepo.find.mockResolvedValue([{ permissions: ['MODERATE_MESSAGES'] }]);
+    roleRepo.find.mockResolvedValue([{ permissions: ['channel.moderate'] }]);
     const msg = {
       id: 'm1',
       channelId: 'ch1',
@@ -642,8 +642,8 @@ describe('ChannelService security hardening', () => {
       { id: 'ws2', name: 'Member WS' },
     ]);
     roleRepo.find.mockResolvedValue([
-      { id: 'r-admin', permissions: ['MANAGE_WORKSPACE'] },
-      { id: 'r-member', permissions: ['SEND_MESSAGES'] },
+      { id: 'r-admin', permissions: ['workspace.manage'] },
+      { id: 'r-member', permissions: ['channel.send'] },
     ]);
 
     const result = await service.listWorkspacesForUser('u1');
