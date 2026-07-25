@@ -96,11 +96,18 @@ export class SecurityController {
     });
 
     if (!doc || !doc.verifier || doc.verifier.length === 0) {
-      const newDoc = this.pinVerifierRepo.create({
-        userId: safeUserId,
-        verifier: safeVerifier,
-      });
-      await this.pinVerifierRepo.save(newDoc);
+      if (doc) {
+        // Placeholder row created by pin-salt: update the verifier on the existing entity
+        doc.verifier = safeVerifier;
+        await this.pinVerifierRepo.save(doc);
+      } else {
+        // First registration: create a new row
+        const newDoc = this.pinVerifierRepo.create({
+          userId: safeUserId,
+          verifier: safeVerifier,
+        });
+        await this.pinVerifierRepo.save(newDoc);
+      }
       return { status: 'registered', resetRequired: false };
     }
 

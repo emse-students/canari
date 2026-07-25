@@ -3,6 +3,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { isValidPin } from '$lib/utils/chat/pinValidation';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -87,7 +88,7 @@
       internalError = m.auth_pin_required();
       return;
     }
-    if (trimmed.length < 4) {
+    if (!isValidPin(trimmed)) {
       internalError = m.auth_pin_min_length();
       return;
     }
