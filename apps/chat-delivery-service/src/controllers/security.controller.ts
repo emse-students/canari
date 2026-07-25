@@ -21,6 +21,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { MessagingService } from '../services/messaging.service';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
 import {
   assertSafeExternalUrl,
@@ -73,7 +74,7 @@ export class SecurityController {
    *   { status: 'ok' }          - verifier matches; PIN is consistent.
    *   { status: 'mismatch' }    - verifier differs; wrong PIN for this user.
    */
-  @UseGuards(HeaderAuthGuard)
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/security/pin-check')
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string },
@@ -94,7 +95,7 @@ export class SecurityController {
       where: { userId: safeUserId },
     });
 
-    if (!doc) {
+    if (!doc || !doc.verifier || doc.verifier.length === 0) {
       const newDoc = this.pinVerifierRepo.create({
         userId: safeUserId,
         verifier: safeVerifier,
@@ -127,6 +128,47 @@ export class SecurityController {
     }
 
     return { status: match ? 'ok' : 'mismatch', resetRequired };
+  }
+
+  /**
+   * Returns the PBKDF2 salt for the user so the client can compute the PIN
+   * verifier with a per-user random salt instead of a predictable one.
+   * On first call for a user without a salt, generates a fresh 16-byte hex salt,
+   * stores it alongside a placeholder verifier, and returns it.
+   * For legacy rows (salt = null), invalidates the old verifier by replacing the row
+   * so the next pin-check forces a clean re-registration with the new salt.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/security/pin-salt/:userId')
+  async getPinSalt(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ): Promise<{ salt: string }> {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+
+    let doc = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
+
+    // Existing user with a salt already set — return it as-is
+    if (doc?.salt) {
+      return { salt: doc.salt };
+    }
+
+    // Legacy user (salt = null) or no row yet: generate a fresh salt.
+    // For legacy users, delete the old row so the next pin-check treats it as a
+    // clean registration (the verifier was computed with the old predictable salt,
+    // so it would never match a verifier derived from the new random salt).
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    if (doc) {
+      await this.pinVerifierRepo.delete({ userId: safeUserId });
+    }
+    await this.pinVerifierRepo.save(
+      this.pinVerifierRepo.create({ userId: safeUserId, verifier: '', salt: newSalt })
+    );
+    this.logger.log(`[PIN_SALT] new salt generated for ${safeUserId} (legacy=${!!doc})`);
+
+    return { salt: newSalt };
   }
 
   /**

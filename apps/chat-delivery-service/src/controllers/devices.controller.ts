@@ -32,7 +32,7 @@ import {
   sanitizeOptionalDeviceAppVersion,
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
-import { RETENTION_WINDOW_MS } from '../retention.constants';
+import { RETENTION_WINDOW_MS, MAX_DEVICES_PER_USER } from '../retention.constants';
 import { resolveUserDisplayName } from '../utils/display-name';
 
 /** Device registration, key packages, device metadata, and device deletion. */
@@ -145,6 +145,16 @@ export class DevicesController {
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
+
+    // Enforce per-user device limit (M5)
+    const deviceCount = await this.keyPackageRepo.count({
+      where: { userId, createdAt: MoreThanOrEqual(new Date(Date.now() - RETENTION_WINDOW_MS)) },
+    });
+    if (deviceCount >= MAX_DEVICES_PER_USER) {
+      throw new BadRequestException(
+        `Maximum ${MAX_DEVICES_PER_USER} devices per user reached. Delete an unused device in Settings first.`
+      );
+    }
 
     const traceId = this.makeTraceId('reg-device');
 

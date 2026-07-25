@@ -690,7 +690,6 @@
           if (bioAvailable) {
             biometricConfigured = true;
             showBiometricSheet = true;
-            globalSession.isLoginInProgress = false;
             await globalSession.biometricLogin({
               ...sessionCb(),
               onLoginFailed: onSavedPinFailed,

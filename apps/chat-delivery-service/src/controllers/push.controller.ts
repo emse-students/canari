@@ -74,15 +74,34 @@ export class PushController {
     const stored = pt?.pushSecret;
     if (!stored) throw new ForbiddenException('Invalid push secret');
 
-    // Reject outright on length mismatch rather than truncating/padding the supplied
-    // value to the stored length: padding let any secret sharing the stored prefix
-    // authenticate, and truncation let a longer value with the right prefix pass.
-    // pushSecret is a fixed-length opaque token, so comparing lengths leaks nothing.
-    const expected = Buffer.from(stored, 'utf8');
-    const received = Buffer.from(secret, 'utf8');
-    if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
-      throw new ForbiddenException('Invalid push secret');
+    // Try SHA-256 hash first (new format)
+    const hashed = crypto.createHash('sha256').update(secret).digest('hex');
+    if (stored.length === hashed.length) {
+      try {
+        if (crypto.timingSafeEqual(Buffer.from(stored, 'utf8'), Buffer.from(hashed, 'utf8'))) {
+          return; // OK - new format
+        }
+      } catch {
+        /* fall through */
+      }
     }
+
+    // Fallback: compare plaintext (legacy format, backward-compatible)
+    try {
+      if (
+        stored.length === secret.length &&
+        crypto.timingSafeEqual(Buffer.from(stored, 'utf8'), Buffer.from(secret, 'utf8'))
+      ) {
+        // Migrate silently to hashed format
+        await this.pushTokenRepo.update({ userId, deviceId }, { pushSecret: hashed });
+        this.logger.log(`[PUSH_SECRET] migrated to hash for ${userId}:${deviceId}`);
+        return; // OK - legacy format, now migrated
+      }
+    } catch {
+      /* fall through */
+    }
+
+    throw new ForbiddenException('Invalid push secret');
   }
 
   private isTerminalPushTokenError(error: unknown): boolean {
@@ -123,10 +142,10 @@ export class PushController {
         ? body.voipToken.trim().slice(0, 255)
         : undefined;
 
-    // Generate an opaque long-lived secret for this device.
-    // Returned ONCE in the response; the client encrypts it in Android Keystore
-    // and uses it for GET /mls/push/fetch-proto.
-    const pushSecret = crypto.randomUUID().replace(/-/g, '');
+    // Generate a per-device push secret, hash it for storage so a plaintext DB
+    // leak doesn't expose usable push secrets directly.
+    const rawSecret = crypto.randomUUID().replace(/-/g, '');
+    const pushSecret = crypto.createHash('sha256').update(rawSecret).digest('hex');
 
     // Atomic upsert - avoids a race condition where two concurrent requests
     // (e.g. app restart) both find no row then both try to INSERT, with the
@@ -136,8 +155,8 @@ export class PushController {
       { conflictPaths: ['userId', 'deviceId'] }
     );
     this.logger.log(`[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`);
-    // pushSecret returned ONCE - the client must persist it.
-    return { status: 'registered', pushSecret };
+    // rawSecret returned ONCE - the client must persist it.
+    return { status: 'registered', pushSecret: rawSecret };
   }
 
   /**

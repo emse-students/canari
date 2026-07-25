@@ -20,6 +20,10 @@ export class PinVerifier {
   @Column()
   verifier: string;
 
+  /** Per-user random salt for PBKDF2-based PIN verifier derivation. */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  salt: string | null;
+
   @CreateDateColumn()
   registeredAt: Date;
 }

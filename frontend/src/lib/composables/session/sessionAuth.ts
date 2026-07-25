@@ -324,7 +324,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       //  - a wrong PIN is rejected without ever touching the device's identity or state;
       //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
       //    so the one-shot reset fires instead of leaving it banned forever.
-      const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin());
+      // Fetch the per-user random salt from the server
+      const saltRes = await fetch(
+        `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(ctx.getUserId())}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!saltRes.ok) {
+        throw new Error('Cannot fetch PIN salt (server unreachable).');
+      }
+      const { salt } = (await saltRes.json()) as { salt: string };
+      const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin(), salt);
       const verifierHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
@@ -963,8 +972,14 @@ export async function recoverPinImpl(
   }
 
   // The new PIN must be the real (rotated) account PIN: verify its verifier server-side.
-  const newVerifier = await computePinVerifier(userId, newPin);
   const token = await getToken();
+  const saltRes = await fetch(
+    `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!saltRes.ok) throw new Error('Cannot fetch PIN salt (server unreachable).');
+  const { salt } = (await saltRes.json()) as { salt: string };
+  const newVerifier = await computePinVerifier(userId, newPin, salt);
   const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

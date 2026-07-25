@@ -200,10 +200,15 @@ export async function performPinChange(
   log('[PIN_CHANGE] Starting PIN change…');
   reportProgress(onProgress, { percent: 5, stage: 'server' });
 
-  const [oldVerifier, newVerifier, token] = await Promise.all([
-    computePinVerifier(userId, currentPin),
-    computePinVerifier(userId, newPin),
-    getToken(),
+  const token = await getToken();
+  const saltRes = await fetch(`/api/mls/security/pin-salt/${encodeURIComponent(userId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!saltRes.ok) throw new Error('Cannot fetch PIN salt (server unreachable).');
+  const { salt } = (await saltRes.json()) as { salt: string };
+  const [oldVerifier, newVerifier] = await Promise.all([
+    computePinVerifier(userId, currentPin, salt),
+    computePinVerifier(userId, newPin, salt),
   ]);
 
   const res = await fetch('/api/mls/security/pin-change', {

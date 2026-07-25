@@ -13,6 +13,9 @@
  */
 export const RETENTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** Maximum active devices per user. Exceeding this limit blocks device registration. */
+export const MAX_DEVICES_PER_USER = 15;
+
 /**
  * Duree au-dela de laquelle une invitation (DeviceGroupMembership `pending`) jamais passee
  * `active` est consideree coincee et purgee, pour borner la boucle de re-invitation cote

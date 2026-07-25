@@ -15,7 +15,7 @@ import { MessagingService } from '../services/messaging.service';
 describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   let controller: PushController;
 
-  const pushTokenRepo = { findOne: jest.fn() };
+  const pushTokenRepo = { findOne: jest.fn(), update: jest.fn() };
   const getCommitsSince = jest.fn();
   const messagingService = { getCommitsSince } as unknown as MessagingService;
 
@@ -56,7 +56,9 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   };
 
   it('returns the ordered commits for a valid PushSecret', async () => {
-    pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'sekret' });
+    pushTokenRepo.findOne.mockResolvedValue({
+      pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
+    });
     getCommitsSince.mockResolvedValue(canned);
 
     const res = await controller.getCommitsPush('PushSecret sekret', body);
@@ -66,7 +68,9 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   });
 
   it('rejects a wrong PushSecret and never reads the commit log', async () => {
-    pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'sekret' });
+    pushTokenRepo.findOne.mockResolvedValue({
+      pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
+    });
 
     await expect(controller.getCommitsPush('PushSecret wrong-one', body)).rejects.toBeInstanceOf(
       ForbiddenException
@@ -75,14 +79,18 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   });
 
   it('rejects a missing PushSecret header', async () => {
-    pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'sekret' });
+    pushTokenRepo.findOne.mockResolvedValue({
+      pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
+    });
 
     await expect(controller.getCommitsPush('', body)).rejects.toBeInstanceOf(ForbiddenException);
     expect(getCommitsSince).not.toHaveBeenCalled();
   });
 
   it('clamps a negative or non-numeric sinceEpoch to 0', async () => {
-    pushTokenRepo.findOne.mockResolvedValue({ pushSecret: 'sekret' });
+    pushTokenRepo.findOne.mockResolvedValue({
+      pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
+    });
     getCommitsSince.mockResolvedValue(canned);
 
     await controller.getCommitsPush('PushSecret sekret', {
