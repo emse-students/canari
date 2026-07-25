@@ -43,7 +43,6 @@ import {
   summarizeConversationStats,
   installCatchupBenchDevTools,
 } from '$lib/mls-client/catchupBenchmark';
-import { BiometricService } from '$lib/services/biometric';
 import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
@@ -81,8 +80,6 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
-import { isBiometricPromptDismissed } from './sessionBiometrics';
-
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -379,12 +376,17 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     ]);
     if (mlsInitSettled.status === 'rejected') {
       const reason = mlsInitSettled.reason;
-      const isUndecryptable =
-        reason instanceof Error && reason.message === MLS_LOCAL_STATE_UNDECRYPTABLE;
+      const reasonStr = reason instanceof Error ? reason.message : String(reason);
+      const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
         throw new Error(
           'Your PIN was changed on another device. Recover your messages with your old PIN.'
         );
+      }
+      // Empty keystore on biometric path: no key stored yet (first launch or
+      // keystore was wiped). Surface a clean message and let the caller recover.
+      if (isBiometric && /no keystore key/i.test(reasonStr)) {
+        throw new Error('Veuillez entrer votre PIN pour déverrouiller la messagerie.');
       }
       throw mlsInitSettled.reason;
     }
@@ -423,26 +425,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     cb.onMlsReady?.();
 
     // Fire-and-forget: savePin is independent of conversation loading.
-    // On Tauri, BiometricService.isConfigured() is a fast read (localStorage +
-    // optional native invoke) and does not need to block the rest of login.
+    // The PIN is always saved — on Tauri it feeds push_context.json for
+    // background FCM decryption; on web it powers auto-login.
     void (async () => {
-      if (!isTauriRuntime() || !(await BiometricService.isConfigured().catch(() => false))) {
-        await savePin(ctx.getPin());
-      }
+      await savePin(ctx.getPin());
     })();
-
-    // Biometric enrolment prompt: depends only on local state (Tauri + not configured
-    // + not dismissed), not on syncs. Evaluated as soon as MLS is ready so the prompt
-    // appears immediately, not at the very end of the startup catch-up.
-    if (isTauriRuntime()) {
-      void (async () => {
-        const [isConfig, isDismissed] = await Promise.all([
-          BiometricService.isConfigured().catch(() => false),
-          isBiometricPromptDismissed(),
-        ]);
-        if (!isConfig && !isDismissed) ctx.setShowBiometricEnrollPrompt(true);
-      })();
-    }
 
     // Check push health AFTER registration so pending_push_secret.txt is present
     // (written by store_push_secret during startPushService) before the health check runs.
@@ -899,8 +886,10 @@ export async function nativeStorageLoginImpl(
  * (Android KeyStore / iOS Keychain) holds the MLS decryption key directly (see
  * KEYSTORE_PLAN.md). `retrieve_device_key` triggers the single biometric prompt.
  *
- * The old path that stored the PIN in the keystore (`BiometricService`) is no
- * longer used for login — it is kept only for enrollment / disable flows.
+ * When the keystore is empty (first launch, app reinstall), the biometric prompt
+ * still appears (user-presence check) but loginImpl will surface a clean
+ * "keystore empty" error — the caller should then fall back to the PIN modal
+ * without showing an error to the user.
  */
 export async function biometricLoginImpl(
   ctx: SessionContext,
@@ -927,14 +916,16 @@ export async function biometricLoginImpl(
       ...cb,
       onLoginFailed: (msg: string) => {
         failMsg = msg;
-        cb.onLoginFailed?.(msg);
+        // Don't propagate "empty keystore" errors to the caller — they are
+        // expected on first launch and the caller will show the PIN modal anyway.
+        if (!/no keystore key/i.test(msg) && !/veuillez entrer votre pin/i.test(msg)) {
+          cb.onLoginFailed?.(msg);
+        }
       },
     });
-    if (failMsg && /incorrect PIN/i.test(failMsg)) {
-      await BiometricService.disable().catch(() => {});
-      cb.log(
-        '[BIOMETRIC] Stale keystore key detected - biometric disabled, re-enrolment required.'
-      );
+    // If loginImpl succeeded despite a suppressed error, log it but don't alarm the user.
+    if (failMsg && /no keystore key|veuillez entrer votre pin/i.test(failMsg)) {
+      cb.log('[BIOMETRIC] Keystore empty — falling back to PIN.');
     }
   } catch (e) {
     ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');

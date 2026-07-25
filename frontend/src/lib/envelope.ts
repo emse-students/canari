@@ -42,6 +42,7 @@ export interface SystemEnvelope {
     channelId: string;
     channelName: string;
     workspaceName?: string;
+    inviterName?: string;
   };
   /** Metadata for call lifecycle messages (start → duration update on hangup). */
   callEvent?: {
@@ -170,6 +171,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 channelId: ci.channelId,
                 channelName: ci.channelName,
                 workspaceName: typeof ci.workspaceName === 'string' ? ci.workspaceName : undefined,
+                inviterName: typeof ci.inviterName === 'string' ? ci.inviterName : undefined,
               }
             : undefined;
         const ce = obj.callEvent as Record<string, unknown> | undefined;
@@ -300,12 +302,15 @@ export function mkPollEnvelope(
 export function mkChannelInviteEnvelope(
   channelId: string,
   channelName: string,
-  workspaceName?: string
+  workspaceName?: string,
+  inviterName?: string
 ): SystemEnvelope {
   return {
     kind: 'system',
-    text: m.chat_system_channel_invite({ channel: channelName }),
-    channelInvite: { channelId, channelName, workspaceName },
+    text: inviterName
+      ? m.chat_system_channel_invite_by({ inviter: inviterName, community: channelName })
+      : m.chat_system_channel_invite({ community: channelName }),
+    channelInvite: { channelId, channelName, workspaceName, inviterName },
   };
 }
 

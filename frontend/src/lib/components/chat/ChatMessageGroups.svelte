@@ -39,6 +39,8 @@
     onEdit?: (messageId: string, text: string) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
+    /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
+    onJoinChannel?: (channelId: string) => void;
     /** IDs of pinned messages in this conversation. */
     pinnedIds?: string[];
     /** Timestamp (ms) when the current conversation was opened; messages newer than this animate in. */
@@ -67,6 +69,7 @@
     onDelete,
     onEdit,
     onTogglePin,
+    onJoinChannel,
     pinnedIds = [],
     switchTime,
     currentUserId = '',
@@ -212,6 +215,7 @@
             {reactions}
             onReply={onReply ? () => onReply?.(msg) : undefined}
             onForward={onForward ? () => onForward?.(msg) : undefined}
+            {onJoinChannel}
             {onReact}
             {currentUserId}
             shouldAnimate={msg.timestamp.getTime() > switchTime}
@@ -267,6 +271,7 @@
               isDeleted={msg.isDeleted}
               status={msg.status}
               {groupPosition}
+              {onJoinChannel}
               onReply={onReply ? () => onReply?.(msg) : undefined}
               onForward={onForward ? () => onForward?.(msg) : undefined}
               {onNavigateToMessage}

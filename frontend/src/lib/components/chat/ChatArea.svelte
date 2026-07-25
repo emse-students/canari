@@ -114,6 +114,8 @@
     onCancelReply?: () => void;
     /** JWT auth token forwarded to message bubbles for media decryption. */
     authToken?: string;
+    /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
+    onJoinChannel?: (channelId: string) => void;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Files staged for sending but not yet uploaded. */
@@ -182,6 +184,7 @@
     onEdit,
     onCancelReply,
     authToken = '',
+    onJoinChannel,
     onFilesSelected,
     pendingFiles = [],
     onRemovePendingFile,
@@ -907,6 +910,7 @@
             searchQuery={searchQuery.trim()}
             {onReply}
             {onForward}
+            {onJoinChannel}
             onNavigateToMessage={navigateToMessage}
             {onReact}
             {onVotePoll}

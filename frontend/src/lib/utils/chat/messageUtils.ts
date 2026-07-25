@@ -1,5 +1,11 @@
 import { messageTime } from '$lib/utils/chat/messageOrder';
-import { serializeEnvelope, mkTextEnvelope, mkMediaEnvelope, mkPollEnvelope } from '$lib/envelope';
+import {
+  serializeEnvelope,
+  mkTextEnvelope,
+  mkMediaEnvelope,
+  mkPollEnvelope,
+  mkSystemEnvelope,
+} from '$lib/envelope';
 
 /** Returns true if the message was sent by the current user (case-insensitive). */
 export function isOwnMessage(senderId: string, userId: string): boolean {
@@ -168,6 +174,13 @@ export function appMsgToEnvelope(
           endsAtMs > 0 ? new Date(endsAtMs).toISOString() : null
         )
       ),
+      options: { messageId: msg.messageId || undefined, timestamp },
+    };
+  }
+
+  if (msg.system) {
+    return {
+      content: serializeEnvelope(mkSystemEnvelope(msg.system.data || msg.system.event || '')),
       options: { messageId: msg.messageId || undefined, timestamp },
     };
   }

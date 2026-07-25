@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CornerDownRight, Info, Hash } from '@lucide/svelte';
+  import { CornerDownRight, Info, Building2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
@@ -82,6 +82,8 @@
     isDeleted?: boolean;
     /** Controls which corners of the bubble are rounded based on adjacent messages. */
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
+    /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
+    onJoinChannel?: (channelId: string) => void;
     /** Called when the user triggers the reply action. */
     onReply?: (messageId: string) => void;
     /** Called when the user triggers the forward action. */
@@ -135,6 +137,7 @@
     isEdited = false,
     isDeleted = false,
     groupPosition = 'single',
+    onJoinChannel,
     onReply,
     onForward,
     onNavigateToMessage,
@@ -516,24 +519,29 @@
         : ''}"
     >
       <div class="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-        <Hash size={15} strokeWidth={2.5} class="flex-shrink-0" />
+        <Building2 size={15} strokeWidth={2.5} class="flex-shrink-0" />
         <span class="text-xs font-bold truncate">{channelInvite.channelName}</span>
-        {#if channelInvite.workspaceName}
+        {#if channelInvite.workspaceName && channelInvite.workspaceName !== channelInvite.channelName}
           <span class="text-xs text-text-muted font-medium truncate"
             >· {channelInvite.workspaceName}</span
           >
         {/if}
       </div>
       <p class="text-xs text-text-muted leading-relaxed">
-        {m.msg_channel_invite_description()}
+        {#if channelInvite.inviterName}
+          {m.msg_channel_invite_description_by({ inviter: channelInvite.inviterName })}
+        {:else}
+          {m.msg_channel_invite_description()}
+        {/if}
       </p>
-      <a
-        href="/chat"
+      <button
+        onclick={() => onJoinChannel?.(channelInvite.channelId)}
+        type="button"
         class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
       >
-        <Hash size={12} strokeWidth={3} />
+        <Building2 size={12} strokeWidth={3} />
         {m.msg_channel_invite_join_button()}
-      </a>
+      </button>
     </div>
   {:else}
     <div

@@ -17,7 +17,6 @@
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin, isPinPersistenceEnabled, setPinPersistence } from '$lib/utils/pinVault';
   import { getToken, clearAuth } from '$lib/stores/auth';
-  import { showToast } from '$lib/stores/toast.svelte';
   import { currentUserId } from '$lib/stores/user';
   import {
     globalSession,
@@ -37,7 +36,7 @@
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { Fingerprint, Phone, PhoneOff, Video } from '@lucide/svelte';
+  import { Phone, PhoneOff, Video } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
@@ -598,6 +597,13 @@
     };
   }
 
+  /** Navigates to the channel community when the user clicks "Rejoindre la communauté". */
+  function handleJoinChannel(channelId: string) {
+    const channelConversationId = `channel_${channelId}`;
+    notifNav.navigate(channelConversationId);
+    goto('/chat');
+  }
+
   // ── Post-login: load channel workspaces ───────────────────────────────────
   $effect(() => {
     if (!globalSession.isLoggedIn) return;
@@ -668,28 +674,35 @@
       }
 
       // Biometric path (Tauri only): try the device keystore directly.
-      // biometricLogin() now calls loginImpl() without a PIN, which triggers
-      // retrieve_device_key → single BiometricPrompt. No need to pre-check
-      // BiometricService.isConfigured() — if the keystore has a key for this
-      // device, the prompt appears; if not, it falls through to PIN.
+      // biometricLogin() calls loginImpl() without a PIN, which triggers
+      // retrieve_device_key → single BiometricPrompt.
+      //
+      // On first launch (no MLS device identity yet), skip biometric and go
+      // straight to PIN: the keystore is empty and the biometric prompt would
+      // be an unnecessary detour.
       if (isTauriRuntime()) {
-        const bioAvailable = await BiometricService.isAvailable().catch(() => false);
-        if (bioAvailable) {
-          biometricConfigured = true;
-          showBiometricSheet = true;
-          globalSession.isLoginInProgress = false;
-          await globalSession.biometricLogin({
-            ...sessionCb(),
-            onLoginFailed: onSavedPinFailed,
-          });
-          dismissAuthPrompts();
+        const savedUser = currentUserId();
+        const deviceKey = savedUser ? `mls_device_id_${savedUser}` : null;
+        const hasExistingDevice = deviceKey !== null && localStorage.getItem(deviceKey) !== null;
+
+        if (hasExistingDevice) {
+          const bioAvailable = await BiometricService.isAvailable().catch(() => false);
+          if (bioAvailable) {
+            biometricConfigured = true;
+            showBiometricSheet = true;
+            globalSession.isLoginInProgress = false;
+            await globalSession.biometricLogin({
+              ...sessionCb(),
+              onLoginFailed: onSavedPinFailed,
+            });
+            dismissAuthPrompts();
+          }
         }
         if (!globalSession.isLoggedIn) {
-          // Biometric cancelled, failed, or no keystore key: fall back to PIN modal.
-          const savedUser2 = currentUserId();
-          if (savedUser2) {
+          // Biometric cancelled, failed, keystore empty, or first launch: fall back to PIN.
+          if (savedUser) {
             globalSession.isLoginInProgress = false;
-            await openPinModal(savedUser2);
+            await openPinModal(savedUser);
           } else {
             globalSession.isLoginInProgress = false;
           }
@@ -1145,54 +1158,4 @@
     currentUserId={globalSession.userId || currentUserId() || ''}
     participants={callRemoteParticipants}
   />
-{/if}
-
-<!-- Biometric enrollment prompt (all routes) -->
-{#if globalSession.showBiometricEnrollPrompt}
-  <div
-    data-keyboard-aware-toast
-    class="keyboard-aware-bottom fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 right-4 md:left-auto md:right-6 md:w-fit max-w-[90vw] z-50 p-4 rounded-[1.25rem] border border-black/5 dark:border-white/10 bg-white/95 dark:bg-black/80 backdrop-blur-2xl shadow-2xl flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 transition-all duration-300"
-  >
-    <div class="flex items-center gap-3 w-full sm:w-auto">
-      <div
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400"
-      >
-        <Fingerprint size={24} strokeWidth={2.5} />
-      </div>
-
-      <div class="flex-1 min-w-0 pr-2">
-        <p class="text-sm font-bold text-text-main mb-0.5">{m.auth_biometric_enroll_title()}</p>
-        <p class="text-[11px] sm:text-xs text-text-muted leading-relaxed">
-          {m.auth_biometric_enroll_prompt()}
-        </p>
-      </div>
-    </div>
-
-    <!-- Buttons container: compact and right-aligned on mobile. -->
-    <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto mt-1 sm:mt-0">
-      <button
-        onclick={() => globalSession.dismissBiometricPrompt()}
-        class="px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-      >
-        {m.auth_biometric_later_btn()}
-      </button>
-      <button
-        onclick={async () => {
-          try {
-            await globalSession.enrollBiometric();
-            globalSession.showBiometricEnrollPrompt = false;
-          } catch (e) {
-            // If the device has no enrolled biometric, catch the error.
-            if (String(e).includes('At least one biometric must be enrolled')) {
-              showToast(m.auth_biometric_no_fingerprint_android(), 'info');
-              globalSession.showBiometricEnrollPrompt = false;
-            }
-          }
-        }}
-        class="px-4 py-2 text-xs font-bold text-[#151B2C] bg-amber-500 rounded-xl hover:bg-amber-400 shadow-sm transition-all whitespace-nowrap"
-      >
-        {m.auth_biometric_enable_btn()}
-      </button>
-    </div>
-  </div>
 {/if}

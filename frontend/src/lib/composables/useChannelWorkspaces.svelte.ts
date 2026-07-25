@@ -4,7 +4,12 @@ import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { hydrateChannelBootstrap, isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import {
+  hydrateChannelBootstrap,
+  isChannelConversationId,
+  sendEncryptedChannelMessage,
+} from '$lib/utils/chat/channelCrypto';
+import { currentUserId } from '$lib/stores/userState.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
@@ -544,6 +549,31 @@ export function useChannelWorkspaces() {
             );
             await mlsService.sendMessage(directConvo[1].id, controlMsg);
 
+            // Envoyer un message channel_invitation visible dans la conversation DM
+            const inviterId = currentUserId();
+            if (inviterId) {
+              const getName = await resolveDisplayNames([memberId, inviterId]);
+              const invitationMsg = encodeAppMessage(
+                mkSystem(
+                  'channel_invitation',
+                  JSON.stringify({
+                    channelId,
+                    channelName: channelDisplayName,
+                    workspaceName: workspaceDisplayName,
+                    inviterId,
+                    inviterName: getName(inviterId),
+                    inviteeId: memberId,
+                    inviteeName: getName(memberId),
+                  })
+                )
+              );
+              try {
+                await mlsService.sendMessage(directConvo[1].id, invitationMsg);
+              } catch (err) {
+                console.warn('[Channel Invite] Failed to send invitation message:', err);
+              }
+            }
+
             await service.markKeyDistributionSent(
               channelId,
               inviteResult.keyDistribution.distributionId
@@ -556,8 +586,26 @@ export function useChannelWorkspaces() {
         }
       }
 
-      const getName = await resolveDisplayNames([memberId]);
+      // Envoyer un message système chiffré dans le canal pour notifier les membres
+      const inviterId = currentUserId();
+      const getName = await resolveDisplayNames(inviterId ? [memberId, inviterId] : [memberId]);
       const displayName = getName(memberId);
+
+      if (inviterId) {
+        try {
+          const inviterName = getName(inviterId);
+          const systemText = m.chat_system_member_added({
+            sender: inviterName,
+            members: displayName,
+          });
+          const systemBytes = encodeAppMessage(mkSystem('memberAdded', systemText as string));
+          await sendEncryptedChannelMessage(channelConversationId, systemBytes);
+        } catch (err) {
+          console.warn('[Channel Invite] Failed to send system message to channel:', err);
+          // Ne pas bloquer l'invitation si le message système échoue
+        }
+      }
+
       ctx.log(`Member invited to channel (${roleName}): ${displayName}`);
     } catch (error) {
       // Suppress the toast: the invite modal re-surfaces this error inline via inviteStatus.

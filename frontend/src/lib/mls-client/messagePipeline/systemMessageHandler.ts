@@ -1,6 +1,6 @@
 import type { Conversation } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
-import { serializeEnvelope, mkChannelInviteEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkChannelInviteEnvelope, mkSystemEnvelope } from '$lib/envelope';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
@@ -105,18 +105,53 @@ export async function handleSystemEvent(
         .catch(() => {});
       await channelSvc.ackKeyDistribution(channelId, distributionId, keyVersion).catch(() => {});
 
-      const displayName = data.channelName || channelId;
-      const inviteEnvelope = serializeEnvelope(
-        mkChannelInviteEnvelope(channelId, displayName, data.workspaceName)
-      );
-      await addMessageToChat('system', inviteEnvelope, convoKey, { isSystem: true });
       log(
-        `[CHANNEL-KEY] ${keysToImport.length} key(s) received via MLS for #${displayName} (up to v${keyVersion}).`
+        `[CHANNEL-KEY] ${keysToImport.length} key(s) received via MLS for #${data.channelName || channelId} (up to v${keyVersion}).`
       );
     } catch (e) {
       log(
         `[CHANNEL-KEY] Distribution handling failed ${distributionId}: ${e instanceof Error ? e.message : String(e)}`
       );
+    }
+
+    return true;
+  }
+
+  if (event === 'channel_invitation') {
+    const channelId = String(data.channelId || '');
+    const channelName = String(data.channelName || channelId);
+    const workspaceName = data.workspaceName ? String(data.workspaceName) : undefined;
+
+    if (!channelId) return true;
+
+    if (senderNorm === userId) {
+      // L'inviteur voit son propre message (écho MLS)
+      const inviteeDisplayName = String(data.inviteeName || data.inviteeId || '');
+      await addMessageToChat(
+        'system',
+        serializeEnvelope(
+          mkSystemEnvelope(
+            m.chat_system_channel_invite_sent({
+              member: inviteeDisplayName,
+              community: workspaceName ?? channelName,
+            })
+          )
+        ),
+        convoKey,
+        { isSystem: true }
+      );
+    } else {
+      // L'invité reçoit la carte d'invitation
+      const inviterDisplayName = String(data.inviterName || '');
+      const inviteEnvelope = serializeEnvelope(
+        mkChannelInviteEnvelope(
+          channelId,
+          workspaceName ?? channelName,
+          workspaceName,
+          inviterDisplayName
+        )
+      );
+      await addMessageToChat('system', inviteEnvelope, convoKey, { isSystem: true });
     }
 
     return true;

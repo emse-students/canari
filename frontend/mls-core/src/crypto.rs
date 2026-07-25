@@ -1,3 +1,4 @@
+use argon2::password_hash::rand_core::{OsRng, RngCore};
 use openmls_traits::OpenMlsProvider;
 use zeroize::Zeroize;
 
@@ -111,9 +112,17 @@ impl MlsManager {
                     // PIN has been zeroized by derive_and_store_device_key.
                     return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
                 }
-                // No blob or blob too short — load as usual (fresh state or error).
-                // PIN will be zeroized by load_encrypted_owned.
-                Self::load_encrypted_owned(user_id, device_id, encrypted_blob, pin_str)
+                // No blob or blob too short — first launch with PIN.
+                // Generate a fresh salt, derive the key, store it for future
+                // biometric logins, and create the initial MLS identity.
+                let mut salt = [0u8; 16];
+                OsRng.fill_bytes(&mut salt);
+                let key =
+                    crate::security::derive_and_store_device_key(pin_str, &salt, &alias, keystore)
+                        .map_err(MlsError::OpenMls)?;
+                // PIN has been zeroized by derive_and_store_device_key.
+                // encrypted_blob is None (or too short) — load_or_create handles the fresh state.
+                Self::load_with_key(user_id, device_id, encrypted_blob, &key)
             }
             None => Err(MlsError::OpenMls(
                 "No keystore key and no PIN provided".into(),

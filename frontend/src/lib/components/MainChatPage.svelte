@@ -9,6 +9,7 @@
 
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -730,6 +731,13 @@
     }
   }
 
+  /** Navigates to the channel community when the user clicks "Rejoindre la communauté". */
+  function handleJoinChannel(channelId: string) {
+    const channelConversationId = `channel_${channelId}`;
+    notifNav.navigate(channelConversationId);
+    goto('/chat');
+  }
+
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
@@ -816,6 +824,7 @@
             ? () => (convs.isChannelSettingsModalOpen = true)
             : undefined}
           isHidden={convs.mobileView === 'list'}
+          onJoinChannel={handleJoinChannel}
           isLoadingHistory={convs.isLoadingHistory}
           isCatchingUpMessages={messaging.isMessageCatchupActive}
           groupMembers={convs.groupMembers}
