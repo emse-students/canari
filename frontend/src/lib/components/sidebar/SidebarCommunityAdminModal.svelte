@@ -24,6 +24,7 @@
   import { getToken } from '$lib/stores/auth';
   import { channelService } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Log } from '$lib/utils/Log';
 
   interface ChannelItem {
@@ -358,7 +359,9 @@
     inviteRole = 'member';
     try {
       await onInviteCommunityMember(savedId, savedRole);
-      inviteStatus = m.chat_community_invite_sent_message({ savedId });
+      const resolvedName = await resolveUserDisplayName(savedId);
+      const displayName = resolvedName ?? savedId;
+      inviteStatus = m.chat_community_invite_sent_message({ savedId: displayName });
       setTimeout(() => (inviteStatus = ''), 4000);
       void loadCommunityMembers();
     } catch (e) {
