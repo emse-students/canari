@@ -305,7 +305,7 @@ export class ChannelService {
     if (!member?.roleIds?.length) return false;
     const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
     return roles.some(
-      (r) => r.permissions.includes('INVITE_USERS') || r.permissions.includes('MANAGE_WORKSPACE')
+      (r) => r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
     );
   }
 
@@ -539,7 +539,7 @@ export class ChannelService {
       ? await this.roleRepo.find({ where: { id: In(allRoleIds) } })
       : [];
     const manageRoleIds = new Set(
-      roles.filter((r) => r.permissions.includes('MANAGE_WORKSPACE')).map((r) => r.id)
+      roles.filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)).map((r) => r.id)
     );
     const canManageByWorkspace = new Map<string, boolean>();
     for (const membership of memberships) {
@@ -601,7 +601,7 @@ export class ChannelService {
     if (actorMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
-        (r) => r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_ROLES')
+        (r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
@@ -629,7 +629,7 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
@@ -682,7 +682,7 @@ export class ChannelService {
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some((r) => r.permissions.includes('MANAGE_WORKSPACE'));
+      hasPerm = roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
 
@@ -734,7 +734,7 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
@@ -797,10 +797,10 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     channel.isPrivate = isPrivate;
     channel.allowedUsers = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
@@ -833,10 +833,10 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     channel.archived = true;
     await this.channelRepo.save(channel);
@@ -869,10 +869,10 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     // Backfill master secret if missing
     if (!channel.masterSecret) {
@@ -1172,9 +1172,9 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('INVITE_USERS') ||
-          r.permissions.includes('MANAGE_WORKSPACE') ||
-          r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
@@ -1410,11 +1410,11 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
 
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
 
@@ -1477,7 +1477,7 @@ export class ChannelService {
     if (adminMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
       hasPerm = roles.some(
-        (r) => r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_ROLES')
+        (r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
       );
     }
 
@@ -1522,11 +1522,11 @@ export class ChannelService {
       const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
       hasPerm = roles.some(
         (r) =>
-          r.permissions.includes('MANAGE_WORKSPACE') || r.permissions.includes('MANAGE_CHANNELS')
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) || r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
 
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNELS permission');
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     // Verify the target user is a workspace member
     const targetMember = await this.memberRepo.findOne({
@@ -2048,9 +2048,9 @@ export class ChannelService {
           : [];
         const canModerate = roles.some(
           (r) =>
-            r.permissions.includes('MODERATE_MESSAGES') ||
-            r.permissions.includes('MANAGE_CHANNELS') ||
-            r.permissions.includes('MANAGE_WORKSPACE')
+            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
+            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
         );
         if (!canModerate) {
           throw new ForbiddenException('Only the poll author or a moderator can close this poll');

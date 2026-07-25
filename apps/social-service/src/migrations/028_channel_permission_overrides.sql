@@ -15,6 +15,6 @@ CREATE INDEX IF NOT EXISTS idx_cpo_channel ON channel_permission_overrides(chann
 CREATE INDEX IF NOT EXISTS idx_cpo_role ON channel_permission_overrides(role_id);
 
 -- Ajout de la colonne d'activation du nouveau système de permissions sur channels
-ALTER TABLE channels ADD COLUMN IF NOT EXISTS use_permission_overrides BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS "usePermissionOverrides" BOOLEAN NOT NULL DEFAULT FALSE;
 
 COMMIT;
