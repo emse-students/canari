@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "0.10.13",
+  "version": "0.10.14",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
