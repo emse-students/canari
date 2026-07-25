@@ -210,18 +210,27 @@ export async function resetDeviceAsFreshImpl(
 }
 
 /**
- * Full login flow: verifies the PIN against the server, initialises MLS, opens IndexedDB,
- * restores conversations, connects the WebSocket, and schedules device-sync.
+ * Full login flow: verifies the PIN against the server (unless biometric mode),
+ * initialises MLS, opens IndexedDB, restores conversations, connects the WebSocket,
+ * and schedules device-sync.
+ *
+ * When `pin` is empty, biometric mode is assumed: the server-side pin-check is
+ * skipped, and `mlsService.init()` is called with an empty PIN so the Rust side
+ * path (`load_encrypted_with_keystore(pin: None)`) uses the platform keystore
+ * (single biometric prompt via `retrieve_device_key`).
+ *
  * On failure redirects to /login (or calls cb.onLoginFailed if provided).
  */
 export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
   const userId = ctx.getUserId();
   const pin = ctx.getPin();
 
-  if (!userId.trim() || !pin.trim()) {
+  // Biometric mode: skip the PIN-fields guard. The keystore handles authentication.
+  const isBiometric = !pin.trim();
+
+  if (!userId.trim()) {
     const msg = 'Please fill in all fields.';
     ctx.setLoginError(msg);
-    // Notify the caller so a PIN-modal spinner does not hang forever.
     cb.onLoginFailed?.(msg);
     return;
   }
@@ -248,7 +257,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
   try {
     const mlsService = ctx.ensureMls();
-    cb.log('Verifying PIN...');
+    if (isBiometric) {
+      cb.log('[BIOMETRIC] Skipping PIN verification - using device keystore...');
+    } else {
+      cb.log('Verifying PIN...');
+    }
 
     // Start MLS state load immediately - pure I/O, doesn't need the token.
     const { loadMlsState } = await import('$lib/utils/hex');
@@ -293,12 +306,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       return;
     }
 
-    const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin());
-    const verifierHeaders: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    };
-
     // Collect the MLS state that was loading in the background.
     const mlsStateResult = await mlsStatePromise;
     if (mlsStateResult) {
@@ -309,48 +316,61 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       );
     }
 
-    cb.log('Initialising MLS...');
-    // Resolve the device id and verify the PIN BEFORE init(). init() decrypts the
-    // encrypted MLS state, and a WRONG PIN makes that decryption fail - which would
-    // trigger a destructive fresh-start (generate a new id + deleteDevice → revocation).
-    // By resolving the real deviceId (no state decryption) and verifying the PIN first:
-    //  - a wrong PIN is rejected without ever touching the device's identity or state;
-    //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
-    //    so the one-shot reset fires instead of leaving it banned forever.
-    const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
-    const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
-    const pinCheckRes = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
-      method: 'POST',
-      headers: verifierHeaders,
-      body: verifierPayload,
-    });
-    if (!pinCheckRes.ok) {
-      throw new Error('Cannot verify PIN (server unreachable).');
-    }
-    const pinCheckData = (await pinCheckRes.json()) as {
-      status: string;
-      resetRequired?: boolean;
-    };
+    // Biometric mode: skip server-side PIN verification. The keystore
+    // (retrieve_device_key → BiometricPrompt) is the authentication factor.
+    if (!isBiometric) {
+      cb.log('Initialising MLS...');
+      // Resolve the device id and verify the PIN BEFORE init(). init() decrypts the
+      // encrypted MLS state, and a WRONG PIN makes that decryption fail - which would
+      // trigger a destructive fresh-start (generate a new id + deleteDevice → revocation).
+      // By resolving the real deviceId (no state decryption) and verifying the PIN first:
+      //  - a wrong PIN is rejected without ever touching the device's identity or state;
+      //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
+      //    so the one-shot reset fires instead of leaving it banned forever.
+      const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin());
+      const verifierHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      };
+      const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+      const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
+      const pinCheckRes = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
+        method: 'POST',
+        headers: verifierHeaders,
+        body: verifierPayload,
+      });
+      if (!pinCheckRes.ok) {
+        throw new Error('Cannot verify PIN (server unreachable).');
+      }
+      const pinCheckData = (await pinCheckRes.json()) as {
+        status: string;
+        resetRequired?: boolean;
+      };
 
-    if (pinCheckData.status === 'mismatch') {
-      throw new Error(
-        'Incorrect PIN: this PIN does not match the one registered for this user. All devices must use the same PIN.'
-      );
+      if (pinCheckData.status === 'mismatch') {
+        throw new Error(
+          'Incorrect PIN: this PIN does not match the one registered for this user. All devices must use the same PIN.'
+        );
+      }
+      if (pinCheckData.resetRequired === true) {
+        ctx.resetMls();
+        await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
+        ctx.setPin('');
+        throw new Error(
+          'This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.'
+        );
+      }
+      if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
+    } else {
+      cb.log('Initialising MLS (biometric keystore path)...');
     }
-    if (pinCheckData.resetRequired === true) {
-      ctx.resetMls();
-      await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
-      ctx.setPin('');
-      throw new Error(
-        'This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.'
-      );
-    }
-    if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
 
-    // PIN verified server-side - now decrypt the local MLS state. When a saved state
-    // exists, pass noFreshStart so an undecryptable state (the account PIN was rotated
-    // on another device → local state still sealed under the old PIN) surfaces as a
-    // recoverable signal instead of a destructive fresh-start that would drop history.
+    // PIN verified server-side (or biometric mode) - now decrypt the local MLS state.
+    // When a saved state exists, pass noFreshStart so an undecryptable state (the account
+    // PIN was rotated on another device → local state still sealed under the old PIN)
+    // surfaces as a recoverable signal instead of a destructive fresh-start that would
+    // drop history. In biometric mode, an empty PIN is passed so the Rust side invokes
+    // retrieve_device_key (single BiometricPrompt).
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       mlsService.init(ctx.getUserId(), ctx.getPin(), mlsStateResult?.bytes, {
         noFreshStart: !!mlsStateResult?.bytes,
@@ -875,15 +895,19 @@ export async function nativeStorageLoginImpl(
 }
 
 /**
- * Reads the PIN from the hardware biometric keystore and delegates to loginImpl().
- * Displays a user-friendly error if biometric authentication fails.
+ * Biometric login: delegates to loginImpl() WITHOUT a PIN. The platform keystore
+ * (Android KeyStore / iOS Keychain) holds the MLS decryption key directly (see
+ * KEYSTORE_PLAN.md). `retrieve_device_key` triggers the single biometric prompt.
+ *
+ * The old path that stored the PIN in the keystore (`BiometricService`) is no
+ * longer used for login — it is kept only for enrollment / disable flows.
  */
 export async function biometricLoginImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks
 ): Promise<void> {
   ctx.setLoginError('');
-  cb.log('[BIOMETRIC] Biometric login attempt...');
+  cb.log('[BIOMETRIC] Biometric login attempt (keystore key path)...');
   try {
     const savedUser = currentUserId();
     if (!savedUser) {
@@ -891,20 +915,13 @@ export async function biometricLoginImpl(
       cb.log('[BIOMETRIC] Failed - no local user found.');
       return;
     }
-    cb.log(`[BIOMETRIC] Authenticating for userId=${savedUser.slice(0, 8)}...`);
-    const retrieved = await BiometricService.authenticateAndGetSecret();
-    if (!retrieved) {
-      ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');
-      cb.log('[BIOMETRIC] Failed - secret not retrieved, manual PIN required.');
-      return;
-    }
-    cb.log('[BIOMETRIC] PIN retrieved via biometrics - calling login().');
+    cb.log(`[BIOMETRIC] Authenticating for userId=${savedUser.slice(0, 8)} via device keystore...`);
     ctx.setUserId(savedUser);
-    ctx.setPin(retrieved);
+    // Pass an empty PIN — loginImpl will skip the server-side pin-check and
+    // mlsService.init() will call load_encrypted_with_keystore(pin: None),
+    // which triggers retrieve_device_key → single BiometricPrompt.
+    ctx.setPin('');
 
-    // Capture a PIN-mismatch failure: the keystore holds a stale PIN (e.g. the PIN
-    // was changed on another device). Disable biometric so the user re-enters the
-    // new PIN and re-enrols, instead of the fingerprint failing on every attempt.
     let failMsg = '';
     await loginImpl(ctx, {
       ...cb,
@@ -915,7 +932,9 @@ export async function biometricLoginImpl(
     });
     if (failMsg && /incorrect PIN/i.test(failMsg)) {
       await BiometricService.disable().catch(() => {});
-      cb.log('[BIOMETRIC] Stale PIN detected - biometric disabled, re-enrolment required.');
+      cb.log(
+        '[BIOMETRIC] Stale keystore key detected - biometric disabled, re-enrolment required.'
+      );
     }
   } catch (e) {
     ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');

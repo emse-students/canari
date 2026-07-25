@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Biometric enrollment no longer throws when no fingerprint/Face ID is configured; falls back to PIN with a user-facing toast (fr/en)
 - Replaced all `unwrap()` calls with `?` in tauri-plugin-keystore `desktop.rs`
 
+### Fixed
+- Biometric login now uses a single prompt (device keystore) instead of two: the PIN is no longer stored in the keystore; `biometricLoginImpl` delegates directly to `loginImpl` without a PIN, and the Rust side uses `retrieve_device_key` for the MLS decryption key (completing the PIN→Key migration from KEYSTORE_PLAN.md)
+
 ### Removed
 - Per-channel/per-role permission-override system (`channel_permission_overrides`, `usePermissionOverrides`) in favour of the simple model (migration 032)
 

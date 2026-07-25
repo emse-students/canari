@@ -667,16 +667,15 @@
         return;
       }
 
-      const configured = await BiometricService.isConfigured().catch(() => false);
-      biometricConfigured = configured;
-
-      if (configured && isTauriRuntime()) {
-        // Only invoke the biometric prompt if the device actually has enrolled
-        // biometrics. If not (e.g., fingerprint hardware present but no fingerprint
-        // set up), skip straight to PIN to avoid a confusing OS error dialog.
-        const biometricAvailable = await BiometricService.isAvailable().catch(() => false);
-        if (biometricAvailable) {
-          // Sheet backdrop for the OS prompt; dismissed via onMlsReady as soon as MLS unlocks.
+      // Biometric path (Tauri only): try the device keystore directly.
+      // biometricLogin() now calls loginImpl() without a PIN, which triggers
+      // retrieve_device_key → single BiometricPrompt. No need to pre-check
+      // BiometricService.isConfigured() — if the keystore has a key for this
+      // device, the prompt appears; if not, it falls through to PIN.
+      if (isTauriRuntime()) {
+        const bioAvailable = await BiometricService.isAvailable().catch(() => false);
+        if (bioAvailable) {
+          biometricConfigured = true;
           showBiometricSheet = true;
           globalSession.isLoginInProgress = false;
           await globalSession.biometricLogin({
@@ -686,7 +685,7 @@
           dismissAuthPrompts();
         }
         if (!globalSession.isLoggedIn) {
-          // Biometric cancelled, failed, or unavailable: fall back to PIN modal.
+          // Biometric cancelled, failed, or no keystore key: fall back to PIN modal.
           const savedUser2 = currentUserId();
           if (savedUser2) {
             globalSession.isLoginInProgress = false;

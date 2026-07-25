@@ -18,12 +18,16 @@ pub(crate) async fn initialiser_mls(
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
     let keystore = PluginDeviceKeyStore::new(app);
+    // Empty PIN → biometric mode: the keystore holds the device key directly.
+    // load_encrypted_with_keystore will use Path A (retrieve_device_key) which
+    // triggers a single BiometricPrompt on Android/iOS.
+    let pin_opt = if pin.is_empty() { None } else { Some(pin) };
     tauri::async_runtime::spawn_blocking(move || {
         let manager = MlsManager::load_encrypted_with_keystore(
             &user_id,
             &device_id,
             encrypted_state,
-            Some(pin),
+            pin_opt,
             &keystore,
         )
         .map_err(|e| e.to_string())?;
