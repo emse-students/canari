@@ -11,8 +11,6 @@ package fr.emse.canari
 import android.annotation.SuppressLint
 import android.webkit.*
 import android.content.Context
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlin.collections.Map
@@ -25,9 +23,7 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.setGeolocationEnabled(true)
-        // CANARI CUSTOM PATCH (re-apply after `tauri android` regeneration): upstream sets
-        // `settings.databaseEnabled = true` (WebSQL) here, but WebSQL was removed from
-        // Chromium (WebView 115+) so the deprecated setter is a no-op - dropped.
+        settings.databaseEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
         settings.javaScriptCanOpenWindowsAutomatically = true
 
@@ -98,11 +94,5 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         return cookieManager.getCookie(url)
     }
 
-    // CANARI CUSTOM PATCH (re-apply after `tauri android` regeneration): let the soft keyboard
-    // commit rich content (e.g. a Gboard GIF) into the WebView. All logic lives in the
-    // non-generated KeyboardMediaBridge; this override is the single required hook.
-    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
-        val ic = super.onCreateInputConnection(outAttrs)
-        return KeyboardMediaBridge.wrapInputConnection(this, ic, outAttrs)
-    }
+    
 }

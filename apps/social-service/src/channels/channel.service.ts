@@ -420,7 +420,7 @@ export class ChannelService {
 
     await this.pushKeyToUser(savedGeneralChannel, input.createdBy);
 
-    return savedWs;
+    return { ...savedWs, viewerCanManage: true };
   }
 
   /**

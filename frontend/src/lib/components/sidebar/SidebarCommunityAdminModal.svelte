@@ -594,7 +594,6 @@
                 permissions={roleGridPermissions}
                 overrides={roleOverrides}
                 onToggle={handleRolePermissionToggle}
-                lockAdmin={false}
                 disableDeny={true}
               />
             </div>
