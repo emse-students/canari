@@ -17,16 +17,16 @@ export const RETENTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 export const MAX_DEVICES_PER_USER = 15;
 
 /**
- * Duree au-dela de laquelle une invitation (DeviceGroupMembership `pending`) jamais passee
- * `active` est consideree coincee et purgee, pour borner la boucle de re-invitation cote
- * membres actifs (`getPendingInvitations` la re-liste a chaque sync).
+ * Duration after which a `pending` DeviceGroupMembership invitation that never transitioned
+ * to `active` is considered stuck and purged, to bound the re-invitation loop on the active
+ * members side (`getPendingInvitations` re-lists it on every sync).
  *
- * Volontairement DISTINCT et beaucoup plus court que {@link RETENTION_WINDOW_MS} : supprimer
- * une ligne `pending` n'empeche PAS un device encore vivant de rejoindre. La ligne `pending`
- * n'est que le declencheur cote inviteur (et un fallback durable) ; le Welcome en file (table
- * separee, retention 90j) et le chemin `welcome_request` (le device reste `GroupMember` au
- * niveau utilisateur) assurent la reprise sans nouveau commit dans le cas courant. On garde
- * donc seulement une fenetre suffisante pour que l'ajout initial ait le temps de se faire
- * meme si tous les membres sont hors-ligne quelques jours (week-end), puis on purge.
+ * Deliberately DISTINCT and much shorter than {@link RETENTION_WINDOW_MS}: deleting a
+ * `pending` row does NOT prevent a still-alive device from joining. The `pending` row is
+ * only the inviter-side trigger (and a durable fallback); the queued Welcome (separate
+ * table, 90-day retention) and the `welcome_request` path (the device remains a `GroupMember`
+ * at the user level) ensure recovery without a new commit in the common case. We therefore
+ * only keep a window long enough for the initial add to complete even if all members are
+ * offline for a few days (weekend), then we purge.
  */
 export const STALE_PENDING_INVITATION_MS = 14 * 24 * 60 * 60 * 1000;

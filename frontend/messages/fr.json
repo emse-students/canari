@@ -13,7 +13,7 @@
   "auth_maintenance_default": "Canari est en maintenance. Seuls les administrateurs peuvent se connecter.",
   "auth_update_required": "Mettez à jour Canari (minimum {version}) avant de vous connecter.",
   "auth_pin_required": "Veuillez entrer votre PIN.",
-  "auth_pin_min_length": "Le code doit comporter au moins 6 chiffres.",
+  "auth_pin_min_length": "Le code doit comporter au moins 4 chiffres.",
   "auth_pin_title_setup": "Choisir un PIN de chiffrement",
   "auth_pin_title": "PIN de chiffrement",
   "auth_pin_first_heading": "Première connexion - choisissez votre PIN",

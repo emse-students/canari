@@ -87,7 +87,7 @@
       internalError = m.auth_pin_required();
       return;
     }
-    if (trimmed.length < 6) {
+    if (trimmed.length < 4) {
       internalError = m.auth_pin_min_length();
       return;
     }
