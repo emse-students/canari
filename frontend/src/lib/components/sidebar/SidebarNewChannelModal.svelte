@@ -1,6 +1,7 @@
 <script lang="ts">
   import Modal from '../shared/Modal.svelte';
   import { tick } from 'svelte';
+  import { Globe, Lock } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -8,15 +9,27 @@
     open: boolean;
     /** Current value of the channel name input. */
     channelName: string;
+    /** Channel visibility: 'public' or 'private'. */
+    visibility: 'public' | 'private';
     /** Callback to close the modal. */
     onClose: () => void;
     /** Callback fired when the channel name input changes. */
     onChannelNameChange: (value: string) => void;
+    /** Callback fired when the visibility toggle changes. */
+    onVisibilityChange: (value: 'public' | 'private') => void;
     /** Callback to submit the new channel creation form. */
     onSubmitChannel: () => void;
   }
 
-  let { open, channelName, onClose, onChannelNameChange, onSubmitChannel }: Props = $props();
+  let {
+    open,
+    channelName,
+    visibility,
+    onClose,
+    onChannelNameChange,
+    onVisibilityChange,
+    onSubmitChannel,
+  }: Props = $props();
   let channelInput: HTMLInputElement | undefined;
 
   $effect(() => {
@@ -42,6 +55,41 @@
         onkeydown={(e) => e.key === 'Enter' && onSubmitChannel()}
       />
     </div>
+
+    <!-- Visibility toggle -->
+    <div>
+      <span class="block text-sm font-medium text-text-main mb-2">Visibilité</span>
+      <div class="flex gap-2">
+        <button
+          type="button"
+          onclick={() => onVisibilityChange('public')}
+          class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all {visibility ===
+          'public'
+            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+            : 'bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 text-text-muted hover:text-text-main'}"
+        >
+          <Globe size={16} />
+          Public
+        </button>
+        <button
+          type="button"
+          onclick={() => onVisibilityChange('private')}
+          class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all {visibility ===
+          'private'
+            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+            : 'bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 text-text-muted hover:text-text-main'}"
+        >
+          <Lock size={16} />
+          Privé
+        </button>
+      </div>
+      <p class="text-xs text-text-muted mt-1.5">
+        {visibility === 'public'
+          ? 'Tous les membres peuvent voir et rejoindre ce canal.'
+          : 'Seuls les membres invités peuvent accéder à ce canal.'}
+      </p>
+    </div>
+
     <button
       onclick={onSubmitChannel}
       disabled={!channelName.trim()}

@@ -27,6 +27,8 @@
     clearOnSelect?: boolean;
     /** User IDs to hide from the suggestion list (e.g. already-selected users). */
     excludeIds?: string[];
+    /** When set, only users whose IDs are in this list appear in suggestions. */
+    filterUserIds?: string[];
   }
 
   let {
@@ -38,6 +40,7 @@
     onSubmit,
     clearOnSelect = false,
     excludeIds = [],
+    filterUserIds,
   }: Props = $props();
 
   let suggestions = $state<User[]>([]);
@@ -64,8 +67,13 @@
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
       if (res.ok) {
-        const all: User[] = await res.json();
-        suggestions = all.filter((u) => !excludeIds.includes(u.id));
+        let all: User[] = await res.json();
+        all = all.filter((u) => !excludeIds.includes(u.id));
+        if (filterUserIds) {
+          const allowed = new Set(filterUserIds.map((id) => id.toLowerCase()));
+          all = all.filter((u) => allowed.has(u.id.toLowerCase()));
+        }
+        suggestions = all;
         showDropdown = suggestions.length > 0;
         selectedIndex = -1;
       }

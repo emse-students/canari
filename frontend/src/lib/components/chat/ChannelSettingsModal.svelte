@@ -126,6 +126,9 @@
     }
   });
 
+  /** Derived list of workspace member IDs for filtering the user autocomplete. */
+  let workspaceMemberIds = $derived(channelMembers.map((m) => m.userId));
+
   async function loadChannelAccess() {
     accessLoading = true;
     accessError = '';
@@ -133,10 +136,8 @@
       const data = await channelService.getChannelAccess(selectedChannelId);
       accessIsPrivate = data.isPrivate;
       accessAllowedUserIds = data.allowedUsers ?? [];
-      // If channel is private, also load the member list (for removal)
-      if (data.isPrivate) {
-        await loadMembers();
-      }
+      // Always load the member list so the user autocomplete is scoped to workspace members.
+      await loadMembers();
       accessLoaded = true;
     } catch (e) {
       accessError = e instanceof Error ? e.message : m.chat_channel_access_load_error();
@@ -610,6 +611,7 @@
                           value={addingUserId}
                           onValueChange={(v) => (addingUserId = v)}
                           placeholder={m.chat_search_user_placeholder()}
+                          filterUserIds={workspaceMemberIds}
                         />
                       </div>
                       <button

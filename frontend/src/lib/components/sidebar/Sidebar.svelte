@@ -63,7 +63,11 @@
     /** Callback to create a new group conversation with the given name. */
     onCreateGroup: (groupName?: string) => void;
     /** Callback to create a new channel inside the specified workspace. */
-    onCreateChannel?: (workspaceId: string, channelName: string) => void;
+    onCreateChannel?: (
+      workspaceId: string,
+      channelName: string,
+      visibility?: 'public' | 'private'
+    ) => void;
     /** Callback to create a new community workspace. */
     onCreateWorkspace?: (workspaceName?: string) => void;
     /** Callback to invite a member to a channel with a given role. */
@@ -139,6 +143,7 @@
   let contactId = $state('');
   let groupName = $state('');
   let channelName = $state('');
+  let channelVisibility = $state<'public' | 'private'>('public');
   let communityName = $state('');
 
   let selectedCommunityWorkspaceId = $state('');
@@ -242,6 +247,7 @@
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     if (tab === 'channel') {
       channelName = newChannelInput || '';
+      channelVisibility = 'public';
       showNewChannelModal = true;
     } else {
       activeTab = tab;
@@ -293,8 +299,9 @@
       return;
     }
     onChannelInputChange?.(value);
-    onCreateChannel?.(selectedCommunityWorkspaceId, value);
+    onCreateChannel?.(selectedCommunityWorkspaceId, value, channelVisibility);
     channelName = '';
+    channelVisibility = 'public';
     onChannelInputChange?.('');
     closeNewChannelModal();
   }
@@ -550,14 +557,16 @@
               </button>
             {/each}
 
-            <button
-              type="button"
-              onclick={() => openNewChatModal('channel')}
-              class="w-full mt-2 flex items-center gap-2 px-3 py-2 rounded-xl text-left border border-dashed border-text-muted/30 text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20 transition-colors"
-            >
-              <Plus size={16} />
-              <span class="font-medium text-sm">Ajouter un canal</span>
-            </button>
+            {#if currentWorkspace?.viewerCanManage}
+              <button
+                type="button"
+                onclick={() => openNewChatModal('channel')}
+                class="w-full mt-2 flex items-center gap-2 px-3 py-2 rounded-xl text-left border border-dashed border-text-muted/30 text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20 transition-colors"
+              >
+                <Plus size={16} />
+                <span class="font-medium text-sm">Ajouter un canal</span>
+              </button>
+            {/if}
           </div>
         {:else}
           <div class="text-center py-8 px-4 text-text-muted text-sm">
@@ -592,9 +601,13 @@
 <SidebarNewChannelModal
   open={showNewChannelModal}
   {channelName}
+  visibility={channelVisibility}
   onClose={closeNewChannelModal}
   onChannelNameChange={(value) => {
     channelName = value;
+  }}
+  onVisibilityChange={(value) => {
+    channelVisibility = value;
   }}
   onSubmitChannel={handleCreateChannel}
 />

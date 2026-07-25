@@ -418,11 +418,15 @@ export function useChannelWorkspaces() {
     }
   }
 
-  /** Creates a public channel in the given workspace, hydrates its encryption key, adds it to the sidebar, and selects it. */
+  /**
+   * Creates a channel in the given workspace with the specified visibility,
+   * hydrates its encryption key, adds it to the sidebar, and selects it.
+   */
   async function createNewChannel(
     workspaceId: string,
     nameRaw: string,
-    ctx: ChannelWorkspaceContext
+    ctx: ChannelWorkspaceContext,
+    visibility: 'public' | 'private' = 'public'
   ) {
     if (!workspaceId) {
       ctx.log('Cannot create channel: select a community first.');
@@ -435,7 +439,7 @@ export function useChannelWorkspaces() {
       const createdChannel = await service.createChannel({
         workspaceId,
         name: normalizedChannelName,
-        visibility: 'public',
+        visibility,
       });
 
       const actualId =
@@ -456,12 +460,13 @@ export function useChannelWorkspaces() {
         }
       }
 
+      const isPrivate = visibility === 'private';
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
         addChannelToWorkspace(sidebarWorkspace.id, {
           id: channelId,
           name: normalizedChannelName,
-          isPrivate: false,
+          isPrivate,
         });
       }
 
@@ -477,7 +482,7 @@ export function useChannelWorkspaces() {
       });
       await ctx.saveConversation(channelId);
       ctx.selectConversation(channelId);
-      ctx.log(`Channel created: #${normalizedChannelName}`);
+      ctx.log(`Channel created: #${normalizedChannelName} (${visibility})`);
     } catch (error) {
       ctx.log(toUiActionError(m.channel_action_channel_create(), error));
     }

@@ -296,11 +296,12 @@
           convs.newGroupInput = '';
         }
       },
-      onCreateChannel: (workspaceId: string, value?: string) => {
+      onCreateChannel: (workspaceId: string, value?: string, visibility?: 'public' | 'private') => {
         const ch = (value ?? convs.newChannelInput).trim();
         if (!ch) return;
         const ws = channels.channelWorkspaces.find((w) => w.id === workspaceId);
-        if (ws?.workspaceDbId) channels.createNewChannel(ws.workspaceDbId, ch, channelsCtx());
+        if (ws?.workspaceDbId)
+          channels.createNewChannel(ws.workspaceDbId, ch, channelsCtx(), visibility);
         convs.newChannelInput = '';
       },
       onCreateWorkspace: (value?: string) => {

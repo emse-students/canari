@@ -57,11 +57,11 @@ export class ChannelsController {
     return this.service.createWorkspace({ ...body, createdBy: xUserId.trim().toLowerCase() });
   }
 
-  /** Returns a workspace looked up by its URL slug. */
+  /** Returns a workspace looked up by its URL slug, with viewerCanManage computed for the caller. */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/by-slug/:slug')
-  getWorkspaceBySlug(@Param('slug') slug: string) {
-    return this.service.getWorkspaceBySlug(slug);
+  getWorkspaceBySlug(@Headers('x-user-id') xUserId: string, @Param('slug') slug: string) {
+    return this.service.getWorkspaceBySlug(slug, xUserId.trim().toLowerCase());
   }
 
   /** Returns all workspaces the calling user belongs to. */

@@ -510,8 +510,12 @@ export class ChannelService {
     return savedWs;
   }
 
-  /** Loads a workspace by its URL slug together with its channels, members, and roles. */
-  async getWorkspaceBySlug(slug: string) {
+  /**
+   * Loads a workspace by its URL slug together with its channels, members, and roles.
+   * When `userId` is provided, computes `viewerCanManage` server-side so the frontend
+   * can gate admin controls without deriving permissions itself.
+   */
+  async getWorkspaceBySlug(slug: string, userId?: string) {
     const ws = await this.workspaceRepo.findOne({ where: { slug } });
     if (!ws) throw new NotFoundException('Workspace not found');
 
@@ -519,7 +523,22 @@ export class ChannelService {
     const members = await this.memberRepo.find({ where: { workspaceId: ws.id } });
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
 
-    return { workspace: ws, channels, members, roles };
+    let viewerCanManage = false;
+    if (userId) {
+      const viewerMember = members.find(
+        (m) => m.userId.trim().toLowerCase() === userId.trim().toLowerCase()
+      );
+      if (viewerMember?.roleIds?.length) {
+        const manageRoleIds = new Set(
+          roles
+            .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+            .map((r) => r.id)
+        );
+        viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
+      }
+    }
+
+    return { workspace: { ...ws, viewerCanManage }, channels, members, roles };
   }
 
   /** Returns all workspaces the user belongs to (derived from their ChannelMember records). */
