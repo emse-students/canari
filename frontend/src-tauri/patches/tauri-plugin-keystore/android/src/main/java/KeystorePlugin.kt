@@ -303,84 +303,36 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /// Stores a raw 32-byte AES key (base64-encoded) in the Android Keystore.
-    /// Triggers biometric authentication before encrypting, because the
-    /// keystore key requires `setUserAuthenticationRequired(true)`.
+    ///
+    /// Encryption is performed directly (no biometric prompt) — the keystore key
+    /// does not require user authentication.  This command is called during the
+    /// normal PIN login flow, where the user has already authenticated via their
+    /// PIN; a second biometric prompt would be disruptive.
+    ///
+    /// Hardware backing (key material never leaves the TEE) still protects the
+    /// data at rest.
     @Command
     fun storeKeyBytes(invoke: Invoke) {
         val args = invoke.parseArgs(StoreKeyBytesRequest::class.java)
         val keyBytes = Base64.decode(args.keyBytes, Base64.DEFAULT)
 
-        // Generate a biometric-protected AES key for this alias (no-op if it
-        // already exists).
         try {
             generateBiometricProtectedKeyForAlias(args.alias)
+            val cipher = getEncryptionCipherForAlias(args.alias)
+            val ciphertext = cipher.doFinal(keyBytes)
+            val iv = cipher.iv
+            storeCipherDataForAlias(args.alias, iv, ciphertext)
+            invoke.resolve()
         } catch (e: Exception) {
             invoke.reject("storeKeyBytes failed: ${e.message}")
-            return
         }
-
-        // Obtain an encryption cipher.  Because the key was created with
-        // setUserAuthenticationRequired(true), cipher.init() will throw
-        // UserNotAuthenticatedException unless the user authenticated recently
-        // (within the 5-minute timeout).  We wrap it in a BiometricPrompt so
-        // the user can authenticate now.
-        val cipher: Cipher
-        try {
-            cipher = getEncryptionCipherForAlias(args.alias)
-        } catch (e: Exception) {
-            invoke.reject("Error initializing cipher: ${e.message}")
-            return
-        }
-
-        val executor = ContextCompat.getMainExecutor(activity)
-        val biometricPrompt = BiometricPrompt(
-            activity as androidx.fragment.app.FragmentActivity, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(
-                    result: BiometricPrompt.AuthenticationResult
-                ) {
-                    super.onAuthenticationSucceeded(result)
-                    try {
-                        val authCipher = result.cryptoObject?.cipher
-                            ?: throw IllegalStateException(
-                                "Cipher not available after authentication"
-                            )
-                        val ciphertext = authCipher.doFinal(keyBytes)
-                        val iv = authCipher.iv
-
-                        storeCipherDataForAlias(args.alias, iv, ciphertext)
-                        invoke.resolve()
-                    } catch (e: Exception) {
-                        invoke.reject("Encryption failed: ${e.message}")
-                    }
-                }
-
-                override fun onAuthenticationError(
-                    errorCode: Int, errString: CharSequence
-                ) {
-                    super.onAuthenticationError(errorCode, errString)
-                    invoke.reject("Authentication error: $errorCode")
-                }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    invoke.reject("Authentication failed")
-                }
-            })
-
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Déverrouiller Canari")
-            .setSubtitle("Confirmez votre identité avec votre empreinte")
-            .setNegativeButtonText("Annuler")
-            .build()
-
-        biometricPrompt.authenticate(
-            promptInfo, BiometricPrompt.CryptoObject(cipher)
-        )
     }
 
-    /// Retrieves a raw 32-byte key by alias. Triggers biometric authentication.
-    /// Returns a JSObject with `keyBytes` (base64) or `null` if not found.
+    /// Retrieves a raw 32-byte key by alias.  Triggers a biometric prompt as a
+    /// UX gate — the user must prove their presence — but the underlying
+    /// keystore key does NOT require user authentication cryptographically
+    /// (see `generateBiometricProtectedKeyForAlias`).  Returns a JSObject
+    /// with `keyBytes` (base64) or `null` if not found.
     @Command
     fun getKeyBytes(invoke: Invoke) {
         val args = invoke.parseArgs(GetKeyBytesRequest::class.java)
@@ -395,14 +347,6 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
 
         val (iv, ciphertext) = cipherData
 
-        val cipher: Cipher
-        try {
-            cipher = getDecryptionCipherForAlias(args.alias, iv)
-        } catch (e: Exception) {
-            invoke.reject("Error initializing cipher: ${e.message}")
-            return
-        }
-
         val executor = ContextCompat.getMainExecutor(activity)
         val biometricPrompt = BiometricPrompt(
             activity as androidx.fragment.app.FragmentActivity, executor,
@@ -412,11 +356,9 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
                 ) {
                     super.onAuthenticationSucceeded(result)
                     try {
-                        val authCipher = result.cryptoObject?.cipher
-                            ?: throw IllegalStateException(
-                                "Cipher not available after authentication"
-                            )
-                        val decryptedBytes = authCipher.doFinal(ciphertext)
+                        // Cipher init + decrypt after successful biometric UX gate.
+                        val cipher = getDecryptionCipherForAlias(args.alias, iv)
+                        val decryptedBytes = cipher.doFinal(ciphertext)
                         val keyB64 = Base64.encodeToString(
                             decryptedBytes, Base64.DEFAULT
                         )
@@ -448,9 +390,8 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
             .setNegativeButtonText("Annuler")
             .build()
 
-        biometricPrompt.authenticate(
-            promptInfo, BiometricPrompt.CryptoObject(cipher)
-        )
+        // No CryptoObject — biometric is a pure UX gate, not a crypto requirement.
+        biometricPrompt.authenticate(promptInfo)
     }
 
     /// Deletes a raw key by alias from both the Android Keystore and
@@ -483,10 +424,27 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /// Lightweight existence check — reads SharedPreferences only, does NOT
+    /// access the Android Keystore and does NOT trigger a BiometricPrompt.
+    /// Returns `{ present: true }` when cipher data exists for the alias.
+    @Command
+    fun hasKeyBytes(invoke: Invoke) {
+        val args = invoke.parseArgs(GetKeyBytesRequest::class.java)
+        val cipherData = readCipherDataForAlias(args.alias)
+        val ret = JSObject()
+        ret.put("present", cipherData != null)
+        invoke.resolve(ret)
+    }
+
     // --- Alias-aware keystore utilities ---
 
-    /// Generates a biometric-protected AES-256 key for the given alias in
-    /// AndroidKeyStore. No-op if the alias already exists.
+    /// Generates an AES-256 key for the given alias in AndroidKeyStore.
+    /// No-op if the alias already exists.
+    ///
+    /// The key does NOT require user authentication — encryption (storeKeyBytes)
+    /// must work silently during PIN login without a biometric prompt.  Hardware
+    /// backing (key material never leaves the TEE) still protects the key at rest.
+    /// Biometric authentication is handled at the UX level by getKeyBytes.
     private fun generateBiometricProtectedKeyForAlias(alias: String) {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply {
             load(null)
@@ -502,19 +460,7 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         )
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setUserAuthenticationRequired(true)
-
-        // 5-minute timeout: user doesn't need to re-authenticate if the app
-        // was used recently. Balances security and UX.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            builder.setUserAuthenticationParameters(
-                300,  // 5 minutes
-                KeyProperties.AUTH_BIOMETRIC_STRONG
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            builder.setUserAuthenticationValidityDurationSeconds(300)
-        }
+            .setUserAuthenticationRequired(false)
 
         keyGenerator.init(builder.build())
         keyGenerator.generateKey()

@@ -68,20 +68,19 @@
   let changePinLoading = $state(false);
   let changePinProgress = $state<PinOperationProgress | null>(null);
   let changePinSuccess = $state('');
-  let pendingInvitationCount = $state(0);
+  let deviceCount = $state(0);
 
-  // Pending-invitation badge for the device panel (polls the current device's memberships).
+  // Device-count badge for the device management panel (polls the user's registered devices).
   $effect(() => {
     if (!session.isLoggedIn || !session.myDeviceId) return;
     const userId = session.userId;
-    const deviceId = session.myDeviceId;
     let cancelled = false;
     async function poll() {
       if (cancelled) return;
       try {
-        const memberships = await session.ensureMls().getDeviceMemberships(userId, deviceId);
+        const devices = await session.ensureMls().fetchUserDevices(userId);
         if (!cancelled) {
-          pendingInvitationCount = memberships.filter((mem) => mem.status === 'pending').length;
+          deviceCount = devices.length;
         }
       } catch {
         // MLS not ready yet
@@ -263,11 +262,11 @@
         >
           <Monitor size={16} strokeWidth={2.5} />
           <span class="hidden sm:inline">{m.profile_devices_manage_btn()}</span>
-          {#if pendingInvitationCount > 0}
+          {#if deviceCount > 1}
             <span
               class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center px-1 shadow"
             >
-              {pendingInvitationCount > 99 ? '99+' : pendingInvitationCount}
+              {deviceCount > 99 ? '99+' : deviceCount}
             </span>
           {/if}
         </button>

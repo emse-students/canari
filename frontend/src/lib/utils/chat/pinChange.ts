@@ -155,18 +155,21 @@ export async function reencryptLocalMessages(
 
 /**
  * Refreshes this device's locally stored PIN material after the account PIN changed:
- * updates the session PIN vault and, on Tauri, re-enrols biometric so the keystore holds
- * the new PIN instead of the stale one. Shared by both the change and recovery flows.
+ * updates the session PIN vault and, on Tauri, deletes the stale keystore key (derived
+ * from the old PIN) so the next PIN login re-derives and stores the new key.  Shared by
+ * both the change and recovery flows.
  */
 export async function applyNewPinLocally(
   newPin: string,
+  userId: string,
+  deviceId: string,
   log: (msg: string) => void
 ): Promise<void> {
   await savePin(newPin).catch(() => {});
   if (isTauriRuntime() && (await BiometricService.isConfigured().catch(() => false))) {
-    await BiometricService.enableBiometric(newPin).catch((e) =>
-      log(`[PIN] Biometric re-enrolment failed: ${e instanceof Error ? e.message : String(e)}`)
-    );
+    const alias = `mls_device_key_${userId}_${deviceId}`;
+    await BiometricService.disable(alias).catch(() => {});
+    log('[PIN] PIN changed — old keystore key deleted. Will be re-derived on next PIN login.');
   }
 }
 
@@ -234,7 +237,7 @@ export async function performPinChange(
   setPin(newPin);
 
   // Refresh this device's stored PIN + biometric so silent re-login keeps working.
-  await applyNewPinLocally(newPin, log);
+  await applyNewPinLocally(newPin, userId, mlsService.getDeviceId(), log);
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[PIN_CHANGE] Done.');
 }

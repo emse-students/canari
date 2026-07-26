@@ -1008,7 +1008,7 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Local messages re-encrypted with the new PIN.');
 
   onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewPinLocally(newPin, cb.log);
+  await applyNewPinLocally(newPin, userId, mls.getDeviceId(), cb.log);
   ctx.setPin(newPin);
 
   onProgress?.({ percent: 92, stage: 'login' });

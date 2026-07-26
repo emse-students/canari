@@ -19,8 +19,8 @@
     isImporting?: boolean;
     /** Whether a sync operation is in progress. */
     isSyncing?: boolean;
-    /** Number of pending device invitations to display as badge. */
-    pendingInvitationCount?: number;
+    /** Number of registered devices to display as badge. */
+    deviceCount?: number;
   }
 
   let {
@@ -32,7 +32,7 @@
     isExporting = false,
     isImporting = false,
     isSyncing = false,
-    pendingInvitationCount = 0,
+    deviceCount = 0,
   }: Props = $props();
 
   let fileInput: HTMLInputElement | undefined = $state();
@@ -101,11 +101,11 @@
         aria-label={m.chat_manage_devices_label()}
       >
         <Monitor size={16} />
-        {#if pendingInvitationCount > 0}
+        {#if deviceCount > 1}
           <span
             class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center px-1 shadow-sm"
           >
-            {pendingInvitationCount > 99 ? '99+' : pendingInvitationCount}
+            {deviceCount > 99 ? '99+' : deviceCount}
           </span>
         {/if}
       </button>

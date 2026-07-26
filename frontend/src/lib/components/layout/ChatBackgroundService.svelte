@@ -16,6 +16,7 @@
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
   import { loadPin, isPinPersistenceEnabled, setPinPersistence } from '$lib/utils/pinVault';
+  import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import { getToken, clearAuth } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import {
@@ -36,7 +37,7 @@
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { Phone, PhoneOff, Video } from '@lucide/svelte';
+  import { Fingerprint, Phone, PhoneOff, Video } from '@lucide/svelte';
   import { fly } from 'svelte/transition';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
@@ -192,8 +193,12 @@
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
   // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
-  const showStaySignedIn = !isTauriRuntime();
+  const showStaySignedIn = true;
   let pinStaySignedIn = $state(isPinPersistenceEnabled());
+
+  // Bannière d'enrôlement biométrique post-login (Tauri uniquement)
+  let showBiometricEnrollBanner = $state(false);
+  let biometricCheckedForEnrollment = $state(false);
 
   // "PIN changed on another device" recovery (offered on a mismatch when local state exists).
   let canRecoverPin = $state(false);
@@ -260,8 +265,12 @@
   }
 
   let showBiometricSheet = $state(false);
+  /** Flag permettant à startLoginFlow() de savoir que l'utilisateur a choisi
+   *  "Utiliser le code PIN" plutôt que la biométrie sur le BiometricBottomSheet. */
+  let biometricCancelled = $state(false);
 
   function onBiometricSkip() {
+    biometricCancelled = true;
     showBiometricSheet = false;
   }
 
@@ -612,6 +621,29 @@
     });
   });
 
+  // ── Post-login: propose biometric enrollment on mobile ────────────────────
+  // After a successful PIN login on Tauri, check if biometric enrollment
+  // should be offered (hardware available, not already configured, not dismissed).
+  $effect(() => {
+    const loggedIn = globalSession.isLoggedIn;
+    const isTauri = isTauriRuntime();
+    if (!loggedIn || !isTauri) return;
+    if (biometricCheckedForEnrollment) return;
+    if (showPinModal || showBiometricSheet) return;
+
+    biometricCheckedForEnrollment = true;
+    untrack(async () => {
+      const configured = await BiometricService.isConfigured().catch(() => false);
+      if (configured) return;
+      const dismissed = await isBiometricPromptDismissed();
+      if (dismissed) return;
+      const available = await BiometricService.isAvailable().catch(() => false);
+      if (!available) return;
+
+      showBiometricEnrollBanner = true;
+    });
+  });
+
   /**
    * Consumes the native FCM cache and injects messages directly into reactive memory,
    * enabling immediate display without waiting for the next history poll (5s or foreground resume).
@@ -673,42 +705,65 @@
         return;
       }
 
-      // Biometric path (Tauri only): try the device keystore directly.
-      // biometricLogin() calls loginImpl() without a PIN, which triggers
-      // retrieve_device_key → single BiometricPrompt.
-      //
-      // On first launch (no MLS device identity yet), skip biometric and go
-      // straight to PIN: the keystore is empty and the biometric prompt would
-      // be an unnecessary detour.
+      // ── BRANCHE TAURI (MOBILE) ──
       if (isTauriRuntime()) {
         const savedUser = currentUserId();
-        const deviceKey = savedUser ? `mls_device_id_${savedUser}` : null;
-        const hasExistingDevice = deviceKey !== null && localStorage.getItem(deviceKey) !== null;
+        if (!savedUser) {
+          globalSession.isLoginInProgress = false;
+          return;
+        }
+        globalSession.userId = savedUser;
+
+        // Étape 1 : Vérifier si biométrie est CONFIGURÉE (clé keystore présente)
+        const deviceKey = `mls_device_id_${savedUser}`;
+        const storedDeviceId = localStorage.getItem(deviceKey);
+        const hasExistingDevice = storedDeviceId !== null;
 
         if (hasExistingDevice) {
-          const bioAvailable = await BiometricService.isAvailable().catch(() => false);
-          if (bioAvailable) {
+          const alias = `mls_device_key_${savedUser}_${storedDeviceId}`;
+          const keyPresent = await BiometricService.isKeyPresent(alias).catch(() => false);
+
+          if (keyPresent) {
+            // Connexion suivante avec biométrie ENROLÉE → BiometricBottomSheet directe
             biometricConfigured = true;
+            biometricCancelled = false;
             showBiometricSheet = true;
-            await globalSession.biometricLogin({
-              ...sessionCb(),
-              onLoginFailed: onSavedPinFailed,
-            });
-            dismissAuthPrompts();
+
+            // Laisse un court délai pour que l'utilisateur puisse interagir avec
+            // le BiometricBottomSheet (choisir "Utiliser le code PIN"). Si onSkip
+            // est déclenché pendant ce délai, biometricCancelled passe à true et
+            // on évite d'afficher le prompt biométrique OS.
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            if (biometricCancelled) {
+              showBiometricSheet = false;
+            } else {
+              await globalSession.biometricLogin({
+                ...sessionCb(),
+                onLoginFailed: onSavedPinFailed,
+              });
+              dismissAuthPrompts();
+            }
           }
         }
+
         if (!globalSession.isLoggedIn) {
-          // Biometric cancelled, failed, keystore empty, or first launch: fall back to PIN.
-          if (savedUser) {
-            globalSession.isLoginInProgress = false;
-            await openPinModal(savedUser);
-          } else {
-            globalSession.isLoginInProgress = false;
-          }
+          // Biométrie a échoué, annulée, ou pas configurée → essayer le PIN stocké
+          globalSession.isLoginInProgress = false;
+          const ok = await globalSession.nativeStorageLogin({
+            ...sessionCb(),
+            onLoginFailed: onSavedPinFailed,
+          });
+          if (ok) return;
+
+          // Fallback : PIN modal SANS bouton empreinte
+          biometricConfigured = false;
+          globalSession.isLoginInProgress = false;
+          await openPinModal(savedUser);
         }
         return;
       }
 
+      // ── BRANCHE WEB ──
       const savedUser = currentUserId();
       const savedPin = await loadPin();
       if (savedUser && savedPin) {
@@ -720,13 +775,6 @@
         void globalSession.login({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
       } else if (savedUser) {
         globalSession.userId = savedUser;
-        if (isTauriRuntime()) {
-          const ok = await globalSession.nativeStorageLogin({
-            ...sessionCb(),
-            onLoginFailed: onSavedPinFailed,
-          });
-          if (ok) return;
-        }
         globalSession.isLoginInProgress = false;
         await openPinModal(savedUser);
       } else {
@@ -873,6 +921,22 @@
     };
   });
 
+  // ── Biométrie : handlers d'enrôlement post-login ──────────────────────────
+
+  async function handleBiometricEnroll() {
+    showBiometricEnrollBanner = false;
+    await globalSession.enrollBiometric();
+    // Après enrôlement réussi, mettre à jour biometricConfigured pour le prochain flux
+    if (globalSession.isLoggedIn) {
+      biometricConfigured = await BiometricService.isConfigured().catch(() => false);
+    }
+  }
+
+  async function handleBiometricEnrollDismiss() {
+    showBiometricEnrollBanner = false;
+    await globalSession.dismissBiometricPrompt();
+  }
+
   async function handleBiometricFromModal() {
     pinError = '';
     pinLoading = true;
@@ -993,6 +1057,7 @@
 
   // Safety net for navigations that arrive before onMount's startLoginFlow completes
   // (e.g. the OIDC callback navigates to /posts while onMount already ran with uid=null).
+  // Delegates to startLoginFlow which handles both mobile and web paths uniformly.
   afterNavigate(async ({ to }) => {
     const path = to?.url.pathname ?? window.location.pathname;
     const isAuthRoute =
@@ -1018,40 +1083,41 @@
     // Arriving on a non-auth route with a user but not yet logged in:
     // trigger the login flow that onMount missed.
     globalSession.initServices(appendLog);
-    const savedPin = await loadPin();
-    if (savedPin) {
-      globalSession.userId = uid;
-      globalSession.pin = savedPin;
-      _loginInProgress = true;
-      // loginImpl bails if isLoginInProgress=true - reset before delegating.
-      globalSession.isLoginInProgress = false;
-      void globalSession.login({
-        ...sessionCb(),
-        onLoginFailed: (msg: string) => {
-          onSavedPinFailed(msg);
-          _loginInProgress = false;
-        },
-      });
-    } else {
-      globalSession.userId = uid;
-      // Try biometric before falling back to the PIN modal.
-      // biometricConfigured is set by startLoginFlow which runs before afterNavigate.
-      if (biometricConfigured) {
-        const bioAvailable = await BiometricService.isAvailable().catch(() => false);
-        if (bioAvailable) {
-          _loginInProgress = true;
-          // loginImpl bails if isLoginInProgress=true - reset before delegating.
-          globalSession.isLoginInProgress = false;
-          await globalSession.biometricLogin({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
-          if (globalSession.isLoggedIn) return;
-          _loginInProgress = false;
-        }
-      }
-      globalSession.isLoginInProgress = false;
-      await openPinModal(uid);
-    }
+    // Reset the flag so startLoginFlow can proceed (it sets it again internally).
+    globalSession.isLoginInProgress = false;
+    void startLoginFlow();
   });
 </script>
+
+{#if showBiometricEnrollBanner}
+  <!-- Bannière d'enrôlement biométrique post-login (Tauri uniquement) -->
+  <div
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[300] max-w-sm w-[calc(100%-2rem)] bg-[#1a1f2e]/95 backdrop-blur-2xl rounded-2xl shadow-2xl ring-1 ring-white/10 px-5 py-4 flex items-center gap-4"
+    transition:fly={{ y: 20, duration: 300 }}
+  >
+    <div class="p-3 rounded-full bg-amber-500/10 shrink-0">
+      <Fingerprint size={24} strokeWidth={1.5} class="text-amber-500" />
+    </div>
+    <div class="min-w-0 flex-1">
+      <p class="text-sm font-bold text-white">{m.auth_biometric_enroll_title()}</p>
+      <p class="text-xs text-white/55 mt-0.5">{m.auth_biometric_enroll_prompt()}</p>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button
+        onclick={handleBiometricEnrollDismiss}
+        class="px-3 py-1.5 text-xs font-semibold text-white/60 hover:text-white transition-colors"
+      >
+        {m.auth_biometric_later_btn()}
+      </button>
+      <button
+        onclick={handleBiometricEnroll}
+        class="px-4 py-1.5 text-xs font-bold bg-amber-500 text-[#151B2C] rounded-lg hover:bg-amber-400 transition-all active:scale-95"
+      >
+        {m.auth_biometric_enable_btn()}
+      </button>
+    </div>
+  </div>
+{/if}
 
 <!-- Biometric choice sheet (shown before OS biometric prompt) -->
 <BiometricBottomSheet open={showBiometricSheet} onSkip={onBiometricSkip} />

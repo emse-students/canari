@@ -25,13 +25,13 @@ use crate::state::{AppState, HttpClient, PendingDb};
 // Re-export commands for generate_handler!
 use crate::commands::bootstrap::bootstrap_dead_conversation;
 use crate::commands::mls::{
-    ajouter_membres_bulk, annuler_commit, confirmer_commit, creer_groupe, envoyer_message,
-    envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree, exporter_secret,
-    generer_key_package, generer_key_packages, generer_key_packages_et_persister, initialiser_mls,
-    key_package_a_clef_privee, lister_groupes, obtenir_epoch, oublier_groupe, recevoir_message,
-    recevoir_message_bytes, recevoir_messages_batch, rejoindre_par_commit_externe, retirer_membres,
-    retirer_membres_par_appareil, sauvegarder_mls, sauvegarder_mls_et_persister, supprimer_groupe,
-    trailer_welcome,
+    actualiser_cle_keystore, ajouter_membres_bulk, annuler_commit, confirmer_commit, creer_groupe,
+    envoyer_message, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
+    exporter_secret, generer_key_package, generer_key_packages, generer_key_packages_et_persister,
+    initialiser_mls, key_package_a_clef_privee, lister_groupes, obtenir_epoch, oublier_groupe,
+    recevoir_message, recevoir_message_bytes, recevoir_messages_batch,
+    rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil, sauvegarder_mls,
+    sauvegarder_mls_et_persister, supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
     check_push_secret_health, get_fcm_token, get_voip_token, load_push_context,
@@ -820,7 +820,8 @@ pub fn run() {
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
             get_voip_token,
-            store_channel_key
+            store_channel_key,
+            actualiser_cle_keystore
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

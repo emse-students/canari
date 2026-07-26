@@ -3,7 +3,7 @@
  * isBiometricPromptDismissed, dismissBiometricPromptImpl, enrollBiometricImpl.
  */
 import { BiometricService } from '$lib/services/biometric';
-import { clearPinAndKey, savePin } from '$lib/utils/pinVault';
+import { clearPinAndKey, savePin, setPinPersistence } from '$lib/utils/pinVault';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -56,23 +56,28 @@ export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<v
 }
 
 /**
- * Stores the current PIN in the hardware biometric keystore, then clears the in-memory PIN
- * so future logins require biometric authentication.
+ * Enables biometric unlock.  The derived MLS key is already stored in the
+ * platform keystore by `derive_and_store_device_key` during PIN login —
+ * no additional keystore write is needed.  We just mark the flag and clear
+ * the in-memory PIN so future logins go through the biometric path.
  */
 export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
   appendLog('[BIOMETRIC] Biometric enrollment in progress…');
   try {
-    const result = await BiometricService.enableBiometric(ctx.getPin());
+    const result = await BiometricService.enableBiometric();
     if (!result.enrolled) {
-      // No fingerprint / Face ID enrolled on this device.
-      // Biometric enrollment is a convenience, not a prerequisite — let the user
-      // continue with their PIN.
       appendLog('[BIOMETRIC] No biometric enrolled on device — falling back to PIN.');
       showToast(m.auth_biometric_no_biometric_enrolled(), 'info');
       return;
     }
-    // PIN is now protected by the hardware keystore - wipe the session cache
+    // Biometric is now enabled — wipe the session PIN so the next launch
+    // uses the keystore path (getKeyBytes → BiometricPrompt).
     clearPinAndKey();
+    // Also clear the "stay signed in" persistence flag so the PIN is
+    // not re-saved on the next login (the keystore holds the key).
+    try {
+      await setPinPersistence(false, null);
+    } catch {}
     ctx.setShowBiometricEnrollPrompt(false);
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
     appendLog('[BIOMETRIC] Enrollment OK - PIN cleared from session (hardware keystore)');
@@ -83,14 +88,20 @@ export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
 }
 
 /**
- * Turns biometric unlock off (Settings toggle). Removes the hardware keystore secret,
- * then re-saves the in-memory PIN into the session PIN vault so the current session and
- * the next launch fall back to the normal PIN auto-login path instead of being stranded
- * without any unlock secret. Re-arms the enrolment banner so it can be offered again.
+ * Turns biometric unlock off (Settings toggle).  Deletes the derived MLS key
+ * from the platform keystore and clears the configured flag.  Re-saves the
+ * in-memory PIN into the session PIN vault so the next launch falls back to
+ * the normal PIN path.  Re-arms the enrolment banner.
  */
 export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   appendLog('[BIOMETRIC] Disabling biometric unlock…');
-  await BiometricService.disable();
+
+  // Build the alias so we can delete the exact keystore entry.
+  const userId = ctx.getUserId();
+  const deviceId = ctx.getMyDeviceId();
+  const alias = userId && deviceId ? `mls_device_key_${userId}_${deviceId}` : undefined;
+  await BiometricService.disable(alias);
+
   const pin = ctx.getPin();
   if (pin) await savePin(pin).catch(() => {});
   localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);

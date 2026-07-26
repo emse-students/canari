@@ -6,6 +6,7 @@ use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, KeyPackageBatchResult, PendingDb,
 };
 use mls_core::{DecryptErrorKind, MlsManager};
+use tauri::Manager;
 
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
@@ -693,4 +694,46 @@ pub(crate) fn exporter_secret(
             key_len,
         )
         .map_err(|e| e.to_string())
+}
+
+/// Re-derive la clé de chiffrement du device à partir du nouveau PIN et l'écrase
+/// dans le keystore. Appelée après un changement de PIN pour que le login biométrique
+/// continue de fonctionner avec le nouveau PIN.
+///
+/// Lit `mls.bin` pour extraire le sel (16 premiers octets), dérive la nouvelle clé
+/// via Argon2id et la stocke dans le keystore sous l'alias `mls_device_key_{user_id}_{device_id}`.
+/// Best-effort : si le keystore est indisponible, l'erreur est loggée mais la commande
+/// réussit quand même (le prochain login PIN re-dérivera la clé automatiquement).
+#[tauri::command]
+pub(crate) async fn actualiser_cle_keystore(
+    pin: String,
+    user_id: String,
+    device_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mls_path = data_dir.join("mls.bin");
+
+    let blob = std::fs::read(&mls_path).map_err(|e| format!("read mls.bin: {e}"))?;
+    if blob.len() < 16 {
+        return Err("mls.bin too short (no salt)".into());
+    }
+
+    let mut salt = [0u8; 16];
+    salt.copy_from_slice(&blob[..16]);
+    let alias = format!("mls_device_key_{user_id}_{device_id}");
+    let keystore = PluginDeviceKeyStore::new(app);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // derive_and_store_device_key zeroizes the PIN after derivation.
+        mls_core::security::derive_and_store_device_key(pin, &salt, &alias, &keystore)
+            .map(|_key| ())
+            .map_err(|e| {
+                log::warn!("[PIN_CHANGE] Failed to refresh keystore key: {e}");
+                // Non-fatal: the next PIN login will re-derive and store the key.
+                e
+            })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

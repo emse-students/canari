@@ -93,10 +93,28 @@ impl MlsManager {
 
         // Path A: keystore has a key for this device — use it directly.
         if let Some(key) = keystore.retrieve_device_key(&alias) {
-            return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
+            // Quick validation: can the key actually decrypt the blob?
+            // If not (PIN changed, blob re-encrypted with a new key), delete the
+            // stale keystore entry and fall through to Path B so the user is
+            // prompted for the new PIN. This makes the system self-healing.
+            let key_valid = match &encrypted_blob {
+                Some(blob) if blob.len() >= 16 => {
+                    let (_salt, rest) = blob.split_at(16);
+                    crate::security::decrypt_blob(&key, rest).is_ok()
+                }
+                _ => true, // No blob yet (first launch) — key is valid by definition.
+            };
+            if key_valid {
+                return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
+            }
+            // Stale key — delete it and fall through to Path B (PIN prompt).
+            let _ = keystore.delete_device_key(&alias);
+            log::warn!(
+                "[MLS] Keystore key failed to decrypt blob — key deleted, falling back to PIN."
+            );
         }
 
-        // Path B: no keystore key — fall back to PIN.
+        // Path B: no (valid) keystore key — fall back to PIN.
         match pin {
             Some(pin_str) => {
                 // If we have a blob, extract the salt from the header (first 16 bytes)
