@@ -14,12 +14,17 @@ object MlsContextLoader {
     /**
      * Identity context required by every background-side MLS HTTP and JNI call.
      * Loaded from push_context.json, written by Tauri after authentication.
+     *
+     * [deviceKeyB64] carries the base64-encoded 32-byte MLS device key so the
+     * FCM service can decrypt push notifications without a PIN. The PIN is never
+     * stored in push_context.json; it lives exclusively in the PinVault
+     * (AES-GCM encrypted in localStorage/sessionStorage).
      */
     data class PushContext(
-        val pin: String,
         val userId: String,
         val deviceId: String,
         val baseUrl: String,
+        val deviceKeyB64: String = "",
     )
 
     /**
@@ -42,11 +47,14 @@ object MlsContextLoader {
         if (!file.exists()) return null
         return try {
             val j = JSONObject(file.readText())
+            // Retrocompatibilite: ignorer l'ancien champ "pin" s'il existe.
+            // deviceKeyB64 peut etre vide (keystore indisponible) — le push
+            // ne pourra pas dechiffrer, mais c'est mieux que de stocker le PIN.
             PushContext(
-                pin      = j.optString("pin").takeIf      { it.isNotEmpty() } ?: return null,
                 userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
                 deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
                 baseUrl  = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null,
+                deviceKeyB64  = j.optString("deviceKeyB64", ""),
             )
         } catch (_: Exception) { null }
     }

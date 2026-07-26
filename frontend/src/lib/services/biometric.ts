@@ -1,5 +1,6 @@
 import { authenticate, BiometryType, checkStatus, type Status } from '@tauri-apps/plugin-biometric';
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
  * Flag persisted in localStorage (and mirrored to Tauri native store) that
@@ -88,8 +89,7 @@ export class BiometricService {
    * at least one fingerprint / face enrolled in the OS settings.
    */
   static async isAvailable(): Promise<boolean> {
-    const isMobile =
-      typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isMobile = isTauriRuntime();
     if (!isMobile) return false;
     const status: Status = await checkStatus();
     return status.isAvailable && status.biometryType !== BiometryType.None;

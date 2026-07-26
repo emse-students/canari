@@ -223,7 +223,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   const pin = ctx.getPin();
 
   // Biometric mode: skip the PIN-fields guard. The keystore handles authentication.
-  const isBiometric = !pin.trim();
+  const isBiometric = pin.length === 0;
 
   if (!userId.trim()) {
     const msg = 'Please fill in all fields.';
@@ -871,18 +871,48 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 /**
  * On Tauri/Android (no biometrics), reads the PIN from push_context.json and delegates to loginImpl().
  * Returns true if login succeeded, false if manual PIN is still needed.
+ *
+ * Option C : Si la biométrie est configurée, ne PAS tenter de login automatique
+ * depuis push_context.json. Le PIN a été effacé du fichier après enrollment,
+ * et le flux doit passer par le PinModal pour que l'utilisateur saisisse son PIN
+ * manuellement (ou utilise la biométrie).
  */
 export async function nativeStorageLoginImpl(
   ctx: SessionContext,
-  cb: ChatSessionCallbacks
+  cb: ChatSessionCallbacks,
+  biometricConfigured?: boolean
 ): Promise<boolean> {
   if (!isTauriRuntime()) return false;
+
+  // Option C : ne pas utiliser push_context.json si la biométrie est configurée.
+  // La biométrie prend le pas — le flux doit aller vers le BiometricBottomSheet
+  // ou le PinModal, pas vers l'auto-login.
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const nativeCtx = await invoke<{ pin?: string; userId?: string } | null>('load_push_context');
-    if (!nativeCtx?.pin || !nativeCtx.userId || nativeCtx.userId !== ctx.getUserId()) return false;
-    appendLog('[PIN] PIN restored from native storage - auto-login…');
-    ctx.setPin(nativeCtx.pin);
+    let isConfigured: boolean;
+    if (biometricConfigured !== undefined) {
+      isConfigured = biometricConfigured;
+    } else {
+      const { BiometricService } = await import('$lib/services/biometric');
+      isConfigured = await BiometricService.isConfigured();
+    }
+    if (isConfigured) {
+      appendLog('[PIN] Biometric configured - skipping native storage auto-login');
+      return false;
+    }
+  } catch {
+    // Si on ne peut pas vérifier, on continue avec le comportement actuel.
+  }
+
+  // Lire le PIN depuis le PinVault (AES-GCM chiffré), jamais depuis push_context.json.
+  try {
+    const { loadPin } = await import('$lib/utils/pinVault');
+    const pin = await loadPin();
+    if (!pin) {
+      appendLog('[PIN] No PIN in vault - auto-login impossible');
+      return false;
+    }
+    appendLog('[PIN] PIN restored from PinVault - auto-login…');
+    ctx.setPin(pin);
     await loginImpl(ctx, cb);
     return ctx.isLoggedIn();
   } catch {
@@ -925,17 +955,14 @@ export async function biometricLoginImpl(
       ...cb,
       onLoginFailed: (msg: string) => {
         failMsg = msg;
-        // Don't propagate "empty keystore" errors to the caller — they are
-        // expected on first launch and the caller will show the PIN modal anyway.
-        if (!/no keystore key/i.test(msg) && !/veuillez entrer votre pin/i.test(msg)) {
-          cb.onLoginFailed?.(msg);
-        }
+        // P2-B : Ne jamais supprimer l'erreur d'authentification.
+        // Si l'utilisateur annule le BiometricPrompt, l'erreur doit se
+        // propager au startLoginFlow qui affichera le PinModal (P2-A).
+        // La distinction entre "keystore vide" et "authentification annulée"
+        // est gérée côté Rust via des messages d'erreur distincts.
+        cb.onLoginFailed?.(msg);
       },
     });
-    // If loginImpl succeeded despite a suppressed error, log it but don't alarm the user.
-    if (failMsg && /no keystore key|veuillez entrer votre pin/i.test(failMsg)) {
-      cb.log('[BIOMETRIC] Keystore empty — falling back to PIN.');
-    }
   } catch (e) {
     ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');
     cb.log(`[BIOMETRIC] Exception: ${e instanceof Error ? e.message : String(e)}`);

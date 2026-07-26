@@ -1,6 +1,10 @@
 //! Commandes Tauri pour le contexte push (FCM, VOIP, cache, outbox mirror).
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use mls_core::keystore::DeviceKeyStore;
 use tauri::Manager;
+
+use crate::keystore_bridge::PluginDeviceKeyStore;
 
 /// Retourne le token FCM stocke par CanariFirebaseMessagingService.
 /// Verifie que le Keystore Android peut lire le push secret (flag ecrit par CanariApplication).
@@ -20,6 +24,23 @@ pub(crate) fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Val
         }
         // keystore_ok.flag ecrit par CanariApplication.checkKeystoreHealth() au demarrage.
         if data_dir.join("keystore_ok.flag").exists() {
+            // Verifier que deviceKeyB64 est present et non vide dans push_context.json.
+            // Le flag keystore peut etre present mais le champ deviceKeyB64 manquant
+            // (ex: apres un clear_push_context_key qui n'a pas ete suivi d'un store_push_context).
+            if let Ok(content) = std::fs::read_to_string(data_dir.join("push_context.json")) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let device_key_empty = json
+                        .get("deviceKeyB64")
+                        .and_then(|v| v.as_str())
+                        .map_or(true, |s| s.is_empty());
+                    if device_key_empty {
+                        log::warn!(
+                            "[PushHealth] keystore_ok.flag present but deviceKeyB64 missing/empty in push_context.json"
+                        );
+                        return serde_json::json!({"ok": false, "reason": "no_secret"});
+                    }
+                }
+            }
             return serde_json::json!({"ok": true});
         }
         // pending_push_secret.txt -> migration en attente ; le service FCM peut dechiffrer
@@ -277,10 +298,14 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
     Some(content)
 }
 
-/// Sauvegarde le PIN et le contexte de session dans {app_data_dir}/push_context.json
+/// Sauvegarde le contexte de session dans {app_data_dir}/push_context.json
 /// pour que CanariFirebaseMessagingService puisse dechiffrer les notifications push.
 /// `push_token` est un Bearer token long-lived (ou vide sur desktop) utilise par le
 /// service Kotlin pour fetcher le proto MLS quand il n'est pas inclus inline dans FCM.
+///
+/// Le PIN n'est JAMAIS stocke dans push_context.json. La cle de dechiffrement MLS
+/// est toujours recuperee du keystore et stockee en base64 dans `deviceKeyB64`.
+/// Si la cle n'est pas dans le keystore, `deviceKeyB64` reste vide.
 #[tauri::command]
 pub(crate) fn store_push_context(
     pin: String,
@@ -290,16 +315,47 @@ pub(crate) fn store_push_context(
     push_token: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let _ = pin; // Le PIN n'est plus stocke, garde pour retrocompatibilite de l'API
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+
+    // Toujours recuperer la cle du keystore pour que le service
+    // Kotlin puisse dechiffrer les push sans PIN.
+    let alias = format!("mls_device_key_{user_id}_{device_id}");
+    let keystore = PluginDeviceKeyStore::new(app.clone());
+    let device_key_b64: String = keystore
+        .retrieve_device_key(&alias)
+        .map(|key| STANDARD.encode(&key))
+        .unwrap_or_default();
+
     let json = serde_json::json!({
-        "pin": pin,
         "userId": user_id,
         "deviceId": device_id,
         "baseUrl": base_url,
-        "pushToken": push_token.unwrap_or_default()
+        "pushToken": push_token.unwrap_or_default(),
+        "deviceKeyB64": device_key_b64
     });
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
+}
+
+/// Efface le champ `deviceKeyB64` de {app_data_dir}/push_context.json.
+/// Appele apres enrollment/desactivation de la biometrie pour invalider
+/// la cle de dechiffrement stockee sur le filesystem.
+/// Si le fichier n'existe pas → no-op (succes).
+#[tauri::command]
+pub(crate) fn clear_push_context_key(app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = data_dir.join("push_context.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut json: serde_json::Value =
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert("deviceKeyB64".to_string(), serde_json::Value::Null);
+    }
+    std::fs::write(&path, json.to_string()).map_err(|e| e.to_string())
 }
 
 /// Lit {app_data_dir}/push_context.json et retourne son contenu.

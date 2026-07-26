@@ -19,6 +19,7 @@ pub(crate) async fn initialiser_mls(
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
     let keystore = PluginDeviceKeyStore::new(app);
+
     // Empty PIN → biometric mode: the keystore holds the device key directly.
     // load_encrypted_with_keystore will use Path A (retrieve_device_key) which
     // triggers a single BiometricPrompt on Android/iOS.

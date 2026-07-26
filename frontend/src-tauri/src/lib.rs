@@ -34,9 +34,10 @@ use crate::commands::mls::{
     sauvegarder_mls_et_persister, supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
-    check_push_secret_health, get_fcm_token, get_voip_token, load_push_context,
-    read_and_clear_fcm_cache, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
-    store_channel_key, store_outbox_mirror, store_push_context, store_push_secret,
+    check_push_secret_health, clear_push_context_key, get_fcm_token, get_voip_token,
+    load_push_context, read_and_clear_fcm_cache, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, store_channel_key, store_outbox_mirror, store_push_context,
+    store_push_secret,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, get_native_flags, load_mls_state, mls_foreground_heartbeat,
@@ -46,153 +47,7 @@ use crate::commands::storage::{
 // ─── JNI functions (Android background push) ──────────────────────────────
 // Kept in lib.rs because they use `extern "system"` / `no_mangle` and reference
 // `mobile::background` / `mobile::proto_fields` which are conditionally compiled.
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessage<
-    'a,
->(
-    mut env: jni::JNIEnv<'a>,
-    _service: jni::objects::JObject<'a>,
-    state_bytes: jni::objects::JByteArray<'a>,
-    pin: jni::objects::JString<'a>,
-    user_id: jni::objects::JString<'a>,
-    device_id: jni::objects::JString<'a>,
-    group_id: jni::objects::JString<'a>,
-    ciphertext: jni::objects::JByteArray<'a>,
-) -> jni::objects::JString<'a> {
-    let result = (|| -> serde_json::Value {
-        let state_vec = match env.convert_byte_array(&state_bytes) {
-            Ok(v) => v,
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let pin_str: String = match env.get_string(&pin) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let user_id_str: String = match env.get_string(&user_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let device_id_str: String = match env.get_string(&device_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let group_id_str: String = match env.get_string(&group_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let cipher_vec = match env.convert_byte_array(&ciphertext) {
-            Ok(v) => v,
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-
-        mobile::background::decrypt_push_message(
-            &state_vec,
-            &pin_str,
-            &user_id_str,
-            &device_id_str,
-            &group_id_str,
-            &cipher_vec,
-        )
-        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
-    })();
-
-    let json_str = result.to_string();
-    env.new_string(&json_str)
-        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeGroupEpoch<'a>(
-    mut env: jni::JNIEnv<'a>,
-    _service: jni::objects::JObject<'a>,
-    state_bytes: jni::objects::JByteArray<'a>,
-    pin: jni::objects::JString<'a>,
-    user_id: jni::objects::JString<'a>,
-    device_id: jni::objects::JString<'a>,
-    group_id: jni::objects::JString<'a>,
-) -> jni::sys::jlong {
-    let epoch = (|| -> Option<u64> {
-        let state_vec = env.convert_byte_array(&state_bytes).ok()?;
-        let pin_str: String = env.get_string(&pin).ok()?.into();
-        let user_id_str: String = env.get_string(&user_id).ok()?.into();
-        let device_id_str: String = env.get_string(&device_id).ok()?.into();
-        let group_id_str: String = env.get_string(&group_id).ok()?.into();
-        mobile::background::background_group_epoch(
-            &state_vec,
-            &pin_str,
-            &user_id_str,
-            &device_id_str,
-            &group_id_str,
-        )
-    })();
-    epoch.map(|e| e as jni::sys::jlong).unwrap_or(-1)
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessageWithCommits<
-    'a,
->(
-    mut env: jni::JNIEnv<'a>,
-    _service: jni::objects::JObject<'a>,
-    state_bytes: jni::objects::JByteArray<'a>,
-    pin: jni::objects::JString<'a>,
-    user_id: jni::objects::JString<'a>,
-    device_id: jni::objects::JString<'a>,
-    group_id: jni::objects::JString<'a>,
-    commits_json: jni::objects::JString<'a>,
-    ciphertext: jni::objects::JByteArray<'a>,
-) -> jni::objects::JString<'a> {
-    let result = (|| -> serde_json::Value {
-        let state_vec = match env.convert_byte_array(&state_bytes) {
-            Ok(v) => v,
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let pin_str: String = match env.get_string(&pin) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let user_id_str: String = match env.get_string(&user_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let device_id_str: String = match env.get_string(&device_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let group_id_str: String = match env.get_string(&group_id) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let commits_json_str: String = match env.get_string(&commits_json) {
-            Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-        let cipher_vec = match env.convert_byte_array(&ciphertext) {
-            Ok(v) => v,
-            Err(_) => return serde_json::json!({ "ok": false }),
-        };
-
-        let commits = mobile::background::decode_commits_b64_json(&commits_json_str);
-        mobile::background::decrypt_push_message_with_commits(
-            &state_vec,
-            &pin_str,
-            &user_id_str,
-            &device_id_str,
-            &group_id_str,
-            &commits,
-            &cipher_vec,
-        )
-        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
-    })();
-
-    let json_str = result.to_string();
-    env.new_string(&json_str)
-        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
-}
+// PIN-based JNI variants removed: all decrypt paths now use key-based variants.
 
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -226,6 +81,157 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         };
         mobile::background::decrypt_channel_message(&key, &nonce, &ciphertext)
             .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+    })();
+
+    let json_str = result.to_string();
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+// ─── Key-based JNI variants (biometric mode, no PIN) ────────────────────
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessageWithKey<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    ciphertext: jni::objects::JByteArray<'a>,
+) -> jni::objects::JString<'a> {
+    let result = (|| -> serde_json::Value {
+        let state_vec = match env.convert_byte_array(&state_bytes) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let key_b64_str: String = match env.get_string(&key_b64) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let user_id_str: String = match env.get_string(&user_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let device_id_str: String = match env.get_string(&device_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let group_id_str: String = match env.get_string(&group_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let cipher_vec = match env.convert_byte_array(&ciphertext) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+
+        mobile::background::decrypt_push_message_with_key(
+            &state_vec,
+            &key_b64_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+            &cipher_vec,
+        )
+        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+    })();
+
+    let json_str = result.to_string();
+    env.new_string(&json_str)
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeGroupEpochWithKey<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+) -> jni::sys::jlong {
+    let epoch = (|| -> Option<u64> {
+        let state_vec = env.convert_byte_array(&state_bytes).ok()?;
+        let key_b64_str: String = env.get_string(&key_b64).ok()?.into();
+        let user_id_str: String = env.get_string(&user_id).ok()?.into();
+        let device_id_str: String = env.get_string(&device_id).ok()?.into();
+        let group_id_str: String = env.get_string(&group_id).ok()?.into();
+        mobile::background::background_group_epoch_with_key(
+            &state_vec,
+            &key_b64_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+        )
+    })();
+    epoch.map(|e| e as jni::sys::jlong).unwrap_or(-1)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessageWithCommitsWithKey<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    key_b64: jni::objects::JString<'a>,
+    user_id: jni::objects::JString<'a>,
+    device_id: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+    commits_json: jni::objects::JString<'a>,
+    ciphertext: jni::objects::JByteArray<'a>,
+) -> jni::objects::JString<'a> {
+    let result = (|| -> serde_json::Value {
+        let state_vec = match env.convert_byte_array(&state_bytes) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let key_b64_str: String = match env.get_string(&key_b64) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let user_id_str: String = match env.get_string(&user_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let device_id_str: String = match env.get_string(&device_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let group_id_str: String = match env.get_string(&group_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let commits_json_str: String = match env.get_string(&commits_json) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let cipher_vec = match env.convert_byte_array(&ciphertext) {
+            Ok(v) => v,
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+
+        let commits = mobile::background::decode_commits_b64_json(&commits_json_str);
+        mobile::background::decrypt_push_message_with_commits_with_key(
+            &state_vec,
+            &key_b64_str,
+            &user_id_str,
+            &device_id_str,
+            &group_id_str,
+            &commits,
+            &cipher_vec,
+        )
+        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
     })();
 
     let json_str = result.to_string();
@@ -802,6 +808,7 @@ pub fn run() {
             exporter_secret,
             get_fcm_token,
             check_push_secret_health,
+            clear_push_context_key,
             store_push_context,
             load_push_context,
             save_mls_state,

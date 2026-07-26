@@ -117,8 +117,6 @@ impl MlsManager {
         // Path B: no (valid) keystore key — fall back to PIN.
         match pin {
             Some(pin_str) => {
-                // If we have a blob, extract the salt from the header (first 16 bytes)
-                // and derive+store the key for next launch.
                 if let Some(ref blob) = encrypted_blob
                     && blob.len() >= 16
                 {
@@ -131,8 +129,7 @@ impl MlsManager {
                     return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
                 }
                 // No blob or blob too short — first launch with PIN.
-                // Generate a fresh salt, derive the key, store it for future
-                // biometric logins, and create the initial MLS identity.
+                // Generate a fresh salt and derive the key.
                 let mut salt = [0u8; 16];
                 OsRng.fill_bytes(&mut salt);
                 let key =

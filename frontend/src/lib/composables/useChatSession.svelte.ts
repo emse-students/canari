@@ -428,8 +428,10 @@ export function useChatSession() {
     /** Runs the full login flow (PIN verify, MLS init, DB open, WS connect). */
     login: (cb: import('./session/sessionTypes').ChatSessionCallbacks) => loginImpl(ctx, cb),
     /** On Tauri/Android without biometrics, reads PIN from push_context.json and logs in silently. */
-    nativeStorageLogin: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
-      nativeStorageLoginImpl(ctx, cb),
+    nativeStorageLogin: (
+      cb: import('./session/sessionTypes').ChatSessionCallbacks,
+      biometricConfigured?: boolean
+    ) => nativeStorageLoginImpl(ctx, cb, biometricConfigured),
     /** Retrieves the PIN from the biometric keystore and delegates to login(). */
     biometricLogin: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       biometricLoginImpl(ctx, cb),

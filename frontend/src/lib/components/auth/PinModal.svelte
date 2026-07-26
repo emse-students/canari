@@ -55,7 +55,7 @@
     onBiometricRequest,
     showBiometricButton = false,
     showStaySignedIn = false,
-    staySignedIn = $bindable(false),
+    staySignedIn = $bindable(true),
     externalError = '',
     isLoading = false,
     isFirstSetup = false,

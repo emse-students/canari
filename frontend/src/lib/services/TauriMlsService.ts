@@ -14,6 +14,7 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { isTauriRuntime } from '$lib/utils/openExternal';
 import { BiometricService } from '$lib/services/biometric';
 import { BaseMlsService } from './BaseMlsService';
 
@@ -448,6 +449,7 @@ export class TauriMlsService extends BaseMlsService {
     // Save session context for Android push notifications (no-op on desktop).
     // The pushToken is included so the Kotlin service can fetch the MLS proto
     // when it is not included inline in the FCM payload (large messages).
+    // deviceKeyB64 is always derived from the keystore by store_push_context.
     void getToken()
       .then((pushToken: string) =>
         invoke('store_push_context', {
@@ -552,25 +554,22 @@ export class TauriMlsService extends BaseMlsService {
     this._pin = newPin;
     await this.saveState(newPin);
 
-    // Refresh the keystore key: the blob was just re-encrypted with newPin,
-    // so the salt changed. Re-derive and overwrite the keystore entry so that
-    // biometric login keeps working after the PIN change.
-    void BiometricService.isConfigured()
-      .then((configured) => {
-        if (!configured) return;
-        const alias = `mls_device_key_${this.userId}_${this.deviceId}`;
-        return invoke('actualiser_cle_keystore', {
-          pin: newPin,
-          userId: this.userId,
-          deviceId: this.deviceId,
-        });
-      })
-      .catch((e) => console.warn('[MLS][Tauri] Keystore key refresh after PIN change failed:', e));
+    // Toujours regenerer la cle keystore pour les push arriere-plan,
+    // independamment du flag biometrique. La cle keystore est necessaire
+    // pour le dechiffrement FCM meme sans biometrie.
+    if (isTauriRuntime()) {
+      invoke('actualiser_cle_keystore', {
+        pin: newPin,
+        userId: this.userId,
+        deviceId: this.deviceId,
+      }).catch((e) =>
+        console.warn('[MLS][Tauri] Keystore key refresh after PIN change failed:', e)
+      );
+    }
 
-    // Refresh the native push context so background FCM decryption and native
-    // auto-login use the new PIN. mls.bin is now re-encrypted under newPin; without
-    // this update push_context.json would keep the old PIN and background decrypts
-    // (and silent re-login) would fail until the next manual login. Mirrors init().
+    // Refresh the native push context so background FCM decryption uses the
+    // updated keystore key (re-derived from newPin by actualiser_cle_keystore above).
+    // deviceKeyB64 is always derived from the keystore by store_push_context.
     void getToken()
       .then((pushToken: string) =>
         invoke('store_push_context', {

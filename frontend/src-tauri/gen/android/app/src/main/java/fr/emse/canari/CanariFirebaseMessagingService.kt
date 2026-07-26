@@ -478,7 +478,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val filesDir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
                 val jsonStr = service.nativeSendMessageBackground(
-                    filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
+                    filesDir, stateBytes, "", ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
                 )
                 val json = JSONObject(jsonStr)
                 if (!json.optBoolean("ok", false)) {
@@ -658,33 +658,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    // Returns a JSON: {"ok":true,"text":"...","messageId":"...","sentAt":123,"type":"text|reply|media","replyTo":null,"mediaKind":null}
-    // or {"ok":false} on failure.
-    external fun nativeDecryptMessage(
+    // ─── Key-based JNI variants (always used, PIN never stored in push_context.json) ───
+    // The 32-byte device key (base64) from push_context.json replaces the PIN string
+    // for all background MLS decryption. The PIN is never stored on the filesystem.
+
+    /** Decrypts an MLS message using the pre-derived device key (base64). */
+    external fun nativeDecryptMessageWithKey(
         stateBytes: ByteArray,
-        pin: String,
+        keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String,
         ciphertext: ByteArray
     ): String
 
-    // Returns the current MLS epoch of groupId in the persisted state, or -1 if unknown / unreadable.
-    // Used to compute the sinceEpoch to fetch for the in-memory commit catch-up. Read-only.
-    external fun nativeGroupEpoch(
+    /** Key-based variant of [nativeGroupEpoch]. */
+    external fun nativeGroupEpochWithKey(
         stateBytes: ByteArray,
-        pin: String,
+        keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String
     ): Long
 
-    // Read-only in-memory commit catch-up decrypt: applies the ordered commitsJson (JSON array of
-    // base64 commit bytes) to an ephemeral manager to reach the message epoch, then decrypts
-    // ciphertext. Same JSON shape as nativeDecryptMessage, or {"ok":false}. Never writes mls.bin.
-    external fun nativeDecryptMessageWithCommits(
+    /** Key-based variant of [nativeDecryptMessageWithCommits]. */
+    external fun nativeDecryptMessageWithCommitsWithKey(
         stateBytes: ByteArray,
-        pin: String,
+        keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String,
@@ -1218,7 +1218,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
                 val jsonStr = nativeCreateWelcomeBackground(
-                    filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId,
+                    filesDir, stateBytes, "", ctx.userId, ctx.deviceId,
                     groupId, keyPackage,
                 )
                 result = JSONObject(jsonStr)
@@ -1468,7 +1468,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return null
             }
             Log.d(TAG, "tryDecrypt: MLS state loaded (${stateBytes.size} bytes), userId=${ctx.userId} deviceId=${ctx.deviceId}")
-            return decryptProto(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, protoB64)
+            return decryptProto(
+                stateBytes, "", ctx.userId, ctx.deviceId, groupId, protoB64,
+                deviceKeyB64 = ctx.deviceKeyB64,
+            )
         } finally {
             MlsStateLock.LOCK.unlock()
         }
@@ -1580,7 +1583,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
             joined = nativeProcessWelcomeBackground(
-                filesDir, stateBytes, ctx.pin, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+                filesDir, stateBytes, "", ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
             )
         } finally {
             MlsStateLock.LOCK.unlock()
@@ -1695,7 +1698,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
     }
 
-    /** Parses the JSON returned by nativeDecryptMessage and returns a structured DecryptedMessage. */
+    /** Parses the JSON returned by nativeDecryptMessageWithKey and returns a structured DecryptedMessage. */
     private fun decryptProto(
         stateBytes: ByteArray,
         pin: String,
@@ -1703,10 +1706,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         groupId: String,
         protoB64: String,
+        deviceKeyB64: String? = null,
     ): DecryptedMessage? {
         return try {
             val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
-            val jsonStr = nativeDecryptMessage(stateBytes, pin, userId, deviceId, groupId, cipherBytes)
+            val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return null
+            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, cipherBytes)
             val json = JSONObject(jsonStr)
             if (!json.optBoolean("ok", false)) {
                 Log.w(TAG, "decryptProto: ok=false -> decryption failed")
@@ -1773,7 +1778,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // 1) Read the current epoch (brief lock: mls.bin + Argon2 via JNI).
         val epoch = withMlsStateLock(5) {
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock -1L
-            nativeGroupEpoch(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId)
+            if (ctx.deviceKeyB64.isNotEmpty()) {
+                nativeGroupEpochWithKey(stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
+            } else {
+                return@withMlsStateLock -1L
+            }
         } ?: return null
         if (epoch < 0) {
             Log.w(TAG, "catchup: epoch unknown for group=$groupId -> abort")
@@ -1790,7 +1799,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // 3) Apply the commits in memory and decrypt (brief lock: mls.bin + Argon2 via JNI).
         return withMlsStateLock(5) {
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
-            decryptProtoWithCommits(stateBytes, ctx.pin, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes)
+            decryptProtoWithCommits(
+                stateBytes, "", ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
+                deviceKeyB64 = ctx.deviceKeyB64,
+            )
         }
     }
 
@@ -1814,7 +1826,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    /** Parses the JSON from nativeDecryptMessageWithCommits into a DecryptedMessage (mirror of decryptProto). */
+    /** Parses the JSON from nativeDecryptMessageWithCommitsWithKey into a DecryptedMessage (mirror of decryptProto). */
     private fun decryptProtoWithCommits(
         stateBytes: ByteArray,
         pin: String,
@@ -1823,9 +1835,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         commitsJson: String,
         cipherBytes: ByteArray,
+        deviceKeyB64: String? = null,
     ): DecryptedMessage? {
         return try {
-            val jsonStr = nativeDecryptMessageWithCommits(stateBytes, pin, userId, deviceId, groupId, commitsJson, cipherBytes)
+            val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return null
+            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, commitsJson, cipherBytes)
             val json = JSONObject(jsonStr)
             if (!json.optBoolean("ok", false)) {
                 Log.w(TAG, "decryptProtoWithCommits: ok=false -> catch-up insufficient")

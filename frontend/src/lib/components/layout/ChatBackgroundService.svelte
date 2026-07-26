@@ -193,7 +193,9 @@
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
   // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
-  const showStaySignedIn = true;
+  // Desactive quand la biometric est configuree car le PIN sauvegarde ne sera jamais utilise
+  // (le flux biometrique prend le pas au prochain lancement).
+  let showStaySignedIn = $derived(!biometricConfigured);
   let pinStaySignedIn = $state(isPinPersistenceEnabled());
 
   // Bannière d'enrôlement biométrique post-login (Tauri uniquement)
@@ -714,46 +716,61 @@
         }
         globalSession.userId = savedUser;
 
-        // Étape 1 : Vérifier si biométrie est CONFIGURÉE (clé keystore présente)
-        const deviceKey = `mls_device_id_${savedUser}`;
-        const storedDeviceId = localStorage.getItem(deviceKey);
-        const hasExistingDevice = storedDeviceId !== null;
+        // Étape 1 : Vérifier si biométrie est CONFIGURÉE (flag utilisateur) — P1-A
+        // Ne JAMAIS interroger le keystore si l'utilisateur a désactivé la biométrie,
+        // même si une clé résiduelle est présente.
+        let biometricAttempted = false;
+        const isBiometricConfigured = await BiometricService.isConfigured();
 
-        if (hasExistingDevice) {
-          const alias = `mls_device_key_${savedUser}_${storedDeviceId}`;
-          const keyPresent = await BiometricService.isKeyPresent(alias).catch(() => false);
+        if (isBiometricConfigured) {
+          const deviceKey = `mls_device_id_${savedUser}`;
+          const storedDeviceId = localStorage.getItem(deviceKey);
+          const hasExistingDevice = storedDeviceId !== null;
 
-          if (keyPresent) {
-            // Connexion suivante avec biométrie ENROLÉE → BiometricBottomSheet directe
-            biometricConfigured = true;
-            biometricCancelled = false;
-            showBiometricSheet = true;
+          if (hasExistingDevice) {
+            const alias = `mls_device_key_${savedUser}_${storedDeviceId}`;
+            const keyPresent = await BiometricService.isKeyPresent(alias).catch(() => false);
 
-            // Laisse un court délai pour que l'utilisateur puisse interagir avec
-            // le BiometricBottomSheet (choisir "Utiliser le code PIN"). Si onSkip
-            // est déclenché pendant ce délai, biometricCancelled passe à true et
-            // on évite d'afficher le prompt biométrique OS.
-            await new Promise((resolve) => setTimeout(resolve, 250));
-            if (biometricCancelled) {
-              showBiometricSheet = false;
-            } else {
-              await globalSession.biometricLogin({
-                ...sessionCb(),
-                onLoginFailed: onSavedPinFailed,
-              });
-              dismissAuthPrompts();
+            if (keyPresent) {
+              biometricAttempted = true;
+              // Connexion suivante avec biométrie ENROLÉE → BiometricBottomSheet directe
+              biometricConfigured = true;
+              biometricCancelled = false;
+              showBiometricSheet = true;
+
+              // Laisse un court délai pour que l'utilisateur puisse interagir avec
+              // le BiometricBottomSheet (choisir "Utiliser le code PIN"). Si onSkip
+              // est déclenché pendant ce délai, biometricCancelled passe à true et
+              // on évite d'afficher le prompt biométrique OS.
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              if (biometricCancelled) {
+                showBiometricSheet = false;
+              } else {
+                await globalSession.biometricLogin({
+                  ...sessionCb(),
+                  onLoginFailed: onSavedPinFailed,
+                });
+                dismissAuthPrompts();
+              }
             }
           }
         }
 
         if (!globalSession.isLoggedIn) {
-          // Biométrie a échoué, annulée, ou pas configurée → essayer le PIN stocké
-          globalSession.isLoginInProgress = false;
-          const ok = await globalSession.nativeStorageLogin({
-            ...sessionCb(),
-            onLoginFailed: onSavedPinFailed,
-          });
-          if (ok) return;
+          // P2-A : Pas de fallback automatique après échec biométrique.
+          // Si la biométrie a été tentée et a échoué/été annulée, l'utilisateur
+          // doit saisir son PIN explicitement — pas de nativeStorageLogin.
+          if (!biometricAttempted) {
+            globalSession.isLoginInProgress = false;
+            const ok = await globalSession.nativeStorageLogin(
+              {
+                ...sessionCb(),
+                onLoginFailed: onSavedPinFailed,
+              },
+              isBiometricConfigured
+            );
+            if (ok) return;
+          }
 
           // Fallback : PIN modal SANS bouton empreinte
           biometricConfigured = false;
