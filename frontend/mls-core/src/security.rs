@@ -82,10 +82,16 @@ pub fn encrypt_state_with_pin_owned(
 
 // --- Keystore integration ---
 
-/// Derives a 32-byte key from a PIN and stores it in the platform keystore.
+/// Derives a 32-byte key from a PIN and best-effort stores it in the platform
+/// keystore.
 ///
 /// The PIN is zeroized after derivation. The derived key is stored under the
 /// given alias for future retrieval without PIN re-entry.
+///
+/// If the keystore is unavailable (no biometrics configured, user cancelled the
+/// prompt, desktop/web keystore not supported, etc.), the error is logged and
+/// the function still returns the derived key. The caller will need to re-enter
+/// the PIN on the next launch.
 pub fn derive_and_store_device_key(
     pin: String,
     salt: &[u8],
@@ -93,7 +99,14 @@ pub fn derive_and_store_device_key(
     keystore: &dyn crate::keystore::DeviceKeyStore,
 ) -> Result<[u8; 32], String> {
     let key = derive_key_from_pin_owned(pin, salt)?;
-    // PIN has been zeroized by derive_key_from_pin_owned
-    keystore.store_device_key(&key, alias)?;
+    // PIN has been zeroized by derive_key_from_pin_owned.
+    // Best-effort store: if the keystore rejects the write (e.g. Android
+    // UserNotAuthenticatedException when no biometric was performed), we
+    // continue without storing — the user will need to enter their PIN again.
+    if let Err(e) = keystore.store_device_key(&key, alias) {
+        log::warn!(
+            "Failed to store device key in keystore (non-fatal, will fall back to PIN on next launch): {e}"
+        );
+    }
     Ok(key)
 }

@@ -303,29 +303,80 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /// Stores a raw 32-byte AES key (base64-encoded) in the Android Keystore.
-    /// The key is encrypted with a biometric-protected keystore key and the
-    /// ciphertext is persisted in SharedPreferences namespaced by alias.
+    /// Triggers biometric authentication before encrypting, because the
+    /// keystore key requires `setUserAuthenticationRequired(true)`.
     @Command
     fun storeKeyBytes(invoke: Invoke) {
         val args = invoke.parseArgs(StoreKeyBytesRequest::class.java)
         val keyBytes = Base64.decode(args.keyBytes, Base64.DEFAULT)
 
+        // Generate a biometric-protected AES key for this alias (no-op if it
+        // already exists).
         try {
-            // Generate a biometric-protected AES key for this alias.
             generateBiometricProtectedKeyForAlias(args.alias)
-
-            // Encrypt the key bytes with the keystore key.
-            val cipher = getEncryptionCipherForAlias(args.alias)
-            val ciphertext = cipher.doFinal(keyBytes)
-            val iv = cipher.iv
-
-            // Store IV + ciphertext in SharedPreferences.
-            storeCipherDataForAlias(args.alias, iv, ciphertext)
-
-            invoke.resolve()
         } catch (e: Exception) {
             invoke.reject("storeKeyBytes failed: ${e.message}")
+            return
         }
+
+        // Obtain an encryption cipher.  Because the key was created with
+        // setUserAuthenticationRequired(true), cipher.init() will throw
+        // UserNotAuthenticatedException unless the user authenticated recently
+        // (within the 5-minute timeout).  We wrap it in a BiometricPrompt so
+        // the user can authenticate now.
+        val cipher: Cipher
+        try {
+            cipher = getEncryptionCipherForAlias(args.alias)
+        } catch (e: Exception) {
+            invoke.reject("Error initializing cipher: ${e.message}")
+            return
+        }
+
+        val executor = ContextCompat.getMainExecutor(activity)
+        val biometricPrompt = BiometricPrompt(
+            activity as androidx.fragment.app.FragmentActivity, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(
+                    result: BiometricPrompt.AuthenticationResult
+                ) {
+                    super.onAuthenticationSucceeded(result)
+                    try {
+                        val authCipher = result.cryptoObject?.cipher
+                            ?: throw IllegalStateException(
+                                "Cipher not available after authentication"
+                            )
+                        val ciphertext = authCipher.doFinal(keyBytes)
+                        val iv = authCipher.iv
+
+                        storeCipherDataForAlias(args.alias, iv, ciphertext)
+                        invoke.resolve()
+                    } catch (e: Exception) {
+                        invoke.reject("Encryption failed: ${e.message}")
+                    }
+                }
+
+                override fun onAuthenticationError(
+                    errorCode: Int, errString: CharSequence
+                ) {
+                    super.onAuthenticationError(errorCode, errString)
+                    invoke.reject("Authentication error: $errorCode")
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    invoke.reject("Authentication failed")
+                }
+            })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Déverrouiller Canari")
+            .setSubtitle("Confirmez votre identité avec votre empreinte")
+            .setNegativeButtonText("Annuler")
+            .build()
+
+        biometricPrompt.authenticate(
+            promptInfo, BiometricPrompt.CryptoObject(cipher)
+        )
     }
 
     /// Retrieves a raw 32-byte key by alias. Triggers biometric authentication.
