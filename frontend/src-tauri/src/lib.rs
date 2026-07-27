@@ -276,7 +276,7 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     _class: jni::objects::JClass,
     files_dir: jni::objects::JString,
     _state_bytes: jni::objects::JByteArray,
-    _pin: jni::objects::JString,
+    _device_key_b64: jni::objects::JString,
     _user_id: jni::objects::JString,
     _device_id: jni::objects::JString,
 ) -> jni::sys::jboolean {
@@ -287,11 +287,11 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
 
     match mobile::background::cleanup_pending_db(std::path::Path::new(&files_dir_str)) {
         Ok(()) => {
-            log::info!("Background Worker execute avec succes !");
+            log::info!("Background Worker completed successfully");
             1
         }
         Err(e) => {
-            log::error!("Background Worker echoue: {e}");
+            log::error!("Background Worker failed: {e}");
             0
         }
     }

@@ -16,21 +16,21 @@ extern "C" {
 /// Decrypts an MLS application message. Returns a heap JSON string
 /// (`{"ok":true,"text":...}` or `{"ok":false}`); free with canari_free_string.
 char *canari_native_decrypt_message(const unsigned char *state_ptr, size_t state_len,
-                                    const char *pin, const char *user_id, const char *device_id,
+                                    const char *device_key_b64, const char *user_id, const char *device_id,
                                     const char *group_id, const unsigned char *cipher_ptr,
                                     size_t cipher_len);
 
 /// Returns the persisted group's current MLS epoch, or -1 if unknown / unreadable.
 /// Used to compute the `sinceEpoch` before an in-memory commit catch-up.
 long long canari_native_group_epoch(const unsigned char *state_ptr, size_t state_len,
-                                    const char *pin, const char *user_id, const char *device_id,
+                                    const char *device_key_b64, const char *user_id, const char *device_id,
                                     const char *group_id);
 
 /// In-memory commit catch-up then decrypt: applies the ordered base64 commits in
 /// `commits_json` to reach the message epoch, then decrypts. Never persists mls.bin.
 /// Same JSON contract as canari_native_decrypt_message.
 char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr, size_t state_len,
-                                                 const char *pin, const char *user_id,
+                                                 const char *device_key_b64, const char *user_id,
                                                  const char *device_id, const char *group_id,
                                                  const char *commits_json,
                                                  const unsigned char *cipher_ptr, size_t cipher_len);

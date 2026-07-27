@@ -76,21 +76,25 @@ impl MlsError {
     }
 }
 
-/// Resultat de `add_members_bulk` (stage-only, C7-A unified) :
+/// Result of `add_members_bulk` (stage-only, C7-A unified):
 /// `(commit, welcome, added_indices, skipped_indices)`.
-/// Le commit est *stage* (non merge) : l'appelant le valide cote serveur PUIS appelle
-/// `merge_pending_commit_for` (accepte) ou `clear_pending_commit_for` (rejete), donc un ADD
-/// rejete ne laisse jamais l'epoch local en avance (aucun fork). Le ratchet tree est exporte
-/// separement par `export_ratchet_tree_for` APRES le merge (il exige l'etat post-commit
-/// epoch N+1 que le nouveau membre rejoint).
-/// - `added_indices` donne, dans l'ordre, les positions (dans le slice d'entree
-///   `key_packages_bytes`) des KeyPackages effectivement inclus dans le commit.
-/// - `skipped_indices` donne les positions des KeyPackages **invalides ou illisibles**
-///   (expiration, mauvaise ciphersuite, cle privee perdue chez le pair, bytes corrompus).
-///   Ce sont des pertes potentiellement recuperables (republication d'un KeyPackage frais)
-///   que l'appelant doit remonter au lieu de les laisser disparaitre silencieusement. [[C5]]
-///   Les positions correspondant a un membre **deja present** ne sont PAS comptees ici :
-///   c'est une deduplication intentionnelle (le device est deja - ou fantome - dans l'arbre),
-///   signalee globalement par `MlsError::AlreadyMember` quand rien d'autre n'a ete ajoute.
-pub(crate) type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<u32>);
-pub(crate) type AddMemberResult = (Vec<u8>, Option<Vec<u8>>);
+///
+/// The commit is *staged* (not merged): the caller validates it server-side THEN calls
+/// `merge_pending_commit_for` (accepted) or `clear_pending_commit_for` (rejected), so a rejected
+/// ADD never leaves the local epoch ahead (no fork). The ratchet tree is exported separately by
+/// `export_ratchet_tree_for` AFTER the merge (it requires the post-commit epoch N+1 state the new
+/// member joins).
+///
+/// - `added_indices` gives, in order, the positions (within the input slice `key_packages_bytes`)
+///   of the KeyPackages actually included in the commit.
+/// - `skipped_indices` gives the positions of KeyPackages that are **invalid or unreadable**
+///   (expired, wrong ciphersuite, private key lost on the peer, corrupted bytes). These are
+///   potentially recoverable losses (republish a fresh KeyPackage) that the caller must surface
+///   instead of letting them disappear silently. [[C5]]
+///   Positions matching an **already-present** member are NOT counted here: that is intentional
+///   deduplication (the device is already - or ghosted - in the tree), reported globally via
+///   `MlsError::AlreadyMember` when nothing else was added.
+pub type AddMembersBulkResult = (Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<u32>);
+
+/// Result of `add_member`: `(commit, welcome)`. Staged like [`AddMembersBulkResult`].
+pub type AddMemberResult = (Vec<u8>, Option<Vec<u8>>);

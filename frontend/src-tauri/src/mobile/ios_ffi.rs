@@ -1,4 +1,8 @@
-//! Pont FFI C expose a `libapp.a` pour le code natif iOS (ObjC++/Swift).
+//! C FFI bridge exposed by `libapp.a` to the native iOS code (ObjC++/Swift).
+//!
+//! Every MLS entry point takes `device_key_b64`: the base64 32-byte device key read from
+//! `push_context.json`, never the user's PIN. Shared logic lives in `super::background`,
+//! which is also what the Android JNI layer calls, so both platforms stay in lockstep.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -27,17 +31,17 @@ fn err_json_to_c_string(err: String) -> *mut c_char {
     json_to_c_string(value)
 }
 
-/// Decode une chaine C null-terminated en `PathBuf` possede (duree de vie FFI).
+/// Decodes a null-terminated C string into an owned `PathBuf` (FFI lifetime).
 unsafe fn path_from_c_str(ptr: *const c_char) -> std::path::PathBuf {
     std::path::PathBuf::from(CStr::from_ptr(ptr).to_string_lossy().into_owned())
 }
 
-/// Decode une chaine C null-terminated en `String` possedee.
+/// Decodes a null-terminated C string into an owned `String`.
 unsafe fn str_from_c_str(ptr: *const c_char) -> String {
     CStr::from_ptr(ptr).to_string_lossy().into_owned()
 }
 
-/// Libere une chaine allouee par les fonctions `canari_*` de ce module.
+/// Frees a string allocated by the `canari_*` functions in this module.
 #[no_mangle]
 pub extern "C" fn canari_free_string(ptr: *mut c_char) {
     if ptr.is_null() {
@@ -48,12 +52,12 @@ pub extern "C" fn canari_free_string(ptr: *mut c_char) {
     }
 }
 
-/// Dechiffre un message MLS et retourne un JSON UTF-8 alloue sur le tas.
+/// Decrypts an MLS message and returns a heap-allocated UTF-8 JSON string. Read-only.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_decrypt_message(
     state_ptr: *const u8,
     state_len: usize,
-    pin: *const c_char,
+    device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
@@ -61,7 +65,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
     cipher_len: usize,
 ) -> *mut c_char {
     if state_ptr.is_null()
-        || pin.is_null()
+        || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
@@ -72,14 +76,14 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
 
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
     let ciphertext = slice::from_raw_parts(cipher_ptr, cipher_len);
-    let pin_str = str_from_c_str(pin);
+    let device_key_str = str_from_c_str(device_key_b64);
     let user_id_str = str_from_c_str(user_id);
     let device_id_str = str_from_c_str(device_id);
     let group_id_str = str_from_c_str(group_id);
 
     match decrypt_push_message_with_key(
         state_bytes,
-        &pin_str,
+        &device_key_str,
         &user_id_str,
         &device_id_str,
         &group_id_str,
@@ -90,20 +94,20 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
     }
 }
 
-/// Retourne l'epoch MLS courant du groupe dans l'etat persiste, ou -1 si inconnu / etat illisible.
-/// Le chemin push background l'appelle pour calculer le `sinceEpoch` a recuperer avant le rattrapage
-/// de commits en memoire. Lecture seule, ne persiste jamais.
+/// Returns the group's current MLS epoch from the persisted state, or -1 if unknown / unreadable.
+/// The background push path calls this to compute the `sinceEpoch` to fetch before the in-memory
+/// commit catch-up. Read-only, never persists.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_group_epoch(
     state_ptr: *const u8,
     state_len: usize,
-    pin: *const c_char,
+    device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
 ) -> i64 {
     if state_ptr.is_null()
-        || pin.is_null()
+        || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
@@ -112,14 +116,14 @@ pub unsafe extern "C" fn canari_native_group_epoch(
     }
 
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    let pin_str = str_from_c_str(pin);
+    let device_key_str = str_from_c_str(device_key_b64);
     let user_id_str = str_from_c_str(user_id);
     let device_id_str = str_from_c_str(device_id);
     let group_id_str = str_from_c_str(group_id);
 
     match background_group_epoch_with_key(
         state_bytes,
-        &pin_str,
+        &device_key_str,
         &user_id_str,
         &device_id_str,
         &group_id_str,
@@ -130,15 +134,15 @@ pub unsafe extern "C" fn canari_native_group_epoch(
     }
 }
 
-/// Rattrapage de commits en memoire (lecture seule) puis dechiffrement. Applique les commits ordonnes
-/// de `commits_json` (tableau JSON de commits base64) a un manager ephemere pour atteindre l'epoch du
-/// message, puis dechiffre `cipher_ptr`. Retourne le meme JSON que `canari_native_decrypt_message`,
-/// ou `{"ok":false}`. N'ecrit jamais mls.bin - l'etat durable est rattrape plus tard au premier plan.
+/// In-memory commit catch-up (read-only) followed by decryption. Applies the ordered commits from
+/// `commits_json` (JSON array of base64 commits) to an ephemeral manager to reach the message's
+/// epoch, then decrypts `cipher_ptr`. Returns the same JSON as `canari_native_decrypt_message`, or
+/// `{"ok":false}`. Never writes mls.bin - the durable state catches up later in the foreground.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     state_ptr: *const u8,
     state_len: usize,
-    pin: *const c_char,
+    device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
@@ -147,7 +151,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     cipher_len: usize,
 ) -> *mut c_char {
     if state_ptr.is_null()
-        || pin.is_null()
+        || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
@@ -159,7 +163,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
 
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
     let ciphertext = slice::from_raw_parts(cipher_ptr, cipher_len);
-    let pin_str = str_from_c_str(pin);
+    let device_key_str = str_from_c_str(device_key_b64);
     let user_id_str = str_from_c_str(user_id);
     let device_id_str = str_from_c_str(device_id);
     let group_id_str = str_from_c_str(group_id);
@@ -167,7 +171,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
 
     match decrypt_push_message_with_commits_with_key(
         state_bytes,
-        &pin_str,
+        &device_key_str,
         &user_id_str,
         &device_id_str,
         &group_id_str,
@@ -179,11 +183,11 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     }
 }
 
-/// Dechiffre un message channel/communaute (AES-256-GCM, hors MLS). Les trois arguments sont des
-/// chaines base64 : cle d'epoch brute (32 octets), nonce (12 octets), ciphertext (`ciphertext||tag`).
-/// Retourne le meme JSON que `canari_native_decrypt_message` (`{"ok":true,"text":...}`), ou
-/// `{"ok":false}`. Sans etat MLS ni verrou : le dechiffrement est stateless et en lecture seule.
-/// Miroir FFI du JNI Android `nativeDecryptChannelMessage`.
+/// Decrypts a channel/community message (AES-256-GCM, outside MLS). The three arguments are base64
+/// strings: raw epoch key (32 bytes), nonce (12 bytes), ciphertext (`ciphertext||tag`). Returns the
+/// same JSON as `canari_native_decrypt_message` (`{"ok":true,"text":...}`), or `{"ok":false}`. No
+/// MLS state and no lock: the decryption is stateless and read-only.
+/// FFI mirror of the Android JNI `nativeDecryptChannelMessage`.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_decrypt_channel_message(
     key_b64: *const c_char,
@@ -214,12 +218,12 @@ pub unsafe extern "C" fn canari_native_decrypt_channel_message(
     }
 }
 
-/// Dechiffre un blob media chiffre de bout en bout (AES-256-GCM) pour la miniature de notification
-/// (WP-XP-3). `key_b64`/`iv_b64` sont la CEK (32 octets) + IV (12 octets) en base64, extraits du
-/// `MediaMsg` MLS dechiffre ; `cipher_ptr`/`cipher_len` pointent sur le `ciphertext||tag` telecharge
-/// depuis `/api/mls/push/media/:mediaId`. Ecrit la longueur du plaintext dans `out_len` et retourne
-/// un pointeur tas a liberer avec `canari_free_bytes`. Retourne NULL (et `*out_len = 0`) sur echec.
-/// Miroir FFI du JNI Android `nativeDecryptMedia`.
+/// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
+/// (WP-XP-3). `key_b64`/`iv_b64` are the CEK (32 bytes) + IV (12 bytes) in base64, extracted from
+/// the MLS-decrypted `MediaMsg`; `cipher_ptr`/`cipher_len` point at the `ciphertext||tag`
+/// downloaded from `/api/mls/push/media/:mediaId`. Writes the plaintext length to `out_len` and
+/// returns a heap pointer to free with `canari_free_bytes`. Returns NULL (and `*out_len = 0`) on
+/// failure. FFI mirror of the Android JNI `nativeDecryptMedia`.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_decrypt_media(
     key_b64: *const c_char,
@@ -259,8 +263,8 @@ pub unsafe extern "C" fn canari_native_decrypt_media(
     ptr
 }
 
-/// Libere un buffer d'octets alloue par `canari_native_decrypt_media`. `len` doit etre la longueur
-/// renvoyee via `out_len` (l'allocation est une boxed slice, capacite == longueur).
+/// Frees a byte buffer allocated by `canari_native_decrypt_media`. `len` must be the length
+/// returned via `out_len` (the allocation is a boxed slice, capacity == length).
 #[no_mangle]
 pub unsafe extern "C" fn canari_free_bytes(ptr: *mut u8, len: usize) {
     if ptr.is_null() || len == 0 {
@@ -269,13 +273,13 @@ pub unsafe extern "C" fn canari_free_bytes(ptr: *mut u8, len: usize) {
     drop(Vec::from_raw_parts(ptr, len, len));
 }
 
-/// Cree un Welcome MLS. Retourne un JSON alloue (`welcome`, `commit`, `baseEpoch`, ...).
+/// Creates an MLS Welcome. Returns an allocated JSON (`welcome`, `commit`, `baseEpoch`, ...).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_create_welcome_background(
     files_dir: *const c_char,
     state_ptr: *const u8,
     state_len: usize,
-    pin: *const c_char,
+    device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
@@ -283,7 +287,7 @@ pub unsafe extern "C" fn canari_native_create_welcome_background(
 ) -> *mut c_char {
     if files_dir.is_null()
         || state_ptr.is_null()
-        || pin.is_null()
+        || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
@@ -297,7 +301,7 @@ pub unsafe extern "C" fn canari_native_create_welcome_background(
     match create_welcome_background_with_key(
         &files_dir,
         state_bytes,
-        &str_from_c_str(pin),
+        &str_from_c_str(device_key_b64),
         &str_from_c_str(user_id),
         &str_from_c_str(device_id),
         &str_from_c_str(group_id),
@@ -308,13 +312,13 @@ pub unsafe extern "C" fn canari_native_create_welcome_background(
     }
 }
 
-/// Applique un Welcome recu. Retourne 1 si succes, 0 sinon.
+/// Applies a received Welcome. Returns 1 on success, 0 otherwise.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_process_welcome_background(
     files_dir: *const c_char,
     state_ptr: *const u8,
     state_len: usize,
-    pin: *const c_char,
+    device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
     welcome_b64: *const c_char,
@@ -322,7 +326,7 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
 ) -> i32 {
     if files_dir.is_null()
         || state_ptr.is_null()
-        || pin.is_null()
+        || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
         || welcome_b64.is_null()
@@ -336,7 +340,7 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
     match process_welcome_background_with_key(
         &files_dir,
         state_bytes,
-        &str_from_c_str(pin),
+        &str_from_c_str(device_key_b64),
         &str_from_c_str(user_id),
         &str_from_c_str(device_id),
         &str_from_c_str(welcome_b64),
@@ -350,13 +354,13 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
     }
 }
 
-/// Chiffre un proto AppMessage en clair (base64) et retourne `{"ok":true,"ciphertext":"..."}`.
+/// Encrypts a plaintext AppMessage proto (base64) and returns `{"ok":true,"ciphertext":"..."}`.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_send_message_background(
     files_dir: *const c_char,
     state_ptr: *const u8,
     state_len: usize,
-    pin: *const c_char,
+    device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
     group_id: *const c_char,
@@ -364,7 +368,7 @@ pub unsafe extern "C" fn canari_native_send_message_background(
 ) -> *mut c_char {
     if files_dir.is_null()
         || state_ptr.is_null()
-        || pin.is_null()
+        || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
         || group_id.is_null()
@@ -378,7 +382,7 @@ pub unsafe extern "C" fn canari_native_send_message_background(
     match send_message_background_with_key(
         &files_dir,
         state_bytes,
-        &str_from_c_str(pin),
+        &str_from_c_str(device_key_b64),
         &str_from_c_str(user_id),
         &str_from_c_str(device_id),
         &str_from_c_str(group_id),
@@ -433,7 +437,7 @@ pub unsafe extern "C" fn canari_native_build_read_receipt_proto(
         .into_raw()
 }
 
-/// Nettoie `mls_pending.db`. Retourne 1 si succes.
+/// Prunes `mls_pending.db`. Returns 1 on success.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_char) -> i32 {
     if files_dir.is_null() {
@@ -449,14 +453,14 @@ pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_ch
     }
 }
 
-/// Rafraichit la garde foreground (appele depuis `canari_ios` au resume).
+/// Refreshes the foreground guard (called from `canari_ios` on resume).
 #[no_mangle]
 pub extern "C" fn canari_ios_on_resume() {
     mark_foreground_active();
     log::debug!("[iOS] canari_ios_on_resume: garde foreground rafraichie");
 }
 
-/// Signale la mise en arriere-plan (log diagnostic).
+/// Signals the move to background (diagnostic log).
 #[no_mangle]
 pub extern "C" fn canari_ios_on_pause() {
     log::debug!("[iOS] canari_ios_on_pause");

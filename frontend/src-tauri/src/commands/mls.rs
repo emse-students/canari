@@ -282,7 +282,7 @@ pub(crate) fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
     state: tauri::State<AppState>,
-) -> Result<(Vec<u8>, Option<Vec<u8>>, Vec<u32>, Vec<u32>), String> {
+) -> Result<mls_core::AddMembersBulkResult, String> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -531,10 +531,7 @@ pub(crate) async fn recevoir_message_bytes(
             .map_err(|_| "Failed to lock state")?;
         match lock.as_ref() {
             Some(manager) => {
-                let group_epoch = match manager.get_epoch(&group_id) {
-                    Ok(epoch) => Some(epoch),
-                    Err(_) => None,
-                };
+                let group_epoch = manager.get_epoch(&group_id).ok();
                 match (MlsManager::parse_message_epoch(&message_bytes), group_epoch) {
                     (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
                     _ => None,

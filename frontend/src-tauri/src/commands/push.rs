@@ -340,7 +340,7 @@ pub(crate) fn store_push_context(
     // derive_and_store_device_key zeroize le PIN après dérivation.
     let device_key_b64: String =
         match mls_core::security::derive_and_store_device_key(pin, &salt, &alias, &keystore) {
-            Ok(key) => STANDARD.encode(&key),
+            Ok(key) => STANDARD.encode(key),
             Err(e) => {
                 log::warn!("[PushCtx] derive_and_store_device_key failed: {e}");
                 String::new()

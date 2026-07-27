@@ -1,12 +1,52 @@
-//! Operations MLS en arriere-plan partagees Android (JNI) et iOS (FFI C).
+//! Background MLS operations shared by Android (JNI) and iOS (C FFI).
+//!
+//! Every entry point here is key-based: callers hold the raw device key (base64) read from
+//! `push_context.json`, never the user's PIN. The on-disk `mls.bin` wire format is
+//! `[nonce (12) || ciphertext]` (ChaCha20-Poly1305 direct, no Argon2id, no salt prefix) --
+//! always load and save through `MlsManager::load_with_key` / `save_encrypted_with_key`
+//! so the format stays defined in exactly one place (`mls_core::security`).
 
 use std::path::Path;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use mls_core::crypto::decode_base64_to_32_bytes;
 use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
 use crate::concurrency::background_write_mls_bin;
+
+/// Decodes a base64 device key and loads the MLS manager from the encrypted `mls.bin` bytes.
+///
+/// Single choke point for the background paths: it keeps the `[nonce || ciphertext]` layout
+/// knowledge inside `mls_core` and returns the decoded key so callers can re-encrypt with it.
+fn load_manager_with_key_b64(
+    state_bytes: &[u8],
+    key_b64: &str,
+    user_id: &str,
+    device_id: &str,
+) -> Result<(MlsManager, [u8; 32]), String> {
+    let key = decode_base64_to_32_bytes(key_b64.trim())?;
+    let manager = MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
+        .map_err(|e| e.to_string())?;
+    Ok((manager, key))
+}
+
+/// `Option`-returning wrapper over [`load_manager_with_key_b64`] for the push-decrypt paths,
+/// which degrade to a generic notification rather than surfacing an error.
+fn load_manager_for_push(
+    state_bytes: &[u8],
+    key_b64: &str,
+    user_id: &str,
+    device_id: &str,
+) -> Option<(MlsManager, [u8; 32])> {
+    match load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id) {
+        Ok(pair) => Some(pair),
+        Err(e) => {
+            log::error!("[PushBG] load mls.bin with device key failed: {e}");
+            None
+        }
+    }
+}
 
 /// Decodes a JSON array of base64-encoded commit bytes (`["b64","b64",...]`, ordered by ascending
 /// base epoch as the server returns them) into raw commit byte vectors for the in-memory catch-up.
@@ -94,8 +134,8 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
     }
 }
 
-/// Cree un Welcome MLS pour un nouveau device (background, app tuee).
-/// Variante basee sur clef : utilise la clef device pre-derivee (base64) au lieu du PIN.
+/// Creates an MLS Welcome for a new device from the background (app may be killed).
+/// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
 pub fn create_welcome_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
@@ -109,21 +149,7 @@ pub fn create_welcome_background_with_key(
         .decode(key_package_b64.trim())
         .map_err(|e| format!("base64 decode key_package: {e}"))?;
 
-    let key_bytes = STANDARD
-        .decode(key_b64.trim())
-        .map_err(|e| format!("base64 decode device key: {e}"))?;
-    if key_bytes.len() != 32 {
-        return Err(format!(
-            "invalid device key length: {} (want 32)",
-            key_bytes.len()
-        ));
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-
-    let mut manager =
-        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
-            .map_err(|e| e.to_string())?;
+    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
 
     let base_epoch = manager.get_epoch(group_id).map_err(|e| e.to_string())?;
 
@@ -153,7 +179,7 @@ pub fn create_welcome_background_with_key(
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
-        "[BG_WELCOME] mls.bin mis a jour ({} octets) pour group={group_id}",
+        "[BG_WELCOME] mls.bin updated ({} bytes) for group={group_id}",
         enc.len()
     );
 
@@ -166,8 +192,8 @@ pub fn create_welcome_background_with_key(
     }))
 }
 
-/// Applique un Welcome MLS recu en arriere-plan (cote receveur).
-/// Variante basee sur clef : utilise la clef device pre-derivee (base64) au lieu du PIN.
+/// Applies an MLS Welcome received in the background (receiver side).
+/// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
 pub fn process_welcome_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
@@ -192,21 +218,7 @@ pub fn process_welcome_background_with_key(
         )
     };
 
-    let key_bytes = STANDARD
-        .decode(key_b64.trim())
-        .map_err(|e| format!("base64 decode device key: {e}"))?;
-    if key_bytes.len() != 32 {
-        return Err(format!(
-            "invalid device key length: {} (want 32)",
-            key_bytes.len()
-        ));
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-
-    let mut manager =
-        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
-            .map_err(|e| e.to_string())?;
+    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
 
     let group_id = manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
@@ -218,14 +230,14 @@ pub fn process_welcome_background_with_key(
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
-        "[BG_JOIN] groupe rejoint via Welcome: {group_id} (mls.bin {} octets)",
+        "[BG_JOIN] joined group via Welcome: {group_id} (mls.bin {} bytes)",
         enc.len()
     );
     Ok(())
 }
 
-/// Chiffre un message sortant en attente et persiste `mls.bin`.
-/// Variante basee sur clef : utilise la clef device pre-derivee (base64) au lieu du PIN.
+/// Encrypts a queued outbound message and persists `mls.bin`.
+/// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
 pub fn send_message_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
@@ -239,21 +251,7 @@ pub fn send_message_background_with_key(
         .decode(proto_b64.trim())
         .map_err(|e| format!("base64 decode proto: {e}"))?;
 
-    let key_bytes = STANDARD
-        .decode(key_b64.trim())
-        .map_err(|e| format!("base64 decode device key: {e}"))?;
-    if key_bytes.len() != 32 {
-        return Err(format!(
-            "invalid device key length: {} (want 32)",
-            key_bytes.len()
-        ));
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-
-    let mut manager =
-        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
-            .map_err(|e| e.to_string())?;
+    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
 
     let ciphertext = manager
         .send_message(group_id, &proto_bytes)
@@ -265,7 +263,7 @@ pub fn send_message_background_with_key(
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
-        "[BG_SEND] message chiffre group={group_id} (ciphertext {} octets, mls.bin {} octets)",
+        "[BG_SEND] message encrypted group={group_id} (ciphertext {} bytes, mls.bin {} bytes)",
         ciphertext.len(),
         enc.len()
     );
@@ -276,7 +274,7 @@ pub fn send_message_background_with_key(
     }))
 }
 
-/// Nettoie `mls_pending.db` (messages exhausted / perimes). Miroir `MlsBackgroundWorker`.
+/// Prunes `mls_pending.db` (exhausted / expired messages). Mirrors `MlsBackgroundWorker`.
 pub fn cleanup_pending_db(files_dir: &Path) -> Result<(), String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(async {
@@ -319,10 +317,16 @@ pub fn cleanup_pending_db(files_dir: &Path) -> Result<(), String> {
     })
 }
 
-// ─── Key-based variants (biometric mode, no PIN) ───────────────────────────
+// --- Read-only push decrypt paths -------------------------------------------
+//
+// These never persist `mls.bin`: a background decrypt must not advance the on-disk state
+// (the foreground owns it), so the loaded manager is discarded after the plaintext is read.
 
-/// Key-based variant of [`decrypt_push_message`]: uses the pre-derived 32-byte
-/// key (base64) from push_context.json instead of the PIN.
+/// Decrypts an MLS push payload for a notification preview, read-only.
+///
+/// Uses the pre-derived 32-byte device key (base64) from `push_context.json`. Returns the
+/// message metadata JSON, or `None` on any failure so the caller falls back to a generic
+/// notification.
 pub fn decrypt_push_message_with_key(
     state_bytes: &[u8],
     key_b64: &str,
@@ -331,47 +335,7 @@ pub fn decrypt_push_message_with_key(
     group_id: &str,
     ciphertext: &[u8],
 ) -> Option<serde_json::Value> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let key_bytes = STANDARD.decode(key_b64.trim()).ok()?;
-    if key_bytes.len() != 32 {
-        log::error!(
-            "[PushBG] decrypt_with_key: invalid key length {}",
-            key_bytes.len()
-        );
-        return None;
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-
-    // We can't use load_encrypted because it derives key from PIN. Use load_with_key.
-    // Actually load_encrypted internally calls load_with_key. Let me check...
-
-    // load_encrypted calls security::derive_key_from_pin(pin, salt) then decrypt_blob.
-    // We have the raw key already. We need load_with_key which is `fn load_with_key(...)`.
-    // But load_with_key is private (pub(crate) in mls-core).
-    // Let me make it accessible...
-
-    // For now, derive key from empty PIN (which will fail) and fall back.
-    // Actually, the simplest approach: decrypt the blob ourselves and call load_or_create.
-    decrypt_with_raw_key(state_bytes, &key, user_id, device_id, group_id, ciphertext)
-}
-
-/// Internal: manually decrypt the blob with the raw key, then use load_or_create.
-fn decrypt_with_raw_key(
-    state_bytes: &[u8],
-    key: &[u8; 32],
-    user_id: &str,
-    device_id: &str,
-    group_id: &str,
-    ciphertext: &[u8],
-) -> Option<serde_json::Value> {
-    if state_bytes.len() < 16 {
-        return None;
-    }
-    let (_salt, rest) = state_bytes.split_at(16);
-    let plain = mls_core::security::decrypt_blob(key, rest).ok()?;
-    let mut manager = mls_core::MlsManager::load_or_create(user_id, device_id, Some(plain)).ok()?;
+    let (mut manager, _key) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)?;
 
     let plaintext = match manager.process_incoming_message(group_id, ciphertext) {
         Ok(Some(p)) => p,
@@ -385,7 +349,7 @@ fn decrypt_with_raw_key(
         }
     };
 
-    let info = super::proto_fields::extract_full_message_info(&plaintext);
+    let info = extract_full_message_info(&plaintext);
     if info["ok"].as_bool().unwrap_or(false) {
         Some(info)
     } else {
@@ -393,7 +357,10 @@ fn decrypt_with_raw_key(
     }
 }
 
-/// Key-based variant of [`background_group_epoch`].
+/// Reads the current MLS epoch of `group_id` from the encrypted state, read-only.
+///
+/// Used to decide whether the pushed ciphertext belongs to a newer epoch than the one on
+/// disk, which is what triggers the commit catch-up path below.
 pub fn background_group_epoch_with_key(
     state_bytes: &[u8],
     key_b64: &str,
@@ -401,25 +368,15 @@ pub fn background_group_epoch_with_key(
     device_id: &str,
     group_id: &str,
 ) -> Option<u64> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let key_bytes = STANDARD.decode(key_b64.trim()).ok()?;
-    if key_bytes.len() != 32 {
-        return None;
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-
-    if state_bytes.len() < 16 {
-        return None;
-    }
-    let (_salt, rest) = state_bytes.split_at(16);
-    let plain = mls_core::security::decrypt_blob(&key, rest).ok()?;
-    let manager = mls_core::MlsManager::load_or_create(user_id, device_id, Some(plain)).ok()?;
+    let (manager, _key) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)?;
     manager.get_epoch(group_id).ok()
 }
 
-/// Key-based variant of [`decrypt_push_message_with_commits`].
+/// Decrypts an MLS push payload after applying `commits` in memory, read-only.
+///
+/// `commits` are ordered by ascending base epoch. They are applied to the loaded manager only
+/// to reach the sender's epoch; the result is never written back, so the foreground stays the
+/// single writer of `mls.bin`.
 pub fn decrypt_push_message_with_commits_with_key(
     state_bytes: &[u8],
     key_b64: &str,
@@ -429,21 +386,7 @@ pub fn decrypt_push_message_with_commits_with_key(
     commits: &[Vec<u8>],
     ciphertext: &[u8],
 ) -> Option<serde_json::Value> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let key_bytes = STANDARD.decode(key_b64.trim()).ok()?;
-    if key_bytes.len() != 32 {
-        return None;
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&key_bytes);
-
-    if state_bytes.len() < 16 {
-        return None;
-    }
-    let (_salt, rest) = state_bytes.split_at(16);
-    let plain = mls_core::security::decrypt_blob(&key, rest).ok()?;
-    let mut manager = mls_core::MlsManager::load_or_create(user_id, device_id, Some(plain)).ok()?;
+    let (mut manager, _key) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)?;
 
     for commit in commits {
         match manager.process_incoming_message(group_id, commit) {
@@ -467,7 +410,7 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     };
 
-    let info = super::proto_fields::extract_full_message_info(&plaintext);
+    let info = extract_full_message_info(&plaintext);
     if info["ok"].as_bool().unwrap_or(false) {
         Some(info)
     } else {

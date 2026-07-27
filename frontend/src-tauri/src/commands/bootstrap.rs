@@ -37,20 +37,24 @@ struct ClaimBootstrapResponse {
     bootstrap_version: u32,
 }
 
-/// Fail-Safe universel : recree un groupe MLS mort de zero.
+/// Universal fail-safe: rebuilds a dead MLS group from scratch.
 ///
-/// Sequence atomique du point de vue du reseau :
-///   1. Acquiert le verrou optimiste cote serveur (`claim-bootstrap`).
-///      Si 409 -> un autre device a gagne la course -> retourne Conflict.
-///   2. Remet l'epoch serveur a 0 (`reset-epoch`).
-///   3. Cree un etat MLS frais en local (`force_create_group`).
-///   4. Recupere les KeyPackages de tous les membres via l'API.
-///   5. Ajoute tous les devices en bulk (`add_members_bulk`).
-///   6. Sauvegarde l'etat MLS chiffre (mls.bin + checkpoint SQLite).
-///   7. Remet a zero le compteur de defaillances consecutives.
+/// Network-atomic sequence:
+///   1. Acquire the server-side optimistic lock (`claim-bootstrap`).
+///      On 409 -> another device won the race -> return Conflict.
+///   2. Reset the server epoch to 0 (`reset-epoch`).
+///   3. Create a fresh local MLS state (`force_create_group`).
+///   4. Fetch every member's KeyPackages through the API.
+///   5. Add all devices in bulk (`add_members_bulk`).
+///   6. Save the encrypted MLS state (mls.bin + SQLite checkpoint).
+///   7. Reset the consecutive-failure counter.
 ///
-/// La completion (envoi du Welcome + commit) est laissee au frontend TypeScript
-/// car elle implique de multiples appels reseau et de la logique applicative.
+/// Completion (sending the Welcome + commit) is left to the TypeScript frontend because it
+/// involves multiple network calls and application-level logic.
+///
+/// The argument count is fixed by the Tauri IPC signature (the last four are injected by the
+/// runtime, not passed by the caller), so grouping them into a struct would only obscure it.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn bootstrap_dead_conversation(
     conversation_id: String,

@@ -12,7 +12,7 @@ void canari_free_string(char *ptr);
 char *canari_native_decrypt_message(
     const unsigned char *state_ptr,
     size_t state_len,
-    const char *pin,
+    const char *device_key_b64,
     const char *user_id,
     const char *device_id,
     const char *group_id,
@@ -22,7 +22,7 @@ char *canari_native_decrypt_message(
 long long canari_native_group_epoch(
     const unsigned char *state_ptr,
     size_t state_len,
-    const char *pin,
+    const char *device_key_b64,
     const char *user_id,
     const char *device_id,
     const char *group_id);
@@ -30,7 +30,7 @@ long long canari_native_group_epoch(
 char *canari_native_decrypt_message_with_commits(
     const unsigned char *state_ptr,
     size_t state_len,
-    const char *pin,
+    const char *device_key_b64,
     const char *user_id,
     const char *device_id,
     const char *group_id,
@@ -56,7 +56,7 @@ char *canari_native_create_welcome_background(
     const char *files_dir,
     const unsigned char *state_ptr,
     size_t state_len,
-    const char *pin,
+    const char *device_key_b64,
     const char *user_id,
     const char *device_id,
     const char *group_id,
@@ -66,7 +66,7 @@ int canari_native_process_welcome_background(
     const char *files_dir,
     const unsigned char *state_ptr,
     size_t state_len,
-    const char *pin,
+    const char *device_key_b64,
     const char *user_id,
     const char *device_id,
     const char *welcome_b64,
@@ -76,7 +76,7 @@ char *canari_native_send_message_background(
     const char *files_dir,
     const unsigned char *state_ptr,
     size_t state_len,
-    const char *pin,
+    const char *device_key_b64,
     const char *user_id,
     const char *device_id,
     const char *group_id,
