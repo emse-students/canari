@@ -98,19 +98,22 @@ Audit found 15 gaps (T1-T15). Remediation lots, in order:
 - \[x\] **Lot 1 - mobile background push (BLOCKER)** - commit `6e6a7e1e`
   - T1/T2/T10a done: the three broken paths now go through `MlsManager::load_with_key` via the new `load_manager_with_key_b64` / `load_manager_for_push` helpers in `mobile/background.rs`; scratch comments removed; `pin`->`device_key_b64` in `ios_ffi.rs` + both iOS C headers; French rustdoc/logs translated; `AddMembersBulkResult`/`AddMemberResult` made `pub`. clippy 0 warnings on src-tauri/mls-core/mls-wasm, svelte-check 0/0.
   - \[ \] [device] verify a decrypted notification on Android AND iOS - this is the whole point of the fix.
-- \[ \] **Lot 2 - frontend key chain** (NEXT - start here)
-  - Pre-commit hook surfaced 4 oxlint warnings that ARE Lot 2/4 items: `sessionAuth.ts:961` unused `failMsg`, `pinChange.ts:16` unused `encryptData` import, `TauriMlsService.ts:17` unused `BiometricService` import (fallout of the deleted `reloadStateFromDisk` = T5), `db/salt.ts` empty file (T10b).
-  - T4: no Argon2id PIN->deviceKeyB64 derivation exists in the frontend despite CHANGELOG/KEYSTORE_PLAN. Decide: implement it, or document that the PIN is not the key source. Then remove `deviceKeyB64 || ctx.getPin()` fallbacks (`sessionAuth.ts:388,447`).
-  - T3: `SettingsSecuritySection.svelte:60` passes `session.pin` to the DEVICE-KEY vault -> must be `session.deviceKeyB64`.
-  - T5: `reloadStateFromDisk()` is now a silent no-op on Tauri (`BaseMlsService.ts`) but still called from `ChatBackgroundService.svelte` -> anti-SecretReuse protection lost. Implement with `_deviceKeyB64` or remove the call.
-- \[ \] **Lot 3 - prod & migrations**
+- \[x\] **Lot 2 - frontend key chain (BLOCKER, bigger than the audit said)** - commit `529c924d`
+  - T4 root cause was worse than "derivation missing": EVERY consumer fell back to the raw PIN, which can never be 32 bytes of base64 -> the entire at-rest chain failed closed on web AND native. New `$lib/crypto/deviceKey.ts` (PBKDF2-SHA256 310k, salt `canari-device-key-v1|{serverSalt}|{userId}`) is now the SINGLE source of the key. WebCrypto only - browser/desktop/mobile derive identical keys, no WASM or FFI on the login path. Domain-separated from `computePinVerifier` (which is sent to the server), asserted by a test.
+  - Three MORE shipped defects found and fixed here: (a) `store_push_context` declared `pin` while all 3 call sites passed `deviceKeyB64` -> invoke failed on a missing arg EVERY time, swallowed by `.catch(() => {})`; it also read `mls.bin[..16]` as an Argon2id salt that no longer exists and stored the resulting garbage key in the keystore. Lot 1 could not have worked without this. (b) the change-PIN flow never called `POST mls/security/pin-change` - endpoint existed with ZERO callers, so the account verifier was never rotated. (c) `disableBiometricImpl` invoked `actualiser_cle_keystore`, a command that no longer exists.
+  - T3, T5, T10b, T12 done. T5: `recharger_mls_au_resume` was already correct and key-based in Rust - only the TS caller had been deleted.
+  - Recovery detection no longer regexes error text: typed `LoginFailure` codes in `session/loginErrors.ts`. **Never reintroduce message-matching here** - localizing a string silently disabled the branch, which is exactly how this broke.
+  - `pinVault.ts` -> `deviceKeyVault.ts`; `db/salt.ts`, `derive_and_store_device_key`, legacy `encrypt_mls_state_blob` deleted.
+  - \[ \] [device] a PIN login now re-derives the key - verify login, PIN change, and biometric enable/disable on a real device.
+- \[ \] **Lot 3 - prod & migrations** (NEXT - start here)
   - T6: migration history rewritten (003 modified; 023/025/026/027 deleted; gaps 023, 026-029). Prod applies SQL BY HAND (`synchronize:false`, no runner, no tracking table). VERIFY 030/031/032 are applied in prod (`channels.writePolicy` present, `channel_permission_overrides` gone) - `writePolicy` is enforced server-side on send, so a missing column kills the feature. Then add a tracking table or a checklist in `infrastructure/MIGRATION.md`.
-- \[ \] **Lot 4 - hygiene**
-  - T10b: delete `src/lib/db/salt.ts` (tombstone), the dead deprecated block in `pinVault.ts` (`loadPin`/`savePin`/`clearPin`/`clearPinAndKey` have ZERO callers), rename `pinVault.ts` -> `deviceKeyVault.ts`.
-  - T11: French comments -> English (`background.rs:1,97-98`, `sessionAuth.ts:914`, `mls.rs:710`, `locks.controller.ts:24`, `mlsDeliveryApi.ts:10`, `same_epoch_ratchet.rs:8`).
-  - T12: hardcoded thrown strings -> Paraglide (`sessionAuth.ts:371,399,405`). Careful: the stale-key recovery regexes match this text.
-  - T13: ~20 stale Argon2/PBKDF2 comments still describe the old scheme.
-  - T14: confirm legacy `encrypt_with_pin`/`decrypt_with_pin` is only used by backup v1 (`backup.ts:174`), isolate it.
+  - Dir inventory: `social-service` 016-032 (gaps 023, 026-029), `chat-delivery-service` 001-011 (two 007s: `007_drop_orphan_columns.sql` AND `007_mls_commit_log.sql`), `core-service` 001 only.
+  - User authorized cleaning up the accumulated migration files ("s'il faut nettoyer tous les fichiers de migration accumules tu peux aussi") - and authorized prod access for the verification.
+- \[ \] **Lot 4 - hygiene** (T10b/T12 already closed by Lot 2)
+  - T11: French comments -> English. Remaining: `commands/push.rs` (many), `mls.rs:424,706-711`, `locks.controller.ts:24`, `mlsDeliveryApi.ts:10`, `same_epoch_ratchet.rs:8`, `useChatSession.svelte.ts:122`, `sessionTypes.ts:45-46`, `ChatBackgroundService.svelte:205`, `bootstrap.rs` step comments, `mls-core/src/lib.rs:24,49-51,65-66`.
+  - T13: stale Argon2/PBKDF2 comments - the crypto ones are done; sweep the rest (`encryption.ts:7-8` fixed? verify, `sqlite.ts`, `indexeddb.ts`, `biometric.ts:9,27,119` still cite `derive_and_store_device_key` which no longer exists).
+  - T14: DONE - legacy `encrypt_with_pin`/`decrypt_with_pin` confirmed reachable only from `backup.ts:174` (v1 branch); header comment now says so.
+  - `messages/fr.json` has 2157 keys vs `en.json` 2147 - 10 FR-only keys, pre-existing gap, worth reconciling.
 - \[ \] **Lot 5 - docs & state**
   - T7: CHANGELOG `[Unreleased]` still holds all v0.11.0 content; no v0.10.10-v0.10.15 sections; the PIN->deviceKey block is in French.
   - T9: `plans/` and `docs/strategy/` are TEMPORARY working trees (user-confirmed) - DELETE once T1-T15 are closed. `docs/TESTS-DEVICE-PENDING.md` was deleted with open items in it.
