@@ -75,3 +75,6 @@ here because they show the failure mode this file guards against:
 
 - [ ] Decrypted push notification on Android **and** iOS (Lot 1 - the whole point of the fix).
 - [ ] Login, PIN change, biometric enable/disable on a real device (Lot 2).
+- [ ] v0.11.1 auth fixes: PIN change must KEEP biometrics enabled (was silently disabling them);
+      the fingerprint button must stay on the PIN sheet after a cancelled biometric prompt;
+      the enrolment bottom sheet must appear right after the first PIN entry, once only.
