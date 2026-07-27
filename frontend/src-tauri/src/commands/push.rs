@@ -6,10 +6,9 @@ use tauri::Manager;
 
 use crate::keystore_bridge::PluginDeviceKeyStore;
 
-/// Retourne le token FCM stocke par CanariFirebaseMessagingService.
-/// Verifie que le Keystore Android peut lire le push secret (flag ecrit par CanariApplication).
-/// Retourne `{"ok":true}` ou `{"ok":false,"reason":"no_context"|"no_secret"}`.
-/// Sur desktop/web, toujours OK (pas de Keystore Android).
+/// Checks that the Android Keystore can read the push secret (flag written by CanariApplication).
+/// Returns `{"ok":true}` or `{"ok":false,"reason":"no_context"|"no_secret"}`.
+/// Always OK on desktop/web (no Android Keystore).
 #[tauri::command]
 pub(crate) fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Value {
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -18,15 +17,14 @@ pub(crate) fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Val
             Ok(d) => d,
             Err(_) => return serde_json::json!({"ok": false, "reason": "no_context"}),
         };
-        // Si push_context.json absent -> utilisateur non encore authentifie, situation normale.
+        // No push_context.json -> user not authenticated yet, which is normal.
         if !data_dir.join("push_context.json").exists() {
             return serde_json::json!({"ok": true});
         }
-        // keystore_ok.flag ecrit par CanariApplication.checkKeystoreHealth() au demarrage.
+        // keystore_ok.flag is written by CanariApplication.checkKeystoreHealth() at startup.
         if data_dir.join("keystore_ok.flag").exists() {
-            // Verifier que deviceKeyB64 est present et non vide dans push_context.json.
-            // Le flag keystore peut etre present mais le champ deviceKeyB64 manquant
-            // (ex: apres un clear_push_context_key qui n'a pas ete suivi d'un store_push_context).
+            // The flag can be present while deviceKeyB64 is missing from push_context.json
+            // (e.g. a clear_push_context_key that was not followed by a store_push_context).
             if let Ok(content) = std::fs::read_to_string(data_dir.join("push_context.json")) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                     let device_key_empty = json
@@ -43,14 +41,16 @@ pub(crate) fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Val
             }
             return serde_json::json!({"ok": true});
         }
-        // pending_push_secret.txt -> migration en attente ; le service FCM peut dechiffrer
-        // en fallback et le Keystore sera restaure au prochain demarrage de l'app.
+        // pending_push_secret.txt -> migration pending; the FCM service can still decrypt and the
+        // Keystore is restored at the next app startup.
         if data_dir.join("pending_push_secret.txt").exists() {
-            log::info!("[PushHealth] pending_push_secret.txt present -> migration en attente, push fonctionnel");
+            log::info!(
+                "[PushHealth] pending_push_secret.txt present -> migration pending, push still works"
+            );
             return serde_json::json!({"ok": true});
         }
         log::warn!(
-            "[PushHealth] keystore_ok.flag et pending_push_secret.txt absents -> Keystore perdu"
+            "[PushHealth] neither keystore_ok.flag nor pending_push_secret.txt -> Keystore lost"
         );
         serde_json::json!({"ok": false, "reason": "no_secret"})
     }
@@ -61,7 +61,7 @@ pub(crate) fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Val
     }
 }
 
-/// Lit {app_data_dir}/fcm_token.txt (ecrit par le code natif Android/iOS).
+/// Reads {app_data_dir}/fcm_token.txt (written by the native Android/iOS code).
 #[tauri::command]
 pub(crate) fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -130,9 +130,9 @@ pub(crate) fn get_voip_token(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
-/// Lit {app_data_dir}/fcm_message_cache.ndjson, efface le fichier et retourne les entrees.
-/// Appele au boot juste apres login pour pre-injecter les messages deja dechiffres
-/// lors de la reception FCM - evite d'attendre la sync MLS complete (~10s).
+/// Reads {app_data_dir}/fcm_message_cache.ndjson, clears the file and returns the entries.
+/// Called at boot right after login to pre-inject messages already decrypted when the FCM push
+/// arrived - avoids waiting for the full MLS sync (~10s).
 #[tauri::command]
 pub(crate) fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
     let data_dir = match app.path().app_data_dir() {
@@ -147,27 +147,27 @@ pub(crate) fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json:
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
         Err(e) => {
-            log::warn!("[FCM_CACHE] lecture: {e}");
+            log::warn!("[FCM_CACHE] read failed: {e}");
             return vec![];
         }
     };
-    // Effacer immediatement pour eviter les doublons au prochain boot
+    // Clear immediately so the next boot does not replay the same entries.
     if let Err(e) = std::fs::remove_file(&path) {
-        log::warn!("[FCM_CACHE] suppression: {e}");
+        log::warn!("[FCM_CACHE] delete failed: {e}");
     }
     let entries: Vec<serde_json::Value> = content
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
-    log::info!("[FCM_CACHE] {} entree(s) lue(s)", entries.len());
+    log::info!("[FCM_CACHE] {} entry/entries read", entries.len());
     entries
 }
 
-/// Reecrit {app_data_dir}/outbox_pending.ndjson depuis l'instantanse courant de l'outbox.
-/// Chaque entree porte le proto AppMessage *en clair* (base64) que le service Android chiffrera
-/// contre l'epoch vivant via `nativeSendMessageBackground`. Fichier app-prive en clair, coherent
-/// avec push_context.json / fcm_message_cache.ndjson. Reecriture complete (pas d'append).
+/// Rewrites {app_data_dir}/outbox_pending.ndjson from the current outbox snapshot.
+/// Each entry carries the AppMessage proto *in the clear* (base64), which the Android service
+/// encrypts against the live epoch via `nativeSendMessageBackground`. App-private plaintext file,
+/// consistent with push_context.json / fcm_message_cache.ndjson. Full rewrite, never an append.
 #[tauri::command]
 pub(crate) fn store_outbox_mirror(
     app: tauri::AppHandle,
@@ -176,11 +176,11 @@ pub(crate) fn store_outbox_mirror(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("outbox_pending.ndjson");
-    // File vide -> supprimer le fichier pour que le natif voie "rien en attente" sans le parser.
+    // Empty queue -> delete the file so the native side sees "nothing pending" without parsing it.
     if entries.is_empty() {
         if let Err(e) = std::fs::remove_file(&path) {
             if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("[OUTBOX_MIRROR] suppression: {e}");
+                log::warn!("[OUTBOX_MIRROR] delete failed: {e}");
             }
         }
         return Ok(());
@@ -191,7 +191,7 @@ pub(crate) fn store_outbox_mirror(
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(&path, body + "\n").map_err(|e| e.to_string())?;
-    log::debug!("[OUTBOX_MIRROR] {} entree(s) ecrite(s)", entries.len());
+    log::debug!("[OUTBOX_MIRROR] {} entry/entries written", entries.len());
     Ok(())
 }
 
@@ -231,9 +231,9 @@ pub(crate) fn store_channel_key(
     Ok(())
 }
 
-/// Lit {app_data_dir}/outbox_sent.ndjson (un messageId par ligne, ecrit par le service Android
-/// apres un envoi background reussi), efface le fichier et retourne les ids. Appele au login pour
-/// supprimer de l'outbox les messages deja livres en arriere-plan.
+/// Reads {app_data_dir}/outbox_sent.ndjson (one messageId per line, written by the Android service
+/// after a successful background send), clears the file and returns the ids. Called at login to
+/// drop from the outbox the messages already delivered in the background.
 #[tauri::command]
 pub(crate) fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
     let data_dir = match app.path().app_data_dir() {
@@ -346,10 +346,9 @@ pub(crate) fn store_push_context(
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
 }
 
-/// Efface le champ `deviceKeyB64` de {app_data_dir}/push_context.json.
-/// Appele apres enrollment/desactivation de la biometrie pour invalider
-/// la cle de dechiffrement stockee sur le filesystem.
-/// Si le fichier n'existe pas → no-op (succes).
+/// Clears the `deviceKeyB64` field from {app_data_dir}/push_context.json.
+/// Called after enrolling in or disabling biometrics, to invalidate the decryption key held on
+/// the filesystem. No-op (success) when the file does not exist.
 #[tauri::command]
 pub(crate) fn clear_push_context_key(app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -366,8 +365,8 @@ pub(crate) fn clear_push_context_key(app: tauri::AppHandle) -> Result<(), String
     std::fs::write(&path, json.to_string()).map_err(|e| e.to_string())
 }
 
-/// Lit {app_data_dir}/push_context.json et retourne son contenu.
-/// Utilise pour restaurer le device ID quand localStorage est vide (reinstall Android).
+/// Reads {app_data_dir}/push_context.json and returns its contents.
+/// Used to restore the device ID when localStorage is empty (Android reinstall).
 #[tauri::command]
 pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Value> {
     let data_dir = match app.path().app_data_dir() {
@@ -395,9 +394,9 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
     }
 }
 
-/// Ecrit le pushSecret recu du backend dans {app_data_dir}/pending_push_secret.txt.
-/// CanariApplication.processPendingPushSecret() le lit au prochain demarrage,
-/// le chiffre dans Android Keystore, puis supprime le fichier.
+/// Writes the pushSecret received from the backend to {app_data_dir}/pending_push_secret.txt.
+/// CanariApplication.processPendingPushSecret() reads it at the next startup, encrypts it into the
+/// Android Keystore, then deletes the file.
 #[tauri::command]
 pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]

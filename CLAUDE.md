@@ -113,8 +113,9 @@ Audit found 15 gaps (T1-T15). Remediation lots, in order:
   - `007_mls_commit_log.sql` -> `012_` (duplicate number with `007_drop_orphan_columns.sql`); French headers in it and in `030` translated. Numbering gaps (023, 026-029) left alone: harmless, documented.
   - Migration contract documented in `docs/wiki/infrastructure/databases.md` (+ real prod table names, the old list was wrong) and `infrastructure/MIGRATION.md`.
   - Files are a PATCH SET, not a schema: migration 001 opens with `ALTER TABLE users`. A fresh prod DB comes from a backup restore, never from replaying migrations.
-- \[ \] **Lot 4 - hygiene** (T10b/T12 already closed by Lot 2)
-  - T11: French comments -> English. Remaining: `commands/push.rs` (many), `mls.rs:424,706-711`, `locks.controller.ts:24`, `mlsDeliveryApi.ts:10`, `same_epoch_ratchet.rs:8`, `useChatSession.svelte.ts:122`, `sessionTypes.ts:45-46`, `ChatBackgroundService.svelte:205`, `bootstrap.rs` step comments, `mls-core/src/lib.rs:24,49-51,65-66`.
+- \[~\] **Lot 4 - hygiene** (T10b/T12 already closed by Lot 2) - IN PROGRESS, resume here
+  - T11: French comments -> English. DONE: `commands/push.rs` (all of it), migrations `012_mls_commit_log.sql` + `030` (done in Lot 3). Remaining: `mls.rs:424,706-711`, `locks.controller.ts:24`, `mlsDeliveryApi.ts:10`, `same_epoch_ratchet.rs:8`, `useChatSession.svelte.ts:122`, `sessionTypes.ts:45-46`, `ChatBackgroundService.svelte:205`, `bootstrap.rs` step comments, `mls-core/src/lib.rs:24,49-51,65-66`.
+  - Detection recipe (ripgrep, `-i`, no `(?i)` inline - it fails to parse): `//.*\b(le|la|les|une|des|dans|pour|avec|sur|est|sont|pas|que|qui|cette|cle|clé|chiffr|dechiffr|utilise|permet|renvoie|retourne|evite|verifie|charge|stocke|recupere|supprime|ajoute|lors|ainsi|afin|depuis|aucun|chaque|meme)\b`
   - T13: stale Argon2/PBKDF2 comments - the crypto ones are done; sweep the rest (`encryption.ts:7-8` fixed? verify, `sqlite.ts`, `indexeddb.ts`, `biometric.ts:9,27,119` still cite `derive_and_store_device_key` which no longer exists).
   - T14: DONE - legacy `encrypt_with_pin`/`decrypt_with_pin` confirmed reachable only from `backup.ts:174` (v1 branch); header comment now says so.
   - `messages/fr.json` has 2157 keys vs `en.json` 2147 - 10 FR-only keys, pre-existing gap, worth reconciling.
