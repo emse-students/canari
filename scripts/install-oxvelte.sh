@@ -3,7 +3,7 @@
 set -euo pipefail
 
 OXVELTE_REPO="${OXVELTE_REPO:-https://github.com/tolgaouz/oxvelte.git}"
-MIN_RUST_VERSION="${MIN_RUST_VERSION:-1.93.0}"
+MIN_RUST_VERSION="${MIN_RUST_VERSION:-1.97.0}"
 
 if [ -f "$HOME/.cargo/env" ]; then
   # shellcheck disable=SC1091

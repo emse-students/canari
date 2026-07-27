@@ -190,12 +190,12 @@ install-rust:
 		echo "${GREEN}✅ Rust already installed: $$(rustc --version)${RESET}"; \
 		echo "${GREEN}✅ cargo already installed: $$(cargo --version)${RESET}"; \
 		rust_version=$$(rustc --version | sed -E 's/rustc ([0-9]+\.[0-9]+\.[0-9]+).*/\1/'); \
-		if [ "$$(printf '%s\n%s\n' '1.93.0' "$$rust_version" | sort -V | head -n1)" != "1.93.0" ]; then \
-			echo "${YELLOW}⚠ Rust >= 1.93.0 required (oxvelte). Run: rustup update stable${RESET}"; \
+		if [ "$$(printf '%s\n%s\n' '1.97.0' "$$rust_version" | sort -V | head -n1)" != "1.97.0" ]; then \
+			echo "${YELLOW}⚠ Rust >= 1.97.0 required (oxvelte). Run: rustup update stable${RESET}"; \
 		fi; \
 	else \
 		echo "${BLUE}⬇️ Installing Rust via rustup…${RESET}"; \
-		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.93.0; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.0; \
 		. "$$HOME/.cargo/env"; \
 		rustup target add wasm32-unknown-unknown; \
 		echo "${YELLOW}⚠ Open a new shell or run: source ~/.cargo/env${RESET}"; \

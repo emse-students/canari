@@ -300,7 +300,7 @@ jobs:
       - name: Setup Rust (oxvelte >= 1.93)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.93.0
+          toolchain: 1.97.0
 
       - name: Cache oxvelte build
         uses: actions/cache@v6
