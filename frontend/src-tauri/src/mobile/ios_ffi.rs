@@ -9,9 +9,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::concurrency::mark_foreground_active;
 
 use super::background::{
-    background_group_epoch, cleanup_pending_db, create_welcome_background, decode_commits_b64_json,
-    decrypt_channel_message, decrypt_push_message, decrypt_push_message_with_commits,
-    process_welcome_background, send_message_background,
+    background_group_epoch_with_key, cleanup_pending_db, create_welcome_background_with_key,
+    decode_commits_b64_json, decrypt_channel_message, decrypt_push_message_with_commits_with_key,
+    decrypt_push_message_with_key, process_welcome_background_with_key,
+    send_message_background_with_key,
 };
 use super::proto_fields::{build_read_receipt_app_message, build_text_app_message};
 
@@ -76,7 +77,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
     let device_id_str = str_from_c_str(device_id);
     let group_id_str = str_from_c_str(group_id);
 
-    match decrypt_push_message(
+    match decrypt_push_message_with_key(
         state_bytes,
         &pin_str,
         &user_id_str,
@@ -116,7 +117,7 @@ pub unsafe extern "C" fn canari_native_group_epoch(
     let device_id_str = str_from_c_str(device_id);
     let group_id_str = str_from_c_str(group_id);
 
-    match background_group_epoch(
+    match background_group_epoch_with_key(
         state_bytes,
         &pin_str,
         &user_id_str,
@@ -164,7 +165,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     let group_id_str = str_from_c_str(group_id);
     let commits = decode_commits_b64_json(&str_from_c_str(commits_json));
 
-    match decrypt_push_message_with_commits(
+    match decrypt_push_message_with_commits_with_key(
         state_bytes,
         &pin_str,
         &user_id_str,
@@ -293,7 +294,7 @@ pub unsafe extern "C" fn canari_native_create_welcome_background(
 
     let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    match create_welcome_background(
+    match create_welcome_background_with_key(
         &files_dir,
         state_bytes,
         &str_from_c_str(pin),
@@ -332,7 +333,7 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
 
     let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    match process_welcome_background(
+    match process_welcome_background_with_key(
         &files_dir,
         state_bytes,
         &str_from_c_str(pin),
@@ -374,7 +375,7 @@ pub unsafe extern "C" fn canari_native_send_message_background(
 
     let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    match send_message_background(
+    match send_message_background_with_key(
         &files_dir,
         state_bytes,
         &str_from_c_str(pin),

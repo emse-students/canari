@@ -344,9 +344,6 @@ pub fn decrypt_push_message_with_key(
     let mut key = [0u8; 32];
     key.copy_from_slice(&key_bytes);
 
-    let mut manager =
-        mls_core::MlsManager::load_encrypted(user_id, device_id, Some(state_bytes.to_vec()), "")
-            .ok()?;
     // We can't use load_encrypted because it derives key from PIN. Use load_with_key.
     // Actually load_encrypted internally calls load_with_key. Let me check...
 
