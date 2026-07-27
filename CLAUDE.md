@@ -95,11 +95,11 @@ Todo:
 
 Audit found 15 gaps (T1-T15). Remediation lots, in order:
 
-- \[ \] **Lot 1 - mobile background push (BLOCKER)**
-  - T1: `mobile/background.rs` `decrypt_with_raw_key` / `background_group_epoch_with_key` / `decrypt_push_message_with_commits_with_key` strip a 16-byte salt the v0.11.0 format no longer has (`[nonce 12 || ct]`) -> background decrypt ALWAYS fails on Android + iOS. Fix: route through `MlsManager::load_with_key` (it is `pub`, contrary to the in-file comment).
-  - T2: delete LLM scratch comments committed at `background.rs:347-356`.
-  - T10a: rename `pin`/`pin_str` -> `device_key_b64` in `mobile/ios_ffi.rs`; fix rustdoc links to deleted fns.
-- \[ \] **Lot 2 - frontend key chain**
+- \[x\] **Lot 1 - mobile background push (BLOCKER)** - commit `6e6a7e1e`
+  - T1/T2/T10a done: the three broken paths now go through `MlsManager::load_with_key` via the new `load_manager_with_key_b64` / `load_manager_for_push` helpers in `mobile/background.rs`; scratch comments removed; `pin`->`device_key_b64` in `ios_ffi.rs` + both iOS C headers; French rustdoc/logs translated; `AddMembersBulkResult`/`AddMemberResult` made `pub`. clippy 0 warnings on src-tauri/mls-core/mls-wasm, svelte-check 0/0.
+  - \[ \] [device] verify a decrypted notification on Android AND iOS - this is the whole point of the fix.
+- \[ \] **Lot 2 - frontend key chain** (NEXT - start here)
+  - Pre-commit hook surfaced 4 oxlint warnings that ARE Lot 2/4 items: `sessionAuth.ts:961` unused `failMsg`, `pinChange.ts:16` unused `encryptData` import, `TauriMlsService.ts:17` unused `BiometricService` import (fallout of the deleted `reloadStateFromDisk` = T5), `db/salt.ts` empty file (T10b).
   - T4: no Argon2id PIN->deviceKeyB64 derivation exists in the frontend despite CHANGELOG/KEYSTORE_PLAN. Decide: implement it, or document that the PIN is not the key source. Then remove `deviceKeyB64 || ctx.getPin()` fallbacks (`sessionAuth.ts:388,447`).
   - T3: `SettingsSecuritySection.svelte:60` passes `session.pin` to the DEVICE-KEY vault -> must be `session.deviceKeyB64`.
   - T5: `reloadStateFromDisk()` is now a silent no-op on Tauri (`BaseMlsService.ts`) but still called from `ChatBackgroundService.svelte` -> anti-SecretReuse protection lost. Implement with `_deviceKeyB64` or remove the call.

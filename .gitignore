@@ -108,3 +108,6 @@ lcov-report/
 *.p8
 GoogleService-Info.plist
 google-services.json
+
+# Aider
+.aider*
