@@ -8,17 +8,51 @@
 
 Single shared database host for all relational data. The database name is `auth_db`; logical separation is by schema/table prefix, not by database.
 
+Table names below are the live production names (TypeORM's default strategy snake_cases the entity
+class name, so most are singular unless the entity declares `@Entity('...')`).
+
 | Service | Tables (key ones) |
 |---|---|
-| core-service | `users`, `platform_config`, `notes` |
-| chat-delivery-service | `key_packages`, `one_time_key_packages`, `queued_message`, `dm_groups`, `dm_group_members`, `dm_device_group_memberships`, `push_tokens`, `revoked_devices`, `pin_verifiers` |
-| social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `forms`, `form_submissions`, `associations`, `association_members`, `products` |
+| core-service | `users` (the personal notepad is a `notes` column, not a table), `platform_config` |
+| chat-delivery-service | `key_package`, `one_time_key_package`, `queued_message`, `dm_groups`, `dm_group_members`, `dm_device_group_memberships`, `dm_user_dismissed_groups`, `group_invites`, `mls_commit_log`, `mls_group_info`, `push_token`, `revoked_device`, `pin_verifier` |
+| social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `workspace_invites`, `forms`, `submissions`, `form_reminders`, `associations`, `association_members`, `association_products`, `association_categories`, `association_documents`, `purchase_records`, `webhook_deliveries` |
 
 Full schema: see `docs/wiki/architecture.md` (PostgreSQL schema overview section).
 
 ### Migrations
 
-NestJS services use TypeORM. Schema is managed via migrations in each service's `src/migrations/` directory. In development, `synchronize: true` is active (auto-sync). In production, `synchronize: false` — migrations run explicitly.
+NestJS services use TypeORM. In development `synchronize: true` auto-syncs the schema from the
+entities; in production `synchronize: false`, so **every entity change needs a hand-written SQL file**
+in that service's `src/migrations/` directory or the column simply will not exist in production.
+
+The CD workflow applies them (`.github/workflows/cd.yml`, "Run database migrations"): it collects
+`apps/*/src/migrations/*.sql`, sorts by path, and applies each file that is not yet recorded in the
+`schema_migrations` ledger (`filename`, `checksum`, `applied_at`), inside the postgres container with
+`ON_ERROR_STOP=1`. A failing migration fails the deploy.
+
+Rules, all of them load-bearing:
+
+- **Idempotent, always.** A deploy that dies mid-run leaves later files unrecorded, so the next
+  deploy re-runs them. Use `IF NOT EXISTS` / `IF EXISTS`, or a `DO $$ ... IF EXISTS ... $$` guard for
+  DDL that has no such clause.
+- **Never edit an applied migration.** The checksum is recorded; a changed file only produces a CI
+  warning, because production keeps the version it already ran. Write a new migration instead.
+- **Quote camelCase columns.** TypeORM's default naming strategy preserves camelCase, so unquoted
+  `writePolicy` would be folded to `writepolicy` and the entity would not find it.
+- **One number per service directory.** Numbers are per-service and gaps are fine (deleted
+  migrations leave holes at 023 and 026-029 in social-service); duplicates are not, because ordering
+  then depends on the rest of the filename.
+- **One-shot data backfills are a trap.** Before the ledger existed every file replayed on every
+  deploy, so a backfill kept re-applying: migration 004 re-granted `MANAGE_STRIPE_CONNECT` and 016
+  re-enabled `cotisationEnabled`, silently reverting admin changes. The ledger fixes this going
+  forward; keep backfills narrowly conditioned anyway.
+
+The file set is a **patch set, not a schema**. It assumes a database that TypeORM already created;
+migration 001 starts with `ALTER TABLE users`. A brand-new production database is bootstrapped from a
+backup restore (see `backup.md`), never by replaying migrations.
+
+To check production against the entities, dump `information_schema.columns` and compare with the
+`@Column` declarations - drift is silent otherwise.
 
 ### Backup
 

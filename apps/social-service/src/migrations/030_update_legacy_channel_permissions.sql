@@ -1,9 +1,9 @@
--- Migration 030: remplace les anciennes clés de permissions dans channel_roles
--- par les nouvelles clés unifiées (migration du format legacy MANAGE_WORKSPACE → workspace.manage, etc.).
--- La colonne `permissions` est un simple-array TypeORM stocké en texte séparé par des virgules.
--- Chaque REPLACE ne touche que la sous-chaîne exacte de la clé legacy ; les clés déjà migrées
--- (ex: workspace.manage) ne contiennent pas ces motifs et restent inchangées.
--- Idempotent : si la clé n'existe pas, REPLACE est un no-op.
+-- Migration 030: rewrites the legacy permission keys in channel_roles to the unified ones
+-- (MANAGE_WORKSPACE -> workspace.manage, and so on).
+-- `permissions` is a TypeORM simple-array, stored as comma-separated text.
+-- Each REPLACE only touches the exact legacy substring; already-migrated keys
+-- (workspace.manage, ...) do not contain these patterns and are left alone.
+-- Idempotent: REPLACE is a no-op when the key is absent.
 
 BEGIN;
 

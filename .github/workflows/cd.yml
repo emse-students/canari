@@ -797,17 +797,38 @@ jobs:
             fi
           done
 
+          PSQL="$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T postgres \
+            psql -U \"$POSTGRES_USER\" -d auth_db -v ON_ERROR_STOP=1"
+
+          # Ledger of applied migrations, keyed by repo-relative path. Without it every file
+          # replays on every deploy, which silently reverts admin changes made after a one-shot
+          # data backfill (migrations 004 and 016 are exactly that). See infrastructure/MIGRATION.md.
+          eval "$PSQL -q -c \"CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())\""
+
           # Run all *.sql files found under apps/*/src/migrations/, sorted by filename (001_, 002_, …).
-          # All migration files must be idempotent (use IF NOT EXISTS / ON CONFLICT DO NOTHING).
+          # Files must still be idempotent: a deploy that fails mid-migration leaves the rest
+          # unrecorded, so the next one re-runs them.
           MIGRATIONS=$(find apps/*/src/migrations -name "*.sql" 2>/dev/null | sort)
 
           if [ -z "$MIGRATIONS" ]; then
             echo "ℹ️ No migration files found - skipping"
           else
             for migration in $MIGRATIONS; do
+              checksum=$(sha256sum "$migration" | cut -d' ' -f1)
+              recorded=$(eval "$PSQL -At -c \"SELECT checksum FROM schema_migrations WHERE filename = '$migration'\"")
+
+              if [ -n "$recorded" ]; then
+                if [ "$recorded" != "$checksum" ]; then
+                  echo "::warning::$migration changed after it was applied - production still has the old version. Add a new migration instead of editing an applied one."
+                  eval "$PSQL -q -c \"UPDATE schema_migrations SET checksum = '$checksum' WHERE filename = '$migration'\""
+                fi
+                echo "⏭️ Already applied: $migration"
+                continue
+              fi
+
               echo "▶️ Applying: $migration"
-              eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T postgres \
-                psql -U \"$POSTGRES_USER\" -d auth_db -v ON_ERROR_STOP=1" < "$migration"
+              eval "$PSQL" < "$migration"
+              eval "$PSQL -q -c \"INSERT INTO schema_migrations (filename, checksum) VALUES ('$migration', '$checksum') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum\""
               echo "✅ Done: $migration"
             done
           fi

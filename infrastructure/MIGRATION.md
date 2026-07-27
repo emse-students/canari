@@ -106,7 +106,23 @@ Trigger the CD (push to `main`, or Actions → CD → Run workflow). It will:
 1. generate `infrastructure/.env` from secrets (regenerated from the template);
 2. deploy the Canari stack (`docker compose -f infrastructure/docker-compose.prod.yml up -d`);
 3. deploy the Authentik `miconnect` stack (see [authentik/](authentik/));
-4. apply SQL migrations and verify service health.
+4. apply SQL migrations (see below) and verify service health.
+
+### SQL migrations
+
+Production runs TypeORM with `synchronize: false`, so **an entity change without a matching SQL file
+never reaches production**. The CD step "Run database migrations" collects
+`apps/*/src/migrations/*.sql`, sorts by path, and applies every file not yet listed in the
+`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`.
+
+Writing one: idempotent statements only (`IF NOT EXISTS` / `IF EXISTS`, or a `DO $$ ... $$` guard),
+camelCase columns double-quoted, a fresh number in that service's directory, and no edits to a file
+that has already been applied - the checksum mismatch only warns, production keeps the old version.
+Full rationale in [`docs/wiki/infrastructure/databases.md`](../docs/wiki/infrastructure/databases.md).
+
+On a **fresh** host there is nothing to migrate: the migration files are a patch set on top of a
+schema TypeORM created long ago (migration 001 opens with `ALTER TABLE users`), so the database comes
+from the restore in step 6, and the migrations then apply on top.
 
 ## 6. Data restore
 
