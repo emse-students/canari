@@ -2130,5 +2130,20 @@
   "chat_channel_add_user_label": "Add a user",
   "chat_channel_remove_access_confirm": "Remove this user's access to the channel? They can be re-invited later.",
   "chat_channel_remove_access_title": "Remove access",
-  "chat_channel_load_members_error": "Failed to load members."
+  "chat_channel_load_members_error": "Failed to load members.",
+  "auth_pin_salt_unreachable": "Cannot fetch the PIN salt (server unreachable).",
+  "auth_pin_check_unreachable": "Cannot verify the PIN (server unreachable).",
+  "auth_pin_mismatch": "Incorrect PIN: this PIN does not match the one registered for this account. All your devices use the same PIN.",
+  "auth_device_revoked_reset": "This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.",
+  "auth_state_sealed_old_pin": "Your PIN was changed on another device. Recover your messages with your old PIN.",
+  "auth_keystore_empty_enter_pin": "Please enter your PIN to unlock messaging.",
+  "auth_no_user_signed_in": "No user is currently signed in.",
+  "auth_pin_change_current_incorrect": "The current PIN is incorrect.",
+  "auth_pin_change_server_error": "Cannot change the PIN (server error).",
+  "auth_pin_verify_new_unreachable": "Cannot verify the new PIN (server unreachable).",
+  "auth_pin_new_incorrect": "The new PIN is incorrect.",
+  "auth_pin_old_incorrect": "The old PIN is incorrect (it does not decrypt this device's state).",
+  "auth_no_local_state_recover": "No local state to recover on this device.",
+  "auth_login_failed_after_recovery": "Login failed after recovery.",
+  "auth_device_key_stale_reenter_pin": "Your saved device key is no longer valid. Enter your PIN to regenerate it."
 }

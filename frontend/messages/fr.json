@@ -2140,5 +2140,20 @@
   "chat_channel_add_user_label": "Ajouter un utilisateur",
   "chat_channel_remove_access_confirm": "Retirer cet utilisateur de l'accès au canal ? Il pourra être ré-invité ultérieurement.",
   "chat_channel_remove_access_title": "Retirer l'accès",
-  "chat_channel_load_members_error": "Erreur lors du chargement des membres."
+  "chat_channel_load_members_error": "Erreur lors du chargement des membres.",
+  "auth_pin_salt_unreachable": "Impossible de récupérer le sel du PIN (serveur injoignable).",
+  "auth_pin_check_unreachable": "Impossible de vérifier le PIN (serveur injoignable).",
+  "auth_pin_mismatch": "PIN incorrect : ce PIN ne correspond pas à celui enregistré pour ce compte. Tous vos appareils utilisent le même PIN.",
+  "auth_device_revoked_reset": "Cet appareil a été révoqué. L'état local a été réinitialisé : connectez-vous avec votre PIN pour l'enregistrer comme nouvel appareil.",
+  "auth_state_sealed_old_pin": "Votre PIN a été changé sur un autre appareil. Récupérez vos messages avec votre ancien PIN.",
+  "auth_keystore_empty_enter_pin": "Veuillez entrer votre PIN pour déverrouiller la messagerie.",
+  "auth_no_user_signed_in": "Aucun utilisateur n'est connecté.",
+  "auth_pin_change_current_incorrect": "Le PIN actuel est incorrect.",
+  "auth_pin_change_server_error": "Impossible de changer le PIN (erreur serveur).",
+  "auth_pin_verify_new_unreachable": "Impossible de vérifier le nouveau PIN (serveur injoignable).",
+  "auth_pin_new_incorrect": "Le nouveau PIN est incorrect.",
+  "auth_pin_old_incorrect": "L'ancien PIN est incorrect (il ne déchiffre pas l'état de cet appareil).",
+  "auth_no_local_state_recover": "Aucun état local à récupérer sur cet appareil.",
+  "auth_login_failed_after_recovery": "Échec de la connexion après récupération.",
+  "auth_device_key_stale_reenter_pin": "Votre clé d'appareil enregistrée n'est plus valide. Entrez votre PIN pour la régénérer."
 }

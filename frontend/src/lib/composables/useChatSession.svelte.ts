@@ -29,6 +29,7 @@ import {
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
   recoverPinImpl,
+  changePinImpl,
 } from './session/sessionAuth';
 import {
   dismissBiometricPromptImpl,
@@ -505,6 +506,16 @@ export function useChatSession() {
       userIdToReset: string,
       cb: import('./session/sessionTypes').ChatSessionCallbacks
     ) => resetDeviceAsFreshImpl(ctx, userIdToReset, cb),
+    /**
+     * Changes the account PIN: rotates the server-side verifier, then re-derives this device's
+     * key and re-encrypts the MLS state and local messages under it.
+     */
+    changePin: (
+      currentPin: string,
+      newPin: string,
+      log: (msg: string) => void,
+      onProgress?: import('$lib/utils/chat/pinChange').PinProgressCallback
+    ) => changePinImpl(ctx, log, currentPin, newPin, onProgress),
     /** Recovers messages after the PIN was changed on another device (old PIN → new PIN, no data loss). */
     recoverPin: (
       cb: import('./session/sessionTypes').ChatSessionCallbacks,

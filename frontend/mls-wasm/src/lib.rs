@@ -50,24 +50,6 @@ pub fn init_logger() {
     let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
 }
 
-/// @deprecated Use `encrypt_mls_state_blob_with_key` instead.
-/// Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot. Safe to call from a Web Worker.
-#[wasm_bindgen]
-pub fn encrypt_mls_state_blob(plain_state: &[u8], pin: &str) -> Result<Vec<u8>, JsValue> {
-    // Legacy path: uses Argon2id with a fresh random salt.
-    let pin_owned = pin.to_string();
-    let salt = mls_core::security::generate_salt();
-    let key = mls_core::security::derive_key_from_pin_owned(pin_owned, &salt)
-        .map_err(|e| JsValue::from_str(&e))?;
-    let ct =
-        mls_core::security::encrypt_blob(&key, plain_state).map_err(|e| JsValue::from_str(&e))?;
-    // Legacy format: [salt (16) || nonce (12) || ciphertext]
-    let mut result = Vec::with_capacity(16 + ct.len());
-    result.extend_from_slice(&salt);
-    result.extend_from_slice(&ct);
-    Ok(result)
-}
-
 /// ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key.
 /// Wire format: `[nonce (12) || ciphertext]` — no salt prefix. Safe to call from a Web Worker.
 #[wasm_bindgen]

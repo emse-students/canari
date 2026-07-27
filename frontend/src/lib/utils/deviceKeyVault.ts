@@ -1,5 +1,5 @@
 /**
- * PinVault - stores the user's device key (deviceKeyB64) in an AES-GCM encrypted blob so that:
+ * DeviceKeyVault - stores the user's device key (deviceKeyB64) in an AES-GCM encrypted blob so that:
  *
  * 1. The device key is never written to disk in plaintext.
  * 2. Even if someone reads the storage area they only see ciphertext; the
@@ -32,7 +32,6 @@ const PERSIST_FLAG_KEY = 'canari_device_key_persist'; // localStorage - user opt
 // ── Legacy storage keys (pre-Phase5) ─────────────────────────────────────────
 const LEGACY_VAULT_KEY_KEY = 'canari_pin_vault_key';
 const LEGACY_VAULT_BLOB_KEY = 'canari_pin_vault';
-const LEGACY_PERSIST_FLAG_KEY = 'canari_pin_persist';
 
 /**
  * Whether the user opted into persisting the device key across browser restarts
@@ -158,97 +157,4 @@ export function clearDeviceKeyAndWrapKey(): void {
   sessionStorage.removeItem(LEGACY_VAULT_KEY_KEY);
   localStorage.removeItem(LEGACY_VAULT_BLOB_KEY);
   localStorage.removeItem(LEGACY_VAULT_KEY_KEY);
-}
-
-// ── Deprecated aliases (Phase 5 migration — kept for backward compatibility) ──
-
-/**
- * @deprecated Use {@link saveDeviceKey} instead.
- */
-export async function savePin(pin: string): Promise<void> {
-  return saveDeviceKey(pin);
-}
-
-/**
- * @deprecated Use {@link loadDeviceKey} instead.
- */
-export async function loadPin(): Promise<string | null> {
-  // Try the new key first, then fall back to the legacy key for migration.
-  const fromNew = await loadDeviceKey();
-  if (fromNew) return fromNew;
-
-  // Legacy migration: try reading from the old storage key.
-  try {
-    const legacyStore = isDeviceKeyPersistenceEnabled() ? localStorage : sessionStorage;
-    const blob = legacyStore.getItem(LEGACY_VAULT_BLOB_KEY);
-    if (!blob) return null;
-
-    const colonIdx = blob.indexOf(':');
-    if (colonIdx === -1) return null;
-
-    const ivB64 = blob.slice(0, colonIdx);
-    const cipherB64 = blob.slice(colonIdx + 1);
-
-    // Try with the legacy wrap key first.
-    const legacyKeyRaw = legacyStore.getItem(LEGACY_VAULT_KEY_KEY);
-    if (legacyKeyRaw) {
-      try {
-        const raw = Uint8Array.from(atob(legacyKeyRaw), (c) => c.charCodeAt(0));
-        const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [
-          'decrypt',
-        ]);
-        const iv = Uint8Array.from(atob(ivB64), (c) => c.charCodeAt(0));
-        const cipher = Uint8Array.from(atob(cipherB64), (c) => c.charCodeAt(0));
-        const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
-        const legacyPin = new TextDecoder().decode(plain);
-        // Migrate: the legacy vault contained a PIN; re-derive deviceKeyB64 elsewhere.
-        // For now just return the legacy PIN so callers handle it.
-        return legacyPin;
-      } catch {
-        // Legacy decryption failed — clean up.
-      }
-    }
-
-    // Clean up legacy blob.
-    legacyStore.removeItem(LEGACY_VAULT_BLOB_KEY);
-    legacyStore.removeItem(LEGACY_VAULT_KEY_KEY);
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * @deprecated Use {@link clearDeviceKey} instead.
- */
-export function clearPin(): void {
-  clearDeviceKey();
-}
-
-/**
- * @deprecated Use {@link clearDeviceKeyAndWrapKey} instead.
- */
-export function clearPinAndKey(): void {
-  clearDeviceKeyAndWrapKey();
-}
-
-/**
- * @deprecated Use {@link isDeviceKeyPersistenceEnabled} instead.
- */
-export function isPinPersistenceEnabled(): boolean {
-  // Check both legacy and new flags.
-  try {
-    if (localStorage.getItem(PERSIST_FLAG_KEY) === 'true') return true;
-    if (localStorage.getItem(LEGACY_PERSIST_FLAG_KEY) === 'true') return true;
-  } catch {
-    // ignore
-  }
-  return false;
-}
-
-/**
- * @deprecated Use {@link setDeviceKeyPersistence} instead.
- */
-export async function setPinPersistence(enabled: boolean, pin: string | null): Promise<void> {
-  return setDeviceKeyPersistence(enabled, pin);
 }

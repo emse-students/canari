@@ -14,7 +14,6 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { BiometricService } from '$lib/services/biometric';
 import { BaseMlsService } from './BaseMlsService';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
@@ -507,15 +506,34 @@ export class TauriMlsService extends BaseMlsService {
    * C2: reloads `mls.bin` from disk into the warm in-memory engine. Called on resume (mobile)
    * BEFORE the WS resumes processing: while backgrounded, a native engine (Welcome/send) may
    * have advanced `mls.bin`; without this the warm state is stale and its next save would clobber
-   * that advance (lost-update -> SecretReuse). Also marks the foreground active server-side so the
-   * background engines stop writing.
+   * that advance (lost-update -> SecretReuse). The native command also marks the foreground
+   * active first, so background engines stop writing before it reads, and refuses any reload
+   * that would regress a live group's epoch.
    *
-   * @deprecated This method depended on `this._pin` (Argon2id per reload). With deviceKeyB64
-   * the reload should use the device key directly. The method is removed — the base class
-   * default no-op takes over. A future C2 implementation will use `_deviceKeyB64`.
+   * A missing device key means there is nothing to decrypt with -- skip rather than throw, since
+   * this runs on every resume and a failure here must not break the resume sequence.
    */
-  // reloadStateFromDisk() removed — depended on _pin for Argon2id re-derivation.
-  // The base class default no-op (BaseMlsService.reloadStateFromDisk) is now used.
+  override async reloadStateFromDisk(): Promise<void> {
+    if (!this._deviceKeyB64) {
+      console.warn('[MLS][Tauri] reloadStateFromDisk skipped - no device key in session.');
+      return;
+    }
+    try {
+      const reloaded = await invoke<boolean>('recharger_mls_au_resume', {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        deviceKeyB64: this._deviceKeyB64,
+      });
+      if (reloaded) {
+        this._knownGroups = new Set(await invoke<string[]>('lister_groupes'));
+        console.log('[MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed.');
+      }
+    } catch (e) {
+      // Non-fatal: the warm state stays in place. Losing the reload risks clobbering a background
+      // advance, so this must be loud even though it does not abort the resume.
+      console.error('[MLS][Tauri] reloadStateFromDisk failed:', e);
+    }
+  }
 
   /** Native decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {

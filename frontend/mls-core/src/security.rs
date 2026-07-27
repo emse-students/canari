@@ -9,6 +9,10 @@ use chacha20poly1305::{
 use zeroize::Zeroize;
 
 /// Derives a 32-byte key from a PIN and salt via Argon2id (default params).
+///
+/// LEGACY: the device key is no longer derived here. `$lib/crypto/deviceKey` (PBKDF2-SHA256)
+/// is the single source of the device key, and it is passed in as raw bytes. This function
+/// survives only to read pre-v0.11.0 backup files sealed with the Argon2id + salt-prefix format.
 #[deprecated(note = "Use `derive_key_from_pin_owned` to zeroize the PIN after use")]
 pub fn derive_key_from_pin(pin: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     let mut output_key = [0u8; 32];
@@ -51,39 +55,8 @@ pub fn decrypt_blob(key: &[u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, St
     cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())
 }
 
-// --- Keystore integration ---
-
-/// Derives a 32-byte key from a PIN and best-effort stores it in the platform
-/// keystore.
-///
-/// The PIN is zeroized after derivation. The derived key is stored under the
-/// given alias for future retrieval without PIN re-entry.
-///
-/// If the keystore is unavailable (no biometrics configured, user cancelled the
-/// prompt, desktop/web keystore not supported, etc.), the error is logged and
-/// the function still returns the derived key. The caller will need to re-enter
-/// the PIN on the next launch.
-pub fn derive_and_store_device_key(
-    pin: String,
-    salt: &[u8],
-    alias: &str,
-    keystore: &dyn crate::keystore::DeviceKeyStore,
-) -> Result<[u8; 32], String> {
-    let key = derive_key_from_pin_owned(pin, salt)?;
-    // PIN has been zeroized by derive_key_from_pin_owned.
-    // Best-effort store: if the keystore rejects the write (e.g. Android
-    // UserNotAuthenticatedException when no biometric was performed), we
-    // continue without storing — the user will need to enter their PIN again.
-    if let Err(e) = keystore.store_device_key(&key, alias) {
-        log::warn!(
-            "Failed to store device key in keystore (non-fatal, will fall back to PIN on next launch): {e}"
-        );
-    }
-    Ok(key)
-}
-
-/// Generates a random 16-byte salt for key derivation.
-/// Used when `mls.bin` does not exist yet (first login).
+/// Generates a random 16-byte salt for the legacy Argon2id format.
+/// Only used by the pre-v0.11.0 backup path in `mls-wasm` (`encrypt_with_pin`).
 pub fn generate_salt() -> [u8; 16] {
     let mut salt = [0u8; 16];
     OsRng.fill_bytes(&mut salt);

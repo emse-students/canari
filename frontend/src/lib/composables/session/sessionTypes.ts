@@ -10,6 +10,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
+import type { LoginErrorCode } from './loginErrors';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
@@ -52,8 +53,10 @@ export interface ChatSessionCallbacks {
   onMlsReady?: () => void;
   /** Called when login fails (wrong PIN, server unreachable, etc.).
    * When provided, the redirect to /login is suppressed - the caller handles the error.
-   * When absent, the default redirect to /login takes place. */
-  onLoginFailed?: (error: string) => void;
+   * When absent, the default redirect to /login takes place.
+   * `code` is the machine-readable reason: branch on it, never on `error`, which is a
+   * localized string (see `loginErrors.ts`). */
+  onLoginFailed?: (error: string, code?: LoginErrorCode) => void;
   /** Called when the session is definitively dead (refresh cookie expired/revoked, a
    * SessionExpiredError). Distinct from onLoginFailed: this is not a retryable error
    * shown in the PIN modal but an authentication loss - the caller should log the user

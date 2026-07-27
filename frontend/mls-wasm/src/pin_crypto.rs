@@ -1,13 +1,13 @@
 // Security Utilities (Encryption at Rest)
 // Uses the same logic as MLS Core (ChaCha20Poly1305, key-based).
 //
-// New API: encrypt_with_key / decrypt_with_key — receive a base64-encoded 32-byte
-// key directly (no Argon2id derivation). The caller is responsible for providing
-// the correct key (derived once from the PIN at first login via Argon2id, then
-// stored as deviceKeyB64).
+// Current API: encrypt_with_key / decrypt_with_key — receive a base64-encoded 32-byte key
+// directly. The caller provides the device key derived from the PIN by
+// `$lib/crypto/deviceKey` (PBKDF2-SHA256), and the wire format carries no salt.
 //
-// Legacy API: encrypt_with_pin / decrypt_with_pin — kept for backward compatibility
-// with existing backup files that use the Argon2id + salt format.
+// Legacy API: encrypt_with_pin / decrypt_with_pin — reads ONLY pre-v0.11.0 backup files,
+// which are sealed with Argon2id and a 16-byte salt prefix. Do not use for new data; the
+// single caller is the v1 branch of `restoreBackup` in `$lib/backup`.
 
 use wasm_bindgen::prelude::*;
 

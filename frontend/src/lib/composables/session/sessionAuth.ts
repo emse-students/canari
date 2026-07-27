@@ -10,10 +10,13 @@ import { SvelteSet } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
-  applyNewPinLocally,
+  applyNewDeviceKeyLocally,
+  performPinChange,
   reencryptLocalMessages,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
+import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
+import { LoginFailure, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { m } from '$lib/paraglide/messages';
@@ -43,7 +46,7 @@ import {
   summarizeConversationStats,
   installCatchupBenchDevTools,
 } from '$lib/mls-client/catchupBenchmark';
-import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/pinVault';
+import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -221,7 +224,8 @@ export async function resetDeviceAsFreshImpl(
 export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
   const userId = ctx.getUserId();
   const pin = ctx.getPin();
-  const deviceKeyB64 = ctx.getDeviceKey();
+  // Reassigned below once the PIN branch has fetched the server salt and derived the key.
+  let deviceKeyB64 = ctx.getDeviceKey();
 
   // Biometric mode: skip the PIN-fields guard. The keystore handles authentication.
   // Vault-based (nativeStorageLogin) also skips pin-check: deviceKeyB64 is loaded from
@@ -335,7 +339,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       if (!saltRes.ok) {
-        throw new Error('Cannot fetch PIN salt (server unreachable).');
+        throw new Error(m.auth_pin_salt_unreachable());
       }
       const { salt } = (await saltRes.json()) as { salt: string };
       const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin(), salt);
@@ -351,7 +355,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         body: verifierPayload,
       });
       if (!pinCheckRes.ok) {
-        throw new Error('Cannot verify PIN (server unreachable).');
+        throw new Error(m.auth_pin_check_unreachable());
       }
       const pinCheckData = (await pinCheckRes.json()) as {
         status: string;
@@ -359,19 +363,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       };
 
       if (pinCheckData.status === 'mismatch') {
-        throw new Error(
-          'Incorrect PIN: this PIN does not match the one registered for this user. All devices must use the same PIN.'
-        );
+        throw new LoginFailure('pin_mismatch', m.auth_pin_mismatch());
       }
       if (pinCheckData.resetRequired === true) {
         ctx.resetMls();
         await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
         ctx.setPin('');
-        throw new Error(
-          'This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.'
-        );
+        throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
       }
       if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
+
+      // PIN accepted: derive this device's at-rest key from it. Done here rather than at the
+      // call site because it needs the same server salt the verifier was just computed with,
+      // and it must not run before the PIN has been proven correct.
+      deviceKeyB64 = await deriveDeviceKeyB64(ctx.getUserId(), pin, salt);
+      ctx.setDeviceKey(deviceKeyB64);
     } else if (isVaultLogin) {
       cb.log('Initialising MLS (vault device key path)...');
     } else {
@@ -385,7 +391,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // drop history. In biometric mode, an empty PIN is passed so the Rust side invokes
     // retrieve_device_key (single BiometricPrompt).
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
-      mlsService.init(ctx.getUserId(), deviceKeyB64 || ctx.getPin(), mlsStateResult?.bytes, {
+      mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
         noFreshStart: !!mlsStateResult?.bytes,
       }),
       getStorage(ctx.getUserId()),
@@ -395,14 +401,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       const reasonStr = reason instanceof Error ? reason.message : String(reason);
       const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
-        throw new Error(
-          'Your PIN was changed on another device. Recover your messages with your old PIN.'
-        );
+        throw new LoginFailure('state_sealed_with_old_key', m.auth_state_sealed_old_pin());
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.
       if (isBiometric && /no keystore key/i.test(reasonStr)) {
-        throw new Error('Veuillez entrer votre PIN pour déverrouiller la messagerie.');
+        throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
       throw mlsInitSettled.reason;
     }
@@ -443,9 +447,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // Fire-and-forget: saveDeviceKey is independent of conversation loading.
     // The device key is always saved — on Tauri it feeds push_context.json for
     // background FCM decryption; on web it powers auto-login.
-    void (async () => {
-      await saveDeviceKey(deviceKeyB64 || ctx.getPin());
-    })();
+    // Biometric mode derives nothing: the keystore holds the key, so there is nothing to vault.
+    if (deviceKeyB64) {
+      void (async () => {
+        await saveDeviceKey(deviceKeyB64);
+      })();
+    }
 
     // Check push health AFTER registration so pending_push_secret.txt is present
     // (written by store_push_secret during startPushService) before the health check runs.
@@ -494,10 +501,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     await applyOutboxPendingStatuses();
 
     beginStartupCatchupPhase('fcm_cache');
-    const fcmInjected = await consumeFcmCache(
-      ctx.getDeviceKey() || ctx.getPin(),
-      ctx.getStorage()!
-    ).catch(() => [] as []);
+    const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
+      () => [] as []
+    );
     if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
       const mergedCount = mergeFcmMessagesIntoConversations(
         fcmInjected,
@@ -553,7 +559,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     const callSystemCtx = {
       userId: ctx.getUserId(),
-      pin: ctx.getDeviceKey() || ctx.getPin(),
+      pin: ctx.getDeviceKey(),
       storage: ctx.getStorage(),
       conversations: cb.conversations,
       addMessageToChat: cb.addMessageToChat,
@@ -570,7 +576,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       mlsService,
       storage: ctx.getStorage(),
       userId: ctx.getUserId(),
-      pin: ctx.getDeviceKey() || ctx.getPin(),
+      pin: ctx.getDeviceKey(),
       historyBaseUrl: ctx.getHistoryBaseUrl(),
       conversations: cb.conversations,
       messageReactions: cb.messageReactions,
@@ -623,7 +629,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
                 mlsService: ctx.ensureMls(),
                 storage: ctx.getStorage(),
                 userId: ctx.getUserId(),
-                pin: ctx.getDeviceKey() || ctx.getPin(),
+                pin: ctx.getDeviceKey(),
                 conversations: cb.conversations,
                 log: cb.log,
                 requesterUserId: req.requesterUserId,
@@ -719,7 +725,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             mlsService: ctx.ensureMls(),
             storage: ctx.getStorage(),
             userId: ctx.getUserId(),
-            pin: ctx.getDeviceKey() || ctx.getPin(),
+            pin: ctx.getDeviceKey(),
             conversations: cb.conversations,
             log: cb.log,
             requesterUserId,
@@ -749,7 +755,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           await handleHistoryRequest({
             mlsService: ctx.ensureMls(),
             storage: ctx.getStorage(),
-            pin: ctx.getDeviceKey() || ctx.getPin(),
+            pin: ctx.getDeviceKey(),
             conversations: cb.conversations,
             log: cb.log,
             requesterUserId,
@@ -773,7 +779,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     await initializeConnection({
       mlsService,
       userId: ctx.getUserId(),
-      pin: ctx.getDeviceKey() || ctx.getPin(),
+      pin: ctx.getDeviceKey(),
       scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
       setIsWsConnected: (v) => ctx.setIsWsConnected(v),
       setReconnectAttempts: (v) => ctx.setReconnectAttempts(v),
@@ -865,7 +871,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void goto('/login', { replaceState: true });
     } else if (cb.onLoginFailed) {
-      cb.onLoginFailed(msg);
+      cb.onLoginFailed(msg, loginErrorCode(_e));
     } else {
       const cur = window.location.pathname + window.location.search + window.location.hash;
       void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
@@ -877,13 +883,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 }
 
 /**
- * On Tauri/Android (no biometrics), reads the PIN from push_context.json and delegates to loginImpl().
- * Returns true if login succeeded, false if manual PIN is still needed.
+ * On Tauri (no biometrics), restores the device key from the vault and delegates to loginImpl().
+ * Returns true if login succeeded, false if manual PIN entry is still needed.
  *
- * Option C : Si la biométrie est configurée, ne PAS tenter de login automatique
- * depuis push_context.json. Le PIN a été effacé du fichier après enrollment,
- * et le flux doit passer par le PinModal pour que l'utilisateur saisisse son PIN
- * manuellement (ou utilise la biométrie).
+ * Option C: when biometrics are configured, do NOT attempt the automatic login. The flow must
+ * go through the PinModal (or the biometric prompt) so the platform keystore stays the
+ * authentication factor.
  */
 export async function nativeStorageLoginImpl(
   ctx: SessionContext,
@@ -892,9 +897,8 @@ export async function nativeStorageLoginImpl(
 ): Promise<boolean> {
   if (!isTauriRuntime()) return false;
 
-  // Option C : ne pas utiliser push_context.json si la biométrie est configurée.
-  // La biométrie prend le pas — le flux doit aller vers le BiometricBottomSheet
-  // ou le PinModal, pas vers l'auto-login.
+  // Option C: skip the auto-login when biometrics are configured. Biometrics take priority --
+  // the flow must go through the BiometricBottomSheet or the PinModal, not the auto-login.
   try {
     let isConfigured: boolean;
     if (biometricConfigured !== undefined) {
@@ -908,15 +912,25 @@ export async function nativeStorageLoginImpl(
       return false;
     }
   } catch {
-    // Si on ne peut pas vérifier, on continue avec le comportement actuel.
+    // Cannot determine the biometric state: fall through to the auto-login attempt.
   }
 
-  // Lire le deviceKeyB64 depuis le PinVault (AES-GCM chiffré), jamais depuis push_context.json.
+  // Read deviceKeyB64 from the device key vault (AES-GCM encrypted), never from
+  // push_context.json.
   try {
-    const { loadDeviceKey } = await import('$lib/utils/pinVault');
+    const { loadDeviceKey } = await import('$lib/utils/deviceKeyVault');
     const deviceKeyB64 = await loadDeviceKey();
     if (!deviceKeyB64) {
       appendLog('[PIN] No device key in vault - auto-login impossible');
+      return false;
+    }
+    // Builds before the derivation existed stored the raw PIN under this key. Such a value can
+    // never decrypt anything, so refuse the auto-login and let the PIN modal re-derive a real
+    // key rather than failing deeper in the crypto stack with an opaque error.
+    if (!isValidDeviceKeyB64(deviceKeyB64)) {
+      appendLog('[PIN] Vaulted device key is not a 32-byte key - discarding, PIN required');
+      const { clearDeviceKeyAndWrapKey: dropVault } = await import('$lib/utils/deviceKeyVault');
+      dropVault();
       return false;
     }
     appendLog('[PIN] Device key restored from PinVault - auto-login…');
@@ -958,19 +972,10 @@ export async function biometricLoginImpl(
     // which triggers retrieve_device_key → single BiometricPrompt.
     ctx.setPin('');
 
-    let failMsg = '';
-    await loginImpl(ctx, {
-      ...cb,
-      onLoginFailed: (msg: string) => {
-        failMsg = msg;
-        // P2-B : Ne jamais supprimer l'erreur d'authentification.
-        // Si l'utilisateur annule le BiometricPrompt, l'erreur doit se
-        // propager au startLoginFlow qui affichera le PinModal (P2-A).
-        // La distinction entre "keystore vide" et "authentification annulée"
-        // est gérée côté Rust via des messages d'erreur distincts.
-        cb.onLoginFailed?.(msg);
-      },
-    });
+    // P2-B: never swallow the authentication error. If the user cancels the BiometricPrompt
+    // the error must reach startLoginFlow, which then shows the PinModal (P2-A). Rust
+    // distinguishes "empty keystore" from "authentication cancelled" via distinct messages.
+    await loginImpl(ctx, cb);
   } catch (e) {
     ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');
     cb.log(`[BIOMETRIC] Exception: ${e instanceof Error ? e.message : String(e)}`);
@@ -979,11 +984,95 @@ export async function biometricLoginImpl(
 }
 
 /**
+ * Fetches this user's PIN salt from the server. The salt is the shared input to BOTH the
+ * account verifier ({@link computePinVerifier}) and this device's at-rest key
+ * ({@link deriveDeviceKeyB64}), so every flow that touches the PIN needs it.
+ */
+async function fetchPinSalt(ctx: SessionContext, userId: string, token: string): Promise<string> {
+  const res = await fetch(
+    `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(m.auth_pin_salt_unreachable());
+  const { salt } = (await res.json()) as { salt: string };
+  return salt;
+}
+
+/**
+ * Changes the account PIN for a logged-in user.
+ *
+ * Two halves that must both happen, in this order:
+ *  1. Rotate the account-wide verifier server-side (`POST mls/security/pin-change`), which
+ *     also proves the user knows the current PIN. Done FIRST: if the local re-encryption
+ *     then fails, the account already expects the new PIN and the user can finish with
+ *     {@link recoverPinImpl} (old PIN -> new PIN). The reverse order would leave the
+ *     account on the old PIN with local state sealed under the new key -- unrecoverable.
+ *  2. Re-derive this device's key from the new PIN and re-encrypt the MLS state plus every
+ *     locally stored message under it ({@link performPinChange}).
+ *
+ * The other devices keep their old key locally and will hit a verifier mismatch at their
+ * next login; {@link recoverPinImpl} is what gets them across. That is inherent: the device
+ * key never leaves the device.
+ *
+ * @throws A user-facing (localized) message when the current PIN is wrong or the server is
+ *         unreachable.
+ */
+export async function changePinImpl(
+  ctx: SessionContext,
+  log: (msg: string) => void,
+  currentPin: string,
+  newPin: string,
+  onProgress?: PinProgressCallback
+): Promise<void> {
+  const userId = ctx.getUserId();
+  if (!userId.trim()) throw new Error(m.auth_no_user_signed_in());
+  log('[PIN_CHANGE] Starting PIN change...');
+  onProgress?.({ percent: 2, stage: 'verify' });
+
+  const token = await getToken();
+  const salt = await fetchPinSalt(ctx, userId, token);
+  const [oldVerifier, newVerifier] = await Promise.all([
+    computePinVerifier(userId, currentPin, salt),
+    computePinVerifier(userId, newPin, salt),
+  ]);
+
+  onProgress?.({ percent: 6, stage: 'server' });
+  const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-change`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ userId, oldVerifier, newVerifier }),
+  });
+  if (res.status === 403) throw new Error(m.auth_pin_change_current_incorrect());
+  if (!res.ok) throw new Error(m.auth_pin_change_server_error());
+  log('[PIN_CHANGE] Account verifier rotated server-side.');
+
+  // Derive both device keys from the same salt: the old one to read the existing state,
+  // the new one to re-seal it.
+  const [currentDeviceKeyB64, newDeviceKeyB64] = await Promise.all([
+    deriveDeviceKeyB64(userId, currentPin, salt),
+    deriveDeviceKeyB64(userId, newPin, salt),
+  ]);
+
+  await performPinChange(
+    {
+      userId,
+      mlsService: ctx.ensureMls(),
+      setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+      log,
+      onProgress,
+    },
+    currentDeviceKeyB64,
+    newDeviceKeyB64
+  );
+  log('[PIN_CHANGE] Complete - local state re-encrypted under the new PIN.');
+}
+
+/**
  * "PIN changed on another device" recovery. The account PIN was rotated elsewhere, so
  * this device's local MLS state is still sealed under the OLD pin while the server now
- * expects the NEW one. Decrypts the local state with `oldPin` (non-destructively),
- * re-encrypts it under `newPin` (reusing changePIN), then logs in normally - preserving
- * every local message instead of falling back to a fresh-start.
+ * expects the NEW one. Decrypts the local state with the OLD device key (non-destructively),
+ * re-encrypts it under the NEW one, then logs in normally - preserving every local message
+ * instead of falling back to a fresh-start.
  *
  * Throws a user-facing message when the new PIN is wrong, the old PIN does not decrypt
  * the local state, or there is no local state to recover.
@@ -996,62 +1085,65 @@ export async function recoverPinImpl(
   onProgress?: PinProgressCallback
 ): Promise<void> {
   const userId = ctx.getUserId();
-  if (!userId.trim()) throw new Error('No user is currently signed in.');
+  if (!userId.trim()) throw new Error(m.auth_no_user_signed_in());
   cb.log('[PIN_RECOVER] Starting recovery...');
   onProgress?.({ percent: 3, stage: 'verify' });
 
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
-    throw new Error('No local state to recover on this device.');
+    throw new Error(m.auth_no_local_state_recover());
   }
 
   // The new PIN must be the real (rotated) account PIN: verify its verifier server-side.
   const token = await getToken();
-  const saltRes = await fetch(
-    `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (!saltRes.ok) throw new Error('Cannot fetch PIN salt (server unreachable).');
-  const { salt } = (await saltRes.json()) as { salt: string };
+  const salt = await fetchPinSalt(ctx, userId, token);
   const newVerifier = await computePinVerifier(userId, newPin, salt);
   const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, verifier: newVerifier }),
   });
-  if (!res.ok) throw new Error('Cannot verify the new PIN (server unreachable).');
+  if (!res.ok) throw new Error(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
   if (data.status !== 'ok') {
-    throw new Error('The new PIN is incorrect.');
+    throw new Error(m.auth_pin_new_incorrect());
   }
+
+  // Both device keys come from the same salt: the old one still seals the local state,
+  // the new one is what every device will derive from now on.
+  const [oldDeviceKeyB64, newDeviceKeyB64] = await Promise.all([
+    deriveDeviceKeyB64(userId, oldPin, salt),
+    deriveDeviceKeyB64(userId, newPin, salt),
+  ]);
 
   onProgress?.({ percent: 15, stage: 'mls' });
-  // Non-destructively decrypt local state with the old PIN, then re-encrypt under the new.
+  // Non-destructively decrypt local state with the old key, then re-encrypt under the new.
   const mls = ctx.ensureMls();
-  const ok = await mls.recoverAndRekey(userId, oldPin, newPin, state);
+  const ok = await mls.recoverAndRekey(userId, oldDeviceKeyB64, newDeviceKeyB64, state);
   if (!ok) {
-    throw new Error("The old PIN is incorrect (it does not decrypt this device's state).");
+    throw new Error(m.auth_pin_old_incorrect());
   }
-  cb.log('[PIN_RECOVER] MLS state re-encrypted with the new PIN.');
+  cb.log('[PIN_RECOVER] MLS state re-encrypted with the new device key.');
 
   const storage = await getStorage(userId);
-  await reencryptLocalMessages(storage, oldPin, newPin, cb.log, onProgress, {
+  await reencryptLocalMessages(storage, oldDeviceKeyB64, newDeviceKeyB64, cb.log, onProgress, {
     start: 20,
     end: 82,
   });
-  cb.log('[PIN_RECOVER] Local messages re-encrypted with the new PIN.');
+  cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
 
   onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewPinLocally(newPin, userId, mls.getDeviceId(), cb.log);
+  await applyNewDeviceKeyLocally(newDeviceKeyB64, userId, mls.getDeviceId(), cb.log);
   ctx.setPin(newPin);
+  ctx.setDeviceKey(newDeviceKeyB64);
 
   onProgress?.({ percent: 92, stage: 'login' });
   // Continue with a normal login. init() is a no-op (recoverAndRekey already marked the
   // client initialised), so the decrypted client is reused and all messages are kept.
   await loginImpl(ctx, cb);
   if (!ctx.isLoggedIn()) {
-    throw new Error('Login failed after recovery.');
+    throw new Error(m.auth_login_failed_after_recovery());
   }
   onProgress?.({ percent: 100, stage: 'login' });
   cb.log('[PIN_RECOVER] Complete - messages preserved.');

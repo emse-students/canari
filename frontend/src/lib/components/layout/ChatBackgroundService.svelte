@@ -19,7 +19,7 @@
     loadDeviceKey,
     isDeviceKeyPersistenceEnabled,
     setDeviceKeyPersistence,
-  } from '$lib/utils/pinVault';
+  } from '$lib/utils/deviceKeyVault';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import { getToken, clearAuth } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';

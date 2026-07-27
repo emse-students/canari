@@ -6,9 +6,12 @@
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
-  import { performPinChange, type PinOperationProgress } from '$lib/utils/chat/pinChange';
+  import { type PinOperationProgress } from '$lib/utils/chat/pinChange';
   import { BiometricService } from '$lib/services/biometric';
-  import { isPinPersistenceEnabled, setPinPersistence } from '$lib/utils/pinVault';
+  import {
+    isDeviceKeyPersistenceEnabled,
+    setDeviceKeyPersistence,
+  } from '$lib/utils/deviceKeyVault';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -18,12 +21,12 @@
   let biometricEnabled = $state(false);
   let biometricBusy = $state(false);
 
-  // "Stay signed in" toggle (browser only): persists the PIN vault across browser restarts.
+  // "Stay signed in" toggle (browser only): persists the device key vault across browser restarts.
   const showStaySignedIn = !isTauriRuntime();
   let staySignedIn = $state(false);
 
   onMount(async () => {
-    staySignedIn = isPinPersistenceEnabled();
+    staySignedIn = isDeviceKeyPersistenceEnabled();
     biometricAvailable = await BiometricService.isAvailable().catch(() => false);
     if (biometricAvailable) {
       biometricEnabled = await BiometricService.isConfigured().catch(() => false);
@@ -31,9 +34,9 @@
   });
 
   /**
-   * Toggles hardware biometric unlock. Enabling stores the in-memory PIN in the keystore;
-   * disabling removes it and restores the PIN to the session vault. If the device has no
-   * fingerprint enrolled, enrolment silently no-ops and we surface a hint toast.
+   * Toggles hardware biometric unlock. Enabling hands the keystore key over to the biometric
+   * prompt; disabling re-seeds the session device key vault. If the device has no fingerprint
+   * enrolled, enrolment silently no-ops and we surface a hint toast.
    */
   async function toggleBiometric() {
     if (biometricBusy) return;
@@ -54,10 +57,10 @@
     }
   }
 
-  /** Toggles "stay signed in": migrates the PIN vault to localStorage (on) or sessionStorage (off). */
+  /** Toggles "stay signed in": migrates the device key vault to localStorage (on) or sessionStorage (off). */
   async function toggleStaySignedIn() {
     const next = !staySignedIn;
-    await setPinPersistence(next, session.pin || null);
+    await setDeviceKeyPersistence(next, session.deviceKeyB64 || null);
     staySignedIn = next;
   }
 
@@ -106,19 +109,9 @@
     changePinLoading = true;
     changePinProgress = { percent: 0, stage: 'server' };
     try {
-      await performPinChange(
-        {
-          userId: session.userId,
-          mlsService: session.ensureMls(),
-          setDeviceKey: (k: string) => (session.deviceKeyB64 = k),
-          log: appendLog,
-          onProgress: (progress) => {
-            changePinProgress = progress;
-          },
-        },
-        currentPin,
-        newPin
-      );
+      await session.changePin(currentPin, newPin, appendLog, (progress) => {
+        changePinProgress = progress;
+      });
       showChangePinModal = false;
       changePinSuccess = m.profile_pin_changed();
     } catch (e) {

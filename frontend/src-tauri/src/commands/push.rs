@@ -1,6 +1,7 @@
-//! Commandes Tauri pour le contexte push (FCM, VOIP, cache, outbox mirror).
+//! Tauri commands for the push context (FCM, VoIP, cache, outbox mirror).
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use mls_core::DeviceKeyStore;
 use tauri::Manager;
 
 use crate::keystore_bridge::PluginDeviceKeyStore;
@@ -297,17 +298,22 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
     Some(content)
 }
 
-/// Sauvegarde le contexte de session dans {app_data_dir}/push_context.json
-/// pour que CanariFirebaseMessagingService puisse dechiffrer les notifications push.
-/// `push_token` est un Bearer token long-lived (ou vide sur desktop) utilise par le
-/// service Kotlin pour fetcher le proto MLS quand il n'est pas inclus inline dans FCM.
+/// Writes the session context to `{app_data_dir}/push_context.json` so the native background
+/// handlers (Android `CanariFirebaseMessagingService`, iOS NSE) can decrypt push notifications.
+/// `push_token` is a long-lived Bearer token (empty on desktop) the native side uses to fetch
+/// the MLS proto when FCM did not carry it inline.
 ///
-/// Le PIN n'est JAMAIS stocke dans push_context.json. La cle de dechiffrement MLS
-/// est toujours recuperee du keystore et stockee en base64 dans `deviceKeyB64`.
-/// Si la cle n'est pas dans le keystore, `deviceKeyB64` reste vide.
+/// The PIN is never seen here. `device_key_b64` is the already-derived 32-byte device key
+/// (see `$lib/crypto/deviceKey`), which is the ONLY value that can decrypt `mls.bin`
+/// (`[nonce (12) || ciphertext]`, ChaCha20-Poly1305 direct).
+///
+/// The key is also mirrored into the platform keystore under
+/// `mls_device_key_{user_id}_{device_id}` so the biometric login path
+/// (`load_encrypted_with_keystore` path A) can retrieve it without the PIN. That write is
+/// best-effort: if the keystore rejects it, push still works from the JSON file.
 #[tauri::command]
 pub(crate) fn store_push_context(
-    pin: String,
+    device_key_b64: String,
     user_id: String,
     device_id: String,
     base_url: String,
@@ -317,35 +323,18 @@ pub(crate) fn store_push_context(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
-    // Dériver la clé depuis le PIN au lieu d'appeler retrieve_device_key()
-    // (qui déclenche un BiometricPrompt parasite sur Android).
-    // On lit le sel depuis mls.bin (16 premiers octets), ou on génère un sel
-    // aléatoire si mls.bin n'existe pas encore (premier login).
+    // Validate before writing: a malformed key would poison both the keystore and the JSON,
+    // and the failure would only surface much later as an undecryptable notification.
+    let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64.trim())
+        .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+
     let alias = format!("mls_device_key_{user_id}_{device_id}");
     let keystore = PluginDeviceKeyStore::new(app.clone());
+    if let Err(e) = keystore.store_device_key(&key_bytes, &alias) {
+        log::warn!("[PushCtx] keystore mirror failed (non-fatal, push still uses the JSON): {e}");
+    }
 
-    let mls_path = data_dir.join("mls.bin");
-    let salt: [u8; 16] = match std::fs::read(&mls_path) {
-        Ok(blob) if blob.len() >= 16 => {
-            let mut s = [0u8; 16];
-            s.copy_from_slice(&blob[..16]);
-            s
-        }
-        _ => {
-            // Premier login : mls.bin n'existe pas encore, on génère un sel frais.
-            mls_core::security::generate_salt()
-        }
-    };
-
-    // derive_and_store_device_key zeroize le PIN après dérivation.
-    let device_key_b64: String =
-        match mls_core::security::derive_and_store_device_key(pin, &salt, &alias, &keystore) {
-            Ok(key) => STANDARD.encode(key),
-            Err(e) => {
-                log::warn!("[PushCtx] derive_and_store_device_key failed: {e}");
-                String::new()
-            }
-        };
+    let device_key_b64 = STANDARD.encode(key_bytes);
 
     let json = serde_json::json!({
         "userId": user_id,

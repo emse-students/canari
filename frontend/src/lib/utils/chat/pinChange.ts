@@ -13,9 +13,9 @@
  * new PIN (and re-enrol biometric). That is inherent: the device key never leaves
  * the device.
  */
-import { decryptData, encryptData } from '$lib/encryption';
+import { decryptData } from '$lib/encryption';
 import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
-import { saveDeviceKey } from '$lib/utils/pinVault';
+import { saveDeviceKey } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';

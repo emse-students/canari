@@ -7,7 +7,7 @@ import {
   clearDeviceKeyAndWrapKey,
   saveDeviceKey,
   setDeviceKeyPersistence,
-} from '$lib/utils/pinVault';
+} from '$lib/utils/deviceKeyVault';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -60,10 +60,10 @@ export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<v
 }
 
 /**
- * Enables biometric unlock.  The derived MLS key is already stored in the
- * platform keystore by `derive_and_store_device_key` during PIN login —
- * no additional keystore write is needed.  We just mark the flag and clear
- * the in-memory PIN so future logins go through the biometric path.
+ * Enables biometric unlock.  The device key is already in the platform keystore, stored by
+ * `store_push_context` during PIN login — no additional keystore write is needed.  We just
+ * mark the flag and clear the session device key so future logins go through the biometric
+ * path (`retrieve_device_key` behind a single BiometricPrompt).
  */
 export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
   appendLog('[BIOMETRIC] Biometric enrollment in progress…');
@@ -82,23 +82,23 @@ export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
     try {
       await setDeviceKeyPersistence(false, null);
     } catch {}
-    // Ne pas appeler clear_push_context_key : la cle dans le keystore
-    // reste valide, seul le mode d'acces change (empreinte au lieu de PIN).
-    // deviceKeyB64 dans push_context.json reste utilisable pour les push FCM.
+    // Deliberately NOT calling clear_push_context_key: the keystore key stays valid, only the
+    // unlock method changes (fingerprint instead of PIN). deviceKeyB64 in push_context.json
+    // must stay readable or background FCM decryption breaks.
     ctx.setShowBiometricEnrollPrompt(false);
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
     appendLog('[BIOMETRIC] Enrollment OK - device key cleared from session (hardware keystore)');
   } catch (e) {
-    appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
+    appendLog(`[BIOMETRIC] Enrollment failed: ${e instanceof Error ? e.message : String(e)}`);
     console.error('Biometric enrollment failed:', e);
   }
 }
 
 /**
- * Turns biometric unlock off (Settings toggle).  Deletes the derived MLS key
- * from the platform keystore and clears the configured flag.  Re-saves the
- * in-memory PIN into the session PIN vault so the next launch falls back to
- * the normal PIN path.  Re-arms the enrolment banner.
+ * Turns biometric unlock off (Settings toggle).  Deletes the device key from the platform
+ * keystore and clears the configured flag, then re-seeds both the session device key vault
+ * and the keystore so the next launch falls back to the normal PIN path with background push
+ * still working.  Re-arms the enrolment banner.
  */
 export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   appendLog('[BIOMETRIC] Disabling biometric unlock…');
@@ -109,20 +109,23 @@ export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   const alias = userId && deviceId ? `mls_device_key_${userId}_${deviceId}` : undefined;
   await BiometricService.disable(alias);
 
-  const deviceKey = ctx.getDeviceKey() || ctx.getPin();
-  if (deviceKey) await saveDeviceKey(deviceKey).catch(() => {});
+  const deviceKeyB64 = ctx.getDeviceKey();
+  if (deviceKeyB64) await saveDeviceKey(deviceKeyB64).catch(() => {});
 
-  // Regenerer la cle keystore et re-remplir deviceKeyB64 dans push_context.json
-  // pour que les push arriere-plan continuent de fonctionner sans biometrie.
-  if (isTauriRuntime() && userId && deviceId && deviceKey) {
+  // Re-seed the keystore and push_context.json with the session device key so background
+  // push decryption keeps working without biometrics. BiometricService.disable() emptied
+  // the keystore entry, and the device key is the only thing that can decrypt mls.bin.
+  if (isTauriRuntime() && userId && deviceId && deviceKeyB64) {
     const { invoke } = await import('@tauri-apps/api/core');
-    // Regenerer la cle keystore a partir du PIN (le keystore est vide apres BiometricService.disable)
-    await invoke('actualiser_cle_keystore', { pin: deviceKey, userId, deviceId }).catch(() => {});
-    // Re-remplir push_context.json avec la cle keystore fraichement regeneree
+    await invoke('actualiser_cle_keystore_avec_devicekey', {
+      deviceKeyB64,
+      userId,
+      deviceId,
+    }).catch(() => {});
     const { getToken } = await import('$lib/stores/auth');
     const pushToken = await getToken().catch(() => undefined);
     await invoke('store_push_context', {
-      pin: deviceKey,
+      deviceKeyB64,
       userId,
       deviceId,
       baseUrl: ctx.getHistoryBaseUrl(),
