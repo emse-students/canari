@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.11.1] - 2026-07-27
+
 ### Added
 - PIN policy: new PINs are 4 to 8 digits, enforced on setup and on PIN change. Unlock stays permissive so PINs created before the policy still work
 - Biometric enrolment is now offered in a bottom sheet after the first PIN entry, and the in-app biometric sheet accompanies the OS prompt during enrolment (from the post-login offer and the Settings toggle alike)
