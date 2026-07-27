@@ -20,7 +20,7 @@ export namespace canari {
          */
         constructor(properties?: canari.WsEnvelope.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** WsEnvelope mls. */
@@ -131,7 +131,7 @@ export namespace canari {
             /** WsEnvelope body */
             body?: ("mls"|"welcome"|"read");
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -162,7 +162,7 @@ export namespace canari {
          */
         constructor(properties?: canari.Recipient.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** Recipient userId. */
@@ -261,7 +261,7 @@ export namespace canari {
             /** Recipient deviceId */
             deviceId?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -285,7 +285,7 @@ export namespace canari {
          */
         constructor(properties?: canari.MlsFrame.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** MlsFrame ciphertext. */
@@ -390,7 +390,7 @@ export namespace canari {
             /** MlsFrame recipients */
             recipients?: (canari.Recipient.$Properties[]|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -414,7 +414,7 @@ export namespace canari {
          */
         constructor(properties?: canari.WelcomeFrame.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** WelcomeFrame ciphertext. */
@@ -519,7 +519,7 @@ export namespace canari {
             /** WelcomeFrame recipients */
             recipients?: (canari.Recipient.$Properties[]|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -543,7 +543,7 @@ export namespace canari {
          */
         constructor(properties?: canari.ReadAck.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** ReadAck messageId. */
@@ -636,7 +636,7 @@ export namespace canari {
             /** ReadAck messageId */
             messageId?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -660,7 +660,7 @@ export namespace canari {
          */
         constructor(properties?: canari.InboundMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** InboundMsg ciphertext. */
@@ -783,7 +783,7 @@ export namespace canari {
             /** InboundMsg isCommit */
             isCommit?: (boolean|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -807,7 +807,7 @@ export namespace canari {
          */
         constructor(properties?: canari.AppMessage.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** AppMessage messageId. */
@@ -954,7 +954,7 @@ export namespace canari {
             /** AppMessage kind */
             kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll");
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -991,7 +991,7 @@ export namespace canari {
          */
         constructor(properties?: canari.CallMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** CallMsg callId. */
@@ -1132,7 +1132,7 @@ export namespace canari {
             /** CallMsg payload */
             payload?: ("offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered");
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1168,7 +1168,7 @@ export namespace canari {
          */
         constructor(properties?: canari.TextMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** TextMsg content. */
@@ -1261,7 +1261,7 @@ export namespace canari {
             /** TextMsg content */
             content?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1285,7 +1285,7 @@ export namespace canari {
          */
         constructor(properties?: canari.ReplyRef.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** ReplyRef id. */
@@ -1390,7 +1390,7 @@ export namespace canari {
             /** ReplyRef preview */
             preview?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1414,7 +1414,7 @@ export namespace canari {
          */
         constructor(properties?: canari.ReplyMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** ReplyMsg content. */
@@ -1513,7 +1513,7 @@ export namespace canari {
             /** ReplyMsg replyTo */
             replyTo?: (canari.ReplyRef.$Properties|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1537,7 +1537,7 @@ export namespace canari {
          */
         constructor(properties?: canari.ReactionMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** ReactionMsg messageId. */
@@ -1636,7 +1636,7 @@ export namespace canari {
             /** ReactionMsg emoji */
             emoji?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1660,7 +1660,7 @@ export namespace canari {
          */
         constructor(properties?: canari.PollOption.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** PollOption id. */
@@ -1759,7 +1759,7 @@ export namespace canari {
             /** PollOption label */
             label?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1783,7 +1783,7 @@ export namespace canari {
          */
         constructor(properties?: canari.PollMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** PollMsg question. */
@@ -1894,7 +1894,7 @@ export namespace canari {
             /** PollMsg endsAt */
             endsAt?: (number|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -1905,17 +1905,17 @@ export namespace canari {
     /** MediaKind enum. */
     enum MediaKind {
 
-        /** MEDIA_FILE value */
-        MEDIA_FILE = 0,
+        /** MEDIA_KIND_UNSPECIFIED value */
+        MEDIA_KIND_UNSPECIFIED = 0,
 
-        /** MEDIA_IMAGE value */
-        MEDIA_IMAGE = 1,
+        /** MEDIA_KIND_IMAGE value */
+        MEDIA_KIND_IMAGE = 1,
 
-        /** MEDIA_VIDEO value */
-        MEDIA_VIDEO = 2,
+        /** MEDIA_KIND_VIDEO value */
+        MEDIA_KIND_VIDEO = 2,
 
-        /** MEDIA_AUDIO value */
-        MEDIA_AUDIO = 3
+        /** MEDIA_KIND_AUDIO value */
+        MEDIA_KIND_AUDIO = 3
     }
 
     /**
@@ -1934,7 +1934,7 @@ export namespace canari {
          */
         constructor(properties?: canari.MediaMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** MediaMsg kind. */
@@ -2081,7 +2081,7 @@ export namespace canari {
             /** MediaMsg height */
             height?: (number|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 
@@ -2105,7 +2105,7 @@ export namespace canari {
          */
         constructor(properties?: canari.SystemMsg.$Properties);
 
-        /** Unknown fields preserved while decoding */
+        /** Unknown fields preserved while decoding when enabled */
         $unknowns?: Uint8Array[];
 
         /** SystemMsg event. */
@@ -2204,7 +2204,7 @@ export namespace canari {
             /** SystemMsg data */
             data?: (string|null);
 
-            /** Unknown fields preserved while decoding */
+            /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
         }
 

@@ -26,7 +26,7 @@ export const canari = $root.canari = (() => {
          * @property {canari.WelcomeFrame.$Properties|null} [welcome] WsEnvelope welcome
          * @property {canari.ReadAck.$Properties|null} [read] WsEnvelope read
          * @property {"mls"|"welcome"|"read"} [body] WsEnvelope body
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -55,7 +55,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a WsEnvelope.
          * @constructor
          * @param {canari.WsEnvelope.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const WsEnvelope = function (properties) {
             if (properties)
@@ -156,7 +156,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         WsEnvelope.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -391,7 +391,7 @@ export const canari = $root.canari = (() => {
          * @typedef {Object} canari.Recipient.$Properties
          * @property {string|null} [userId] Recipient userId
          * @property {string|null} [deviceId] Recipient deviceId
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -413,7 +413,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a Recipient.
          * @constructor
          * @param {canari.Recipient.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const Recipient = function (properties) {
             if (properties)
@@ -470,9 +470,9 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.userId != null && $Object.hasOwnProperty.call(message, "userId"))
+            if (message.userId != null && $Object.hasOwnProperty.call(message, "userId") && message.userId !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.userId);
-            if (message.deviceId != null && $Object.hasOwnProperty.call(message, "deviceId"))
+            if (message.deviceId != null && $Object.hasOwnProperty.call(message, "deviceId") && message.deviceId !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.deviceId);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -490,7 +490,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         Recipient.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -524,7 +524,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.userId = value;
                         else
                             delete message.userId;
@@ -533,7 +533,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.deviceId = value;
                         else
                             delete message.deviceId;
@@ -684,7 +684,7 @@ export const canari = $root.canari = (() => {
          * @property {Uint8Array|null} [ciphertext] MlsFrame ciphertext
          * @property {string|null} [groupId] MlsFrame groupId
          * @property {Array.<canari.Recipient.$Properties>|null} [recipients] MlsFrame recipients
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -706,7 +706,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a MlsFrame.
          * @constructor
          * @param {canari.MlsFrame.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const MlsFrame = function (properties) {
             this.recipients = [];
@@ -772,9 +772,9 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.ciphertext != null && $Object.hasOwnProperty.call(message, "ciphertext"))
+            if (message.ciphertext != null && $Object.hasOwnProperty.call(message, "ciphertext") && message.ciphertext.length)
                 writer.uint32(/* id 1, wireType 2 =*/10).bytes(message.ciphertext);
-            if (message.groupId != null && $Object.hasOwnProperty.call(message, "groupId"))
+            if (message.groupId != null && $Object.hasOwnProperty.call(message, "groupId") && message.groupId !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.groupId);
             if (message.recipients != null && message.recipients.length)
                 for (let i = 0; i < message.recipients.length; ++i)
@@ -795,7 +795,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         MlsFrame.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -838,7 +838,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.groupId = value;
                         else
                             delete message.groupId;
@@ -1032,7 +1032,7 @@ export const canari = $root.canari = (() => {
          * @property {Uint8Array|null} [ciphertext] WelcomeFrame ciphertext
          * @property {string|null} [groupId] WelcomeFrame groupId
          * @property {Array.<canari.Recipient.$Properties>|null} [recipients] WelcomeFrame recipients
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -1054,7 +1054,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a WelcomeFrame.
          * @constructor
          * @param {canari.WelcomeFrame.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const WelcomeFrame = function (properties) {
             this.recipients = [];
@@ -1120,9 +1120,9 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.ciphertext != null && $Object.hasOwnProperty.call(message, "ciphertext"))
+            if (message.ciphertext != null && $Object.hasOwnProperty.call(message, "ciphertext") && message.ciphertext.length)
                 writer.uint32(/* id 1, wireType 2 =*/10).bytes(message.ciphertext);
-            if (message.groupId != null && $Object.hasOwnProperty.call(message, "groupId"))
+            if (message.groupId != null && $Object.hasOwnProperty.call(message, "groupId") && message.groupId !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.groupId);
             if (message.recipients != null && message.recipients.length)
                 for (let i = 0; i < message.recipients.length; ++i)
@@ -1143,7 +1143,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         WelcomeFrame.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -1186,7 +1186,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.groupId = value;
                         else
                             delete message.groupId;
@@ -1378,7 +1378,7 @@ export const canari = $root.canari = (() => {
          * Properties of a ReadAck.
          * @typedef {Object} canari.ReadAck.$Properties
          * @property {string|null} [messageId] ReadAck messageId
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -1400,7 +1400,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a ReadAck.
          * @constructor
          * @param {canari.ReadAck.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const ReadAck = function (properties) {
             if (properties)
@@ -1449,7 +1449,7 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId"))
+            if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId") && message.messageId !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.messageId);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -1467,7 +1467,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         ReadAck.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -1501,7 +1501,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.messageId = value;
                         else
                             delete message.messageId;
@@ -1645,7 +1645,7 @@ export const canari = $root.canari = (() => {
          * @property {string|null} [groupId] InboundMsg groupId
          * @property {boolean|null} [isWelcome] InboundMsg isWelcome
          * @property {boolean|null} [isCommit] InboundMsg isCommit
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -1667,7 +1667,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents an InboundMsg.
          * @constructor
          * @param {canari.InboundMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const InboundMsg = function (properties) {
             if (properties)
@@ -1756,17 +1756,17 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.ciphertext != null && $Object.hasOwnProperty.call(message, "ciphertext"))
+            if (message.ciphertext != null && $Object.hasOwnProperty.call(message, "ciphertext") && message.ciphertext.length)
                 writer.uint32(/* id 1, wireType 2 =*/10).bytes(message.ciphertext);
-            if (message.senderId != null && $Object.hasOwnProperty.call(message, "senderId"))
+            if (message.senderId != null && $Object.hasOwnProperty.call(message, "senderId") && message.senderId !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.senderId);
-            if (message.senderDeviceId != null && $Object.hasOwnProperty.call(message, "senderDeviceId"))
+            if (message.senderDeviceId != null && $Object.hasOwnProperty.call(message, "senderDeviceId") && message.senderDeviceId !== "")
                 writer.uint32(/* id 3, wireType 2 =*/26).string(message.senderDeviceId);
-            if (message.groupId != null && $Object.hasOwnProperty.call(message, "groupId"))
+            if (message.groupId != null && $Object.hasOwnProperty.call(message, "groupId") && message.groupId !== "")
                 writer.uint32(/* id 4, wireType 2 =*/34).string(message.groupId);
-            if (message.isWelcome != null && $Object.hasOwnProperty.call(message, "isWelcome"))
+            if (message.isWelcome != null && $Object.hasOwnProperty.call(message, "isWelcome") && message.isWelcome !== false)
                 writer.uint32(/* id 5, wireType 0 =*/40).bool(message.isWelcome);
-            if (message.isCommit != null && $Object.hasOwnProperty.call(message, "isCommit"))
+            if (message.isCommit != null && $Object.hasOwnProperty.call(message, "isCommit") && message.isCommit !== false)
                 writer.uint32(/* id 6, wireType 0 =*/48).bool(message.isCommit);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -1784,7 +1784,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         InboundMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -1827,7 +1827,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.senderId = value;
                         else
                             delete message.senderId;
@@ -1836,7 +1836,7 @@ export const canari = $root.canari = (() => {
                 case 3: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.senderDeviceId = value;
                         else
                             delete message.senderDeviceId;
@@ -1845,7 +1845,7 @@ export const canari = $root.canari = (() => {
                 case 4: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.groupId = value;
                         else
                             delete message.groupId;
@@ -2066,7 +2066,7 @@ export const canari = $root.canari = (() => {
          * @property {canari.CallMsg.$Properties|null} [call] AppMessage call
          * @property {canari.PollMsg.$Properties|null} [poll] AppMessage poll
          * @property {"text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"} [kind] AppMessage kind
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -2101,7 +2101,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents an AppMessage.
          * @constructor
          * @param {canari.AppMessage.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const AppMessage = function (properties) {
             if (properties)
@@ -2238,11 +2238,11 @@ export const canari = $root.canari = (() => {
                 $root.canari.MediaMsg.encode(message.media, writer.uint32(/* id 4, wireType 2 =*/34).fork(), _depth + 1).ldelim();
             if (message.system != null && $Object.hasOwnProperty.call(message, "system"))
                 $root.canari.SystemMsg.encode(message.system, writer.uint32(/* id 5, wireType 2 =*/42).fork(), _depth + 1).ldelim();
-            if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId"))
+            if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId") && message.messageId !== "")
                 writer.uint32(/* id 6, wireType 2 =*/50).string(message.messageId);
             if (message.call != null && $Object.hasOwnProperty.call(message, "call"))
                 $root.canari.CallMsg.encode(message.call, writer.uint32(/* id 7, wireType 2 =*/58).fork(), _depth + 1).ldelim();
-            if (message.sentAt != null && $Object.hasOwnProperty.call(message, "sentAt"))
+            if (message.sentAt != null && $Object.hasOwnProperty.call(message, "sentAt") && (typeof message.sentAt === "object" ? message.sentAt.low || message.sentAt.high : message.sentAt !== 0))
                 writer.uint32(/* id 8, wireType 0 =*/64).int64(message.sentAt);
             if (message.poll != null && $Object.hasOwnProperty.call(message, "poll"))
                 $root.canari.PollMsg.encode(message.poll, writer.uint32(/* id 9, wireType 2 =*/74).fork(), _depth + 1).ldelim();
@@ -2262,7 +2262,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         AppMessage.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -2296,7 +2296,7 @@ export const canari = $root.canari = (() => {
                 case 6: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.messageId = value;
                         else
                             delete message.messageId;
@@ -2666,7 +2666,7 @@ export const canari = $root.canari = (() => {
          * @property {boolean|null} [hangup] CallMsg hangup
          * @property {boolean|null} [answered] CallMsg answered
          * @property {"offerSdp"|"answerSdp"|"iceCandidate"|"hangup"|"answered"} [payload] CallMsg payload
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -2700,7 +2700,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a CallMsg.
          * @constructor
          * @param {canari.CallMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const CallMsg = function (properties) {
             if (properties)
@@ -2819,7 +2819,7 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.callId != null && $Object.hasOwnProperty.call(message, "callId"))
+            if (message.callId != null && $Object.hasOwnProperty.call(message, "callId") && message.callId !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.callId);
             if (message.offerSdp != null && $Object.hasOwnProperty.call(message, "offerSdp"))
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.offerSdp);
@@ -2829,11 +2829,11 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 4, wireType 2 =*/34).string(message.iceCandidate);
             if (message.hangup != null && $Object.hasOwnProperty.call(message, "hangup"))
                 writer.uint32(/* id 5, wireType 0 =*/40).bool(message.hangup);
-            if (message.hasVideo != null && $Object.hasOwnProperty.call(message, "hasVideo"))
+            if (message.hasVideo != null && $Object.hasOwnProperty.call(message, "hasVideo") && message.hasVideo !== false)
                 writer.uint32(/* id 6, wireType 0 =*/48).bool(message.hasVideo);
             if (message.answered != null && $Object.hasOwnProperty.call(message, "answered"))
                 writer.uint32(/* id 7, wireType 0 =*/56).bool(message.answered);
-            if (message.deviceId != null && $Object.hasOwnProperty.call(message, "deviceId"))
+            if (message.deviceId != null && $Object.hasOwnProperty.call(message, "deviceId") && message.deviceId !== "")
                 writer.uint32(/* id 8, wireType 2 =*/66).string(message.deviceId);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -2851,7 +2851,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         CallMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -2885,7 +2885,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.callId = value;
                         else
                             delete message.callId;
@@ -2903,7 +2903,7 @@ export const canari = $root.canari = (() => {
                 case 8: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.deviceId = value;
                         else
                             delete message.deviceId;
@@ -2912,21 +2912,21 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        message.offerSdp = reader.string();
+                        message.offerSdp = reader.stringVerify();
                         message.payload = "offerSdp";
                         continue;
                     }
                 case 3: {
                         if (wireType !== 2)
                             break;
-                        message.answerSdp = reader.string();
+                        message.answerSdp = reader.stringVerify();
                         message.payload = "answerSdp";
                         continue;
                     }
                 case 4: {
                         if (wireType !== 2)
                             break;
-                        message.iceCandidate = reader.string();
+                        message.iceCandidate = reader.stringVerify();
                         message.payload = "iceCandidate";
                         continue;
                     }
@@ -3165,7 +3165,7 @@ export const canari = $root.canari = (() => {
          * Properties of a TextMsg.
          * @typedef {Object} canari.TextMsg.$Properties
          * @property {string|null} [content] TextMsg content
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -3187,7 +3187,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a TextMsg.
          * @constructor
          * @param {canari.TextMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const TextMsg = function (properties) {
             if (properties)
@@ -3236,7 +3236,7 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.content != null && $Object.hasOwnProperty.call(message, "content"))
+            if (message.content != null && $Object.hasOwnProperty.call(message, "content") && message.content !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.content);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -3254,7 +3254,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         TextMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -3288,7 +3288,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.content = value;
                         else
                             delete message.content;
@@ -3429,7 +3429,7 @@ export const canari = $root.canari = (() => {
          * @property {string|null} [id] ReplyRef id
          * @property {string|null} [senderId] ReplyRef senderId
          * @property {string|null} [preview] ReplyRef preview
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -3451,7 +3451,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a ReplyRef.
          * @constructor
          * @param {canari.ReplyRef.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const ReplyRef = function (properties) {
             if (properties)
@@ -3516,11 +3516,11 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.id != null && $Object.hasOwnProperty.call(message, "id"))
+            if (message.id != null && $Object.hasOwnProperty.call(message, "id") && message.id !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.id);
-            if (message.senderId != null && $Object.hasOwnProperty.call(message, "senderId"))
+            if (message.senderId != null && $Object.hasOwnProperty.call(message, "senderId") && message.senderId !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.senderId);
-            if (message.preview != null && $Object.hasOwnProperty.call(message, "preview"))
+            if (message.preview != null && $Object.hasOwnProperty.call(message, "preview") && message.preview !== "")
                 writer.uint32(/* id 3, wireType 2 =*/26).string(message.preview);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -3538,7 +3538,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         ReplyRef.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -3572,7 +3572,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.id = value;
                         else
                             delete message.id;
@@ -3581,7 +3581,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.senderId = value;
                         else
                             delete message.senderId;
@@ -3590,7 +3590,7 @@ export const canari = $root.canari = (() => {
                 case 3: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.preview = value;
                         else
                             delete message.preview;
@@ -3749,7 +3749,7 @@ export const canari = $root.canari = (() => {
          * @typedef {Object} canari.ReplyMsg.$Properties
          * @property {string|null} [content] ReplyMsg content
          * @property {canari.ReplyRef.$Properties|null} [replyTo] ReplyMsg replyTo
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -3771,7 +3771,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a ReplyMsg.
          * @constructor
          * @param {canari.ReplyMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const ReplyMsg = function (properties) {
             if (properties)
@@ -3828,7 +3828,7 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.content != null && $Object.hasOwnProperty.call(message, "content"))
+            if (message.content != null && $Object.hasOwnProperty.call(message, "content") && message.content !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.content);
             if (message.replyTo != null && $Object.hasOwnProperty.call(message, "replyTo"))
                 $root.canari.ReplyRef.encode(message.replyTo, writer.uint32(/* id 2, wireType 2 =*/18).fork(), _depth + 1).ldelim();
@@ -3848,7 +3848,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         ReplyMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -3882,7 +3882,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.content = value;
                         else
                             delete message.content;
@@ -4042,7 +4042,7 @@ export const canari = $root.canari = (() => {
          * @typedef {Object} canari.ReactionMsg.$Properties
          * @property {string|null} [messageId] ReactionMsg messageId
          * @property {string|null} [emoji] ReactionMsg emoji
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -4064,7 +4064,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a ReactionMsg.
          * @constructor
          * @param {canari.ReactionMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const ReactionMsg = function (properties) {
             if (properties)
@@ -4121,9 +4121,9 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId"))
+            if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId") && message.messageId !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.messageId);
-            if (message.emoji != null && $Object.hasOwnProperty.call(message, "emoji"))
+            if (message.emoji != null && $Object.hasOwnProperty.call(message, "emoji") && message.emoji !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.emoji);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -4141,7 +4141,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         ReactionMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -4175,7 +4175,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.messageId = value;
                         else
                             delete message.messageId;
@@ -4184,7 +4184,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.emoji = value;
                         else
                             delete message.emoji;
@@ -4334,7 +4334,7 @@ export const canari = $root.canari = (() => {
          * @typedef {Object} canari.PollOption.$Properties
          * @property {string|null} [id] PollOption id
          * @property {string|null} [label] PollOption label
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -4356,7 +4356,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a PollOption.
          * @constructor
          * @param {canari.PollOption.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const PollOption = function (properties) {
             if (properties)
@@ -4413,9 +4413,9 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.id != null && $Object.hasOwnProperty.call(message, "id"))
+            if (message.id != null && $Object.hasOwnProperty.call(message, "id") && message.id !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.id);
-            if (message.label != null && $Object.hasOwnProperty.call(message, "label"))
+            if (message.label != null && $Object.hasOwnProperty.call(message, "label") && message.label !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.label);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -4433,7 +4433,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         PollOption.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -4467,7 +4467,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.id = value;
                         else
                             delete message.id;
@@ -4476,7 +4476,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.label = value;
                         else
                             delete message.label;
@@ -4628,7 +4628,7 @@ export const canari = $root.canari = (() => {
          * @property {Array.<canari.PollOption.$Properties>|null} [options] PollMsg options
          * @property {boolean|null} [multipleChoice] PollMsg multipleChoice
          * @property {number|null} [endsAt] PollMsg endsAt
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -4650,7 +4650,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a PollMsg.
          * @constructor
          * @param {canari.PollMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const PollMsg = function (properties) {
             this.options = [];
@@ -4724,14 +4724,14 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.question != null && $Object.hasOwnProperty.call(message, "question"))
+            if (message.question != null && $Object.hasOwnProperty.call(message, "question") && message.question !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.question);
             if (message.options != null && message.options.length)
                 for (let i = 0; i < message.options.length; ++i)
                     $root.canari.PollOption.encode(message.options[i], writer.uint32(/* id 2, wireType 2 =*/18).fork(), _depth + 1).ldelim();
-            if (message.multipleChoice != null && $Object.hasOwnProperty.call(message, "multipleChoice"))
+            if (message.multipleChoice != null && $Object.hasOwnProperty.call(message, "multipleChoice") && message.multipleChoice !== false)
                 writer.uint32(/* id 3, wireType 0 =*/24).bool(message.multipleChoice);
-            if (message.endsAt != null && $Object.hasOwnProperty.call(message, "endsAt"))
+            if (message.endsAt != null && $Object.hasOwnProperty.call(message, "endsAt") && (typeof message.endsAt === "object" ? message.endsAt.low || message.endsAt.high : message.endsAt !== 0))
                 writer.uint32(/* id 4, wireType 0 =*/32).int64(message.endsAt);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -4749,7 +4749,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         PollMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -4783,7 +4783,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.question = value;
                         else
                             delete message.question;
@@ -5007,17 +5007,17 @@ export const canari = $root.canari = (() => {
      * MediaKind enum.
      * @name canari.MediaKind
      * @enum {number}
-     * @property {number} MEDIA_FILE=0 MEDIA_FILE value
-     * @property {number} MEDIA_IMAGE=1 MEDIA_IMAGE value
-     * @property {number} MEDIA_VIDEO=2 MEDIA_VIDEO value
-     * @property {number} MEDIA_AUDIO=3 MEDIA_AUDIO value
+     * @property {number} MEDIA_KIND_UNSPECIFIED=0 MEDIA_KIND_UNSPECIFIED value
+     * @property {number} MEDIA_KIND_IMAGE=1 MEDIA_KIND_IMAGE value
+     * @property {number} MEDIA_KIND_VIDEO=2 MEDIA_KIND_VIDEO value
+     * @property {number} MEDIA_KIND_AUDIO=3 MEDIA_KIND_AUDIO value
      */
     canari.MediaKind = (function() {
-        const valuesById = {}, values = $Object.create(valuesById);
-        values[valuesById[0] = "MEDIA_FILE"] = 0;
-        values[valuesById[1] = "MEDIA_IMAGE"] = 1;
-        values[valuesById[2] = "MEDIA_VIDEO"] = 2;
-        values[valuesById[3] = "MEDIA_AUDIO"] = 3;
+        const valuesById = $Object.create(null), values = $Object.create(valuesById);
+        values[valuesById[0] = "MEDIA_KIND_UNSPECIFIED"] = 0;
+        values[valuesById[1] = "MEDIA_KIND_IMAGE"] = 1;
+        values[valuesById[2] = "MEDIA_KIND_VIDEO"] = 2;
+        values[valuesById[3] = "MEDIA_KIND_AUDIO"] = 3;
         return values;
     })();
 
@@ -5036,7 +5036,7 @@ export const canari = $root.canari = (() => {
          * @property {string|null} [caption] MediaMsg caption
          * @property {number|null} [width] MediaMsg width
          * @property {number|null} [height] MediaMsg height
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -5058,7 +5058,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a MediaMsg.
          * @constructor
          * @param {canari.MediaMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const MediaMsg = function (properties) {
             if (properties)
@@ -5179,25 +5179,25 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.kind != null && $Object.hasOwnProperty.call(message, "kind"))
+            if (message.kind != null && $Object.hasOwnProperty.call(message, "kind") && message.kind !== 0)
                 writer.uint32(/* id 1, wireType 0 =*/8).int32(message.kind);
-            if (message.mediaId != null && $Object.hasOwnProperty.call(message, "mediaId"))
+            if (message.mediaId != null && $Object.hasOwnProperty.call(message, "mediaId") && message.mediaId !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.mediaId);
-            if (message.key != null && $Object.hasOwnProperty.call(message, "key"))
+            if (message.key != null && $Object.hasOwnProperty.call(message, "key") && message.key.length)
                 writer.uint32(/* id 3, wireType 2 =*/26).bytes(message.key);
-            if (message.iv != null && $Object.hasOwnProperty.call(message, "iv"))
+            if (message.iv != null && $Object.hasOwnProperty.call(message, "iv") && message.iv.length)
                 writer.uint32(/* id 4, wireType 2 =*/34).bytes(message.iv);
-            if (message.mimeType != null && $Object.hasOwnProperty.call(message, "mimeType"))
+            if (message.mimeType != null && $Object.hasOwnProperty.call(message, "mimeType") && message.mimeType !== "")
                 writer.uint32(/* id 5, wireType 2 =*/42).string(message.mimeType);
-            if (message.size != null && $Object.hasOwnProperty.call(message, "size"))
+            if (message.size != null && $Object.hasOwnProperty.call(message, "size") && message.size !== 0)
                 writer.uint32(/* id 6, wireType 0 =*/48).uint32(message.size);
-            if (message.fileName != null && $Object.hasOwnProperty.call(message, "fileName"))
+            if (message.fileName != null && $Object.hasOwnProperty.call(message, "fileName") && message.fileName !== "")
                 writer.uint32(/* id 7, wireType 2 =*/58).string(message.fileName);
-            if (message.caption != null && $Object.hasOwnProperty.call(message, "caption"))
+            if (message.caption != null && $Object.hasOwnProperty.call(message, "caption") && message.caption !== "")
                 writer.uint32(/* id 8, wireType 2 =*/66).string(message.caption);
-            if (message.width != null && $Object.hasOwnProperty.call(message, "width"))
+            if (message.width != null && $Object.hasOwnProperty.call(message, "width") && message.width !== 0)
                 writer.uint32(/* id 9, wireType 0 =*/72).uint32(message.width);
-            if (message.height != null && $Object.hasOwnProperty.call(message, "height"))
+            if (message.height != null && $Object.hasOwnProperty.call(message, "height") && message.height !== 0)
                 writer.uint32(/* id 10, wireType 0 =*/80).uint32(message.height);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -5215,7 +5215,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         MediaMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -5258,7 +5258,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.mediaId = value;
                         else
                             delete message.mediaId;
@@ -5285,7 +5285,7 @@ export const canari = $root.canari = (() => {
                 case 5: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.mimeType = value;
                         else
                             delete message.mimeType;
@@ -5303,7 +5303,7 @@ export const canari = $root.canari = (() => {
                 case 7: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.fileName = value;
                         else
                             delete message.fileName;
@@ -5312,7 +5312,7 @@ export const canari = $root.canari = (() => {
                 case 8: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.caption = value;
                         else
                             delete message.caption;
@@ -5380,15 +5380,8 @@ export const canari = $root.canari = (() => {
             if (_depth > $util.recursionLimit)
                 return "max depth exceeded";
             if (message.kind != null && $Object.hasOwnProperty.call(message, "kind"))
-                switch (message.kind) {
-                default:
+                if (typeof message.kind !== "number" || (message.kind | 0) !== message.kind)
                     return "kind: enum value expected";
-                case 0:
-                case 1:
-                case 2:
-                case 3:
-                    break;
-                }
             if (message.mediaId != null && $Object.hasOwnProperty.call(message, "mediaId"))
                 if (!$util.isString(message.mediaId))
                     return "mediaId: string expected";
@@ -5439,28 +5432,25 @@ export const canari = $root.canari = (() => {
             let message = new $root.canari.MediaMsg();
             if (object.kind !== 0 && (typeof object.kind !== "string" || $root.canari.MediaKind[object.kind] !== 0))
                 switch (object.kind) {
-                default:
-                    if (typeof object.kind === "number") {
-                        message.kind = object.kind;
-                        break;
-                    }
-                    break;
-                case "MEDIA_FILE":
+                case "MEDIA_KIND_UNSPECIFIED":
                 case 0:
                     message.kind = 0;
                     break;
-                case "MEDIA_IMAGE":
+                case "MEDIA_KIND_IMAGE":
                 case 1:
                     message.kind = 1;
                     break;
-                case "MEDIA_VIDEO":
+                case "MEDIA_KIND_VIDEO":
                 case 2:
                     message.kind = 2;
                     break;
-                case "MEDIA_AUDIO":
+                case "MEDIA_KIND_AUDIO":
                 case 3:
                     message.kind = 3;
                     break;
+                default:
+                    if (typeof object.kind === "number" && (object.kind | 0) === object.kind)
+                        message.kind = object.kind;
                 }
             if (object.mediaId != null)
                 if (typeof object.mediaId !== "string" || object.mediaId.length)
@@ -5516,7 +5506,7 @@ export const canari = $root.canari = (() => {
                 throw $Error("max depth exceeded");
             let object = {};
             if (options.defaults) {
-                object.kind = options.enums === $String ? "MEDIA_FILE" : 0;
+                object.kind = options.enums === $String ? "MEDIA_KIND_UNSPECIFIED" : 0;
                 object.mediaId = "";
                 if (options.bytes === $String)
                     object.key = "";
@@ -5599,7 +5589,7 @@ export const canari = $root.canari = (() => {
          * @typedef {Object} canari.SystemMsg.$Properties
          * @property {string|null} [event] SystemMsg event
          * @property {string|null} [data] SystemMsg data
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
         /**
@@ -5621,7 +5611,7 @@ export const canari = $root.canari = (() => {
          * @classdesc Represents a SystemMsg.
          * @constructor
          * @param {canari.SystemMsg.$Properties=} [properties] Properties to set
-         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
         const SystemMsg = function (properties) {
             if (properties)
@@ -5678,9 +5668,9 @@ export const canari = $root.canari = (() => {
                 _depth = 0;
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
-            if (message.event != null && $Object.hasOwnProperty.call(message, "event"))
+            if (message.event != null && $Object.hasOwnProperty.call(message, "event") && message.event !== "")
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.event);
-            if (message.data != null && $Object.hasOwnProperty.call(message, "data"))
+            if (message.data != null && $Object.hasOwnProperty.call(message, "data") && message.data !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.data);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
@@ -5698,7 +5688,7 @@ export const canari = $root.canari = (() => {
          * @returns {$protobuf.Writer} Writer
          */
         SystemMsg.encodeDelimited = function(message, writer) {
-            return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
         };
 
         /**
@@ -5732,7 +5722,7 @@ export const canari = $root.canari = (() => {
                 case 1: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.event = value;
                         else
                             delete message.event;
@@ -5741,7 +5731,7 @@ export const canari = $root.canari = (() => {
                 case 2: {
                         if (wireType !== 2)
                             break;
-                        if ((value = reader.string()).length)
+                        if ((value = reader.stringVerify()).length)
                             message.data = value;
                         else
                             delete message.data;

@@ -569,10 +569,10 @@ export function useMessaging() {
     const channelSvc = isChannel ? new ChannelService() : null;
 
     const kindMap: Record<string, number> = {
-      image: MediaKind.MEDIA_IMAGE,
-      video: MediaKind.MEDIA_VIDEO,
-      audio: MediaKind.MEDIA_AUDIO,
-      file: MediaKind.MEDIA_FILE,
+      image: MediaKind.MEDIA_KIND_IMAGE,
+      video: MediaKind.MEDIA_KIND_VIDEO,
+      audio: MediaKind.MEDIA_KIND_AUDIO,
+      file: MediaKind.MEDIA_KIND_UNSPECIFIED,
     };
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
       mime.startsWith('image/')
@@ -606,7 +606,7 @@ export function useMessaging() {
             });
             const protoBytes = encodeAppMessage({
               ...mkMedia({
-                kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_FILE,
+                kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_KIND_UNSPECIFIED,
                 mediaId: mediaRef.mediaId,
                 key: fromHex(mediaRef.key),
                 iv: fromHex(mediaRef.iv),
@@ -936,17 +936,17 @@ export function useMessaging() {
           return { success: false, error: 'Conversation not ready.' };
         const m = env.media;
         const kindMap: Record<string, number> = {
-          image: MediaKind.MEDIA_IMAGE,
-          video: MediaKind.MEDIA_VIDEO,
-          audio: MediaKind.MEDIA_AUDIO,
-          file: MediaKind.MEDIA_FILE,
+          image: MediaKind.MEDIA_KIND_IMAGE,
+          video: MediaKind.MEDIA_KIND_VIDEO,
+          audio: MediaKind.MEDIA_KIND_AUDIO,
+          file: MediaKind.MEDIA_KIND_UNSPECIFIED,
         };
         const hexToBytes = (h: string) =>
           new Uint8Array((h.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
         const messageId = crypto.randomUUID();
         const protoBytes = encodeAppMessage({
           ...mkMedia({
-            kind: kindMap[m.type] ?? MediaKind.MEDIA_FILE,
+            kind: kindMap[m.type] ?? MediaKind.MEDIA_KIND_UNSPECIFIED,
             mediaId: m.mediaId,
             key: hexToBytes(m.key),
             iv: hexToBytes(m.iv),

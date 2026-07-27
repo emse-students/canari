@@ -16,32 +16,32 @@ import { canari } from './canari.js';
 
 // ─── Re-export the generated types so callers don't need to import canari.js ──
 
-export type IWsEnvelope = canari.IWsEnvelope;
-export type IInboundMsg = canari.IInboundMsg;
-export type IAppMessage = canari.IAppMessage;
-export type IMlsFrame = canari.IMlsFrame;
-export type IWelcomeFrame = canari.IWelcomeFrame;
-export type IReadAck = canari.IReadAck;
-export type IRecipient = canari.IRecipient;
-export type ITextMsg = canari.ITextMsg;
-export type IReplyMsg = canari.IReplyMsg;
-export type IReplyRef = canari.IReplyRef;
-export type IReactionMsg = canari.IReactionMsg;
-export type IMediaMsg = canari.IMediaMsg;
-export type ISystemMsg = canari.ISystemMsg;
-export type ICallMsg = canari.ICallMsg;
-export type IPollMsg = canari.IPollMsg;
-export type IPollOption = canari.IPollOption;
+export type IWsEnvelope = canari.WsEnvelope.$Properties;
+export type IInboundMsg = canari.InboundMsg.$Properties;
+export type IAppMessage = canari.AppMessage.$Properties;
+export type IMlsFrame = canari.MlsFrame.$Properties;
+export type IWelcomeFrame = canari.WelcomeFrame.$Properties;
+export type IReadAck = canari.ReadAck.$Properties;
+export type IRecipient = canari.Recipient.$Properties;
+export type ITextMsg = canari.TextMsg.$Properties;
+export type IReplyMsg = canari.ReplyMsg.$Properties;
+export type IReplyRef = canari.ReplyRef.$Properties;
+export type IReactionMsg = canari.ReactionMsg.$Properties;
+export type IMediaMsg = canari.MediaMsg.$Properties;
+export type ISystemMsg = canari.SystemMsg.$Properties;
+export type ICallMsg = canari.CallMsg.$Properties;
+export type IPollMsg = canari.PollMsg.$Properties;
+export type IPollOption = canari.PollOption.$Properties;
 
 export const MediaKind = canari.MediaKind;
 
 export function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audio' | 'file' {
   switch (kind) {
-    case canari.MediaKind.MEDIA_IMAGE:
+    case canari.MediaKind.MEDIA_KIND_IMAGE:
       return 'image';
-    case canari.MediaKind.MEDIA_VIDEO:
+    case canari.MediaKind.MEDIA_KIND_VIDEO:
       return 'video';
-    case canari.MediaKind.MEDIA_AUDIO:
+    case canari.MediaKind.MEDIA_KIND_AUDIO:
       return 'audio';
     default:
       return 'file';
@@ -53,7 +53,7 @@ export function mediaKindToType(kind?: number | null): 'image' | 'video' | 'audi
 /**
  * Encode a WsEnvelope to binary for sending over WebSocket.
  */
-export function encodeEnvelope(envelope: canari.IWsEnvelope): Uint8Array {
+export function encodeEnvelope(envelope: canari.WsEnvelope.$Properties): Uint8Array {
   return canari.WsEnvelope.encode(canari.WsEnvelope.create(envelope)).finish();
 }
 
@@ -69,7 +69,7 @@ export function decodeInboundMsg(bytes: Uint8Array): canari.InboundMsg {
 /**
  * Encode an AppMessage to raw bytes to be passed to MLS encryption.
  */
-export function encodeAppMessage(msg: canari.IAppMessage): Uint8Array {
+export function encodeAppMessage(msg: canari.AppMessage.$Properties): Uint8Array {
   return canari.AppMessage.encode(canari.AppMessage.create(msg)).finish();
 }
 
@@ -87,26 +87,26 @@ export function decodeAppMessage(bytes: Uint8Array): canari.AppMessage | null {
 
 // ─── Convenience builders (avoid spreading canari.IXxx everywhere) ────────────
 
-export function mkText(content: string): canari.IAppMessage {
+export function mkText(content: string): canari.AppMessage.$Properties {
   return { text: { content } };
 }
 
 export function mkReply(
   content: string,
   replyTo: { id: string; senderId: string; preview: string }
-): canari.IAppMessage {
+): canari.AppMessage.$Properties {
   return { reply: { content, replyTo } };
 }
 
-export function mkReaction(messageId: string, emoji: string): canari.IAppMessage {
+export function mkReaction(messageId: string, emoji: string): canari.AppMessage.$Properties {
   return { reaction: { messageId, emoji } };
 }
 
-export function mkMedia(media: canari.IMediaMsg): canari.IAppMessage {
+export function mkMedia(media: canari.MediaMsg.$Properties): canari.AppMessage.$Properties {
   return { media };
 }
 
-export function mkSystem(event: string, data?: string): canari.IAppMessage {
+export function mkSystem(event: string, data?: string): canari.AppMessage.$Properties {
   return { system: { event, data: data ?? '' } };
 }
 
@@ -115,7 +115,7 @@ export function mkSystem(event: string, data?: string): canari.IAppMessage {
  * here (end-to-end encrypted); only the option ids are also sent in clear to the
  * server so it can tally votes without seeing the labels.
  */
-export function mkPoll(poll: canari.IPollMsg): canari.IAppMessage {
+export function mkPoll(poll: canari.PollMsg.$Properties): canari.AppMessage.$Properties {
   return { poll };
 }
 
@@ -124,7 +124,7 @@ export function mkCallInvite(
   callId: string,
   hasVideo: boolean,
   deviceId?: string
-): canari.IAppMessage {
+): canari.AppMessage.$Properties {
   return {
     call: {
       callId,
@@ -136,7 +136,7 @@ export function mkCallInvite(
 }
 
 /** Builds an MLS call hangup message. */
-export function mkCallHangup(callId: string, deviceId?: string): canari.IAppMessage {
+export function mkCallHangup(callId: string, deviceId?: string): canari.AppMessage.$Properties {
   return {
     call: {
       callId,
@@ -147,7 +147,7 @@ export function mkCallHangup(callId: string, deviceId?: string): canari.IAppMess
 }
 
 /** Notifies other devices of the same user that this device picked up the call. */
-export function mkCallAnswered(callId: string, deviceId: string): canari.IAppMessage {
+export function mkCallAnswered(callId: string, deviceId: string): canari.AppMessage.$Properties {
   return {
     call: {
       callId,
@@ -169,7 +169,7 @@ export function mkMlsEnvelope(
   ciphertext: Uint8Array,
   groupId: string,
   recipients: RecipientSpec[] = []
-): canari.IWsEnvelope {
+): canari.WsEnvelope.$Properties {
   return {
     mls: {
       ciphertext,
@@ -183,7 +183,7 @@ export function mkWelcomeEnvelope(
   ciphertext: Uint8Array,
   groupId: string,
   recipients: RecipientSpec[]
-): canari.IWsEnvelope {
+): canari.WsEnvelope.$Properties {
   return {
     welcome: {
       ciphertext,
@@ -193,6 +193,6 @@ export function mkWelcomeEnvelope(
   };
 }
 
-export function mkReadEnvelope(messageId: string): canari.IWsEnvelope {
+export function mkReadEnvelope(messageId: string): canari.WsEnvelope.$Properties {
   return { read: { messageId } };
 }

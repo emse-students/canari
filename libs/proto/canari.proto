@@ -151,10 +151,10 @@ message PollMsg {
 // encrypted by MLS. Only group members can decrypt both the key and the blob.
 
 enum MediaKind {
-  MEDIA_FILE  = 0; // generic binary
-  MEDIA_IMAGE = 1;
-  MEDIA_VIDEO = 2;
-  MEDIA_AUDIO = 3;
+  MEDIA_KIND_UNSPECIFIED  = 0; // generic binary
+  MEDIA_KIND_IMAGE = 1;
+  MEDIA_KIND_VIDEO = 2;
+  MEDIA_KIND_AUDIO = 3;
 }
 
 message MediaMsg {

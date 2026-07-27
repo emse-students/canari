@@ -319,7 +319,7 @@ describe('outbox flusher', () => {
       sentAt: 100,
       kind: 'media',
       media: {
-        kind: MediaKind.MEDIA_IMAGE,
+        kind: MediaKind.MEDIA_KIND_IMAGE,
         mimeType: 'image/png',
         size: 3,
         fileName: 'a.png',
@@ -362,7 +362,7 @@ describe('outbox flusher', () => {
       sentAt: 100,
       kind: 'media',
       media: {
-        kind: MediaKind.MEDIA_IMAGE,
+        kind: MediaKind.MEDIA_KIND_IMAGE,
         mimeType: 'image/png',
         size: 3,
         fileName: 'a.png',
